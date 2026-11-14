@@ -620,6 +620,30 @@ const std::vector<std::string>& boxClasses() {
     return c;
 }
 
+std::vector<std::string> allClassNames() {
+    std::vector<std::string> v;
+    for (auto& kv : factories()) v.push_back(kv.first);
+    return v;
+}
+
+const char* describeClass(const std::string& cls) {
+    static const std::map<std::string, const char*> d = {
+        {"cycle~", "cosine oscillator"},      {"reson~", "resonant bandpass filter"},
+        {"noise~", "white noise"},            {"click~", "impulse on bang"},
+        {"+~", "add signals"},                {"-~", "subtract signals"},
+        {"*~", "multiply signals"},           {"/~", "divide signals"},
+        {"+", "add numbers"},                 {"-", "subtract numbers"},
+        {"*", "multiply numbers"},            {"/", "divide numbers"},
+        {"flonum", "float number box"},       {"number", "integer number box"},
+        {"message", "clickable message"},     {"send", "send to receive objects"},
+        {"s", "send (short name)"},           {"receive", "receive sent messages"},
+        {"r", "receive (short name)"},        {"loadbang", "bang when the patch opens"},
+        {"adc~", "audio input"},              {"dac~", "audio output"},
+    };
+    auto it = d.find(cls);
+    return it == d.end() ? "" : it->second;
+}
+
 // ============================================================================
 // 3. patch
 // ============================================================================
@@ -1073,12 +1097,31 @@ void AudioEngine::updateInputNeed() {
 // ============================================================================
 
 namespace {
-constexpr int kPortW = 8, kPortH = 3, kBoxH = 22, kFontSize = 12;
+constexpr int kPortW = 8, kPortH = 3, kBoxH = 22, kFontSize = 12, kRadius = 6;
+constexpr int kPortInset = 4;            // keeps ports clear of the rounded corners
+constexpr int kSuggRowH = 20, kSuggMax = 8;
 constexpr Fl_Font kFont = FL_HELVETICA;
-const Fl_Color kInk = fl_rgb_color(40, 40, 40);
-const Fl_Color kSelect = fl_rgb_color(40, 110, 220);
-const Fl_Color kSignal = fl_rgb_color(200, 170, 30);
-const Fl_Color kCable = fl_rgb_color(60, 60, 60);
+
+// dark theme
+const Fl_Color kBgLocked  = fl_rgb_color(34, 35, 39);
+const Fl_Color kBgEdit    = fl_rgb_color(28, 29, 33);
+const Fl_Color kGrid      = fl_rgb_color(50, 52, 58);
+const Fl_Color kBoxFill   = fl_rgb_color(54, 57, 64);
+const Fl_Color kNumFill   = fl_rgb_color(44, 47, 54);
+const Fl_Color kMsgFill   = fl_rgb_color(76, 80, 90);
+const Fl_Color kFlash     = fl_rgb_color(70, 130, 220);
+const Fl_Color kBroken    = fl_rgb_color(78, 40, 44);
+const Fl_Color kBorder    = fl_rgb_color(92, 96, 108);
+const Fl_Color kText      = fl_rgb_color(226, 228, 234);
+const Fl_Color kDim       = fl_rgb_color(140, 144, 156);
+const Fl_Color kAccent    = fl_rgb_color(110, 170, 255);
+const Fl_Color kSelect    = fl_rgb_color(90, 160, 255);
+const Fl_Color kSignal    = fl_rgb_color(236, 196, 70);
+const Fl_Color kSignalDim = fl_rgb_color(120, 96, 28);
+const Fl_Color kCtlPort   = fl_rgb_color(196, 200, 210);
+const Fl_Color kCable     = fl_rgb_color(160, 164, 176);
+const Fl_Color kPopup     = fl_rgb_color(44, 46, 53);
+const Fl_Color kStatusBg  = fl_rgb_color(22, 23, 26);
 
 double segDist(double px, double py, double ax, double ay, double bx, double by) {
     double dx = bx - ax, dy = by - ay, L = dx * dx + dy * dy;
@@ -1088,15 +1131,47 @@ double segDist(double px, double py, double ax, double ay, double bx, double by)
 }
 
 void flashTimer(void* data) { static_cast<Canvas*>(data)->redraw(); }
+
+// Text field for box editing. While the completion popup is open it takes
+// Up/Down (choose), Tab (complete, keep typing) and Enter (complete and
+// create); every other key edits the text and refreshes the suggestions.
+class CompletingInput : public Fl_Input {
+public:
+    CompletingInput(int x, int y, int w, int h, Canvas* c) : Fl_Input(x, y, w, h), canvas_(c) {}
+    int handle(int e) override {
+        if (e == FL_KEYBOARD && canvas_->hasSuggestions()) {
+            switch (Fl::event_key()) {
+                case FL_Down: canvas_->moveSuggestion(1); return 1;
+                case FL_Up: canvas_->moveSuggestion(-1); return 1;
+                case FL_Tab: canvas_->acceptSuggestion(false); return 1;
+                case FL_Escape: canvas_->clearSuggestions(); return 1;
+                case FL_Enter:
+                case FL_KP_Enter:
+                    if (canvas_->acceptSuggestion(true)) return 1;
+                    break;
+            }
+        }
+        int r = Fl_Input::handle(e);
+        if (e == FL_KEYBOARD || e == FL_PASTE) canvas_->updateSuggestions();
+        return r;
+    }
+
+private:
+    Canvas* canvas_;
+};
 }  // namespace
 
 Canvas::Canvas(int x, int y, int w, int h, MainWindow* win)
     : Fl_Group(x, y, w, h), win_(win) {
     box(FL_FLAT_BOX);
-    editor_ = new Fl_Input(x, y, 120, kBoxH);
+    editor_ = new CompletingInput(x, y, 120, kBoxH, this);
     editor_->textfont(kFont);
     editor_->textsize(kFontSize);
     editor_->box(FL_BORDER_BOX);
+    editor_->color(fl_rgb_color(20, 21, 24));
+    editor_->textcolor(kText);
+    editor_->cursor_color(kAccent);
+    editor_->selection_color(fl_rgb_color(60, 100, 170));
     editor_->when(FL_WHEN_ENTER_KEY_ALWAYS | FL_WHEN_RELEASE_ALWAYS);
     editor_->callback(editCb, this);
     editor_->hide();
@@ -1109,13 +1184,15 @@ void Canvas::layoutBox(Box* b) const {
     int tw = (int)fl_width(t.c_str());
     int ports = std::max(b->numIns(), b->numOuts());
     if (b->kind == BoxKind::Number) b->w = std::max(56, tw + 24);
-    else b->w = std::max({tw + 14, ports * (kPortW + 8), 36});
+    else if (b->kind == BoxKind::Message) b->w = std::max(36, tw + 20);
+    else b->w = std::max({tw + 16, ports * (kPortW + 8) + 2 * kPortInset, 40});
     b->h = kBoxH;
 }
 
 void Canvas::portPos(Box* b, bool out, int i, int& px, int& py) const {
     int n = out ? b->numOuts() : b->numIns();
-    px = b->x + (n <= 1 ? 0 : i * (b->w - kPortW) / (n - 1));
+    int span = b->w - kPortW - 2 * kPortInset;
+    px = b->x + kPortInset + (n <= 1 ? 0 : i * span / (n - 1));
     py = out ? b->y + b->h : b->y;
 }
 
@@ -1123,73 +1200,175 @@ void Canvas::drawBox(Box* b) {
     int X = x() + b->x, Y = y() + b->y, W = b->w, H = b->h;
     bool flash = b->flashUntil > now();
 
-    switch (b->kind) {
-        case BoxKind::Message:
-            fl_color(flash ? fl_rgb_color(170, 200, 240) : fl_rgb_color(218, 218, 218));
-            fl_rounded_rectf(X, Y, W, H, 4);
-            break;
-        case BoxKind::Broken:
-            fl_color(fl_rgb_color(255, 236, 236));
-            fl_rectf(X, Y, W, H);
-            break;
-        default:
-            fl_color(FL_WHITE);
-            fl_rectf(X, Y, W, H);
-    }
+    // message boxes are pills, everything else a softly rounded box
+    int r = b->kind == BoxKind::Message ? H / 2 : kRadius;
+    Fl_Color fill = kBoxFill;
+    if (b->kind == BoxKind::Message) fill = flash ? kFlash : kMsgFill;
+    else if (b->kind == BoxKind::Number) fill = kNumFill;
+    else if (b->kind == BoxKind::Broken) fill = kBroken;
+    fl_color(fill);
+    fl_rounded_rectf(X, Y, W, H, r);
 
     // border
     if (b->selected) {
         fl_color(kSelect);
         fl_line_style(FL_SOLID, 2);
     } else if (b->kind == BoxKind::Broken) {
-        fl_color(FL_RED);
+        fl_color(fl_rgb_color(230, 80, 80));
         fl_line_style(FL_DASH, 1);
     } else {
-        fl_color(kInk);
+        fl_color(b->isSignal() ? fl_color_average(kSignal, kBorder, 0.25f) : kBorder);
         fl_line_style(FL_SOLID, 1);
     }
-    if (b->kind == BoxKind::Message) fl_rounded_rect(X, Y, W, H, 4);
-    else fl_rect(X, Y, W, H);
+    fl_rounded_rect(X, Y, W, H, r);
     fl_line_style(0);
 
     // text
     if (editing_ != b) {
         fl_font(kFont, kFontSize);
-        fl_color(kInk);
-        int tx = X + 7;
+        int tx = X + (b->kind == BoxKind::Message ? 10 : 8);
         std::string t = b->text();
         if (b->kind == BoxKind::Number) {
-            fl_polygon(X + 4, Y + 6, X + 10, Y + H / 2, X + 4, Y + H - 6);
-            tx = X + 14;
+            fl_color(kAccent);
+            fl_polygon(X + 6, Y + 7, X + 11, Y + H / 2, X + 6, Y + H - 7);
+            tx = X + 16;
             if (typingBox_ == b && !typed_.empty()) t = typed_ + "_";
         }
-        fl_push_clip(X + 1, Y + 1, W - 2, H - 2);
+        fl_color(kText);
+        fl_push_clip(X + 2, Y + 1, W - 4, H - 2);
         fl_draw(t.c_str(), tx, Y + H / 2 + fl_height() / 2 - fl_descent());
         fl_pop_clip();
     }
 
-    // ports
+    // ports: small tabs on the top (inlets) and bottom (outlets) edges
     for (int k = 0; k < b->numIns(); ++k) {
         int px, py;
         portPos(b, false, k, px, py);
-        fl_color(b->ins[k] == Port::Signal ? kSignal : kInk);
-        fl_rectf(x() + px, y() + py, kPortW, kPortH);
+        fl_color(b->ins[k] == Port::Signal ? kSignal : kCtlPort);
+        fl_rounded_rectf(x() + px, y() + py, kPortW, kPortH + 1, 1);
     }
     for (int k = 0; k < b->numOuts(); ++k) {
         int px, py;
         portPos(b, true, k, px, py);
-        fl_color(b->outs[k] == Port::Signal ? kSignal : kInk);
-        fl_rectf(x() + px, y() + py - kPortH, kPortW, kPortH);
+        fl_color(b->outs[k] == Port::Signal ? kSignal : kCtlPort);
+        fl_rounded_rectf(x() + px, y() + py - kPortH - 1, kPortW, kPortH + 1, 1);
     }
+}
+
+// ---- completion popup
+
+void Canvas::updateSuggestions() {
+    sugg_.clear();
+    suggSel_ = 0;
+    if (editing_ && editing_->kind != BoxKind::Message) {
+        std::string t = editor_->value();
+        if (!t.empty() && t.find(' ') == std::string::npos) {
+            std::vector<std::string> exact, prefix, inner;
+            for (auto& c : allClassNames()) {
+                if (c == t) exact.push_back(c);
+                else if (c.compare(0, t.size(), t) == 0) prefix.push_back(c);
+                else if (c.find(t) != std::string::npos) inner.push_back(c);
+            }
+            for (auto* v : {&exact, &prefix, &inner})
+                for (auto& c : *v)
+                    if ((int)sugg_.size() < kSuggMax) sugg_.push_back(c);
+            // nothing left to complete
+            if (sugg_.size() == 1 && sugg_[0] == t) sugg_.clear();
+        }
+    }
+    redraw();
+}
+
+void Canvas::moveSuggestion(int d) {
+    if (sugg_.empty()) return;
+    int n = (int)sugg_.size();
+    suggSel_ = ((suggSel_ + d) % n + n) % n;
+    redraw();
+}
+
+void Canvas::clearSuggestions() {
+    sugg_.clear();
+    redraw();
+}
+
+bool Canvas::acceptSuggestion(bool commit) {
+    if (sugg_.empty() || !editing_) return false;
+    std::string t = editor_->value(), s = sugg_[suggSel_];
+    sugg_.clear();
+    if (commit && t == s) return false;          // already complete: plain Enter
+    std::string v = commit ? s : s + " ";
+    editor_->value(v.c_str());
+    editor_->insert_position((int)v.size());
+    if (commit) commitEdit();
+    else redraw();
+    return true;
+}
+
+void Canvas::drawSuggestions() {
+    if (!editing_ || sugg_.empty() || !editor_->visible()) return;
+    fl_font(kFont, kFontSize);
+    int nameW = 0;
+    for (auto& s : sugg_) nameW = std::max(nameW, (int)fl_width(s.c_str()));
+    int descW = 0;
+    for (auto& s : sugg_) descW = std::max(descW, (int)fl_width(describeClass(s)));
+    suggW_ = std::max(editor_->w(), nameW + descW + 40);
+    int H = (int)sugg_.size() * kSuggRowH + 6;
+    suggX_ = editor_->x();
+    suggY_ = editor_->y() + editor_->h() + 3;
+    if (suggY_ + H > y() + h()) suggY_ = editor_->y() - H - 3;   // flip above near the bottom
+
+    fl_color(fl_rgb_color(10, 10, 12));                              // soft shadow
+    fl_rounded_rectf(suggX_ + 2, suggY_ + 3, suggW_, H, 6);
+    fl_color(kPopup);
+    fl_rounded_rectf(suggX_, suggY_, suggW_, H, 6);
+    fl_color(kBorder);
+    fl_rounded_rect(suggX_, suggY_, suggW_, H, 6);
+    for (int k = 0; k < (int)sugg_.size(); ++k) {
+        int ry = suggY_ + 3 + k * kSuggRowH;
+        if (k == suggSel_) {
+            fl_color(fl_rgb_color(52, 92, 160));
+            fl_rounded_rectf(suggX_ + 3, ry, suggW_ - 6, kSuggRowH, 4);
+        }
+        int base = ry + kSuggRowH / 2 + fl_height() / 2 - fl_descent();
+        fl_color(kText);
+        fl_draw(sugg_[k].c_str(), suggX_ + 10, base);
+        fl_color(k == suggSel_ ? fl_rgb_color(200, 215, 240) : kDim);
+        fl_draw(describeClass(sugg_[k]), suggX_ + 26 + nameW, base);
+    }
+}
+
+int Canvas::suggestionAt(int ex, int ey) const {
+    if (sugg_.empty()) return -1;
+    int H = (int)sugg_.size() * kSuggRowH + 6;
+    if (ex < suggX_ || ex > suggX_ + suggW_ || ey < suggY_ + 3 || ey >= suggY_ + H - 3) return -1;
+    return std::min((int)sugg_.size() - 1, (ey - suggY_ - 3) / kSuggRowH);
+}
+
+// ---- option-drag duplication
+
+void Canvas::duplicateSelection() {
+    auto sel = selectedBoxes();
+    if (sel.empty()) return;
+    win_->pushUndo();
+    Patch& p = win_->patch;
+    std::map<Box*, Box*> copy;
+    for (Box* b : sel) copy[b] = p.addBox(makeBox(b->cls, b->saveArgs()), b->x, b->y);
+    auto conns = p.conns;               // connect() appends to p.conns
+    for (auto& c : conns)
+        if (copy.count(c.from) && copy.count(c.to))
+            p.connect(copy[c.from], c.outlet, copy[c.to], c.inlet);
+    clearSelection();
+    for (auto& kv : copy) kv.second->selected = true;
+    win_->markDirty();
 }
 
 void Canvas::draw() {
     Patch& p = win_->patch;
     fl_push_clip(x(), y(), w(), h());
-    fl_color(locked_ ? fl_rgb_color(250, 250, 250) : fl_rgb_color(238, 238, 238));
+    fl_color(locked_ ? kBgLocked : kBgEdit);
     fl_rectf(x(), y(), w(), h());
     if (!locked_) {
-        fl_color(fl_rgb_color(212, 212, 212));
+        fl_color(kGrid);
         for (int gx = 15; gx < w(); gx += 15)
             for (int gy = 15; gy < h(); gy += 15) fl_point(x() + gx, y() + gy);
     }
@@ -1205,10 +1384,10 @@ void Canvas::draw() {
         ay += y(); by += y();
         bool sig = c.from->outs[c.outlet] == Port::Signal;
         if (sig) {
-            fl_color(c.selected ? kSelect : kCable);
-            fl_line_style(FL_SOLID | FL_CAP_ROUND, 4);
+            fl_color(c.selected ? kSelect : kSignal);
+            fl_line_style(FL_SOLID | FL_CAP_ROUND, 3);
             fl_line(ax, ay, bx, by);
-            fl_color(c.selected ? fl_rgb_color(160, 200, 255) : kSignal);
+            fl_color(c.selected ? fl_rgb_color(30, 70, 140) : kSignalDim);
             fl_line_style(FL_DASH, 1);
             fl_line(ax, ay, bx, by);
         } else {
@@ -1242,6 +1421,7 @@ void Canvas::draw() {
     }
 
     if (editor_->visible()) draw_child(*editor_);
+    drawSuggestions();
     fl_pop_clip();
 }
 
@@ -1314,6 +1494,7 @@ void Canvas::selectAll() {
 void Canvas::reset() {
     if (editor_->visible()) editor_->hide();
     editing_ = nullptr;
+    sugg_.clear();
     dragBox_ = nullptr;
     typingBox_ = nullptr;
     typed_.clear();
@@ -1334,6 +1515,7 @@ void Canvas::setLocked(bool l) {
 void Canvas::beginEdit(Box* b, bool isNew) {
     editing_ = b;
     editingNew_ = isNew;
+    sugg_.clear();
     std::string t = b->text();
     if (isNew && b->kind != BoxKind::Message && !t.empty()) t += " ";
     editor_->resize(x() + b->x, y() + b->y, std::max(b->w, 160), kBoxH);
@@ -1350,6 +1532,7 @@ void Canvas::commitEdit() {
     if (!editing_) return;
     Box* b = editing_;
     editing_ = nullptr;
+    sugg_.clear();
     std::string t = editor_->value();
     editor_->hide();
     // trim
@@ -1384,6 +1567,7 @@ void Canvas::cancelEdit() {
     if (!editing_) return;
     Box* b = editing_;
     editing_ = nullptr;
+    sugg_.clear();
     editor_->hide();
     if (editingNew_ && b->kind != BoxKind::Message) {
         win_->patch.removeBoxes({b});
@@ -1449,6 +1633,13 @@ int Canvas::handle(int e) {
 
         case FL_PUSH: {
             if (editor_->visible() && Fl::event_inside(editor_)) return Fl_Group::handle(e);
+            int pick = editing_ ? suggestionAt(Fl::event_x(), Fl::event_y()) : -1;
+            if (pick >= 0) {                                // click on a completion
+                suggSel_ = pick;
+                acceptSuggestion(false);
+                editor_->take_focus();
+                return 1;
+            }
             commitEdit();
             Fl::focus(this);
             int mx = Fl::event_x() - x(), my = Fl::event_y() - y();
@@ -1474,7 +1665,7 @@ int Canvas::handle(int e) {
                         std::string t = nb->text();
                         size_t dot = t.find('.');
                         fl_font(kFont, kFontSize);
-                        int dotX = nb->x + 14 + (int)fl_width(t.substr(0, dot).c_str());
+                        int dotX = nb->x + 16 + (int)fl_width(t.substr(0, dot).c_str());
                         if (dot != std::string::npos && mx > dotX) dragStep_ = 0.01;
                     }
                 } else if (h.box && h.box->cls == "loadbang" && Fl::event_clicks()) {
@@ -1503,6 +1694,13 @@ int Canvas::handle(int e) {
                     dragPort_ = h.port;
                     break;
                 case Hit::Body:
+                    if (Fl::event_state(FL_ALT)) {          // option-drag copies
+                        if (!h.box->selected) { clearSelection(); h.box->selected = true; }
+                        duplicateSelection();
+                        drag_ = Drag::Move;
+                        moved_ = true;                      // undo already recorded
+                        break;
+                    }
                     if (shift) h.box->selected = !h.box->selected;
                     else if (!h.box->selected) { clearSelection(); h.box->selected = true; }
                     if (h.box->selected) drag_ = Drag::Move;
@@ -1679,7 +1877,8 @@ MainWindow::MainWindow(int w, int h)
     canvas = new Canvas(0, kMenuH, w, h - kMenuH - kStatusH, this);
     statusBar_ = new Fl_Box(0, h - kStatusH, w, kStatusH);
     statusBar_->box(FL_FLAT_BOX);
-    statusBar_->color(fl_rgb_color(225, 225, 225));
+    statusBar_->color(kStatusBg);
+    statusBar_->labelcolor(kDim);
     statusBar_->labelsize(11);
     statusBar_->align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE | FL_ALIGN_CLIP);
     end();
@@ -2091,6 +2290,10 @@ int main(int argc, char** argv) {
 
     Fl::scheme("gtk+");
     Fl::visual(FL_DOUBLE | FL_RGB);
+    Fl::background(42, 44, 50);          // dark widgets for dialogs and choices
+    Fl::background2(24, 25, 28);
+    Fl::foreground(226, 228, 234);
+    Fl::set_color(FL_SELECTION_COLOR, 52, 92, 160);
     auto* win = new mlsp::MainWindow(960, 640);
     gWin = win;
     fl_open_callback(openFromFinder);

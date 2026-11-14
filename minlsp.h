@@ -147,6 +147,8 @@ std::unique_ptr<Box> makeBox(const std::string& cls, const Message& args);
 bool canConnect(const std::vector<Connection>& conns, Box* from, int outlet, Box* to,
                 int inlet, std::string* err);
 const std::vector<std::string>& boxClasses();   // classes offered in Patch > New
+std::vector<std::string> allClassNames();       // every creatable class, sorted
+const char* describeClass(const std::string& cls);  // one-line help, "" if unknown
 
 // ====================================================================== patch
 
@@ -262,6 +264,14 @@ public:
     void commitEdit();
     void cancelEdit();
     void reset();          // forget selection and edit state (after load/undo)
+    void duplicateSelection();   // option-drag: copies boxes and their inner cables
+
+    // object-name completion while typing in a new/edited object box
+    void updateSuggestions();
+    bool hasSuggestions() const { return !sugg_.empty(); }
+    void moveSuggestion(int delta);
+    bool acceptSuggestion(bool commit);
+    void clearSuggestions();
 
 private:
     struct Hit {
@@ -296,6 +306,12 @@ private:
     Box* typingBox_ = nullptr;     // number box receiving typed digits
     std::string typed_;
     int mouseX_ = 60, mouseY_ = 60;
+
+    std::vector<std::string> sugg_;
+    int suggSel_ = 0;
+    int suggX_ = 0, suggY_ = 0, suggW_ = 0;   // popup geometry (window coords)
+    void drawSuggestions();
+    int suggestionAt(int ex, int ey) const;
 };
 
 class MainWindow : public Fl_Double_Window {

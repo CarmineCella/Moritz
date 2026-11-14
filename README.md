@@ -27,9 +27,13 @@ The editor follows Max's conventions:
     Enter. With the mouse over the canvas, **n** creates an object box, **m**
     a message box, **f** a `flonum` and **i** a `number`. **Patch > New** has
     every object.
+  - While you type an object name, a list of matching objects appears. Use
+    Up/Down to choose, Tab to complete and keep typing arguments, Enter to
+    complete and create the box, or click an entry.
   - Drag from an outlet (bottom edge) to an inlet (top edge) to connect.
-  - Click or rubber-band to select. Drag to move. Backspace deletes boxes and
-    cables. Double-click a box to edit its text.
+  - Click or rubber-band to select. Drag to move. **Option-drag** copies the
+    selection, including the cables between the copied boxes. Backspace
+    deletes boxes and cables. Double-click a box to edit its text.
 - **Locked mode**
   - Click a message box to send it.
   - Drag a number box up or down. On a `flonum`, dragging left of the decimal
