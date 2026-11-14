@@ -10,7 +10,11 @@
 //     patch's DSP mutex, so it never blocks; while the GUI holds the lock
 //     during a structural edit, one block of silence is produced.
 //   * Values the GUI sends to signal objects while audio runs (floats on
-//     signal inlets, bangs to click~) go through atomics.
+//     signal inlets, bangs to click~) go through atomics; ramps for line~
+//     go through a lock-free queue. Audio -> GUI values (meter~, scope~,
+//     snapshot~) are atomics read by the GUI.
+//   * Timed objects (metro, delay, line, ...) use the patch's scheduler,
+//     which runs on the GUI thread (like Max with Overdrive off).
 
 #pragma once
 
@@ -31,6 +35,8 @@
 #include <FL/Fl_Group.H>
 #include <FL/Fl_Input.H>
 #include <FL/Fl_Sys_Menu_Bar.H>
+#include <FL/Fl_Text_Buffer.H>
+#include <FL/Fl_Text_Display.H>
 
 namespace mlsp {
 
@@ -79,8 +85,10 @@ bool parseSExprs(const std::string& src, std::vector<SExpr>& out, std::string& e
 
 class Patch;
 
-enum class Port { Control, Signal };
-enum class BoxKind { Object, Message, Number, Broken };
+// Tap: the special tapin~ -> tapout~ link. It shares a delay line without
+// ordering the two objects, so feedback through a delay is allowed.
+enum class Port { Control, Signal, Tap };
+enum class BoxKind { Object, Message, Number, UI, Comment, Broken };
 
 class Box {
 public:
@@ -102,6 +110,14 @@ public:
     virtual std::string text() const;                     // text shown in the box
     virtual Message saveArgs() const { return args; }     // args written to file
     virtual bool wantsInput() const { return false; }     // uses audio input (adc~)
+    virtual void attached() {}         // box joined a patch (GUI thread): load files, start timers
+    virtual void resolve() {}          // during compile, DSP lock held: look up buffers/taps
+
+    // ---- interface objects (BoxKind::UI): drawn and clicked in locked mode
+    virtual void uiSize(int& w, int& h) const {}
+    virtual void drawUI(int X, int Y) {}
+    virtual void uiMouse(int event, int mx, int my) {}   // FL_PUSH/DRAG/RELEASE, box coords
+    virtual bool animated() const { return false; }      // redraw continuously (meter~, scope~)
 
     bool isSignal() const;
     int numIns() const { return (int)ins.size(); }
@@ -146,7 +162,10 @@ std::unique_ptr<Box> makeBox(const std::string& cls, const Message& args);
 // Checks port ranges, signal/control compatibility and duplicates.
 bool canConnect(const std::vector<Connection>& conns, Box* from, int outlet, Box* to,
                 int inlet, std::string* err);
-const std::vector<std::string>& boxClasses();   // classes offered in Patch > New
+struct ClassInfo {
+    std::string name, group, desc;   // group "" = alias, not listed in menus
+};
+const std::vector<ClassInfo>& classInfos();     // every class, in menu order
 std::vector<std::string> allClassNames();       // every creatable class, sorted
 const char* describeClass(const std::string& cls);  // one-line help, "" if unknown
 
@@ -165,6 +184,8 @@ public:
     std::function<void(const std::string&)> onStatus;
     std::function<void(bool)> onDsp;     // "start"/"stop" sent to dac~/adc~
     std::function<void()> onStructure;   // boxes or connections changed
+    std::function<void(const std::string&)> onPrint;   // print object / errors (console)
+    std::function<void()> onSchedule;    // timer queue changed: re-arm the GUI timer
 
     // ---- editing (GUI thread)
     Box* addBox(std::unique_ptr<Box> b, int x, int y, const std::string& id = "");
@@ -186,12 +207,31 @@ public:
     int depth = 0;                                           // recursion guard
     void status(const std::string& s) { if (onStatus) onStatus(s); }
     void redraw() { if (onRedraw) onRedraw(); }
+    void print(const std::string& s);
+
+    // ---- scheduler (GUI thread). Times are in seconds on `clock`.
+    std::function<double()> clock;
+    double time() const { return clock ? clock() : 0.0; }
+    void scheduleAt(Box* owner, double t, std::function<void()> fn);
+    void schedule(Box* owner, double delay, std::function<void()> fn) {
+        scheduleAt(owner, time() + delay, std::move(fn));
+    }
+    void cancel(Box* owner);
+    void runDue(double t);
+    double nextDue() const;   // +inf when idle
+
+    // ---- files
+    std::string dir;          // folder of the patch file, for relative paths
+    std::string resolvePath(const std::string& p) const;
+    void rebuild();           // recompile after a box changed what it refers to
 
     // ---- audio (audio thread)
     void process(const float* in, int inCh, float* out, int outCh, int frames);
     std::atomic<double> sampleRate{44100.0};
     bool needsInput() const;
     std::string dspError;   // non-empty when the signal graph has a loop
+    std::atomic<bool> dspRunning{false};
+    uint64_t blockCount = 0;  // audio thread: 64-sample blocks processed
 
     // current I/O block, valid inside process() for adc~/dac~
     const float* ioIn = nullptr;
@@ -204,6 +244,15 @@ private:
     void compile();        // caller holds dspMutex
     bool reaches(Box* from, Box* to) const;   // signal path from -> to
     std::vector<Box*> chain_;
+    struct Timer {
+        double t;
+        uint64_t seq;
+        Box* owner;
+        std::function<void()> fn;
+    };
+    std::vector<Timer> timers_;
+    uint64_t timerSeq_ = 0;
+    bool inRunDue_ = false;
 };
 
 // ====================================================================== audio
@@ -297,7 +346,7 @@ private:
     Box* editing_ = nullptr;
     bool editingNew_ = false;
 
-    enum class Drag { None, Move, Cable, Rubber, Number } drag_ = Drag::None;
+    enum class Drag { None, Move, Cable, Rubber, Number, UI } drag_ = Drag::None;
     int pressX_ = 0, pressY_ = 0, curX_ = 0, curY_ = 0;
     bool moved_ = false;
     Box* dragBox_ = nullptr;
@@ -343,6 +392,9 @@ public:
 
     void setStatus(const std::string& s);
     void refreshStatus();
+    void print(const std::string& s);   // append to the console
+    void showConsole();
+    void armTimer();                    // schedule the next patch timer event
     void updateTitle();
     bool confirmDiscard();
     int handle(int e) override;
@@ -359,6 +411,10 @@ private:
     bool dirty_ = false;
     std::vector<std::string> undo_, redo_;
     std::string message_;
+    Fl_Double_Window* console_ = nullptr;
+    Fl_Text_Display* consoleView_ = nullptr;
+    Fl_Text_Buffer* consoleBuf_ = nullptr;
+    std::vector<std::string> consoleLines_;   // kept until the console opens
 };
 
 }  // namespace mlsp

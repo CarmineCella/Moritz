@@ -27,6 +27,8 @@
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
+#include <random>
+#include <stdexcept>
 #include <set>
 #include <sstream>
 
@@ -249,6 +251,34 @@ void Box::outlet(int i, const Message& m) {
     --patch->depth;
 }
 
+// ---- look (shared by the canvas and the interface objects)
+constexpr int kPortW = 8, kPortH = 3, kBoxH = 22, kFontSize = 12, kRadius = 6;
+constexpr int kPortInset = 4;            // keeps ports clear of the rounded corners
+constexpr int kSuggRowH = 20, kSuggMax = 8;
+constexpr Fl_Font kFont = FL_HELVETICA;
+
+// dark theme
+const Fl_Color kBgLocked  = fl_rgb_color(34, 35, 39);
+const Fl_Color kBgEdit    = fl_rgb_color(28, 29, 33);
+const Fl_Color kGrid      = fl_rgb_color(50, 52, 58);
+const Fl_Color kBoxFill   = fl_rgb_color(54, 57, 64);
+const Fl_Color kNumFill   = fl_rgb_color(44, 47, 54);
+const Fl_Color kMsgFill   = fl_rgb_color(76, 80, 90);
+const Fl_Color kFlash     = fl_rgb_color(70, 130, 220);
+const Fl_Color kBroken    = fl_rgb_color(78, 40, 44);
+const Fl_Color kBorder    = fl_rgb_color(92, 96, 108);
+const Fl_Color kText      = fl_rgb_color(226, 228, 234);
+const Fl_Color kDim       = fl_rgb_color(140, 144, 156);
+const Fl_Color kAccent    = fl_rgb_color(110, 170, 255);
+const Fl_Color kSelect    = fl_rgb_color(90, 160, 255);
+const Fl_Color kSignal    = fl_rgb_color(236, 196, 70);
+const Fl_Color kSignalDim = fl_rgb_color(120, 96, 28);
+const Fl_Color kCtlPort   = fl_rgb_color(196, 200, 210);
+const Fl_Color kCable     = fl_rgb_color(160, 164, 176);
+const Fl_Color kPopup     = fl_rgb_color(44, 46, 53);
+const Fl_Color kStatusBg  = fl_rgb_color(22, 23, 26);
+const Fl_Color kEditBg    = fl_rgb_color(78, 84, 98);   // box being typed into
+
 namespace {
 
 using P = Port;
@@ -370,11 +400,12 @@ private:
     dsp::Op op_;
 };
 
-// ---------------------------------------------------------------- + - * /
+// ---------------------------------------------------------------- + - * / % == != > < >= <=
 // Left inlet is hot (outputs), right inlet is cold (stores the operand).
+using BinFn = float (*)(float, float);
 class CtlOpBox : public Box {
 public:
-    CtlOpBox(dsp::Op op, const Message& a) : op_(op), b_(argf(a, 0, 0.f)) {
+    CtlOpBox(BinFn fn, const Message& a) : fn_(fn), b_(argf(a, 0, 0.f)) {
         setPorts({P::Control, P::Control}, {P::Control});
     }
     void message(int in, const Message& m) override {
@@ -385,11 +416,11 @@ public:
         } else if (!m[0].is("bang")) {
             return;
         }
-        outletFloat(0, dsp::apply(op_, a_, b_));
+        outletFloat(0, fn_(a_, b_));
     }
 
 private:
-    dsp::Op op_;
+    BinFn fn_;
     float a_ = 0.f, b_;
 };
 
@@ -569,79 +600,1652 @@ private:
     std::vector<int> ch_;
 };
 
-// ---------------------------------------------------------------- factory
+// ================================================================ helpers
+
+std::string argstr(const Message& a, size_t i, const std::string& def = "") {
+    return i < a.size() ? a[i].str() : def;
+}
+
+bool atomEq(const Atom& x, const Atom& y) {
+    return x.type == y.type && (x.isFloat() ? x.f == y.f : x.s == y.s);
+}
+
+Message tailOf(const Message& m, size_t from = 1) {
+    return from < m.size() ? Message(m.begin() + (long)from, m.end()) : Message{};
+}
+
+bool isIntegral(float v) { return std::isfinite(v) && v == std::floor(v); }
+
+// ================================================================ timing
+
+// ---------------------------------------------------------------- metro
+// metro ms: 1/bang starts, 0/stop stops; right inlet sets the interval.
+// Ticks are scheduled on absolute times, so they don't drift.
+class MetroBox : public Box {
+public:
+    explicit MetroBox(const Message& a) : interval_(std::max(1.f, argf(a, 0, 500.f))) {
+        setPorts({P::Control, P::Control}, {P::Control});
+    }
+    void message(int in, const Message& m) override {
+        if (in == 1) { if (m[0].isFloat()) interval_ = std::max(1.f, m[0].f); return; }
+        if (m[0].is("bang") || m[0].is("start")) start();
+        else if (m[0].is("stop")) stop();
+        else if (m[0].isFloat()) m[0].f != 0.f ? start() : stop();
+    }
+
+private:
+    void start() {
+        patch->cancel(this);
+        ++gen_;
+        running_ = true;
+        next_ = patch->time();
+        tick();
+    }
+    void stop() {
+        running_ = false;
+        patch->cancel(this);
+    }
+    void tick() {
+        int g = gen_;
+        outletBang(0);
+        if (!running_ || g != gen_) return;     // stopped or restarted downstream
+        next_ += interval_ / 1000.0;
+        if (next_ < patch->time() - 0.25) next_ = patch->time();   // fell far behind
+        patch->scheduleAt(this, next_, [this] { tick(); });
+    }
+    float interval_;
+    double next_ = 0.0;
+    bool running_ = false;
+    int gen_ = 0;
+};
+
+// ---------------------------------------------------------------- delay
+// delay ms: bang outputs a bang after the delay (re-banging restarts it);
+// a float in the left inlet sets the time and starts; stop cancels.
+class DelayBox : public Box {
+public:
+    explicit DelayBox(const Message& a) : ms_(std::max(0.f, argf(a, 0, 0.f))) {
+        setPorts({P::Control, P::Control}, {P::Control});
+    }
+    void message(int in, const Message& m) override {
+        if (in == 1) { if (m[0].isFloat()) ms_ = std::max(0.f, m[0].f); return; }
+        if (m[0].is("stop")) { patch->cancel(this); return; }
+        if (m[0].isFloat()) ms_ = std::max(0.f, m[0].f);
+        else if (!m[0].is("bang")) return;
+        patch->cancel(this);
+        patch->schedule(this, ms_ / 1000.0, [this] { outletBang(0); });
+    }
+
+private:
+    float ms_;
+};
+
+// ---------------------------------------------------------------- line
+// line: control-rate ramp. "target time" ramps, outputting every `grain`
+// ms (right inlet, default 20); a float alone jumps (or ramps over the time
+// set in the middle inlet, which then resets, as in Max).
+class LineBox : public Box {
+public:
+    explicit LineBox(const Message& a)
+        : value_(argf(a, 0, 0.f)), grain_(std::max(1.f, argf(a, 1, 20.f))) {
+        setPorts({P::Control, P::Control, P::Control}, {P::Control});
+    }
+    void message(int in, const Message& m) override {
+        if (in == 1) { if (m[0].isFloat()) time_ = m[0].f; return; }
+        if (in == 2) { if (m[0].isFloat()) grain_ = std::max(1.f, m[0].f); return; }
+        if (m[0].is("stop")) { patch->cancel(this); return; }
+        if (m[0].is("set") && m.size() > 1 && m[1].isFloat()) { patch->cancel(this); value_ = m[1].f; return; }
+        if (!m[0].isFloat()) return;
+        float target = m[0].f;
+        float time = m.size() > 1 && m[1].isFloat() ? m[1].f : time_;
+        if (m.size() > 2 && m[2].isFloat()) grain_ = std::max(1.f, m[2].f);
+        time_ = 0.f;
+        patch->cancel(this);
+        if (time <= 0.f) { value_ = target; outletFloat(0, value_); return; }
+        from_ = value_;
+        to_ = target;
+        t0_ = patch->time();
+        dur_ = time / 1000.0;
+        step();
+    }
+
+private:
+    void step() {
+        double k = std::min(1.0, (patch->time() - t0_) / dur_);
+        value_ = (float)(from_ + (to_ - from_) * k);
+        outletFloat(0, value_);
+        if (k < 1.0) patch->schedule(this, grain_ / 1000.0, [this] { step(); });
+    }
+    float value_, grain_, time_ = 0.f, from_ = 0.f, to_ = 0.f;
+    double t0_ = 0.0, dur_ = 1.0;
+};
+
+// ---------------------------------------------------------------- line~
+// line~: signal ramp. "target time" pairs make segments ("1 10 0 300");
+// a float alone jumps, or ramps over the time given in the right inlet.
+class LineSigBox : public Box {
+public:
+    explicit LineSigBox(const Message& a) {
+        setPorts({P::Control, P::Control}, {P::Signal});
+        if (!a.empty() && a[0].isFloat()) post({dsp::Ramp::Cmd::Segment, a[0].f, 0.f});
+    }
+    void message(int in, const Message& m) override {
+        if (in == 1) { if (m[0].isFloat()) time_ = m[0].f; return; }
+        if (m[0].is("stop")) { post({dsp::Ramp::Cmd::Stop, 0.f, 0.f}); return; }
+        if (!m[0].isFloat()) return;
+        post({dsp::Ramp::Cmd::Begin, 0.f, 0.f});
+        if (m.size() == 1) {
+            post({dsp::Ramp::Cmd::Segment, m[0].f, time_});
+        } else {
+            for (size_t k = 0; k < m.size(); k += 2) {
+                float target = m[k].isFloat() ? m[k].f : 0.f;
+                float ms = k + 1 < m.size() && m[k + 1].isFloat() ? m[k + 1].f : 0.f;
+                post({dsp::Ramp::Cmd::Segment, target, ms});
+            }
+        }
+        time_ = 0.f;
+    }
+    void dsp(int n) override { ramp_.process(sigOut(0), n, patch->sampleRate); }
+
+private:
+    void post(const dsp::Ramp::Cmd& c) { ramp_.post(c); }
+    dsp::Ramp ramp_;
+    float time_ = 0.f;
+};
+
+// ---------------------------------------------------------------- sig~
+class SigBox : public Box {
+public:
+    explicit SigBox(const Message& a) {
+        setPorts({P::Signal}, {P::Signal});
+        setScalar(0, argf(a, 0, 0.f));
+    }
+    void message(int, const Message& m) override { if (m[0].isFloat()) setScalar(0, m[0].f); }
+    void dsp(int n) override {
+        const float* x = sigIn(0, n);
+        std::copy(x, x + n, sigOut(0));
+    }
+};
+
+// ================================================================ oscillators
+
+// ---------------------------------------------------------------- phasor~
+class PhasorBox : public Box {
+public:
+    explicit PhasorBox(const Message& a) {
+        setPorts({P::Signal, P::Control}, {P::Signal});
+        setScalar(0, argf(a, 0, 0.f));
+    }
+    void message(int in, const Message& m) override {
+        if (!m[0].isFloat()) return;
+        if (in == 0) setScalar(0, m[0].f);
+        else ph_.setPhase(m[0].f);
+    }
+    void dsp(int n) override { ph_.process(sigIn(0, n), sigOut(0), n, patch->sampleRate); }
+
+private:
+    dsp::Phasor ph_;
+};
+
+// ---------------------------------------------------------------- saw~ rect~ tri~
+class OscBox : public Box {
+public:
+    OscBox(dsp::Osc::Shape s, const Message& a) : osc_(s), shape_(s) {
+        if (s == dsp::Osc::Saw) setPorts({P::Signal}, {P::Signal});
+        else setPorts({P::Signal, P::Signal}, {P::Signal});
+        setScalar(0, argf(a, 0, 0.f));
+        if (s != dsp::Osc::Saw) setScalar(1, argf(a, 1, 0.5f));
+    }
+    void message(int in, const Message& m) override { if (m[0].isFloat()) setScalar(in, m[0].f); }
+    void dsp(int n) override {
+        const float* f = sigIn(0, n);
+        const float* d = shape_ == dsp::Osc::Saw ? f : sigIn(1, n);
+        osc_.process(f, d, sigOut(0), n, patch->sampleRate);
+    }
+
+private:
+    dsp::Osc osc_;
+    dsp::Osc::Shape shape_;
+};
+
+// ================================================================ filters
+
+// ---------------------------------------------------------------- lores~
+// lores~ [cf res]: resonant low-pass, res 0..1.
+class LoresBox : public Box {
+public:
+    explicit LoresBox(const Message& a) {
+        setPorts({P::Signal, P::Signal, P::Signal}, {P::Signal});
+        setScalar(1, argf(a, 0, 1000.f));
+        setScalar(2, argf(a, 1, 0.f));
+    }
+    void message(int in, const Message& m) override {
+        if (m[0].is("clear")) { std::lock_guard<std::mutex> lk(patch->dspMutex); f_ = dsp::Biquad(); return; }
+        if (in > 0 && m[0].isFloat()) setScalar(in, m[0].f);
+    }
+    void dsp(int n) override {
+        const float* x = sigIn(0, n);
+        float cf = sigIn(1, n)[0], res = std::clamp(sigIn(2, n)[0], 0.f, 1.f);
+        f_.lowpass(cf, 0.707 + res * res * 24.0, patch->sampleRate);
+        f_.process(x, sigOut(0), n);
+    }
+
+private:
+    dsp::Biquad f_;
+};
+
+// ---------------------------------------------------------------- svf~
+// svf~ [freq q]: state-variable filter; outlets low, high, band, notch.
+class SvfBox : public Box {
+public:
+    explicit SvfBox(const Message& a) {
+        setPorts({P::Signal, P::Signal, P::Signal}, {P::Signal, P::Signal, P::Signal, P::Signal});
+        setScalar(1, argf(a, 0, 1000.f));
+        setScalar(2, argf(a, 1, 0.5f));
+    }
+    void message(int in, const Message& m) override {
+        if (in > 0 && m[0].isFloat()) setScalar(in, m[0].f);
+    }
+    void dsp(int n) override {
+        const float* x = sigIn(0, n);
+        float f = sigIn(1, n)[0], q = sigIn(2, n)[0];
+        f_.process(x, sigOut(0), sigOut(1), sigOut(2), sigOut(3), n, f, q, patch->sampleRate);
+    }
+
+private:
+    dsp::Svf f_;
+};
+
+// ---------------------------------------------------------------- biquad~
+// biquad~ [a0 a1 a2 b1 b2]: y = a0 x + a1 x1 + a2 x2 - b1 y1 - b2 y2.
+// Coefficients in inlets 1-5, or as a list in the left inlet.
+class BiquadBox : public Box {
+public:
+    explicit BiquadBox(const Message& a) {
+        setPorts({P::Signal, P::Control, P::Control, P::Control, P::Control, P::Control},
+                 {P::Signal});
+        const float def[5] = {1, 0, 0, 0, 0};
+        for (int k = 0; k < 5; ++k) setScalar(1 + k, argf(a, (size_t)k, def[k]));
+    }
+    void message(int in, const Message& m) override {
+        if (in == 0 && m.size() >= 5) {
+            for (int k = 0; k < 5; ++k)
+                if (m[(size_t)k].isFloat()) setScalar(1 + k, m[(size_t)k].f);
+        } else if (in > 0 && m[0].isFloat()) {
+            setScalar(in, m[0].f);
+        }
+    }
+    void dsp(int n) override {
+        f_.set(scalar(1), scalar(2), scalar(3), scalar(4), scalar(5));
+        f_.process(sigIn(0, n), sigOut(0), n);
+    }
+
+private:
+    dsp::Biquad f_;
+};
+
+// ================================================================ signal math
+
+// ---------------------------------------------------------------- clip~ abs~ tanh~
+class ClipBox : public Box {
+public:
+    explicit ClipBox(const Message& a) {
+        setPorts({P::Signal, P::Signal, P::Signal}, {P::Signal});
+        setScalar(1, argf(a, 0, -1.f));
+        setScalar(2, argf(a, 1, 1.f));
+    }
+    void message(int in, const Message& m) override { if (in > 0 && m[0].isFloat()) setScalar(in, m[0].f); }
+    void dsp(int n) override {
+        const float *x = sigIn(0, n), *lo = sigIn(1, n), *hi = sigIn(2, n);
+        float* y = sigOut(0);
+        for (int i = 0; i < n; ++i) y[i] = std::min(std::max(x[i], lo[i]), hi[i]);
+    }
+};
+
+class UnarySigBox : public Box {
+public:
+    explicit UnarySigBox(float (*fn)(float)) : fn_(fn) { setPorts({P::Signal}, {P::Signal}); }
+    void dsp(int n) override {
+        const float* x = sigIn(0, n);
+        float* y = sigOut(0);
+        for (int i = 0; i < n; ++i) y[i] = fn_(x[i]);
+    }
+
+private:
+    float (*fn_)(float);
+};
+
+// ================================================================ delays
+
+// ---------------------------------------------------------------- tapin~ / tapout~
+// tapin~ maxms writes a delay line; connect its outlet to tapout~, whose
+// inlets set each tap's delay (ms). The tap link doesn't order the two, so
+// tapout~ -> ... -> tapin~ feedback is allowed (minimum delay: one block).
+class TapinBox : public Box {
+public:
+    explicit TapinBox(const Message& a) {
+        setPorts({P::Signal}, {P::Tap});
+        maxMs_ = std::clamp(argf(a, 0, 1000.f), 1.f, 60000.f);
+        // sized for sample rates up to 96 kHz
+        line.resize((size_t)(maxMs_ / 1000.0 * 96000.0) + 4 * dsp::kBlock);
+    }
+    void message(int, const Message& m) override {
+        if (m[0].is("clear")) { std::lock_guard<std::mutex> lk(patch->dspMutex); line.clear(); }
+    }
+    void dsp(int n) override {
+        const float* x = sigIn(0, n);
+        for (int i = 0; i < n; ++i) line.push(x[i]);
+        lastBlock = patch->blockCount;
+    }
+    float maxMs() const { return maxMs_; }
+    dsp::DelayLine line;
+    uint64_t lastBlock = ~0ull;
+
+private:
+    float maxMs_;
+};
+
+class TapoutBox : public Box {
+public:
+    explicit TapoutBox(const Message& a) {
+        size_t taps = std::max<size_t>(1, a.size());
+        setPorts(std::vector<Port>(taps, P::Signal), std::vector<Port>(taps, P::Signal));
+        for (size_t k = 0; k < taps; ++k) setScalar((int)k, argf(a, k, 0.f));
+    }
+    void message(int in, const Message& m) override { if (m[0].isFloat()) setScalar(in, m[0].f); }
+    void resolve() override {
+        tap_ = nullptr;
+        for (auto& c : patch->conns)
+            if (c.to == this && c.from->outs[c.outlet] == Port::Tap)
+                tap_ = static_cast<TapinBox*>(c.from);
+    }
+    void dsp(int n) override {
+        if (!tap_) {
+            for (int k = 0; k < numOuts(); ++k) dsp::fill(sigOut(k), 0.f, n);
+            return;
+        }
+        bool written = tap_->lastBlock == patch->blockCount;   // tapin~ ran this block
+        double sr = patch->sampleRate, maxD = tap_->line.size() - 2.0 * dsp::kBlock;
+        for (int k = 0; k < numOuts(); ++k) {
+            const float* ms = sigIn(k, n);
+            float* y = sigOut(k);
+            for (int i = 0; i < n; ++i) {
+                double d = std::clamp(ms[i] * sr / 1000.0, written ? 0.0 : (double)n, maxD);
+                y[i] = tap_->line.read(written ? n - i + d : d - i);
+            }
+        }
+    }
+
+private:
+    TapinBox* tap_ = nullptr;
+};
+
+// ---------------------------------------------------------------- comb~ / allpass~
+// comb~ [maxms delay a b c]: y = a x[n] + b x[n-D] + c y[n-D]
+class CombBox : public Box {
+public:
+    explicit CombBox(const Message& a) {
+        setPorts(std::vector<Port>(5, P::Signal), {P::Signal});
+        float maxMs = std::clamp(argf(a, 0, 50.f), 1.f, 10000.f);
+        size_t len = (size_t)(maxMs / 1000.0 * 96000.0) + 8;
+        xs_.resize(len);
+        ys_.resize(len);
+        maxD_ = len - 4.0;
+        setScalar(1, argf(a, 1, maxMs * 0.5f));
+        setScalar(2, argf(a, 2, 1.f));
+        setScalar(3, argf(a, 3, 0.f));
+        setScalar(4, argf(a, 4, 0.5f));
+    }
+    void message(int in, const Message& m) override {
+        if (m[0].is("clear")) { std::lock_guard<std::mutex> lk(patch->dspMutex); xs_.clear(); ys_.clear(); return; }
+        if (in > 0 && m[0].isFloat()) setScalar(in, m[0].f);
+    }
+    void dsp(int n) override {
+        const float *x = sigIn(0, n), *dm = sigIn(1, n), *ga = sigIn(2, n), *gb = sigIn(3, n),
+                    *gc = sigIn(4, n);
+        float* y = sigOut(0);
+        double sr = patch->sampleRate;
+        for (int i = 0; i < n; ++i) {
+            double D = std::clamp(dm[i] * sr / 1000.0, 1.0, maxD_);
+            float out = ga[i] * x[i] + gb[i] * xs_.read(D) + gc[i] * ys_.read(D);
+            if (!std::isfinite(out)) out = 0.f;
+            xs_.push(x[i]);
+            ys_.push(out);
+            y[i] = out;
+        }
+    }
+
+private:
+    dsp::DelayLine xs_, ys_;
+    double maxD_ = 1.0;
+};
+
+// allpass~ [maxms delay gain]: y = -g x[n] + x[n-D] + g y[n-D]
+class AllpassBox : public Box {
+public:
+    explicit AllpassBox(const Message& a) {
+        setPorts({P::Signal, P::Signal, P::Signal}, {P::Signal});
+        float maxMs = std::clamp(argf(a, 0, 50.f), 1.f, 10000.f);
+        size_t len = (size_t)(maxMs / 1000.0 * 96000.0) + 8;
+        xs_.resize(len);
+        ys_.resize(len);
+        maxD_ = len - 4.0;
+        setScalar(1, argf(a, 1, maxMs * 0.5f));
+        setScalar(2, argf(a, 2, 0.7f));
+    }
+    void message(int in, const Message& m) override {
+        if (m[0].is("clear")) { std::lock_guard<std::mutex> lk(patch->dspMutex); xs_.clear(); ys_.clear(); return; }
+        if (in > 0 && m[0].isFloat()) setScalar(in, m[0].f);
+    }
+    void dsp(int n) override {
+        const float *x = sigIn(0, n), *dm = sigIn(1, n), *g = sigIn(2, n);
+        float* y = sigOut(0);
+        double sr = patch->sampleRate;
+        for (int i = 0; i < n; ++i) {
+            double D = std::clamp(dm[i] * sr / 1000.0, 1.0, maxD_);
+            float out = -g[i] * x[i] + xs_.read(D) + g[i] * ys_.read(D);
+            if (!std::isfinite(out)) out = 0.f;
+            xs_.push(x[i]);
+            ys_.push(out);
+            y[i] = out;
+        }
+    }
+
+private:
+    dsp::DelayLine xs_, ys_;
+    double maxD_ = 1.0;
+};
+
+// ================================================================ samples
+
+struct SampleBuffer {
+    std::vector<float> data;   // interleaved
+    int channels = 1;
+    long frames = 0;
+    double sr = 44100.0;
+
+    float at(long frame, int ch) const {
+        if (frame < 0 || frame >= frames) return 0.f;
+        return data[(size_t)frame * channels + (ch % channels)];
+    }
+    float interp(double pos, int ch) const {
+        long i = (long)std::floor(pos);
+        float f = (float)(pos - i);
+        float a = at(i, ch), b = at(i + 1, ch);
+        return a + f * (b - a);
+    }
+};
+
+bool decodeAudioFile(const std::string& path, SampleBuffer& out, std::string& err) {
+    ma_decoder_config cfg = ma_decoder_config_init(ma_format_f32, 0, 0);
+    ma_decoder dec;
+    if (ma_decoder_init_file(path.c_str(), &cfg, &dec) != MA_SUCCESS) {
+        err = "can't read audio file " + path;
+        return false;
+    }
+    SampleBuffer b;
+    b.channels = (int)dec.outputChannels;
+    b.sr = dec.outputSampleRate;
+    std::vector<float> chunk(4096 * (size_t)b.channels);
+    for (;;) {
+        ma_uint64 got = 0;
+        ma_result r = ma_decoder_read_pcm_frames(&dec, chunk.data(), 4096, &got);
+        b.data.insert(b.data.end(), chunk.begin(), chunk.begin() + (long)(got * b.channels));
+        if (r != MA_SUCCESS || got == 0) break;
+    }
+    ma_decoder_uninit(&dec);
+    b.frames = (long)(b.data.size() / b.channels);
+    out = std::move(b);
+    return true;
+}
+
+bool writeWavFile(const std::string& path, const SampleBuffer& b, std::string& err) {
+    ma_encoder_config cfg =
+        ma_encoder_config_init(ma_encoding_format_wav, ma_format_s16, (ma_uint32)b.channels,
+                               (ma_uint32)b.sr);
+    ma_encoder enc;
+    if (ma_encoder_init_file(path.c_str(), &cfg, &enc) != MA_SUCCESS) {
+        err = "can't write " + path;
+        return false;
+    }
+    std::vector<int16_t> pcm(b.data.size());
+    for (size_t i = 0; i < pcm.size(); ++i)
+        pcm[i] = (int16_t)std::lrint(std::clamp(b.data[i], -1.f, 1.f) * 32767.f);
+    ma_encoder_write_pcm_frames(&enc, pcm.data(), (ma_uint64)b.frames, nullptr);
+    ma_encoder_uninit(&enc);
+    return true;
+}
+
+// ---------------------------------------------------------------- buffer~
+// buffer~ name [file] [ms] [channels]: named sample memory shared with
+// play~, groove~ and record~. Messages: read file, write file, size ms, clear.
+class BufferBox : public Box {
+public:
+    explicit BufferBox(const Message& a) {
+        setPorts({P::Control}, {});
+        name = argstr(a, 0);
+        size_t k = 1;
+        if (k < a.size() && a[k].isSymbol()) file_ = a[k++].s;
+        float ms = argf(a, k, 0.f);
+        int ch = std::clamp((int)argf(a, k + 1, 1.f), 1, 8);
+        buf.channels = ch;
+        buf.frames = (long)(ms / 1000.0 * 44100.0);
+        buf.data.assign((size_t)buf.frames * ch, 0.f);
+    }
+    void attached() override {
+        if (!file_.empty()) read(file_);
+    }
+    void message(int, const Message& m) override {
+        std::string err;
+        if (m[0].is("read") && m.size() > 1) {
+            read(m[1].str());
+        } else if (m[0].is("write") && m.size() > 1) {
+            SampleBuffer copy;
+            { std::lock_guard<std::mutex> lk(patch->dspMutex); copy = buf; }
+            if (!writeWavFile(patch->resolvePath(m[1].str()), copy, err)) patch->print(err);
+        } else if (m[0].is("size") && m.size() > 1 && m[1].isFloat()) {
+            std::lock_guard<std::mutex> lk(patch->dspMutex);
+            buf.frames = std::max(0L, (long)(m[1].f / 1000.0 * buf.sr));
+            buf.data.resize((size_t)buf.frames * buf.channels, 0.f);
+        } else if (m[0].is("clear")) {
+            std::lock_guard<std::mutex> lk(patch->dspMutex);
+            std::fill(buf.data.begin(), buf.data.end(), 0.f);
+        }
+    }
+    std::string name;
+    SampleBuffer buf;        // touched by the audio thread only under the DSP lock
+
+private:
+    void read(const std::string& file) {
+        SampleBuffer b;
+        std::string err;
+        if (!decodeAudioFile(patch->resolvePath(file), b, err)) { patch->print("buffer~ " + name + ": " + err); return; }
+        std::lock_guard<std::mutex> lk(patch->dspMutex);
+        buf = std::move(b);
+    }
+    std::string file_;
+};
+
+BufferBox* findBuffer(Patch* p, const std::string& name) {
+    for (auto& b : p->boxes)
+        if (auto bb = dynamic_cast<BufferBox*>(b.get()))
+            if (bb->name == name) return bb;
+    return nullptr;
+}
+
+// ---------------------------------------------------------------- play~
+// play~ name [channels]: plays a buffer~. With a signal in the inlet it
+// reads at that position (ms, e.g. from line~); otherwise "start [from
+// [to]]" (ms) or bang plays it, "stop" stops.
+class PlayBox : public Box {
+public:
+    explicit PlayBox(const Message& a) : name_(argstr(a, 0)) {
+        setPorts({P::Signal}, std::vector<Port>((size_t)std::clamp((int)argf(a, 1, 1.f), 1, 8), P::Signal));
+    }
+    void resolve() override { b_ = findBuffer(patch, name_); }
+    void message(int, const Message& m) override {
+        if (m[0].is("set") && m.size() > 1) { name_ = m[1].str(); patch->rebuild(); return; }
+        if (m[0].is("stop")) { cmd_.store(2); return; }
+        if (m[0].is("bang") || m[0].is("start")) {
+            startMs_.store(m.size() > 1 && m[1].isFloat() ? m[1].f : 0.f);
+            endMs_.store(m.size() > 2 && m[2].isFloat() ? m[2].f : -1.f);
+            cmd_.store(1);
+        }
+    }
+    void dsp(int n) override {
+        int c = cmd_.exchange(0);
+        const SampleBuffer* b = b_ ? &b_->buf : nullptr;
+        double ms2fr = b ? b->sr / 1000.0 : 0.0;
+        if (c == 1 && b) {
+            pos_ = startMs_.load() * ms2fr;
+            float e = endMs_.load();
+            end_ = e > 0 ? e * ms2fr : (double)b->frames;
+            playing_ = true;
+        } else if (c == 2) {
+            playing_ = false;
+        }
+        bool driven = !inSrc[0].empty();
+        const float* posMs = driven ? sigIn(0, n) : nullptr;
+        double rate = b ? b->sr / patch->sampleRate : 0.0;
+        for (int k = 0; k < numOuts(); ++k) {
+            float* y = sigOut(k);
+            for (int i = 0; i < n; ++i) {
+                double p = driven ? posMs[i] * ms2fr : pos_ + i * rate;
+                y[i] = (b && (driven || (playing_ && p < end_))) ? b->interp(p, k) : 0.f;
+            }
+        }
+        if (playing_ && !driven) {
+            pos_ += n * rate;
+            if (pos_ >= end_) playing_ = false;
+        }
+    }
+
+private:
+    std::string name_;
+    BufferBox* b_ = nullptr;
+    std::atomic<int> cmd_{0};
+    std::atomic<float> startMs_{0.f}, endMs_{-1.f};
+    double pos_ = 0.0, end_ = 0.0;
+    bool playing_ = false;
+};
+
+// ---------------------------------------------------------------- groove~
+// groove~ name [channels]: variable-speed looping playback. Left inlet:
+// playback rate (signal, e.g. sig~ 1); a float there jumps to that position
+// (ms). Inlets 2/3: loop start/end (ms, 0 end = whole buffer). "loop 1"
+// turns looping on. Last outlet: sync signal (0..1 through the loop).
+class GrooveBox : public Box {
+public:
+    explicit GrooveBox(const Message& a) : name_(argstr(a, 0)) {
+        int ch = std::clamp((int)argf(a, 1, 1.f), 1, 8);
+        std::vector<Port> outs((size_t)ch + 1, P::Signal);
+        setPorts({P::Signal, P::Control, P::Control}, outs);
+    }
+    void resolve() override { b_ = findBuffer(patch, name_); }
+    void message(int in, const Message& m) override {
+        if (in > 0) { if (m[0].isFloat()) setScalar(in, std::max(0.f, m[0].f)); return; }
+        if (m[0].is("loop") && m.size() > 1) loop_.store(m[1].isFloat() && m[1].f != 0.f);
+        else if (m[0].is("set") && m.size() > 1) { name_ = m[1].str(); patch->rebuild(); }
+        else if (m[0].is("startloop")) jumpMs_.store(scalar(1));
+        else if (m[0].isFloat()) jumpMs_.store(std::max(0.f, m[0].f));
+    }
+    void dsp(int n) override {
+        int ch = numOuts() - 1;
+        float* sync = sigOut(ch);
+        const SampleBuffer* b = b_ ? &b_->buf : nullptr;
+        if (!b || b->frames < 2) {
+            for (int k = 0; k <= ch; ++k) dsp::fill(sigOut(k), 0.f, n);
+            return;
+        }
+        double ms2fr = b->sr / 1000.0, ratio = b->sr / patch->sampleRate;
+        float j = jumpMs_.exchange(-1.f);
+        if (j >= 0.f) pos_ = j * ms2fr;
+        double ls = std::clamp(scalar(1) * ms2fr, 0.0, (double)b->frames - 1);
+        double le = scalar(2) > 0.f ? std::min(scalar(2) * ms2fr, (double)b->frames) : (double)b->frames;
+        if (le <= ls + 1) le = (double)b->frames;
+        bool loop = loop_.load();
+        const float* rate = sigIn(0, n);
+        for (int i = 0; i < n; ++i) {
+            if (loop) {
+                double L = le - ls;
+                if (pos_ >= le) pos_ = ls + std::fmod(pos_ - ls, L);
+                if (pos_ < ls) pos_ = le - std::fmod(ls - pos_, L);
+            }
+            bool inside = pos_ >= 0 && pos_ < b->frames;
+            for (int k = 0; k < ch; ++k) sigOut(k)[i] = inside ? b->interp(pos_, k) : 0.f;
+            sync[i] = (float)std::clamp((pos_ - ls) / (le - ls), 0.0, 1.0);
+            pos_ += rate[i] * ratio;
+            if (!loop) pos_ = std::clamp(pos_, -1.0, (double)b->frames);
+        }
+    }
+
+private:
+    std::string name_;
+    BufferBox* b_ = nullptr;
+    std::atomic<bool> loop_{false};
+    std::atomic<float> jumpMs_{-1.f};
+    double pos_ = 0.0;
+};
+
+// ---------------------------------------------------------------- record~
+// record~ name [channels]: records its signal inlets into a buffer~.
+// 1 starts (from the beginning), 0 stops; "loop 1" wraps instead of
+// stopping at the end. Outlet: sync signal (0..1 through the buffer).
+class RecordBox : public Box {
+public:
+    explicit RecordBox(const Message& a) : name_(argstr(a, 0)) {
+        int ch = std::clamp((int)argf(a, 1, 1.f), 1, 8);
+        setPorts(std::vector<Port>((size_t)ch, P::Signal), {P::Signal});
+    }
+    void resolve() override { b_ = findBuffer(patch, name_); }
+    void message(int in, const Message& m) override {
+        if (in != 0) return;
+        if (m[0].is("loop") && m.size() > 1) loop_.store(m[1].isFloat() && m[1].f != 0.f);
+        else if (m[0].is("set") && m.size() > 1) { name_ = m[1].str(); patch->rebuild(); }
+        else if (m[0].isFloat()) cmd_.store(m[0].f != 0.f ? 1 : 2);
+    }
+    void dsp(int n) override {
+        int c = cmd_.exchange(0);
+        if (c == 1) { pos_ = 0; rec_ = true; }
+        if (c == 2) rec_ = false;
+        SampleBuffer* b = b_ ? &b_->buf : nullptr;
+        float* sync = sigOut(0);
+        std::vector<const float*> in((size_t)numIns());
+        for (int k = 0; k < numIns(); ++k) in[(size_t)k] = sigIn(k, n);
+        for (int i = 0; i < n; ++i) {
+            if (rec_ && b && b->frames > 0) {
+                if (pos_ >= b->frames) {
+                    if (loop_.load()) pos_ = 0;
+                    else rec_ = false;
+                }
+                if (rec_) {
+                    for (int k = 0; k < b->channels; ++k)
+                        b->data[(size_t)pos_ * b->channels + k] = in[(size_t)(k % numIns())][i];
+                    ++pos_;
+                }
+            }
+            sync[i] = b && b->frames > 0 ? (float)pos_ / (float)b->frames : 0.f;
+        }
+    }
+
+private:
+    std::string name_;
+    BufferBox* b_ = nullptr;
+    std::atomic<int> cmd_{0};
+    std::atomic<bool> loop_{false};
+    long pos_ = 0;
+    bool rec_ = false;
+};
+
+// ---------------------------------------------------------------- sfplay~
+// sfplay~ [channels]: "open file" loads a sound file; 1 plays from the
+// start, 0 stops; "loop 1" loops; "speed x" sets the playback speed.
+class SfplayBox : public Box {
+public:
+    explicit SfplayBox(const Message& a) {
+        int ch = std::clamp((int)argf(a, 0, 1.f), 1, 8);
+        setPorts({P::Control}, std::vector<Port>((size_t)ch, P::Signal));
+    }
+    void message(int, const Message& m) override {
+        if (m[0].is("open") && m.size() > 1) {
+            SampleBuffer b;
+            std::string err;
+            if (!decodeAudioFile(patch->resolvePath(m[1].str()), b, err)) { patch->print("sfplay~: " + err); return; }
+            std::lock_guard<std::mutex> lk(patch->dspMutex);
+            buf_ = std::move(b);
+            playing_ = false;
+        } else if (m[0].is("loop") && m.size() > 1) {
+            loop_.store(m[1].isFloat() && m[1].f != 0.f);
+        } else if (m[0].is("speed") && m.size() > 1 && m[1].isFloat()) {
+            speed_.store(m[1].f);
+        } else if (m[0].isFloat()) {
+            cmd_.store(m[0].f != 0.f ? 1 : 2);
+        } else if (m[0].is("bang")) {
+            cmd_.store(1);
+        }
+    }
+    void dsp(int n) override {
+        int c = cmd_.exchange(0);
+        if (c == 1) { pos_ = 0; playing_ = buf_.frames > 0; }
+        if (c == 2) playing_ = false;
+        double step = buf_.sr / patch->sampleRate * speed_.load();
+        for (int k = 0; k < numOuts(); ++k) {
+            float* y = sigOut(k);
+            double p = pos_;
+            for (int i = 0; i < n; ++i) {
+                if (playing_ && loop_.load() && buf_.frames > 0) p = std::fmod(p, (double)buf_.frames);
+                y[i] = playing_ ? buf_.interp(p, k) : 0.f;
+                p += step;
+            }
+        }
+        if (playing_) {
+            pos_ += n * step;
+            if (loop_.load() && buf_.frames > 0) pos_ = std::fmod(pos_, (double)buf_.frames);
+            else if (pos_ >= buf_.frames || pos_ < 0) playing_ = false;
+        }
+    }
+
+private:
+    SampleBuffer buf_;
+    std::atomic<int> cmd_{0};
+    std::atomic<bool> loop_{false};
+    std::atomic<float> speed_{1.f};
+    double pos_ = 0.0;
+    bool playing_ = false;
+};
+
+// ================================================================ analysis
+
+// ---------------------------------------------------------------- snapshot~ / peakamp~
+// snapshot~ [ms]: outputs the signal's current value on bang, or every ms.
+// peakamp~ [ms]: outputs the peak absolute value since the last report.
+class ProbeBox : public Box {
+public:
+    ProbeBox(bool peak, const Message& a) : peak_(peak), interval_(std::max(0.f, argf(a, 0, 0.f))) {
+        setPorts({P::Signal, P::Control}, {P::Control});
+    }
+    void attached() override { restart(); }
+    void message(int in, const Message& m) override {
+        if (in == 1 || (m[0].is("interval") && m.size() > 1)) {
+            const Atom& v = in == 1 ? m[0] : m[1];
+            if (v.isFloat()) { interval_ = std::max(0.f, v.f); restart(); }
+            return;
+        }
+        if (m[0].is("bang")) report();
+        else if (m[0].isFloat()) { interval_ = std::max(0.f, m[0].f); restart(); }
+    }
+    void dsp(int n) override {
+        const float* x = sigIn(0, n);
+        if (peak_) {
+            float p = 0.f;
+            for (int i = 0; i < n; ++i) p = std::max(p, std::fabs(x[i]));
+            if (p > value_.load(std::memory_order_relaxed)) value_.store(p, std::memory_order_relaxed);
+        } else {
+            value_.store(x[n - 1], std::memory_order_relaxed);
+        }
+    }
+
+private:
+    void report() { outletFloat(0, peak_ ? value_.exchange(0.f) : value_.load()); }
+    void restart() {
+        patch->cancel(this);
+        if (interval_ > 0.f) tick();
+    }
+    void tick() {
+        if (patch->dspRunning) report();
+        patch->schedule(this, std::max(5.f, interval_) / 1000.0, [this] { tick(); });
+    }
+    bool peak_;
+    float interval_;
+    std::atomic<float> value_{0.f};
+};
+
+// ---------------------------------------------------------------- meter~
+class MeterBox : public Box {
+public:
+    MeterBox() { kind = BoxKind::UI; setPorts({P::Signal}, {}); }
+    void uiSize(int& w, int& h) const override { w = 18; h = 90; }
+    bool animated() const override { return true; }
+    void dsp(int n) override {
+        const float* x = sigIn(0, n);
+        float p = 0.f;
+        for (int i = 0; i < n; ++i) p = std::max(p, std::fabs(x[i]));
+        if (p > peak_.load(std::memory_order_relaxed)) peak_.store(p, std::memory_order_relaxed);
+    }
+    void drawUI(int X, int Y) override {
+        level_ = std::max(peak_.exchange(0.f), level_ * 0.85f);
+        double db = 20.0 * std::log10(level_ + 1e-9);
+        double norm = std::clamp((db + 60.0) / 60.0, 0.0, 1.0);
+        int H = h - 8, bh = (int)(H * norm);
+        fl_color(fl_rgb_color(26, 27, 31));
+        fl_rectf(X + 4, Y + 4, w - 8, H);
+        Fl_Color c = db > -3 ? fl_rgb_color(235, 80, 70)
+                   : db > -12 ? fl_rgb_color(235, 200, 70) : fl_rgb_color(90, 200, 120);
+        fl_color(c);
+        fl_rectf(X + 4, Y + 4 + H - bh, w - 8, bh);
+    }
+
+private:
+    std::atomic<float> peak_{0.f};
+    float level_ = 0.f;
+};
+
+// ---------------------------------------------------------------- scope~
+// scope~ [samples]: oscilloscope, triggered on rising zero crossings.
+class ScopeBox : public Box {
+public:
+    explicit ScopeBox(const Message& a) : ring_(new std::atomic<float>[kRing]) {
+        kind = BoxKind::UI;
+        setPorts({P::Signal}, {});
+        window_ = std::clamp((int)argf(a, 0, 512.f), 32, kRing / 4);
+        for (int i = 0; i < kRing; ++i) ring_[i].store(0.f);
+    }
+    void uiSize(int& w, int& h) const override { w = 180; h = 100; }
+    bool animated() const override { return true; }
+    void dsp(int n) override {
+        const float* x = sigIn(0, n);
+        size_t w = w_.load(std::memory_order_relaxed);
+        for (int i = 0; i < n; ++i) ring_[(w + i) & (kRing - 1)].store(x[i], std::memory_order_relaxed);
+        w_.store(w + n, std::memory_order_release);
+    }
+    void drawUI(int X, int Y) override {
+        fl_color(fl_rgb_color(20, 24, 22));
+        fl_rectf(X + 3, Y + 3, w - 6, h - 6);
+        fl_color(fl_rgb_color(45, 60, 52));
+        fl_xyline(X + 3, Y + h / 2, X + w - 4);
+        size_t end = w_.load(std::memory_order_acquire);
+        size_t N = (size_t)window_;
+        size_t start = end > 2 * N ? end - 2 * N : 0;
+        auto s = [&](size_t i) { return ring_[i & (kRing - 1)].load(std::memory_order_relaxed); };
+        size_t trig = end > N ? end - N : 0;
+        for (size_t i = start + 1; i + N <= end && i < start + N; ++i)
+            if (s(i - 1) < 0.f && s(i) >= 0.f) { trig = i; break; }
+        fl_color(kSignal);
+        fl_push_clip(X + 3, Y + 3, w - 6, h - 6);
+        fl_begin_line();
+        double sx = (double)(w - 8) / (double)(N - 1), sy = (h - 10) / 2.0;
+        for (size_t i = 0; i < N; ++i)
+            fl_vertex(X + 4 + i * sx, Y + h / 2.0 - std::clamp(s(trig + i), -1.f, 1.f) * sy);
+        fl_end_line();
+        fl_pop_clip();
+    }
+
+private:
+    static constexpr int kRing = 4096;
+    std::unique_ptr<std::atomic<float>[]> ring_;
+    std::atomic<size_t> w_{0};
+    int window_;
+};
+
+// ================================================================ interface
+
+// ---------------------------------------------------------------- button
+class ButtonBox : public Box {
+public:
+    ButtonBox() { kind = BoxKind::UI; setPorts({P::Control}, {P::Control}); }
+    void uiSize(int& w, int& h) const override { w = 24; h = 24; }
+    void message(int, const Message&) override { bang(); }
+    void uiMouse(int e, int, int) override { if (e == FL_PUSH) bang(); }
+    void drawUI(int X, int Y) override {
+        bool on = flashUntil > now();
+        fl_color(on ? kAccent : kNumFill);
+        fl_pie(X + 5, Y + 5, w - 10, h - 10, 0, 360);
+        fl_color(on ? kAccent : kCtlPort);
+        fl_arc(X + 5, Y + 5, w - 10, h - 10, 0, 360);
+    }
+
+private:
+    void bang() {
+        flashUntil = now() + 0.15;
+        patch->redraw();
+        outletBang(0);
+    }
+};
+
+// ---------------------------------------------------------------- toggle
+class ToggleBox : public Box {
+public:
+    ToggleBox() { kind = BoxKind::UI; setPorts({P::Control}, {P::Control}); }
+    void uiSize(int& w, int& h) const override { w = 24; h = 24; }
+    void message(int, const Message& m) override {
+        if (m[0].is("bang")) set(!on_, true);
+        else if (m[0].isFloat()) set(m[0].f != 0.f, true);
+        else if (m[0].is("set") && m.size() > 1 && m[1].isFloat()) set(m[1].f != 0.f, false);
+    }
+    void uiMouse(int e, int, int) override { if (e == FL_PUSH) set(!on_, true); }
+    void drawUI(int X, int Y) override {
+        if (!on_) return;
+        fl_color(kAccent);
+        fl_line_style(FL_SOLID | FL_CAP_ROUND, 2);
+        fl_line(X + 7, Y + 7, X + w - 8, Y + h - 8);
+        fl_line(X + w - 8, Y + 7, X + 7, Y + h - 8);
+        fl_line_style(0);
+    }
+
+private:
+    void set(bool v, bool out) {
+        on_ = v;
+        patch->redraw();
+        if (out) outletFloat(0, on_ ? 1.f : 0.f);
+    }
+    bool on_ = false;
+};
+
+// ---------------------------------------------------------------- slider
+// slider [min max]: horizontal; outputs integers when min and max are.
+class SliderBox : public Box {
+public:
+    explicit SliderBox(const Message& a) {
+        kind = BoxKind::UI;
+        setPorts({P::Control}, {P::Control});
+        lo_ = argf(a, 0, 0.f);
+        hi_ = argf(a, 1, 127.f);
+        if (hi_ == lo_) hi_ = lo_ + 1.f;
+        int_ = isIntegral(lo_) && isIntegral(hi_);
+        value_ = lo_;
+    }
+    void uiSize(int& w, int& h) const override { w = 140; h = 22; }
+    void message(int, const Message& m) override {
+        if (m[0].is("bang")) outletFloat(0, value_);
+        else if (m[0].isFloat()) set(m[0].f, true);
+        else if (m[0].is("set") && m.size() > 1 && m[1].isFloat()) set(m[1].f, false);
+    }
+    void uiMouse(int e, int mx, int) override {
+        if (e == FL_RELEASE) return;
+        double k = std::clamp((mx - 8.0) / (w - 16.0), 0.0, 1.0);
+        set((float)(lo_ + k * (hi_ - lo_)), true);
+    }
+    void drawUI(int X, int Y) override {
+        double k = std::clamp((value_ - lo_) / (hi_ - lo_), 0.f, 1.f);
+        int tx = X + 8, tw = w - 16, ty = Y + h / 2;
+        fl_color(fl_rgb_color(30, 31, 36));
+        fl_rounded_rectf(tx, ty - 2, tw, 4, 2);
+        fl_color(kAccent);
+        fl_rounded_rectf(tx, ty - 2, std::max(2, (int)(tw * k)), 4, 2);
+        int kx = tx + (int)(tw * k);
+        fl_color(kText);
+        fl_pie(kx - 6, ty - 6, 12, 12, 0, 360);
+    }
+
+private:
+    void set(float v, bool out) {
+        v = std::clamp(v, std::min(lo_, hi_), std::max(lo_, hi_));
+        if (int_) v = std::round(v);
+        bool changed = v != value_;
+        value_ = v;
+        patch->redraw();
+        if (out && changed) outletFloat(0, value_);
+    }
+    float lo_, hi_, value_;
+    bool int_;
+};
+
+// ---------------------------------------------------------------- comment
+class CommentBox : public Box {
+public:
+    explicit CommentBox(const Message& a) {
+        kind = BoxKind::Comment;
+        setPorts({}, {});
+        content = messageToString(a);
+    }
+    std::string text() const override { return content; }
+    Message saveArgs() const override { return {Atom(content)}; }
+    std::string content;
+};
+
+// ---------------------------------------------------------------- print
+class PrintBox : public Box {
+public:
+    explicit PrintBox(const Message& a) : name_(argstr(a, 0, "print")) { setPorts({P::Control}, {}); }
+    void message(int, const Message& m) override { patch->print(name_ + ": " + messageToString(m)); }
+
+private:
+    std::string name_;
+};
+
+// ================================================================ routing
+
+// ---------------------------------------------------------------- trigger / t
+// trigger b f i l a s <constant>...: outputs right to left, converting.
+class TriggerBox : public Box {
+public:
+    explicit TriggerBox(const Message& a) : types_(a) {
+        if (types_.empty()) types_ = {Atom("b"), Atom("b")};
+        setPorts({P::Control}, std::vector<Port>(types_.size(), P::Control));
+    }
+    void message(int, const Message& m) override {
+        for (int k = (int)types_.size() - 1; k >= 0; --k) {
+            const Atom& t = types_[(size_t)k];
+            float f0 = m[0].isFloat() ? m[0].f : 0.f;
+            if (t.isFloat()) outletFloat(k, t.f);
+            else if (t.s == "b") outletBang(k);
+            else if (t.s == "f") outletFloat(k, f0);
+            else if (t.s == "i") outletFloat(k, std::trunc(f0));
+            else if (t.s == "l" || t.s == "a") outlet(k, m);
+            else if (t.s == "s") outlet(k, {Atom(m[0].str())});
+            else outlet(k, {t});
+        }
+    }
+
+private:
+    Message types_;
+};
+
+// ---------------------------------------------------------------- pack / unpack
+class PackBox : public Box {
+public:
+    explicit PackBox(const Message& a) {
+        Message t = a.empty() ? Message{Atom(0.f), Atom(0.f)} : a;
+        for (auto& x : t) {
+            if (x.is("f") || x.is("i")) vals_.push_back(Atom(0.f));
+            else if (x.is("s")) vals_.push_back(Atom(""));
+            else vals_.push_back(x);
+        }
+        setPorts(std::vector<Port>(vals_.size(), P::Control), {P::Control});
+    }
+    void message(int in, const Message& m) override {
+        if (in == 0) {
+            if (m[0].is("bang")) { outlet(0, vals_); return; }
+            for (size_t k = 0; k < m.size() && k < vals_.size(); ++k) vals_[k] = m[k];
+            outlet(0, vals_);
+        } else {
+            vals_[(size_t)in] = m[0];
+        }
+    }
+
+private:
+    Message vals_;
+};
+
+class UnpackBox : public Box {
+public:
+    explicit UnpackBox(const Message& a) {
+        size_t n = a.empty() ? 2 : a.size();
+        setPorts({P::Control}, std::vector<Port>(n, P::Control));
+    }
+    void message(int, const Message& m) override {
+        for (int k = std::min(numOuts(), (int)m.size()) - 1; k >= 0; --k)
+            outlet(k, {m[(size_t)k]});
+    }
+};
+
+// ---------------------------------------------------------------- route
+// route a b c: a message starting with "a" goes out outlet 0 without its
+// first word (as a bang if nothing is left); no match: last outlet.
+class RouteBox : public Box {
+public:
+    explicit RouteBox(const Message& a) : keys_(a) {
+        if (keys_.empty()) keys_ = {Atom(0.f)};
+        setPorts({P::Control}, std::vector<Port>(keys_.size() + 1, P::Control));
+    }
+    void message(int, const Message& m) override {
+        for (size_t k = 0; k < keys_.size(); ++k)
+            if (atomEq(m[0], keys_[k])) {
+                Message rest = tailOf(m);
+                if (rest.empty()) outletBang((int)k);
+                else outlet((int)k, rest);
+                return;
+            }
+        outlet((int)keys_.size(), m);
+    }
+
+private:
+    Message keys_;
+};
+
+// ---------------------------------------------------------------- select / sel
+// select a b: bangs outlet k when the input equals key k; else passes it
+// out of the last outlet. With one key, the right inlet changes it.
+class SelectBox : public Box {
+public:
+    explicit SelectBox(const Message& a) : keys_(a) {
+        if (keys_.empty()) keys_ = {Atom(0.f)};
+        setPorts(keys_.size() == 1 ? std::vector<Port>{P::Control, P::Control}
+                                   : std::vector<Port>{P::Control},
+                 std::vector<Port>(keys_.size() + 1, P::Control));
+    }
+    void message(int in, const Message& m) override {
+        if (in == 1) { keys_[0] = m[0]; return; }
+        for (size_t k = 0; k < keys_.size(); ++k)
+            if (atomEq(m[0], keys_[k])) { outletBang((int)k); return; }
+        outlet((int)keys_.size(), m);
+    }
+
+private:
+    Message keys_;
+};
+
+// ---------------------------------------------------------------- gate
+// gate [n [open]]: left inlet chooses the outlet (0 = closed), right inlet
+// is the data.
+class GateBox : public Box {
+public:
+    explicit GateBox(const Message& a) {
+        n_ = std::clamp((int)argf(a, 0, 1.f), 1, 64);
+        state_ = std::clamp((int)argf(a, 1, 0.f), 0, n_);
+        setPorts({P::Control, P::Control}, std::vector<Port>((size_t)n_, P::Control));
+    }
+    void message(int in, const Message& m) override {
+        if (in == 0) { if (m[0].isFloat()) state_ = std::clamp((int)m[0].f, 0, n_); return; }
+        if (state_ > 0) outlet(state_ - 1, m);
+    }
+
+private:
+    int n_, state_;
+};
+
+// ---------------------------------------------------------------- int / float
+class StoreBox : public Box {
+public:
+    StoreBox(bool isInt, const Message& a) : int_(isInt) {
+        setPorts({P::Control, P::Control}, {P::Control});
+        v_ = fix(argf(a, 0, 0.f));
+    }
+    void message(int in, const Message& m) override {
+        if (in == 1) { if (m[0].isFloat()) v_ = fix(m[0].f); return; }
+        if (m[0].isFloat()) v_ = fix(m[0].f);
+        else if (m[0].is("set") && m.size() > 1 && m[1].isFloat()) { v_ = fix(m[1].f); return; }
+        else if (!m[0].is("bang")) return;
+        outletFloat(0, v_);
+    }
+
+private:
+    float fix(float v) const { return int_ ? std::trunc(v) : v; }
+    bool int_;
+    float v_;
+};
+
+// ---------------------------------------------------------------- counter
+// counter [max] | [min max]: each bang outputs the count, then steps it,
+// wrapping from max back to min. Right inlet / "set n": next value.
+class CounterBox : public Box {
+public:
+    explicit CounterBox(const Message& a) {
+        setPorts({P::Control, P::Control}, {P::Control});
+        if (a.size() >= 2) { min_ = (long)argf(a, 0, 0.f); max_ = (long)argf(a, 1, 0.f); }
+        else if (a.size() == 1) max_ = (long)argf(a, 0, 0.f);
+        if (max_ < min_) std::swap(min_, max_);
+        if (max_ == min_ && a.empty()) max_ = 1L << 30;
+        count_ = min_;
+    }
+    void message(int in, const Message& m) override {
+        if (in == 1) { if (m[0].isFloat()) count_ = (long)m[0].f; return; }
+        if (m[0].is("set") && m.size() > 1 && m[1].isFloat()) { count_ = (long)m[1].f; return; }
+        if (m[0].is("reset")) { count_ = min_; return; }
+        if (!m[0].is("bang") && !m[0].isFloat()) return;
+        long out = count_;
+        count_ = count_ >= max_ ? min_ : count_ + 1;
+        outletFloat(0, (float)out);
+    }
+
+private:
+    long min_ = 0, max_ = 0, count_ = 0;
+};
+
+// ---------------------------------------------------------------- random
+class RandomBox : public Box {
+public:
+    explicit RandomBox(const Message& a) : range_(std::max(1, (int)argf(a, 0, 2.f))) {
+        setPorts({P::Control, P::Control}, {P::Control});
+        rng_.seed(std::random_device{}());
+    }
+    void message(int in, const Message& m) override {
+        if (in == 1) { if (m[0].isFloat()) range_ = std::max(1, (int)m[0].f); return; }
+        if (m[0].is("seed") && m.size() > 1 && m[1].isFloat()) { rng_.seed((unsigned)m[1].f); return; }
+        if (!m[0].is("bang")) return;
+        outletFloat(0, (float)std::uniform_int_distribution<int>(0, range_ - 1)(rng_));
+    }
+
+private:
+    int range_;
+    std::mt19937 rng_;
+};
+
+// ================================================================ conversions
+
+class UnaryCtlBox : public Box {
+public:
+    explicit UnaryCtlBox(double (*fn)(double)) : fn_(fn) { setPorts({P::Control}, {P::Control}); }
+    void message(int, const Message& m) override {
+        if (m[0].isFloat()) last_ = m[0].f;
+        else if (!m[0].is("bang")) return;
+        double r = fn_(last_);
+        outletFloat(0, std::isfinite(r) ? (float)r : 0.f);
+    }
+
+private:
+    double (*fn_)(double);
+    float last_ = 0.f;
+};
+
+double mtof(double m) { return 440.0 * std::pow(2.0, (m - 69.0) / 12.0); }
+double ftom(double f) { return f > 0 ? 69.0 + 12.0 * std::log2(f / 440.0) : 0.0; }
+double dbtoa(double db) { return std::pow(10.0, db / 20.0); }
+double atodb(double a) { return a > 0 ? 20.0 * std::log10(a) : -999.0; }
+
+// ---------------------------------------------------------------- scale
+// scale inlow inhigh outlow outhigh [exp]: maps a number; exp > 1 curves it.
+class ScaleBox : public Box {
+public:
+    explicit ScaleBox(const Message& a) {
+        setPorts(std::vector<Port>(6, P::Control), {P::Control});
+        const float def[5] = {0, 127, 0, 1, 1};
+        for (int k = 0; k < 5; ++k) p_[k] = argf(a, (size_t)k, def[k]);
+    }
+    void message(int in, const Message& m) override {
+        if (in > 0) { if (m[0].isFloat()) p_[in - 1] = m[0].f; return; }
+        if (m[0].isFloat()) x_ = m[0].f;
+        else if (!m[0].is("bang")) return;
+        double range = p_[1] - p_[0];
+        double k = range == 0 ? 0 : (x_ - p_[0]) / range;
+        if (p_[4] != 1.f) k = k >= 0 ? std::pow(k, p_[4]) : -std::pow(-k, p_[4]);
+        outletFloat(0, (float)(p_[2] + k * (p_[3] - p_[2])));
+    }
+
+private:
+    float p_[5];
+    float x_ = 0.f;
+};
+
+// ---------------------------------------------------------------- expr
+// expr: C-like expressions over $f1..$f9 (floats) and $i1..$i9 (truncated).
+// Operators: + - * / % == != < > <= >= && || ! and parentheses.
+// Functions: sin cos tan asin acos atan atan2 sinh cosh tanh exp log log10
+// sqrt pow abs floor ceil int round min max fmod random(lo, hi); pi.
+class ExprParser {
+public:
+    using Fn = std::function<double(const double*)>;
+    explicit ExprParser(std::string s) : s_(std::move(s)) {}
+    bool parse(Fn& out, int& nvars, std::string& err) {
+        try {
+            pos_ = 0;
+            Fn f = parseOr();
+            skip();
+            if (pos_ != s_.size()) fail("unexpected '" + s_.substr(pos_, 1) + "'");
+            out = std::move(f);
+            nvars = maxVar_;
+            return true;
+        } catch (std::exception& e) {
+            err = e.what();
+            return false;
+        }
+    }
+
+private:
+    [[noreturn]] void fail(const std::string& what) { throw std::runtime_error(what); }
+    void skip() { while (pos_ < s_.size() && std::isspace((unsigned char)s_[pos_])) ++pos_; }
+    bool eat(const char* tok) {
+        skip();
+        size_t L = std::strlen(tok);
+        if (s_.compare(pos_, L, tok) == 0) { pos_ += L; return true; }
+        return false;
+    }
+    Fn parseOr() {
+        Fn a = parseAnd();
+        while (eat("||")) { Fn b = parseAnd(); a = [a, b](const double* v) { return (a(v) != 0 || b(v) != 0) ? 1.0 : 0.0; }; }
+        return a;
+    }
+    Fn parseAnd() {
+        Fn a = parseCmp();
+        while (eat("&&")) { Fn b = parseCmp(); a = [a, b](const double* v) { return (a(v) != 0 && b(v) != 0) ? 1.0 : 0.0; }; }
+        return a;
+    }
+    Fn parseCmp() {
+        Fn a = parseAdd();
+        for (;;) {
+            int op;
+            if (eat("==")) op = 0; else if (eat("!=")) op = 1; else if (eat("<=")) op = 2;
+            else if (eat(">=")) op = 3; else if (eat("<")) op = 4; else if (eat(">")) op = 5;
+            else return a;
+            Fn b = parseAdd();
+            a = [a, b, op](const double* v) {
+                double x = a(v), y = b(v);
+                bool r = op == 0 ? x == y : op == 1 ? x != y : op == 2 ? x <= y
+                       : op == 3 ? x >= y : op == 4 ? x < y : x > y;
+                return r ? 1.0 : 0.0;
+            };
+        }
+    }
+    Fn parseAdd() {
+        Fn a = parseMul();
+        for (;;) {
+            if (eat("+")) { Fn b = parseMul(); a = [a, b](const double* v) { return a(v) + b(v); }; }
+            else if (eat("-")) { Fn b = parseMul(); a = [a, b](const double* v) { return a(v) - b(v); }; }
+            else return a;
+        }
+    }
+    Fn parseMul() {
+        Fn a = parseUnary();
+        for (;;) {
+            if (eat("*")) { Fn b = parseUnary(); a = [a, b](const double* v) { return a(v) * b(v); }; }
+            else if (eat("/")) { Fn b = parseUnary(); a = [a, b](const double* v) { double d = b(v); return d == 0 ? 0.0 : a(v) / d; }; }
+            else if (eat("%")) { Fn b = parseUnary(); a = [a, b](const double* v) { double d = b(v); return d == 0 ? 0.0 : std::fmod(a(v), d); }; }
+            else return a;
+        }
+    }
+    Fn parseUnary() {
+        if (eat("-")) { Fn a = parseUnary(); return [a](const double* v) { return -a(v); }; }
+        if (eat("!")) { Fn a = parseUnary(); return [a](const double* v) { return a(v) == 0 ? 1.0 : 0.0; }; }
+        if (eat("+")) return parseUnary();
+        return parsePrimary();
+    }
+    Fn parsePrimary() {
+        skip();
+        if (pos_ >= s_.size()) fail("unexpected end of expression");
+        char c = s_[pos_];
+        if (c == '(') {
+            ++pos_;
+            Fn a = parseOr();
+            if (!eat(")")) fail("missing ')'");
+            return a;
+        }
+        if (c == '$') {
+            ++pos_;
+            char t = pos_ < s_.size() ? (char)std::tolower((unsigned char)s_[pos_++]) : 0;
+            if (t != 'f' && t != 'i') fail("use $f1..$f9 or $i1..$i9");
+            int k = pos_ < s_.size() && std::isdigit((unsigned char)s_[pos_]) ? s_[pos_++] - '0' : 0;
+            if (k < 1 || k > 9) fail("use $f1..$f9 or $i1..$i9");
+            maxVar_ = std::max(maxVar_, k);
+            int idx = k - 1;
+            if (t == 'i') return [idx](const double* v) { return std::trunc(v[idx]); };
+            return [idx](const double* v) { return v[idx]; };
+        }
+        if (std::isdigit((unsigned char)c) || c == '.') {
+            char* end = nullptr;
+            double d = std::strtod(s_.c_str() + pos_, &end);
+            pos_ = (size_t)(end - s_.c_str());
+            return [d](const double*) { return d; };
+        }
+        if (std::isalpha((unsigned char)c) || c == '_') {
+            size_t b = pos_;
+            while (pos_ < s_.size() && (std::isalnum((unsigned char)s_[pos_]) || s_[pos_] == '_')) ++pos_;
+            std::string name = s_.substr(b, pos_ - b);
+            if (!eat("(")) {
+                if (name == "pi") return [](const double*) { return dsp::kPi; };
+                fail("unknown name '" + name + "'");
+            }
+            std::vector<Fn> args;
+            if (!eat(")")) {
+                do args.push_back(parseOr()); while (eat(","));
+                if (!eat(")")) fail("missing ')' after arguments of " + name);
+            }
+            return call(name, args);
+        }
+        fail(std::string("unexpected '") + c + "'");
+    }
+    Fn call(const std::string& name, const std::vector<Fn>& a) {
+        static const std::map<std::string, double (*)(double)> unary = {
+            {"sin", [](double x) { return std::sin(x); }},   {"cos", [](double x) { return std::cos(x); }},
+            {"tan", [](double x) { return std::tan(x); }},   {"asin", [](double x) { return std::asin(x); }},
+            {"acos", [](double x) { return std::acos(x); }}, {"atan", [](double x) { return std::atan(x); }},
+            {"sinh", [](double x) { return std::sinh(x); }}, {"cosh", [](double x) { return std::cosh(x); }},
+            {"tanh", [](double x) { return std::tanh(x); }}, {"exp", [](double x) { return std::exp(x); }},
+            {"log", [](double x) { return std::log(x); }},   {"log10", [](double x) { return std::log10(x); }},
+            {"sqrt", [](double x) { return std::sqrt(x); }}, {"abs", [](double x) { return std::fabs(x); }},
+            {"fabs", [](double x) { return std::fabs(x); }}, {"floor", [](double x) { return std::floor(x); }},
+            {"ceil", [](double x) { return std::ceil(x); }}, {"int", [](double x) { return std::trunc(x); }},
+            {"round", [](double x) { return std::round(x); }},
+        };
+        static const std::map<std::string, double (*)(double, double)> binary = {
+            {"pow", [](double x, double y) { return std::pow(x, y); }},
+            {"atan2", [](double x, double y) { return std::atan2(x, y); }},
+            {"min", [](double x, double y) { return std::min(x, y); }},
+            {"max", [](double x, double y) { return std::max(x, y); }},
+            {"fmod", [](double x, double y) { return y == 0 ? 0.0 : std::fmod(x, y); }},
+            {"random", [](double lo, double hi) {
+                 static std::mt19937 g{std::random_device{}()};
+                 return lo + (hi - lo) * std::uniform_real_distribution<double>(0.0, 1.0)(g);
+             }},
+        };
+        if (auto it = unary.find(name); it != unary.end()) {
+            if (a.size() != 1) fail(name + "() takes 1 argument");
+            auto f = it->second;
+            Fn x = a[0];
+            return [f, x](const double* v) { return f(x(v)); };
+        }
+        if (auto it = binary.find(name); it != binary.end()) {
+            if (a.size() != 2) fail(name + "() takes 2 arguments");
+            auto f = it->second;
+            Fn x = a[0], y = a[1];
+            return [f, x, y](const double* v) { return f(x(v), y(v)); };
+        }
+        fail("unknown function '" + name + "'");
+    }
+
+    std::string s_;
+    size_t pos_ = 0;
+    int maxVar_ = 0;
+};
+
+class ExprBox : public Box {
+public:
+    explicit ExprBox(const Message& a) : src_(messageToString(a)) {
+        int nv = 0;
+        ok_ = ExprParser(src_).parse(fn_, nv, err_);
+        setPorts(std::vector<Port>((size_t)std::max(1, nv), P::Control), {P::Control});
+    }
+    Message saveArgs() const override { return {Atom(src_)}; }
+    std::string text() const override { return "expr " + src_; }
+    void attached() override {
+        if (!ok_) patch->print("expr: " + err_ + " in \"" + src_ + "\"");
+    }
+    void message(int in, const Message& m) override {
+        if (in > 0) { if (m[0].isFloat()) in_[in] = m[0].f; return; }
+        if (m[0].isFloat())
+            for (size_t k = 0; k < m.size() && k < 9; ++k)
+                if (m[k].isFloat()) in_[k] = m[k].f;
+        if (!m[0].isFloat() && !m[0].is("bang")) return;
+        if (!ok_) return;
+        double r = fn_(in_);
+        outletFloat(0, std::isfinite(r) ? (float)r : 0.f);
+    }
+
+private:
+    std::string src_, err_;
+    bool ok_ = false;
+    ExprParser::Fn fn_;
+    double in_[9] = {0};
+};
+
+// ================================================================ class table
+
 using Factory = std::function<std::unique_ptr<Box>(const Message&)>;
 
-const std::map<std::string, Factory>& factories() {
+struct ClassDef {
+    const char* name;
+    const char* group;   // "" = alias (completion only)
+    const char* desc;
+    Factory make;
+};
+
+template <class T>
+Factory with() { return [](const Message& a) { return std::make_unique<T>(a); }; }
+template <class T>
+Factory plain() { return [](const Message&) { return std::make_unique<T>(); }; }
+Factory sigop(dsp::Op op) { return [op](const Message& a) { return std::make_unique<SigOpBox>(op, a); }; }
+Factory ctlop(BinFn f) { return [f](const Message& a) { return std::make_unique<CtlOpBox>(f, a); }; }
+Factory osc(dsp::Osc::Shape s) { return [s](const Message& a) { return std::make_unique<OscBox>(s, a); }; }
+Factory unarySig(float (*f)(float)) { return [f](const Message&) { return std::make_unique<UnarySigBox>(f); }; }
+Factory unaryCtl(double (*f)(double)) { return [f](const Message&) { return std::make_unique<UnaryCtlBox>(f); }; }
+
+const std::vector<ClassDef>& classDefs() {
     using M = const Message&;
-    static const std::map<std::string, Factory> f = {
-        {"cycle~", [](M a) { return std::make_unique<CycleBox>(a); }},
-        {"reson~", [](M a) { return std::make_unique<ResonBox>(a); }},
-        {"noise~", [](M) { return std::make_unique<NoiseBox>(); }},
-        {"click~", [](M a) { return std::make_unique<ClickBox>(a); }},
-        {"+~", [](M a) { return std::make_unique<SigOpBox>(dsp::Op::Add, a); }},
-        {"-~", [](M a) { return std::make_unique<SigOpBox>(dsp::Op::Sub, a); }},
-        {"*~", [](M a) { return std::make_unique<SigOpBox>(dsp::Op::Mul, a); }},
-        {"/~", [](M a) { return std::make_unique<SigOpBox>(dsp::Op::Div, a); }},
-        {"+", [](M a) { return std::make_unique<CtlOpBox>(dsp::Op::Add, a); }},
-        {"-", [](M a) { return std::make_unique<CtlOpBox>(dsp::Op::Sub, a); }},
-        {"*", [](M a) { return std::make_unique<CtlOpBox>(dsp::Op::Mul, a); }},
-        {"/", [](M a) { return std::make_unique<CtlOpBox>(dsp::Op::Div, a); }},
-        {"flonum", [](M a) { return std::make_unique<NumberBox>(true, a); }},
-        {"number", [](M a) { return std::make_unique<NumberBox>(false, a); }},
-        {"message", [](M a) { return std::make_unique<MessageBox>(a); }},
-        {"send", [](M a) { return std::make_unique<SendBox>(a); }},
-        {"s", [](M a) { return std::make_unique<SendBox>(a); }},
-        {"receive", [](M a) { return std::make_unique<ReceiveBox>(a); }},
-        {"r", [](M a) { return std::make_unique<ReceiveBox>(a); }},
-        {"loadbang", [](M) { return std::make_unique<LoadbangBox>(); }},
-        {"adc~", [](M a) { return std::make_unique<AdcBox>(a); }},
-        {"dac~", [](M a) { return std::make_unique<DacBox>(a); }},
+    static const std::vector<ClassDef> t = {
+        // oscillators & generators
+        {"cycle~", "Oscillators", "cosine oscillator", with<CycleBox>()},
+        {"phasor~", "Oscillators", "ramp 0..1", with<PhasorBox>()},
+        {"saw~", "Oscillators", "band-limited sawtooth", osc(dsp::Osc::Saw)},
+        {"rect~", "Oscillators", "band-limited pulse (freq, duty)", osc(dsp::Osc::Rect)},
+        {"tri~", "Oscillators", "triangle (freq, slope)", osc(dsp::Osc::Tri)},
+        {"noise~", "Oscillators", "white noise", plain<NoiseBox>()},
+        {"click~", "Oscillators", "impulse on bang", with<ClickBox>()},
+        {"sig~", "Oscillators", "number to signal", with<SigBox>()},
+        {"line~", "Oscillators", "signal ramps: target time ...", with<LineSigBox>()},
+        // filters
+        {"reson~", "Filters", "resonant bandpass filter", with<ResonBox>()},
+        {"lores~", "Filters", "resonant low-pass (cf, res 0-1)", with<LoresBox>()},
+        {"svf~", "Filters", "state-variable: low high band notch", with<SvfBox>()},
+        {"biquad~", "Filters", "two-pole two-zero filter", with<BiquadBox>()},
+        // signal math
+        {"+~", "Signal Math", "add signals", sigop(dsp::Op::Add)},
+        {"-~", "Signal Math", "subtract signals", sigop(dsp::Op::Sub)},
+        {"*~", "Signal Math", "multiply signals", sigop(dsp::Op::Mul)},
+        {"/~", "Signal Math", "divide signals", sigop(dsp::Op::Div)},
+        {"clip~", "Signal Math", "limit a signal (min, max)", with<ClipBox>()},
+        {"abs~", "Signal Math", "absolute value", unarySig([](float x) { return std::fabs(x); })},
+        {"tanh~", "Signal Math", "soft saturation", unarySig([](float x) { return std::tanh(x); })},
+        // delays
+        {"tapin~", "Delay", "delay line input (max ms)", with<TapinBox>()},
+        {"tapout~", "Delay", "delay line taps (ms ...)", with<TapoutBox>()},
+        {"comb~", "Delay", "comb filter (max, delay, a, b, c)", with<CombBox>()},
+        {"allpass~", "Delay", "allpass filter (max, delay, gain)", with<AllpassBox>()},
+        // samples
+        {"buffer~", "Samples", "named sample memory", with<BufferBox>()},
+        {"play~", "Samples", "play a buffer~", with<PlayBox>()},
+        {"groove~", "Samples", "variable-speed looping playback", with<GrooveBox>()},
+        {"record~", "Samples", "record into a buffer~", with<RecordBox>()},
+        {"sfplay~", "Samples", "play a sound file", with<SfplayBox>()},
+        // analysis
+        {"snapshot~", "Analysis", "signal value as a number", [](M a) { return std::make_unique<ProbeBox>(false, a); }},
+        {"peakamp~", "Analysis", "peak amplitude as a number", [](M a) { return std::make_unique<ProbeBox>(true, a); }},
+        {"meter~", "Analysis", "level meter", plain<MeterBox>()},
+        {"scope~", "Analysis", "oscilloscope", with<ScopeBox>()},
+        // audio I/O
+        {"adc~", "I/O", "audio input", with<AdcBox>()},
+        {"dac~", "I/O", "audio output", with<DacBox>()},
+        // timing
+        {"metro", "Timing", "repeating bang (ms)", with<MetroBox>()},
+        {"delay", "Timing", "delayed bang (ms)", with<DelayBox>()},
+        {"line", "Timing", "control ramps: target time [grain]", with<LineBox>()},
+        {"loadbang", "Timing", "bang when the patch opens", plain<LoadbangBox>()},
+        // control math
+        {"+", "Control Math", "add numbers", ctlop([](float a, float b) { return a + b; })},
+        {"-", "Control Math", "subtract numbers", ctlop([](float a, float b) { return a - b; })},
+        {"*", "Control Math", "multiply numbers", ctlop([](float a, float b) { return a * b; })},
+        {"/", "Control Math", "divide numbers", ctlop([](float a, float b) { return b == 0 ? 0.f : a / b; })},
+        {"%", "Control Math", "remainder", ctlop([](float a, float b) { return b == 0 ? 0.f : std::fmod(a, b); })},
+        {"==", "Control Math", "equal: 1 or 0", ctlop([](float a, float b) { return a == b ? 1.f : 0.f; })},
+        {"!=", "Control Math", "not equal: 1 or 0", ctlop([](float a, float b) { return a != b ? 1.f : 0.f; })},
+        {">", "Control Math", "greater than: 1 or 0", ctlop([](float a, float b) { return a > b ? 1.f : 0.f; })},
+        {"<", "Control Math", "less than: 1 or 0", ctlop([](float a, float b) { return a < b ? 1.f : 0.f; })},
+        {">=", "Control Math", "greater or equal: 1 or 0", ctlop([](float a, float b) { return a >= b ? 1.f : 0.f; })},
+        {"<=", "Control Math", "less or equal: 1 or 0", ctlop([](float a, float b) { return a <= b ? 1.f : 0.f; })},
+        {"mtof", "Control Math", "MIDI note to frequency", unaryCtl(mtof)},
+        {"ftom", "Control Math", "frequency to MIDI note", unaryCtl(ftom)},
+        {"dbtoa", "Control Math", "decibels to amplitude", unaryCtl(dbtoa)},
+        {"atodb", "Control Math", "amplitude to decibels", unaryCtl(atodb)},
+        {"scale", "Control Math", "map a range: in lo hi, out lo hi", with<ScaleBox>()},
+        {"expr", "Control Math", "expression: $f1 * 2 + sin($f2)", with<ExprBox>()},
+        {"random", "Control Math", "random integer below range", with<RandomBox>()},
+        {"counter", "Control Math", "count bangs: [min] max", with<CounterBox>()},
+        // routing
+        {"trigger", "Routing", "ordered outputs, right to left", with<TriggerBox>()},
+        {"pack", "Routing", "combine into a list", with<PackBox>()},
+        {"unpack", "Routing", "split a list", with<UnpackBox>()},
+        {"route", "Routing", "dispatch by first word", with<RouteBox>()},
+        {"select", "Routing", "bang on matching values", with<SelectBox>()},
+        {"gate", "Routing", "open/close/switch a stream", with<GateBox>()},
+        {"int", "Routing", "store an integer", [](M a) { return std::make_unique<StoreBox>(true, a); }},
+        {"float", "Routing", "store a float", [](M a) { return std::make_unique<StoreBox>(false, a); }},
+        {"send", "Routing", "send to receive objects", with<SendBox>()},
+        {"receive", "Routing", "receive sent messages", with<ReceiveBox>()},
+        {"print", "Routing", "print to the console", with<PrintBox>()},
+        // interface
+        {"message", "Interface", "clickable message", with<MessageBox>()},
+        {"flonum", "Interface", "float number box", [](M a) { return std::make_unique<NumberBox>(true, a); }},
+        {"number", "Interface", "integer number box", [](M a) { return std::make_unique<NumberBox>(false, a); }},
+        {"button", "Interface", "click to bang", plain<ButtonBox>()},
+        {"toggle", "Interface", "on/off switch", plain<ToggleBox>()},
+        {"slider", "Interface", "drag a value: [min max]", with<SliderBox>()},
+        {"comment", "Interface", "text note", with<CommentBox>()},
+        // Max's short names
+        {"t", "", "trigger (short name)", with<TriggerBox>()},
+        {"sel", "", "select (short name)", with<SelectBox>()},
+        {"del", "", "delay (short name)", with<DelayBox>()},
+        {"i", "", "int (short name)", [](M a) { return std::make_unique<StoreBox>(true, a); }},
+        {"f", "", "float (short name)", [](M a) { return std::make_unique<StoreBox>(false, a); }},
+        {"s", "", "send (short name)", with<SendBox>()},
+        {"r", "", "receive (short name)", with<ReceiveBox>()},
     };
-    return f;
+    return t;
+}
+
+const ClassDef* findClass(const std::string& name) {
+    for (auto& c : classDefs())
+        if (name == c.name) return &c;
+    return nullptr;
 }
 
 }  // namespace
 
 std::unique_ptr<Box> makeBox(const std::string& cls, const Message& args) {
-    auto it = factories().find(cls);
-    std::unique_ptr<Box> b = it == factories().end() ? std::make_unique<BrokenBox>()
-                                                     : it->second(args);
+    const ClassDef* def = findClass(cls);
+    std::unique_ptr<Box> b = def ? def->make(args) : std::make_unique<BrokenBox>();
     b->cls = cls;
     b->args = args;
+    if (b->kind == BoxKind::UI) b->uiSize(b->w, b->h);   // sized before it is ever drawn
     return b;
 }
 
-const std::vector<std::string>& boxClasses() {
-    static const std::vector<std::string> c = {
-        "cycle~", "reson~", "noise~", "click~", "+~", "-~", "*~", "/~",
-        "+", "-", "*", "/", "flonum", "number", "message", "send", "receive",
-        "loadbang", "adc~", "dac~"};
-    return c;
+const std::vector<ClassInfo>& classInfos() {
+    static const std::vector<ClassInfo> v = [] {
+        std::vector<ClassInfo> r;
+        for (auto& c : classDefs()) r.push_back({c.name, c.group, c.desc});
+        return r;
+    }();
+    return v;
 }
 
 std::vector<std::string> allClassNames() {
     std::vector<std::string> v;
-    for (auto& kv : factories()) v.push_back(kv.first);
+    for (auto& c : classDefs()) v.push_back(c.name);
+    std::sort(v.begin(), v.end());
     return v;
 }
 
 const char* describeClass(const std::string& cls) {
-    static const std::map<std::string, const char*> d = {
-        {"cycle~", "cosine oscillator"},      {"reson~", "resonant bandpass filter"},
-        {"noise~", "white noise"},            {"click~", "impulse on bang"},
-        {"+~", "add signals"},                {"-~", "subtract signals"},
-        {"*~", "multiply signals"},           {"/~", "divide signals"},
-        {"+", "add numbers"},                 {"-", "subtract numbers"},
-        {"*", "multiply numbers"},            {"/", "divide numbers"},
-        {"flonum", "float number box"},       {"number", "integer number box"},
-        {"message", "clickable message"},     {"send", "send to receive objects"},
-        {"s", "send (short name)"},           {"receive", "receive sent messages"},
-        {"r", "receive (short name)"},        {"loadbang", "bang when the patch opens"},
-        {"adc~", "audio input"},              {"dac~", "audio output"},
-    };
-    auto it = d.find(cls);
-    return it == d.end() ? "" : it->second;
+    const ClassDef* c = findClass(cls);
+    return c ? c->desc : "";
 }
 
 // ============================================================================
@@ -651,6 +2255,7 @@ const char* describeClass(const std::string& cls) {
 Patch::Patch() = default;
 
 Patch::~Patch() {
+    timers_.clear();
     std::lock_guard<std::mutex> lk(dspMutex);
     chain_.clear();
     conns.clear();
@@ -690,6 +2295,7 @@ Box* Patch::addBox(std::unique_ptr<Box> b, int x, int y, const std::string& id) 
         boxes.push_back(std::move(b));
         compile();
     }
+    raw->attached();
     if (onStructure) onStructure();
     return raw;
 }
@@ -705,6 +2311,8 @@ bool canConnect(const std::vector<Connection>& conns, Box* from, int o, Box* to,
     if (o < 0 || o >= from->numOuts() || i < 0 || i >= to->numIns()) return fail("no such port");
     if (from->outs[o] == Port::Signal && to->ins[i] == Port::Control)
         return fail("a signal outlet can't connect to a control inlet");
+    if (from->outs[o] == Port::Tap && (to->cls != "tapout~" || i != 0))
+        return fail("tapin~ connects only to the left inlet of tapout~");
     for (auto& c : conns)
         if (c.from == from && c.outlet == o && c.to == to && c.inlet == i)
             return fail("already connected");
@@ -754,6 +2362,7 @@ void Patch::removeConnections(const std::vector<int>& idx) {
 
 void Patch::removeBoxes(const std::vector<Box*>& bs) {
     std::set<Box*> dead(bs.begin(), bs.end());
+    for (Box* b : bs) cancel(b);
     {
         std::lock_guard<std::mutex> lk(dspMutex);
         conns.erase(std::remove_if(conns.begin(), conns.end(),
@@ -778,6 +2387,7 @@ Box* Patch::replaceBox(Box* old, std::unique_ptr<Box> nb) {
     nb->y = old->y;
     Box* raw = nb.get();
     std::unique_ptr<Box> doomed;
+    cancel(old);
     {
         std::lock_guard<std::mutex> lk(dspMutex);
         for (auto& b : boxes)
@@ -795,11 +2405,13 @@ Box* Patch::replaceBox(Box* old, std::unique_ptr<Box> nb) {
         conns = std::move(kept);
         compile();
     }
+    raw->attached();
     if (onStructure) onStructure();
     return raw;
 }
 
 void Patch::clear() {
+    timers_.clear();
     {
         std::lock_guard<std::mutex> lk(dspMutex);
         chain_.clear();
@@ -829,7 +2441,7 @@ void Patch::compile() {
         }
     }
     for (auto& c : conns) {
-        if (c.from->outs[c.outlet] != Port::Signal) continue;
+        if (c.from->outs[c.outlet] != Port::Signal) continue;   // control and tap links
         c.to->inSrc[c.inlet].push_back(c.from->sigOut(c.outlet));
         indeg[c.to]++;
     }
@@ -851,6 +2463,68 @@ void Patch::compile() {
         dspError.clear();
         chain_ = std::move(order);
     }
+    for (auto& b : boxes) b->resolve();
+}
+
+void Patch::rebuild() {
+    {
+        std::lock_guard<std::mutex> lk(dspMutex);
+        compile();
+    }
+    if (onStructure) onStructure();
+}
+
+void Patch::print(const std::string& s) {
+    if (onPrint) onPrint(s);
+    else std::fprintf(stderr, "%s\n", s.c_str());
+}
+
+std::string Patch::resolvePath(const std::string& p) const {
+    if (p.empty() || p[0] == '/') return p;
+    if (p.rfind("~/", 0) == 0) {
+        const char* home = std::getenv("HOME");
+        return std::string(home ? home : "") + p.substr(1);
+    }
+    return dir.empty() ? p : dir + "/" + p;
+}
+
+// ---- scheduler: a small timer queue, run by the GUI (or by --render)
+
+void Patch::scheduleAt(Box* owner, double t, std::function<void()> fn) {
+    timers_.push_back({t, timerSeq_++, owner, std::move(fn)});
+    if (!inRunDue_ && onSchedule) onSchedule();
+}
+
+void Patch::cancel(Box* owner) {
+    size_t before = timers_.size();
+    timers_.erase(std::remove_if(timers_.begin(), timers_.end(),
+                                 [&](const Timer& t) { return t.owner == owner; }),
+                  timers_.end());
+    if (timers_.size() != before && !inRunDue_ && onSchedule) onSchedule();
+}
+
+double Patch::nextDue() const {
+    double t = std::numeric_limits<double>::infinity();
+    for (auto& x : timers_) t = std::min(t, x.t);
+    return t;
+}
+
+void Patch::runDue(double now) {
+    inRunDue_ = true;
+    for (int guard = 0; guard < 100000; ++guard) {
+        int best = -1;
+        for (int k = 0; k < (int)timers_.size(); ++k)
+            if (timers_[k].t <= now &&
+                (best < 0 || timers_[k].t < timers_[best].t ||
+                 (timers_[k].t == timers_[best].t && timers_[k].seq < timers_[best].seq)))
+                best = k;
+        if (best < 0) break;
+        auto fn = std::move(timers_[best].fn);
+        timers_.erase(timers_.begin() + best);
+        fn();
+    }
+    inRunDue_ = false;
+    if (onSchedule) onSchedule();
 }
 
 void Patch::process(const float* in, int inCh, float* out, int outCh, int frames) {
@@ -865,6 +2539,7 @@ void Patch::process(const float* in, int inCh, float* out, int outCh, int frames
         int n = std::min(dsp::kBlock, frames - off);
         ioOffset = off;
         for (Box* b : chain_) b->dsp(n);
+        ++blockCount;
     }
     for (size_t k = 0, N = (size_t)frames * outCh; k < N; ++k)
         out[k] = std::isfinite(out[k]) ? std::clamp(out[k], -1.f, 1.f) : 0.f;
@@ -954,7 +2629,8 @@ bool Patch::load(const std::string& src, std::string& err) {
                     args.push_back(sexprAtom(a));
                 }
             }
-            if (cls == "message") args = {Atom(messageToString(args))};
+            if (cls == "message" || cls == "comment" || cls == "expr")
+                args = {Atom(messageToString(args))};
             if (y < 0) { y = autoY; autoY += 40; }
             if (byId.count(id)) {
                 err = where + "duplicate id '" + id + "'";
@@ -986,6 +2662,7 @@ bool Patch::load(const std::string& src, std::string& err) {
     }
 
     std::vector<std::unique_ptr<Box>> old;
+    timers_.clear();
     {
         std::lock_guard<std::mutex> lk(dspMutex);
         old.swap(boxes);
@@ -994,6 +2671,7 @@ bool Patch::load(const std::string& src, std::string& err) {
         compile();
         old.clear();
     }
+    for (size_t k = 0; k < boxes.size(); ++k) boxes[k]->attached();
     err.clear();
     for (auto& w : warnings) err += (err.empty() ? "" : "\n") + w;
     if (onStructure) onStructure();
@@ -1070,6 +2748,7 @@ bool AudioEngine::start(std::string& err) {
         }
         running_ = true;
         duplex_ = duplex;
+        patch_.dspRunning = true;
         if (attempt == 0) err.clear();
         return true;
     }
@@ -1081,6 +2760,7 @@ void AudioEngine::stop() {
     ma_device_uninit(&device_);
     running_ = false;
     duplex_ = false;
+    patch_.dspRunning = false;
 }
 
 void AudioEngine::updateInputNeed() {
@@ -1097,31 +2777,6 @@ void AudioEngine::updateInputNeed() {
 // ============================================================================
 
 namespace {
-constexpr int kPortW = 8, kPortH = 3, kBoxH = 22, kFontSize = 12, kRadius = 6;
-constexpr int kPortInset = 4;            // keeps ports clear of the rounded corners
-constexpr int kSuggRowH = 20, kSuggMax = 8;
-constexpr Fl_Font kFont = FL_HELVETICA;
-
-// dark theme
-const Fl_Color kBgLocked  = fl_rgb_color(34, 35, 39);
-const Fl_Color kBgEdit    = fl_rgb_color(28, 29, 33);
-const Fl_Color kGrid      = fl_rgb_color(50, 52, 58);
-const Fl_Color kBoxFill   = fl_rgb_color(54, 57, 64);
-const Fl_Color kNumFill   = fl_rgb_color(44, 47, 54);
-const Fl_Color kMsgFill   = fl_rgb_color(76, 80, 90);
-const Fl_Color kFlash     = fl_rgb_color(70, 130, 220);
-const Fl_Color kBroken    = fl_rgb_color(78, 40, 44);
-const Fl_Color kBorder    = fl_rgb_color(92, 96, 108);
-const Fl_Color kText      = fl_rgb_color(226, 228, 234);
-const Fl_Color kDim       = fl_rgb_color(140, 144, 156);
-const Fl_Color kAccent    = fl_rgb_color(110, 170, 255);
-const Fl_Color kSelect    = fl_rgb_color(90, 160, 255);
-const Fl_Color kSignal    = fl_rgb_color(236, 196, 70);
-const Fl_Color kSignalDim = fl_rgb_color(120, 96, 28);
-const Fl_Color kCtlPort   = fl_rgb_color(196, 200, 210);
-const Fl_Color kCable     = fl_rgb_color(160, 164, 176);
-const Fl_Color kPopup     = fl_rgb_color(44, 46, 53);
-const Fl_Color kStatusBg  = fl_rgb_color(22, 23, 26);
 
 double segDist(double px, double py, double ax, double ay, double bx, double by) {
     double dx = bx - ax, dy = by - ay, L = dx * dx + dy * dy;
@@ -1167,8 +2822,8 @@ Canvas::Canvas(int x, int y, int w, int h, MainWindow* win)
     editor_ = new CompletingInput(x, y, 120, kBoxH, this);
     editor_->textfont(kFont);
     editor_->textsize(kFontSize);
-    editor_->box(FL_BORDER_BOX);
-    editor_->color(fl_rgb_color(20, 21, 24));
+    editor_->box(FL_FLAT_BOX);
+    editor_->color(kEditBg);
     editor_->textcolor(kText);
     editor_->cursor_color(kAccent);
     editor_->selection_color(fl_rgb_color(60, 100, 170));
@@ -1183,10 +2838,12 @@ void Canvas::layoutBox(Box* b) const {
     std::string t = b->text();
     int tw = (int)fl_width(t.c_str());
     int ports = std::max(b->numIns(), b->numOuts());
-    if (b->kind == BoxKind::Number) b->w = std::max(56, tw + 24);
-    else if (b->kind == BoxKind::Message) b->w = std::max(36, tw + 20);
-    else b->w = std::max({tw + 16, ports * (kPortW + 8) + 2 * kPortInset, 40});
     b->h = kBoxH;
+    if (b->kind == BoxKind::UI) b->uiSize(b->w, b->h);
+    else if (b->kind == BoxKind::Number) b->w = std::max(56, tw + 24);
+    else if (b->kind == BoxKind::Message) b->w = std::max(36, tw + 20);
+    else if (b->kind == BoxKind::Comment) b->w = std::max(40, tw + 12);
+    else b->w = std::max({tw + 16, ports * (kPortW + 8) + 2 * kPortInset, 40});
 }
 
 void Canvas::portPos(Box* b, bool out, int i, int& px, int& py) const {
@@ -1200,14 +2857,35 @@ void Canvas::drawBox(Box* b) {
     int X = x() + b->x, Y = y() + b->y, W = b->w, H = b->h;
     bool flash = b->flashUntil > now();
 
+    if (b->kind == BoxKind::Comment) {               // comments: just text
+        if (b->selected || !locked_) {
+            fl_color(b->selected ? kSelect : kGrid);
+            fl_line_style(FL_DOT, 1);
+            fl_rounded_rect(X, Y, W, H, 4);
+            fl_line_style(0);
+        }
+        if (editing_ != b) {
+            fl_font(kFont, kFontSize);
+            fl_color(kDim);
+            fl_draw(b->text().c_str(), X + 6, Y + H / 2 + fl_height() / 2 - fl_descent());
+        }
+        return;
+    }
+
     // message boxes are pills, everything else a softly rounded box
     int r = b->kind == BoxKind::Message ? H / 2 : kRadius;
     Fl_Color fill = kBoxFill;
     if (b->kind == BoxKind::Message) fill = flash ? kFlash : kMsgFill;
-    else if (b->kind == BoxKind::Number) fill = kNumFill;
+    else if (b->kind == BoxKind::Number || b->kind == BoxKind::UI) fill = kNumFill;
     else if (b->kind == BoxKind::Broken) fill = kBroken;
     fl_color(fill);
     fl_rounded_rectf(X, Y, W, H, r);
+
+    if (b->kind == BoxKind::UI) {
+        fl_push_clip(X, Y, W, H);
+        b->drawUI(X, Y);
+        fl_pop_clip();
+    }
 
     // border
     if (b->selected) {
@@ -1224,7 +2902,7 @@ void Canvas::drawBox(Box* b) {
     fl_line_style(0);
 
     // text
-    if (editing_ != b) {
+    if (editing_ != b && b->kind != BoxKind::UI) {
         fl_font(kFont, kFontSize);
         int tx = X + (b->kind == BoxKind::Message ? 10 : 8);
         std::string t = b->text();
@@ -1244,13 +2922,13 @@ void Canvas::drawBox(Box* b) {
     for (int k = 0; k < b->numIns(); ++k) {
         int px, py;
         portPos(b, false, k, px, py);
-        fl_color(b->ins[k] == Port::Signal ? kSignal : kCtlPort);
+        fl_color(b->ins[k] == Port::Control ? kCtlPort : kSignal);
         fl_rounded_rectf(x() + px, y() + py, kPortW, kPortH + 1, 1);
     }
     for (int k = 0; k < b->numOuts(); ++k) {
         int px, py;
         portPos(b, true, k, px, py);
-        fl_color(b->outs[k] == Port::Signal ? kSignal : kCtlPort);
+        fl_color(b->outs[k] == Port::Control ? kCtlPort : kSignal);
         fl_rounded_rectf(x() + px, y() + py - kPortH - 1, kPortW, kPortH + 1, 1);
     }
 }
@@ -1260,7 +2938,7 @@ void Canvas::drawBox(Box* b) {
 void Canvas::updateSuggestions() {
     sugg_.clear();
     suggSel_ = 0;
-    if (editing_ && editing_->kind != BoxKind::Message) {
+    if (editing_ && editing_->kind != BoxKind::Message && editing_->kind != BoxKind::Comment) {
         std::string t = editor_->value();
         if (!t.empty() && t.find(' ') == std::string::npos) {
             std::vector<std::string> exact, prefix, inner;
@@ -1382,7 +3060,7 @@ void Canvas::draw() {
         portPos(c.to, false, c.inlet, bx, by);
         ax += x() + kPortW / 2; bx += x() + kPortW / 2;
         ay += y(); by += y();
-        bool sig = c.from->outs[c.outlet] == Port::Signal;
+        bool sig = c.from->outs[c.outlet] != Port::Control;   // signal and tap links
         if (sig) {
             fl_color(c.selected ? kSelect : kSignal);
             fl_line_style(FL_SOLID | FL_CAP_ROUND, 3);
@@ -1398,12 +3076,14 @@ void Canvas::draw() {
         fl_line_style(0);
     }
 
-    bool flashing = false;
+    bool flashing = false, animating = false;
     for (auto& b : p.boxes) {
         drawBox(b.get());
         if (b->flashUntil > now()) flashing = true;
+        if (b->animated()) animating = true;
     }
-    if (flashing && !Fl::has_timeout(flashTimer, this)) Fl::add_timeout(0.05, flashTimer, this);
+    if ((flashing || animating) && !Fl::has_timeout(flashTimer, this))
+        Fl::add_timeout(animating ? 1.0 / 30.0 : 0.05, flashTimer, this);
 
     if (drag_ == Drag::Cable && dragBox_) {
         int ax, ay;
@@ -1420,7 +3100,11 @@ void Canvas::draw() {
         fl_line_style(0);
     }
 
-    if (editor_->visible()) draw_child(*editor_);
+    if (editor_->visible()) {
+        draw_child(*editor_);
+        fl_color(kAccent);                       // outline: the box being typed into
+        fl_rounded_rect(editor_->x() - 1, editor_->y() - 1, editor_->w() + 2, editor_->h() + 2, 3);
+    }
     drawSuggestions();
     fl_pop_clip();
 }
@@ -1517,7 +3201,8 @@ void Canvas::beginEdit(Box* b, bool isNew) {
     editingNew_ = isNew;
     sugg_.clear();
     std::string t = b->text();
-    if (isNew && b->kind != BoxKind::Message && !t.empty()) t += " ";
+    bool content = b->kind == BoxKind::Message || b->kind == BoxKind::Comment;
+    if (isNew && !content && !t.empty()) t += " ";
     editor_->resize(x() + b->x, y() + b->y, std::max(b->w, 160), kBoxH);
     editor_->value(t.c_str());
     editor_->show();
@@ -1540,10 +3225,14 @@ void Canvas::commitEdit() {
     t.erase(t.find_last_not_of(" \t") + 1);
     Patch& p = win_->patch;
 
-    if (b->kind == BoxKind::Message) {
+    if (b->kind == BoxKind::Comment && t.empty() && editingNew_) {
+        p.removeBoxes({b});
+        win_->dropUndo();
+    } else if (b->kind == BoxKind::Message || b->kind == BoxKind::Comment) {
+        // message and comment boxes keep their text verbatim
         if (t != b->text()) {
             if (!editingNew_) win_->pushUndo();
-            p.replaceBox(b, makeBox("message", {Atom(t)}));
+            p.replaceBox(b, makeBox(b->cls, {Atom(t)}));
             win_->markDirty();
         }
     } else if (t.empty()) {
@@ -1586,8 +3275,8 @@ void Canvas::newBoxAt(const std::string& cls, int bx, int by) {
     Box* b = p.addBox(makeBox(cls, {}), std::max(0, bx), std::max(0, by));
     layoutBox(b);
     win_->markDirty();
-    if (b->kind == BoxKind::Number) {
-        b->selected = true;
+    if (b->kind == BoxKind::Number || b->kind == BoxKind::UI) {
+        b->selected = true;                 // ready to use, nothing to type
         redraw();
     } else {
         beginEdit(b, true);
@@ -1668,6 +3357,10 @@ int Canvas::handle(int e) {
                         int dotX = nb->x + 16 + (int)fl_width(t.substr(0, dot).c_str());
                         if (dot != std::string::npos && mx > dotX) dragStep_ = 0.01;
                     }
+                } else if (h.box && h.box->kind == BoxKind::UI) {
+                    drag_ = Drag::UI;
+                    dragBox_ = h.box;
+                    h.box->uiMouse(FL_PUSH, mx - h.box->x, my - h.box->y);
                 } else if (h.box && h.box->cls == "loadbang" && Fl::event_clicks()) {
                     h.box->loadbang();
                 }
@@ -1732,6 +3425,8 @@ int Canvas::handle(int e) {
             } else if (drag_ == Drag::Number) {
                 if (my != pressY_) { moved_ = true; typed_.clear(); }
                 numberDrag(pressY_ - my);
+            } else if (drag_ == Drag::UI && dragBox_) {
+                dragBox_->uiMouse(FL_DRAG, mx - dragBox_->x, my - dragBox_->y);
             }
             redraw();
             return 1;
@@ -1739,6 +3434,8 @@ int Canvas::handle(int e) {
 
         case FL_RELEASE: {
             int mx = Fl::event_x() - x(), my = Fl::event_y() - y();
+            if (drag_ == Drag::UI && dragBox_)
+                dragBox_->uiMouse(FL_RELEASE, mx - dragBox_->x, my - dragBox_->y);
             if (drag_ == Drag::Cable && dragBox_) {
                 Hit h = hitTest(mx, my);
                 if (h.box && h.box != dragBox_) {
@@ -1801,6 +3498,9 @@ int Canvas::handle(int e) {
                 case 'm': newBoxAtMouse("message"); return 1;
                 case 'f': newBoxAtMouse("flonum"); return 1;
                 case 'i': newBoxAtMouse("number"); return 1;
+                case 'b': newBoxAtMouse("button"); return 1;
+                case 't': newBoxAtMouse("toggle"); return 1;
+                case 'c': newBoxAtMouse("comment"); return 1;
             }
             return 0;
         }
@@ -1888,6 +3588,12 @@ MainWindow::MainWindow(int w, int h)
     patch.onRedraw = [this] { canvas->redraw(); };
     patch.onStatus = [this](const std::string& s) { setStatus(s); };
     patch.onDsp = [this](bool on) { setAudio(on); };
+    patch.onPrint = [this](const std::string& s) { print(s); };
+    static const auto t0 = std::chrono::steady_clock::now();
+    patch.clock = [] {
+        return std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+    };
+    patch.onSchedule = [this] { armTimer(); };
     patch.onStructure = [this] {
         audio.updateInputNeed();
         refreshStatus();
@@ -1922,16 +3628,10 @@ void MainWindow::buildMenu() {
                this);
 
     static std::vector<std::unique_ptr<NewItem>> items;
-    const char* groups[][2] = {
-        {"cycle~", "Audio"}, {"reson~", "Audio"}, {"noise~", "Audio"}, {"click~", "Audio"},
-        {"+~", "Audio"}, {"-~", "Audio"}, {"*~", "Audio"}, {"/~", "Audio"},
-        {"adc~", "Audio"}, {"dac~", "Audio"},
-        {"+", "Control"}, {"-", "Control"}, {"*", "Control"}, {"/", "Control"},
-        {"send", "Control"}, {"receive", "Control"}, {"loadbang", "Control"},
-        {"message", "Interface"}, {"flonum", "Interface"}, {"number", "Interface"}};
-    for (auto& g : groups) {
-        items.push_back(std::make_unique<NewItem>(NewItem{this, g[0]}));
-        std::string path = std::string("Patch/New/") + g[1] + "/" + escapeMenu(g[0]);
+    for (auto& c : classInfos()) {
+        if (c.group.empty()) continue;                 // short aliases
+        items.push_back(std::make_unique<NewItem>(NewItem{this, c.name}));
+        std::string path = "Patch/New/" + c.group + "/" + escapeMenu(c.name);
         menu_->add(path.c_str(), 0,
                    [](Fl_Widget*, void* d) {
                        auto it = static_cast<NewItem*>(d);
@@ -1942,7 +3642,8 @@ void MainWindow::buildMenu() {
     menu_->add("Patch/Edit Mode", FL_COMMAND + 'e', MW_CB(toggleLock), this, FL_MENU_TOGGLE);
     menu_->add("Patch/Audio On", FL_COMMAND + '/', MW_CB(toggleAudio), this,
                FL_MENU_TOGGLE | FL_MENU_DIVIDER);
-    menu_->add("Patch/Audio Setup...", 0, MW_CB(audioSetup), this);
+    menu_->add("Patch/Audio Setup...", 0, MW_CB(audioSetup), this, FL_MENU_DIVIDER);
+    menu_->add("Patch/Console", FL_COMMAND + FL_SHIFT + 'm', MW_CB(showConsole), this);
 #undef MW_CB
 }
 
@@ -1966,6 +3667,50 @@ void MainWindow::refreshStatus() {
     statusBar_->copy_label(("  " + s).c_str());
     setMenuCheck(menu_, "Patch/Edit Mode", !canvas->locked());
     setMenuCheck(menu_, "Patch/Audio On", audio.running());
+}
+
+namespace {
+void schedulerTimer(void* d) {
+    auto* w = static_cast<MainWindow*>(d);
+    w->patch.runDue(w->patch.time());           // re-arms through onSchedule
+}
+}  // namespace
+
+void MainWindow::armTimer() {
+    Fl::remove_timeout(schedulerTimer, this);
+    double next = patch.nextDue();
+    if (std::isfinite(next))
+        Fl::add_timeout(std::max(0.0, next - patch.time()), schedulerTimer, this);
+}
+
+void MainWindow::showConsole() {
+    if (!console_) {
+        console_ = new Fl_Double_Window(520, 300, "minlsp Console");
+        consoleBuf_ = new Fl_Text_Buffer();
+        consoleView_ = new Fl_Text_Display(0, 0, 520, 300);
+        consoleView_->buffer(consoleBuf_);
+        consoleView_->box(FL_FLAT_BOX);
+        consoleView_->color(fl_rgb_color(20, 21, 24));
+        consoleView_->textcolor(kText);
+        consoleView_->textfont(FL_COURIER);
+        consoleView_->textsize(12);
+        console_->resizable(consoleView_);
+        console_->end();
+        for (auto& line : consoleLines_) consoleBuf_->append((line + "\n").c_str());
+    }
+    console_->show();
+    consoleView_->scroll(consoleBuf_->count_lines(0, consoleBuf_->length()), 0);
+}
+
+void MainWindow::print(const std::string& s) {
+    consoleLines_.push_back(s);
+    if (consoleLines_.size() > 2000) consoleLines_.erase(consoleLines_.begin());
+    if (consoleBuf_) {
+        consoleBuf_->append((s + "\n").c_str());
+        if (consoleBuf_->length() > 200000) consoleBuf_->remove(0, consoleBuf_->length() - 150000);
+        consoleView_->scroll(consoleBuf_->count_lines(0, consoleBuf_->length()), 0);
+    }
+    setStatus(s);
 }
 
 void MainWindow::setStatus(const std::string& s) {
@@ -2011,6 +3756,7 @@ void MainWindow::newPatch() {
     canvas->reset();
     patch.clear();
     path_.clear();
+    patch.dir.clear();
     undo_.clear();
     redo_.clear();
     dirty_ = false;
@@ -2039,7 +3785,10 @@ bool MainWindow::openFile(const std::string& path) {
         return false;
     }
     canvas->reset();
+    std::string oldDir = patch.dir;
+    patch.dir = path.substr(0, path.find_last_of('/'));
     if (!patch.load(src, err)) {
+        patch.dir = oldDir;
         fl_alert("Can't open %s:\n%s", baseName(path).c_str(), err.c_str());
         return false;
     }
@@ -2049,7 +3798,8 @@ bool MainWindow::openFile(const std::string& path) {
     dirty_ = false;
     canvas->setLocked(true);           // Max opens patches locked
     updateTitle();
-    setStatus(err.empty() ? "opened " + baseName(path) : err.substr(0, err.find('\n')));
+    if (!err.empty()) print(baseName(path) + ":\n" + err);
+    else setStatus("opened " + baseName(path));
     patch.loadbangAll();
     canvas->redraw();
     return true;
@@ -2082,6 +3832,7 @@ bool MainWindow::saveAs() {
     const char* ext = fl_filename_ext(p.c_str());
     if (!ext || !*ext) p += std::string(".") + kExt;
     path_ = p;
+    patch.dir = p.substr(0, p.find_last_of('/'));
     return save();
 }
 
@@ -2233,27 +3984,38 @@ void writeWav(const char* path, const std::vector<float>& data, int ch, int sr) 
 // Runs a patch offline (no GUI, no audio device) and prints levels.
 int renderCli(int argc, char** argv) {
     if (argc < 4) {
-        std::fprintf(stderr, "usage: minlsp --render patch.mlsp seconds [out.wav] [bang=id ...]\n");
+        std::fprintf(stderr,
+                     "usage: minlsp --render patch.mlsp seconds [out.wav] [bang=id] [send=id:message] ...\n");
         return 2;
     }
-    std::string src, err;
-    if (!mlsp::readFile(argv[2], src)) { std::fprintf(stderr, "can't read %s\n", argv[2]); return 1; }
+    std::string src, err, path = argv[2];
+    if (!mlsp::readFile(path, src)) { std::fprintf(stderr, "can't read %s\n", argv[2]); return 1; }
+    const int sr = 44100, ch = 2, blk = dsp::kBlock;
+    long frame = 0;
     mlsp::Patch p;
     p.onStatus = [](const std::string& s) { std::fprintf(stderr, "status: %s\n", s.c_str()); };
+    p.onPrint = [](const std::string& s) { std::printf("%s\n", s.c_str()); };
+    p.clock = [&frame] { return (double)frame / sr; };     // the scheduler follows sample time
+    p.sampleRate = sr;
+    p.dspRunning = true;
+    size_t slash = path.find_last_of('/');
+    p.dir = slash == std::string::npos ? "." : path.substr(0, slash);
     if (!p.load(src, err)) { std::fprintf(stderr, "error: %s\n", err.c_str()); return 1; }
     if (!err.empty()) std::fprintf(stderr, "warning: %s\n", err.c_str());
     if (!p.dspError.empty()) std::fprintf(stderr, "dsp: %s\n", p.dspError.c_str());
-    const int sr = 44100, ch = 2, blk = 256;
-    p.sampleRate = sr;
     p.loadbangAll();
     const char* wav = nullptr;
     for (int k = 4; k < argc; ++k) {
         std::string a = argv[k];
-        if (a.rfind("bang=", 0) == 0) {
-            if (auto b = p.find(a.substr(5))) {
-                b->message(0, {mlsp::Atom("bang")});
+        bool isBang = a.rfind("bang=", 0) == 0, isSend = a.rfind("send=", 0) == 0;
+        if (isBang || isSend) {
+            std::string rest = a.substr(5), id = rest.substr(0, rest.find(':'));
+            mlsp::Message m = isBang ? mlsp::Message{mlsp::Atom("bang")}
+                                     : mlsp::parseMessage(rest.substr(rest.find(':') + 1));
+            if (auto b = p.find(id)) {
+                if (!m.empty()) b->message(0, m);
             } else {
-                std::fprintf(stderr, "no box '%s'\n", a.c_str() + 5);
+                std::fprintf(stderr, "no box '%s'\n", id.c_str());
             }
         } else {
             wav = argv[k];
@@ -2261,8 +4023,9 @@ int renderCli(int argc, char** argv) {
     }
     long total = (long)(std::atof(argv[3]) * sr);
     std::vector<float> all, buf(blk * ch);
-    for (long done = 0; done < total; done += blk) {
-        int n = (int)std::min<long>(blk, total - done);
+    for (; frame < total; frame += blk) {
+        p.runDue((double)frame / sr);
+        int n = (int)std::min<long>(blk, total - frame);
         p.process(nullptr, 0, buf.data(), ch, n);
         all.insert(all.end(), buf.begin(), buf.begin() + n * ch);
     }

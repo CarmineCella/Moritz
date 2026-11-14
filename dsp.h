@@ -161,6 +161,231 @@ private:
     std::atomic<int> pending_{0};
 };
 
+// ------------------------------------------------------------------ SPSC queue
+// Lock-free single-producer / single-consumer queue: GUI thread pushes,
+// audio thread pops. No allocation after construction.
+template <class T, size_t N>
+class Spsc {
+public:
+    bool push(const T& v) {
+        size_t h = head_.load(std::memory_order_relaxed), n = (h + 1) % N;
+        if (n == tail_.load(std::memory_order_acquire)) return false;   // full
+        buf_[h] = v;
+        head_.store(n, std::memory_order_release);
+        return true;
+    }
+    bool pop(T& v) {
+        size_t t = tail_.load(std::memory_order_relaxed);
+        if (t == head_.load(std::memory_order_acquire)) return false;
+        v = buf_[t];
+        tail_.store((t + 1) % N, std::memory_order_release);
+        return true;
+    }
+
+private:
+    T buf_[N];
+    std::atomic<size_t> head_{0}, tail_{0};
+};
+
+// ------------------------------------------------------------------ line~
+// Piecewise-linear ramp. The GUI posts Begin (drop pending segments, keep
+// the current value), then Segment commands; Stop freezes the ramp.
+class Ramp {
+public:
+    struct Cmd {
+        enum Kind : uint8_t { Begin, Segment, Stop } kind = Segment;
+        float target = 0.f, ms = 0.f;
+    };
+    bool post(const Cmd& c) { return q_.push(c); }
+
+    void process(float* out, int n, double sr) {
+        Cmd c;
+        while (q_.pop(c)) {
+            if (c.kind == Cmd::Segment) {
+                if (count_ < kMax) segs_[count_++] = c;
+            } else {
+                count_ = idx_ = 0;
+                left_ = 0;
+            }
+        }
+        for (int i = 0; i < n; ++i) {
+            if (left_ <= 0 && idx_ < count_) {
+                const Cmd& s = segs_[idx_++];
+                double len = s.ms * sr / 1000.0;
+                target_ = s.target;
+                if (len < 1.0) {
+                    value_ = target_;
+                } else {
+                    left_ = (long)len;
+                    inc_ = (target_ - value_) / (double)left_;
+                }
+            }
+            if (left_ > 0 && --left_ == 0) value_ = target_;
+            else if (left_ > 0) value_ += inc_;
+            out[i] = (float)value_;
+        }
+    }
+
+private:
+    static constexpr int kMax = 64;
+    Spsc<Cmd, 256> q_;
+    Cmd segs_[kMax];
+    int count_ = 0, idx_ = 0;
+    long left_ = 0;
+    double value_ = 0.0, inc_ = 0.0, target_ = 0.0;
+};
+
+// ------------------------------------------------------------------ oscillators
+// phasor~: non-band-limited 0..1 ramp (as in MSP; used as a control ramp).
+class Phasor {
+public:
+    void setPhase(float p) { pending_.store(p - std::floor(p)); }
+    void process(const float* freq, float* out, int n, double sr) {
+        float p = pending_.exchange(-1.f);
+        if (p >= 0.f) ph_ = p;
+        const double inv = 1.0 / sr;
+        for (int i = 0; i < n; ++i) {
+            out[i] = (float)ph_;
+            ph_ += freq[i] * inv;
+            ph_ -= std::floor(ph_);
+            if (!(ph_ >= 0.0 && ph_ < 1.0)) ph_ = 0.0;
+        }
+    }
+
+private:
+    double ph_ = 0.0;
+    std::atomic<float> pending_{-1.f};
+};
+
+// PolyBLEP residual for band-limited discontinuities.
+inline double polyBlep(double t, double dt) {
+    if (t < dt) { t /= dt; return t + t - t * t - 1.0; }
+    if (t > 1.0 - dt) { t = (t - 1.0) / dt; return t * t + t + t + 1.0; }
+    return 0.0;
+}
+
+// saw~ / rect~ / tri~: band-limited (PolyBLEP) saw and pulse; triangle with
+// adjustable slope (its harmonics fall off fast enough to stay naive).
+class Osc {
+public:
+    enum Shape { Saw, Rect, Tri };
+    explicit Osc(Shape s) : shape_(s) {}
+    void process(const float* freq, const float* duty, float* out, int n, double sr) {
+        for (int i = 0; i < n; ++i) {
+            double dt = std::min(std::fabs((double)freq[i]) / sr, 0.5);
+            double t = ph_;
+            double v;
+            if (shape_ == Saw) {
+                v = 2.0 * t - 1.0 - (dt > 0 ? polyBlep(t, dt) : 0.0);
+            } else if (shape_ == Rect) {
+                double d = std::clamp((double)duty[i], 0.01, 0.99);
+                v = t < d ? 1.0 : -1.0;
+                if (dt > 0) {
+                    v += polyBlep(t, dt);
+                    double t2 = t + 1.0 - d;
+                    v -= polyBlep(t2 - std::floor(t2), dt);
+                }
+            } else {
+                double d = std::clamp((double)duty[i], 0.01, 0.99);
+                v = t < d ? 2.0 * t / d - 1.0 : 1.0 - 2.0 * (t - d) / (1.0 - d);
+            }
+            out[i] = (float)v;
+            ph_ += freq[i] / sr;
+            ph_ -= std::floor(ph_);
+            if (!(ph_ >= 0.0 && ph_ < 1.0)) ph_ = 0.0;
+        }
+    }
+
+private:
+    Shape shape_;
+    double ph_ = 0.0;
+};
+
+// ------------------------------------------------------------------ filters
+// Biquad in MSP's convention:
+//   y[n] = a0 x[n] + a1 x[n-1] + a2 x[n-2] - b1 y[n-1] - b2 y[n-2]
+class Biquad {
+public:
+    void set(double a0, double a1, double a2, double b1, double b2) {
+        a0_ = a0; a1_ = a1; a2_ = a2; b1_ = b1; b2_ = b2;
+    }
+    // RBJ cookbook low-pass
+    void lowpass(double f, double q, double sr) {
+        f = std::clamp(f, 1.0, sr * 0.49);
+        q = std::max(q, 0.1);
+        double w = kTwoPi * f / sr, c = std::cos(w), al = std::sin(w) / (2.0 * q);
+        double n = 1.0 / (1.0 + al);
+        set((1.0 - c) * 0.5 * n, (1.0 - c) * n, (1.0 - c) * 0.5 * n, -2.0 * c * n,
+            (1.0 - al) * n);
+    }
+    void process(const float* in, float* out, int n) {
+        double x1 = x1_, x2 = x2_, y1 = y1_, y2 = y2_;
+        for (int i = 0; i < n; ++i) {
+            double x = in[i];
+            double y = a0_ * x + a1_ * x1 + a2_ * x2 - b1_ * y1 - b2_ * y2;
+            x2 = x1; x1 = x; y2 = y1; y1 = y;
+            out[i] = (float)y;
+        }
+        if (!std::isfinite(y1) || !std::isfinite(y2)) x1 = x2 = y1 = y2 = 0.0;
+        x1_ = x1; x2_ = x2; y1_ = y1; y2_ = y2;
+    }
+
+private:
+    double a0_ = 1, a1_ = 0, a2_ = 0, b1_ = 0, b2_ = 0;
+    double x1_ = 0, x2_ = 0, y1_ = 0, y2_ = 0;
+};
+
+// State-variable filter (topology-preserving, Simper). q in 0..1 is
+// resonance, as in MSP's svf~. Outputs low, high, band, notch.
+class Svf {
+public:
+    void process(const float* in, float* lo, float* hi, float* bp, float* no, int n, double f,
+                 double q, double sr) {
+        f = std::clamp(f, 1.0, sr * 0.49);
+        double k = std::max(2.0 - 2.0 * std::clamp(q, 0.0, 1.0) * 0.99, 0.02);
+        double g = std::tan(kPi * f / sr);
+        double a1 = 1.0 / (1.0 + g * (g + k)), a2 = g * a1, a3 = g * a2;
+        for (int i = 0; i < n; ++i) {
+            double v0 = in[i];
+            double v3 = v0 - ic2_;
+            double v1 = a1 * ic1_ + a2 * v3;
+            double v2 = ic2_ + a2 * ic1_ + a3 * v3;
+            ic1_ = 2.0 * v1 - ic1_;
+            ic2_ = 2.0 * v2 - ic2_;
+            double h = v0 - k * v1 - v2;
+            lo[i] = (float)v2; hi[i] = (float)h; bp[i] = (float)v1; no[i] = (float)(v2 + h);
+        }
+        if (!std::isfinite(ic1_) || !std::isfinite(ic2_)) ic1_ = ic2_ = 0.0;
+    }
+
+private:
+    double ic1_ = 0.0, ic2_ = 0.0;
+};
+
+// ------------------------------------------------------------------ delay line
+// Ring buffer. read(k) returns the sample written k pushes ago, counted
+// from the next write position (k = 1 is the most recent sample), with
+// linear interpolation for fractional k.
+class DelayLine {
+public:
+    void resize(size_t n) { buf_.assign(std::max<size_t>(n, 4), 0.f); w_ = 0; }
+    size_t size() const { return buf_.size(); }
+    void push(float x) { buf_[w_] = x; if (++w_ == buf_.size()) w_ = 0; }
+    float read(double k) const {
+        k = std::clamp(k, 1.0, (double)buf_.size() - 2.0);
+        size_t ik = (size_t)k;
+        float fr = (float)(k - ik);
+        size_t N = buf_.size();
+        size_t a = (w_ + N - ik) % N, b = (w_ + 2 * N - ik - 1) % N;
+        return buf_[a] + fr * (buf_[b] - buf_[a]);
+    }
+    void clear() { std::fill(buf_.begin(), buf_.end(), 0.f); }
+
+private:
+    std::vector<float> buf_;
+    size_t w_ = 0;
+};
+
 // ------------------------------------------------------------------ arithmetic
 enum class Op { Add, Sub, Mul, Div };
 
