@@ -1,0 +1,43 @@
+Create a minimal clode on the music computing langauge Max/MSP in C++.
+The program should be able to do the following things:
+
+- load and save patches: the patches will have a text format following a lisp-like syntax
+  (patch
+  (obj osc  cycle~ 440)
+  (obj gain *~ 0.2)
+  (obj out  dac~)
+  (connect osc 0 gain 0)
+  (connect gain 0 out 0))
+
+- the interface will present and empty space where the user can create boxes 
+that connects to make the audio flow; the GUI will be done with FLTK.
+
+- the sofware must be able to produce sound in realtime using miniaudio as backend
+
+- the initial set of operators will be: 
+    - osc (interpolated oscillator)
+    - reson (twopole filter)
+    - noise (noise generator)
+    - click (click generator)
+    - +, * add and multiplie sounds or sounds time scalars
+    - a box for a parameter
+    - a message box for parameters that can be used a preset (remote messages)
+    - receive and send for messages
+    - adc and dac for audio input and output
+
+- the UI menu will be
+    - File
+        - New, Open, Save, Save as..., Quit
+    - Edit
+        - Undo, Redo
+    - Patch
+        - New (osc, reson, ...)
+        - Audio setup
+
+- follow the general design of the equivalent max objects
+
+- the code will be contained in minlsp.cpp, the header minlsp.h and, dsp.h (for all audio ops)
+- the Makefile will be able to automatically download the required library on first run if necessary
+- the Makefile will also generate a MacOS bundle
+
+I want to type make and have the app generated and able to be used.

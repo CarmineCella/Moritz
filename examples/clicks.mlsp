@@ -1,0 +1,13 @@
+; clicks.mlsp - click~ excites two resonators tuned a fifth apart.
+; Click "bang" (patch locked) to strike them.
+(patch
+  (obj hit message bang (pos 40 30))
+  (obj clk click~ (pos 40 80))
+  (obj f1 reson~ 400 440 60 (pos 40 140))
+  (obj f2 reson~ 400 660 60 (pos 180 140))
+  (obj out dac~ (pos 40 220))
+  (connect hit 0 clk 0)
+  (connect clk 0 f1 0)
+  (connect clk 0 f2 0)
+  (connect f1 0 out 0)
+  (connect f2 0 out 1))

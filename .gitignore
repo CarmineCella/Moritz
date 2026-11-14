@@ -1,0 +1,5 @@
+deps/
+build/
+minlsp
+minlsp.app/
+.DS_Store
