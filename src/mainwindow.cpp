@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Carmine-Emanuele Cella. SPDX-License-Identifier: BSD-2-Clause
 // mainwindow.cpp — the main window (menus, toolbar, files, undo, audio
 // setup, console) and the windows of subpatchers.
 
@@ -5,6 +6,7 @@
 #include "objects.h"
 
 #include <FL/Fl_Choice.H>
+#include <FL/Fl_PNG_Image.H>
 #include <FL/Fl_Native_File_Chooser.H>
 #include <FL/Fl_Return_Button.H>
 #include <FL/fl_ask.H>
@@ -16,7 +18,12 @@
 #include <fstream>
 
 #ifdef __APPLE__
+#include <FL/platform.H>
 #include <mach-o/dyld.h>
+#endif
+
+#ifndef MINLSP_VERSION
+#define MINLSP_VERSION "dev"
 #endif
 
 namespace mlsp {
@@ -144,6 +151,7 @@ void MainWindow::buildMenu() {
     menu_->add("File/New", FL_COMMAND + 'n', MW_CB(newPatch), this);
     menu_->add("File/Open...", FL_COMMAND + 'o', MW_CB(openPatch), this);
     menu_->add("File/Save", FL_COMMAND + 's', MW_CB(save), this);
+    menu_->add("File/Close", FL_COMMAND + 'w', MW_CB(closeFront), this);
     menu_->add("File/Save as...", FL_COMMAND + FL_SHIFT + 's', MW_CB(saveAs), this,
                FL_MENU_DIVIDER);
     menu_->add("File/Quit", FL_COMMAND + 'q', MW_CB(quit), this);
@@ -170,6 +178,11 @@ void MainWindow::buildMenu() {
                FL_MENU_TOGGLE | FL_MENU_DIVIDER);
     menu_->add("Patch/Audio Setup...", 0, MW_CB(audioSetup), this, FL_MENU_DIVIDER);
     menu_->add("Patch/Console", FL_COMMAND + FL_SHIFT + 'm', MW_CB(showConsole), this);
+#ifdef __APPLE__
+    fl_mac_set_about(MW_CB(about), this);          // minlsp > About minlsp
+#else
+    menu_->add("Help/About minlsp", 0, MW_CB(about), this);
+#endif
 #undef MW_CB
 }
 
@@ -281,6 +294,61 @@ bool MainWindow::confirmDiscard() {
     if (r == 0) return false;
     if (r == 1) return save();
     return true;
+}
+
+void MainWindow::closeFront() {
+    Fl_Window* w = Fl::first_window();
+    if (auto pw = dynamic_cast<PatchWindow*>(w)) {
+        pw->canvas->commitEdit();
+        pw->hide();
+        return;
+    }
+    if (w && w != this && w == console_) {
+        w->hide();
+        return;
+    }
+    if (!confirmDiscard()) return;
+    dirty_ = false;                       // already asked
+    newPatch();
+    setStatus("closed");
+}
+
+void MainWindow::about() {
+    Fl_Double_Window dlg(360, 330, "About minlsp");
+    dlg.color(kBgLocked);
+    Fl_Box icon(116, 18, 128, 128);
+    std::string base = exeDir();
+    Fl_PNG_Image* png = nullptr;
+    for (std::string p : {base + "/../Resources/about.png", base + "/resources/about.png"}) {
+        png = new Fl_PNG_Image(p.c_str());
+        if (png->fail() == 0) break;
+        delete png;
+        png = nullptr;
+    }
+    Fl_Image* scaled = png ? png->copy(128, 128) : nullptr;
+    if (scaled) icon.image(scaled);
+    auto text = [](int y, int h, const char* s, int size, Fl_Font f, Fl_Color c) {
+        auto* b = new Fl_Box(10, y, 340, h);
+        b->copy_label(s);
+        b->labelsize(size);
+        b->labelfont(f);
+        b->labelcolor(c);
+        return b;
+    };
+    text(152, 30, "minlsp", 24, FL_HELVETICA_BOLD, kText);
+    text(182, 18, ("version " MINLSP_VERSION), 12, FL_HELVETICA, kDim);
+    text(206, 20, "A minimal Max/MSP-style patcher", 13, FL_HELVETICA, kText);
+    text(236, 20, "Created by Carmine-Emanuele Cella (2026)", 13, FL_HELVETICA_BOLD, kAccent);
+    text(258, 18, "BSD 2-Clause License", 11, FL_HELVETICA, kDim);
+    Fl_Return_Button ok(260, 288, 85, 28, "OK");
+    ok.callback([](Fl_Widget* w, void*) { w->window()->hide(); });
+    dlg.end();
+    dlg.set_modal();
+    dlg.show();
+    while (dlg.shown()) Fl::wait();
+    icon.image(nullptr);
+    delete scaled;
+    delete png;
 }
 
 void MainWindow::newPatch() {

@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Carmine-Emanuele Cella. SPDX-License-Identifier: BSD-2-Clause
 // objects_control.cpp — timing, routing, control math, expr and interface objects
 
 #include "objects.h"

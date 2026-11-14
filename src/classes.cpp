@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Carmine-Emanuele Cella. SPDX-License-Identifier: BSD-2-Clause
 // classes.cpp — the class table: creating boxes by name, menu groups,
 // completion and abstraction lookup.
 

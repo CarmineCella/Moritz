@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Carmine-Emanuele Cella. SPDX-License-Identifier: BSD-2-Clause
 // objects.h — internals shared by the object files (objects_*.cpp), the
 // class table and the canvas. Not part of the public model in minlsp.h.
 #pragma once

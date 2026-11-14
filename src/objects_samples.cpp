@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Carmine-Emanuele Cella. SPDX-License-Identifier: BSD-2-Clause
 // objects_samples.cpp — buffer~, play~, groove~, record~, sfplay~ and analysis
 
 #include "objects.h"

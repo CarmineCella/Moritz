@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Carmine-Emanuele Cella. SPDX-License-Identifier: BSD-2-Clause
 // core.cpp — atoms, s-expressions, the Box base class and the Patch:
 // editing, signal-graph compilation, scheduler, messaging and file format.
 
@@ -205,11 +206,18 @@ std::string Box::label() const {
 void Box::setPorts(std::vector<Port> in, std::vector<Port> out) {
     ins = std::move(in);
     outs = std::move(out);
-    outBuf_.assign(outs.size(), std::vector<float>(dsp::kBlock, 0.f));
-    inBuf_.assign(ins.size(), std::vector<float>(dsp::kBlock, 0.f));
+    size_t n = std::max<size_t>(dsp::kBlock, outBuf_.empty() ? (inBuf_.empty() ? 0 : inBuf_[0].size())
+                                                             : outBuf_[0].size());
+    outBuf_.assign(outs.size(), std::vector<float>(n, 0.f));
+    inBuf_.assign(ins.size(), std::vector<float>(n, 0.f));
     scalar_.reset(new std::atomic<float>[ins.size() ? ins.size() : 1]);
     for (size_t i = 0; i < ins.size(); ++i) scalar_[i].store(0.f);
     inSrc.assign(ins.size(), {});
+}
+
+void Box::ensureBlock(int n) {
+    for (auto& b : outBuf_) if ((int)b.size() < n) b.resize((size_t)n, 0.f);
+    for (auto& b : inBuf_) if ((int)b.size() < n) b.resize((size_t)n, 0.f);
 }
 
 const float* Box::sigIn(int i, int n) {
@@ -274,13 +282,18 @@ Patch::~Patch() {
 void Patch::forEachBox(const std::function<void(Box*)>& fn) {
     for (auto& b : boxes) {
         fn(b.get());
-        if (Patch* c = b->inner()) c->forEachBox(fn);
+        for (Patch* c : b->inners()) c->forEachBox(fn);
     }
 }
 
 void Patch::structureChanged() {
     if (onStructure) onStructure();
     if (parent) parent->structureChanged();
+}
+
+int Patch::vectorSize() const {
+    const Spectral* sp = spectralContext();
+    return sp ? std::max(sp->bins, dsp::kBlock) : dsp::kBlock;
 }
 
 const Patch::Spectral* Patch::spectralContext() const {
@@ -493,8 +506,11 @@ void Patch::clear() {
 }
 
 bool Patch::needsInput() const {
-    for (auto& b : boxes)
-        if (b->wantsInput() || (b->inner() && b->inner()->needsInput())) return true;
+    for (auto& b : boxes) {
+        if (b->wantsInput()) return true;
+        for (Patch* c : b->inners())
+            if (c->needsInput()) return true;
+    }
     return false;
 }
 
@@ -503,8 +519,8 @@ bool Patch::needsInput() const {
 void Patch::compile() {
     // inner patches first: their inlets/outlets decide the owner's ports
     for (auto& b : boxes)
-        if (Patch* c = b->inner()) {
-            c->compile();
+        if (b->inner()) {
+            for (Patch* c : b->inners()) c->compile();
             b->syncPorts();
         }
     // drop cables whose ports vanished or changed type
@@ -519,7 +535,9 @@ void Patch::compile() {
 
     std::vector<Box*> sig;
     std::map<Box*, int> indeg;
+    int vs = vectorSize();
     for (auto& b : boxes) {
+        b->ensureBlock(vs);                  // before inSrc points into the buffers
         for (auto& s : b->inSrc) s.clear();
         if (b->isSignal() || b->inner()) {          // subpatchers run their inner chain
             sig.push_back(b.get());
@@ -549,7 +567,7 @@ void Patch::compile() {
         dspError.clear();
         chain_ = std::move(order);
         for (auto& b : boxes)
-            if (Patch* c = b->inner(); c && !c->dspError.empty()) {
+            if (Patch* c = b->inner(); c && !c->dspError.empty()) {   // first copy speaks for all
                 dspError = c->dspError + " (in " + b->text() + ")";
                 break;
             }

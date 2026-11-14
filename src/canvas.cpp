@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Carmine-Emanuele Cella. SPDX-License-Identifier: BSD-2-Clause
 // canvas.cpp — the patch editor: drawing boxes and cables, editing,
 // completion, and running interface objects in locked mode.
 

@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Carmine-Emanuele Cella. SPDX-License-Identifier: BSD-2-Clause
 // dsp.h — signal-processing building blocks for minlsp
 //
 // Self-contained: no GUI, no audio-device code. Every unit processes one
@@ -202,7 +203,11 @@ public:
         Cmd c;
         while (q_.pop(c)) {
             if (c.kind == Cmd::Segment) {
-                if (count_ < kMax) segs_[count_++] = c;
+                if (c.ms * sr < 1000.0 && idx_ == count_ && left_ <= 0)
+                    value_ = target_ = c.target;   // a jump with nothing pending: now, so a
+                                                   // "0, 1 100" pair in one block keeps both
+                else if (count_ < kMax)
+                    segs_[count_++] = c;
             } else {
                 count_ = idx_ = 0;
                 left_ = 0;

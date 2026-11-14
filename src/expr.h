@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Carmine-Emanuele Cella. SPDX-License-Identifier: BSD-2-Clause
 // expr.h — the expression language of expr and expr~
 //
 // C-like expressions over $f1..$f9 (floats), $i1..$i9 (truncated) and, for

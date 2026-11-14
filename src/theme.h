@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Carmine-Emanuele Cella. SPDX-License-Identifier: BSD-2-Clause
 // theme.h — colours and sizes shared by the canvas and the interface objects
 #pragma once
 

@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Carmine-Emanuele Cella. SPDX-License-Identifier: BSD-2-Clause
 // main.cpp — entry point: the GUI, or a headless `--render` mode for tests
 //
 //   minlsp [patch.mlsp]

@@ -7,6 +7,7 @@
   (obj buf buffer~ voice sounds/voice.wav (pos 20 40))
   (obj amp buffer~ pvamp 5000 (pos 240 40))
   (obj ph buffer~ pvphase 5000 (pos 410 40))
+  (obj ab buffer~ pvabs 5000 (pos 580 40))
   (obj lb loadbang (pos 20 80))
   (obj rec message "analyse" (pos 110 80))
   (obj go t b b (pos 20 120))

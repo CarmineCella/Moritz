@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Carmine-Emanuele Cella. SPDX-License-Identifier: BSD-2-Clause
 // minlsp.h — a minimal Max/MSP-like patcher
 //
 // Patch model (boxes, connections, messages), patch file format and audio
@@ -116,7 +117,11 @@ public:
     virtual void resolve() {}          // during compile, DSP lock held: look up buffers/taps
 
     // ---- boxes holding a patch (p, abstractions, pfft~)
-    virtual Patch* inner() const { return nullptr; }
+    virtual Patch* inner() const { return nullptr; }       // the one a window shows
+    virtual std::vector<Patch*> inners() const {           // all of them (poly~ has many)
+        Patch* p = inner();
+        return p ? std::vector<Patch*>{p} : std::vector<Patch*>{};
+    }
     virtual bool savesInner() const { return false; }   // written inline as (patch ...)
     virtual void syncPorts() {}        // during compile: ports follow the inner inlets/outlets
     virtual void loadInner(const SExpr& form, std::vector<std::string>& warnings) {}
@@ -138,6 +143,7 @@ public:
 
     // ---- signal plumbing
     void setPorts(std::vector<Port> in, std::vector<Port> out);
+    void ensureBlock(int n);               // grow signal buffers to n samples (compile)
     const float* sigIn(int i, int n);      // summed input, or the inlet's scalar
     float* sigOut(int i) { return outBuf_[i].data(); }
     float scalar(int i) const { return scalar_[i].load(std::memory_order_relaxed); }
@@ -212,12 +218,13 @@ public:
     int instance = 0;
     Atom substitute(const Atom& a) const;    // replaces #0..#9 inside abstractions
 
-    // pfft~: the spectral frame being processed (set by pfft~ on its patch)
+    // pfft~: set on its patch, which then processes one whole frame (all
+    // bins) per dsp() call
     struct Spectral {
         int fftSize = 0, bins = 0;
-        int framePos = 0;       // bin index of the current 64-sample chunk
     } spectral;
     const Spectral* spectralContext() const;   // nearest pfft~ frame, or nullptr
+    int vectorSize() const;      // samples per dsp() call: 64, or a pfft~ frame's bins
 
     // called when any Patch is destroyed (the GUI closes its window)
     static std::function<void(Patch*)> onDestroyed;

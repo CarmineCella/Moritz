@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Carmine-Emanuele Cella. SPDX-License-Identifier: BSD-2-Clause
 // objects_signal.cpp — oscillators, filters, signal math, delays, audio I/O
 
 #include "objects.h"

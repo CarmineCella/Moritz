@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Carmine-Emanuele Cella. SPDX-License-Identifier: BSD-2-Clause
 // gui.h — FLTK editor: canvas, main window, subpatcher windows
 #pragma once
 
@@ -119,6 +120,8 @@ public:
 
     // File
     void newPatch();
+    void closeFront();      // Cmd+W: the front subpatcher/console window, or the patch
+    void about();
     void openPatch();
     bool openFile(const std::string& path);
     bool save();

@@ -9,7 +9,7 @@
 
 APP        := minlsp
 BUNDLE     := $(APP).app
-VERSION    := 0.2
+VERSION    := 0.3
 
 FLTK_VER   := 1.4.4
 FLTK_URL   := https://github.com/fltk/fltk/releases/download/release-$(FLTK_VER)/fltk-$(FLTK_VER)-source.tar.gz
@@ -23,6 +23,8 @@ FLTK_SRC   := $(DEPS)/fltk-$(FLTK_VER)
 FLTK_BLD   := $(DEPS)/fltk-build
 FLTK_INST  := $(DEPS)/fltk
 FLTK_LIB   := $(FLTK_INST)/lib/libfltk.a
+FLTK_LIBS  := $(FLTK_INST)/lib/libfltk_images.a $(FLTK_INST)/lib/libfltk_png.a \
+              $(FLTK_INST)/lib/libfltk_z.a $(FLTK_LIB)
 MA_DIR     := $(DEPS)/miniaudio-$(MA_VER)
 MA_HDR     := $(MA_DIR)/miniaudio.h
 
@@ -94,7 +96,7 @@ $(BUILD)/%.o: src/%.cpp $(HEADERS) $(FLTK_LIB) $(MA_HDR)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
 $(APP): $(OBJECTS) $(BUILD)/miniaudio.o
-	$(CXX) $(LDFLAGS) $^ $(FLTK_LIB) $(FRAMEWORKS) -o $@
+	$(CXX) $(LDFLAGS) $^ $(FLTK_LIBS) $(FRAMEWORKS) -o $@
 
 # ---------------------------------------------------------------- bundle
 define INFO_PLIST
@@ -112,6 +114,8 @@ define INFO_PLIST
   <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
   <key>LSMinimumSystemVersion</key><string>$(MACOS_MIN)</string>
   <key>NSHighResolutionCapable</key><true/>
+  <key>CFBundleIconFile</key><string>minlsp</string>
+  <key>NSHumanReadableCopyright</key><string>Created by Carmine-Emanuele Cella (2026). BSD 2-Clause License.</string>
   <key>NSMicrophoneUsageDescription</key><string>minlsp uses audio input for the adc~ object.</string>
   <key>CFBundleDocumentTypes</key>
   <array>
@@ -126,12 +130,13 @@ define INFO_PLIST
 endef
 export INFO_PLIST
 
-$(BUNDLE): $(APP) $(wildcard examples/*.mlsp examples/sounds/*)
+$(BUNDLE): $(APP) $(wildcard examples/*.mlsp examples/sounds/* resources/*) LICENSE
 	@echo "==> creating $(BUNDLE)"
 	rm -rf $(BUNDLE)
 	mkdir -p $(BUNDLE)/Contents/MacOS $(BUNDLE)/Contents/Resources
 	cp $(APP) $(BUNDLE)/Contents/MacOS/$(APP)
 	cp -R examples $(BUNDLE)/Contents/Resources/ 2>/dev/null || true
+	cp resources/minlsp.icns resources/about.png LICENSE $(BUNDLE)/Contents/Resources/
 	echo "$$INFO_PLIST" > $(BUNDLE)/Contents/Info.plist
 	printf 'APPL????' > $(BUNDLE)/Contents/PkgInfo
 	codesign --force --sign - $(BUNDLE)

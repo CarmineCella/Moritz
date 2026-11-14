@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Carmine-Emanuele Cella. SPDX-License-Identifier: BSD-2-Clause
 // audio.cpp — the miniaudio engine driving Patch::process()
 
 #include "minlsp.h"

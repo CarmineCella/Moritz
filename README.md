@@ -51,7 +51,8 @@ The editor follows Max's conventions:
   edit mode). Undo, Save and the other menu commands work there too.
 - **Console**: Patch > Console (**Shift+Cmd+M**) shows what `print` objects
   print, plus errors such as a missing sound file or a bad `expr`.
-- **Undo/redo**: Cmd+Z and Shift+Cmd+Z.
+- **Undo/redo**: Cmd+Z and Shift+Cmd+Z. **Cmd+W** closes the front window:
+  a subpatcher or the console, or else the patch itself (asking to save).
 
 ## Objects
 
@@ -112,7 +113,7 @@ and `r` work too.
 | `index~ name`, `poke~ name` | Read or write a buffer~ at a sample index given as a signal |
 | `count~ [min max loop]` | Sample counter: bang starts it from `min`, `stop` stops it. It wraps at `max`, or stops there when `loop` is 0 |
 
-**Spectral** (inside a `pfft~` patch, a signal carries one frame: one bin per sample)
+**Spectral** (inside a `pfft~` patch each signal vector is one whole frame: one bin per sample)
 
 | Object | Description |
 | --- | --- |
@@ -120,7 +121,9 @@ and `r` work too.
 | `fftin~ n` | Real part, imaginary part and bin number of `pfft~` signal inlet `n` (bins 0 to size/2 - 1) |
 | `fftout~ n` | Real and imaginary parts for `pfft~` signal outlet `n` |
 | `cartopol~`, `poltocar~` | Real/imaginary to amplitude/phase, and back |
-| `framedelta~`, `frameaccum~ [wrap]` | Per bin: difference from the previous frame, and running sum (with `1`, kept in -pi..pi) |
+| `framedelta~`, `frameaccum~ [wrap]` | Per bin: difference from the previous frame, and running sum (with `1`, kept in -pi..pi). Where `frameaccum~`'s third inlet is not zero, that bin restarts from the value in its second inlet |
+| `pvlock~` | Phase vocoder resynthesis phase with identity phase locking: inlets amplitude, analysed phase, phase difference, reset. Each spectral peak advances by its own frequency and the bins around it keep their analysed offsets from it, so stretched sounds stay clean |
+| `lrshift~ n` | Shifts a frame by `n` bins, to combine bins with their neighbours |
 | `phasewrap~` | Wraps a phase into -pi..pi |
 
 **Analysis**
@@ -174,7 +177,9 @@ sending `; dsp start` or `; dsp stop`.
 | Object | Description |
 | --- | --- |
 | `p name` | Subpatcher, saved inside the parent's file |
-| `inlet`, `inlet~`, `outlet`, `outlet~` | A subpatcher's ports, numbered left to right by position |
+| `inlet`, `inlet~`, `outlet`, `outlet~` | A subpatcher's ports, numbered left to right by position (`in`, `in~`, `out`, `out~` are the same objects) |
+| `poly~ name voices [args]` | `voices` copies of the abstraction `name.mlsp`, with their signal outlets summed. `note ...` sends the rest of the message to a free voice, stealing the oldest note when all are busy; `target n` sends later messages to voice `n` only (`0` = all); `mute n 1/0` stops or restarts voice `n`; anything else goes to the target voice or to all |
+| `thispoly~` | Inside a `poly~` voice: outputs the voice number at load or on bang. The voice stays busy while the signal in its inlet (the envelope) is not zero; a number sets busy directly |
 | any `name` | An abstraction: the patch `name.mlsp`, found next to the patch (or in the bundled examples). Its arguments replace `#1`..`#9` inside it, and `#0` becomes a number unique to each copy, for local `send`/`receive`/`buffer~` names. Saving from its window writes the abstraction's file |
 
 **Interface**
@@ -204,7 +209,7 @@ box holds its contents as a nested `(patch ...)` form.
 `(connect from outlet to inlet)` connects two boxes, counting ports from 0.
 `;` starts a comment outside strings.
 
-`examples/` has eighteen demos, plus the abstractions they use. They are also inside the app bundle, and
+`examples/` has nineteen demos, plus the abstractions they use. They are also inside the app bundle, and
 File > Open starts there.
 
 - `sine.mlsp`: the patch from the spec, with frequency and volume controls.
@@ -231,13 +236,20 @@ File > Open starts there.
   envelopes on amplitude and index, and bell/brass/glass/gong presets.
 - `fm-bells.mlsp`: generative bells from two copies of the `fmvoice`
   abstraction (`fmvoice.mlsp`), each with its own harmonicity, index and decay.
-- `granulator.mlsp`: four copies of the `grain` abstraction (`grain.mlsp`)
-  granulating a sung phrase, with rate, pitch, position and spread.
+- `granulator.mlsp`: asynchronous granular synthesis: a scheduler
+  subpatcher fires grains at random intervals, positions and pans, and
+  `poly~` plays each in one of 32 `grainvoice.mlsp` voices (a Hann window
+  and read position driven by one `line~` ramp). Sliders and presets for
+  density, size, pitch, position and spread.
+- `poly-synth.mlsp`: `poly~` with eight voices of `polyvoice.mlsp` (detuned
+  saws, filter, pluck envelope feeding `thispoly~`), played by chord buttons
+  or a random arpeggiator, through a stereo delay.
 - `cross.mlsp`: cross synthesis in `pfft~` (`xsynth.mlsp`): a sawtooth chord
   takes on the spectral envelope of a voice.
-- `pvoc.mlsp`: a phase vocoder. `pv-rec.mlsp` analyses the phrase into two
-  buffers, and `pv-play.mlsp` resynthesises it at any speed, frozen or
-  backwards, without changing its pitch.
+- `pvoc.mlsp`: a phase vocoder. `pv-rec.mlsp` analyses the phrase into
+  buffers (amplitude, phase, phase difference), and `pv-play.mlsp`
+  resynthesises it at any speed, frozen or backwards, without changing its
+  pitch, using `pvlock~` to keep the partials coherent.
 
 `examples/sounds/bell.wav` was synthesized with minlsp itself, from
 `click~` and five `reson~` filters. `voice.wav` is a synthetic sung phrase
@@ -263,6 +275,10 @@ All sources are in `src/`:
   window, toolbar and subpatcher windows.
 - `main.cpp`: `main` and the `--render` mode.
 
+`resources/` holds the app icon and the image in the About box, drawn by
+`tools/make_icon.py` (numpy and Pillow; the results are committed, so the
+build doesn't need Python).
+
 The audio callback only ever `try_lock`s the patch. If the GUI is changing the
 graph at that moment, the callback outputs one block of silence instead of
 waiting. Values sent to signal inlets while audio runs go through atomics, and
@@ -271,12 +287,14 @@ waiting. Values sent to signal inlets while audio runs go through atomics, and
 Overdrive off). Signal feedback loops are refused when you connect, as in MSP,
 except through `tapin~`/`tapout~`.
 
-Subpatchers, abstractions and `pfft~` each own an inner patch. The top
+Subpatchers, abstractions and `pfft~` each own an inner patch, and `poly~`
+owns one per voice. The top
 patch owns everything shared (the DSP lock, the scheduler, audio I/O, and
 the `send`/`receive` and `buffer~` names, which are global as in Max), and
 an inner patch's signal chain runs inside its owner box. `pfft~` buffers
-its input, and every hop it runs the inner chain over the frame's bins in
-64-sample chunks, then overlap-adds the inverse FFT.
+its input, and every hop it runs the inner chain once over the whole frame
+(the inner patch's vector size is fftsize/2), then overlap-adds the
+inverse FFT.
 
 To run a patch offline for testing, use
 `minlsp --render patch.mlsp seconds [out.wav] [bang=<id>] [send=<id>:<message>] ...`
@@ -284,3 +302,8 @@ To run a patch offline for testing, use
 The scheduler follows sample time, so `metro` and the other timed objects work
 offline too. It prints the peak and RMS level of each channel, sends `print`
 output to stdout, and can write a WAV file.
+
+## License
+
+minlsp is released under the BSD 2-Clause License; see `LICENSE`.
+Created by Carmine-Emanuele Cella (2026).

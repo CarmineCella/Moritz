@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Carmine-Emanuele Cella. SPDX-License-Identifier: BSD-2-Clause
 // objects_patcher.cpp — patches inside patches and spectral processing
 //
 //   p name            subpatcher, saved inline in the parent's file
@@ -5,6 +6,7 @@
 //                     arguments replace #1..#9 inside, #0 is unique per copy
 //   inlet, inlet~     a subpatcher's inlets, ordered left to right
 //   outlet, outlet~   its outlets
+//   poly~ name n      n copies of an abstraction, with voice allocation
 //   pfft~ name N ov   runs abstraction name.mlsp once per FFT frame (size N,
 //                     overlap ov); inside, fftin~ / fftout~ give and take
 //                     the spectrum, one bin per sample
@@ -66,6 +68,17 @@ private:
 
 // ================================================================ p and abstractions
 
+// a patch's inlet and outlet boxes, ordered left to right
+void collectPorts(Patch& p, std::vector<InletBox*>& in, std::vector<OutletBox*>& out) {
+    for (auto& b : p.boxes) {
+        if (auto i = dynamic_cast<InletBox*>(b.get())) in.push_back(i);
+        if (auto o = dynamic_cast<OutletBox*>(b.get())) out.push_back(o);
+    }
+    auto byX = [](const Box* a, const Box* b) { return a->x < b->x; };
+    std::stable_sort(in.begin(), in.end(), byX);
+    std::stable_sort(out.begin(), out.end(), byX);
+}
+
 class SubpatchBox : public Box {
 public:
     explicit SubpatchBox(Patch* context) : child_(std::make_unique<Patch>()) {
@@ -119,18 +132,8 @@ public:
     }
 
 protected:
-    template <class In, class Out>
-    void collectAs(std::vector<In*>& in, std::vector<Out*>& out) {
-        for (auto& b : child_->boxes) {
-            if (auto i = dynamic_cast<In*>(b.get())) in.push_back(i);
-            if (auto o = dynamic_cast<Out*>(b.get())) out.push_back(o);
-        }
-        auto byX = [](const Box* a, const Box* b) { return a->x < b->x; };
-        std::stable_sort(in.begin(), in.end(), byX);
-        std::stable_sort(out.begin(), out.end(), byX);
-    }
     void collect(std::vector<InletBox*>& in, std::vector<OutletBox*>& out) {
-        collectAs(in, out);
+        collectPorts(*child_, in, out);
     }
     std::unique_ptr<Patch> child_;
 };
@@ -248,11 +251,7 @@ private:
             std::fill(ore_[(size_t)j].begin(), ore_[(size_t)j].end(), 0.f);
             std::fill(oim_[(size_t)j].begin(), oim_[(size_t)j].end(), 0.f);
         }
-        for (int pos = 0; pos < bins_; pos += dsp::kBlock) {
-            child_->spectral.framePos = pos;
-            child_->runChain(std::min(dsp::kBlock, bins_ - pos));
-        }
-        child_->spectral.framePos = 0;
+        child_->runChain(bins_);                         // the whole frame is one vector
         for (int j = 0; j < nOut_; ++j) {
             const float* r = ore_[(size_t)j].data();
             const float* m = oim_[(size_t)j].data();
@@ -291,15 +290,13 @@ public:
     int number() const { return n_; }
     void resolve() override { pf_ = findPfft(patch); }
     void dsp(int n) override {
-        const Patch::Spectral* sp = patch->spectralContext();
-        int pos = sp ? sp->framePos : 0;
         const float* re = pf_ ? pf_->inRe(n_ - 1) : nullptr;
         const float* im = pf_ ? pf_->inIm(n_ - 1) : nullptr;
         float *yr = sigOut(0), *yi = sigOut(1), *yb = sigOut(2);
         for (int i = 0; i < n; ++i) {
-            yr[i] = re ? re[pos + i] : 0.f;
-            yi[i] = im ? im[pos + i] : 0.f;
-            yb[i] = (float)(pos + i);
+            yr[i] = re ? re[i] : 0.f;
+            yi[i] = im ? im[i] : 0.f;
+            yb[i] = (float)i;
         }
     }
     static PfftBox* findPfft(Patch* p) {
@@ -329,8 +326,8 @@ public:
         const float* xr = sigIn(0, n);
         const float* xi = sigIn(1, n);
         for (int i = 0; i < n; ++i) {
-            re[sp->framePos + i] += xr[i];
-            im[sp->framePos + i] += xi[i];
+            re[i] += xr[i];
+            im[i] += xi[i];
         }
     }
 
@@ -372,6 +369,185 @@ void PfftBox::syncPorts() {
     }
 }
 
+// ================================================================ poly~
+
+// poly~ name voices [args...]: `voices` copies of the abstraction name.mlsp
+// (args become #1.. in each). Ports come from the inlets/outlets inside
+// (in, in~, out, out~ are the same objects); signal outlets of the voices
+// are summed. Messages to a control inlet:
+//   note ...        the rest goes to a free voice (or steals the oldest)
+//   target n        later messages go to voice n only (0 = all voices)
+//   mute n 1|0      stop/restart processing voice n (0 = all)
+//   anything else   to the target voice, or to all voices
+// A voice is busy from its note until the signal into its thispoly~
+// returns to zero (or thispoly~ gets 0).
+class PolyBox : public Box {
+public:
+    struct Voice {
+        std::unique_ptr<Patch> patch;
+        std::atomic<bool> busy{false}, muted{false}, loud{false};
+        uint64_t used = 0;              // note order, for stealing the oldest
+    };
+
+    PolyBox(const Message& a, Patch* context) : name_(argstr(a, 0)) {
+        int n = std::clamp((int)argf(a, 1, 1.f), 1, 128);
+        std::string path = findAbstraction(name_, context);
+        if (path.empty() && context) context->print("poly~: can't find " + name_ + ".mlsp");
+        for (int k = 0; k < n; ++k) {
+            auto v = std::make_unique<Voice>();
+            v->patch = std::make_unique<Patch>();
+            v->patch->parent = context;
+            v->patch->owner = this;
+            std::string err;
+            if (!path.empty() && (!loadAbstractionInto(*v->patch, path, tailOf(a, 2), err) || !err.empty()) && k == 0)
+                v->patch->print(path + ": " + err);
+            voices_.push_back(std::move(v));
+        }
+        setPorts({}, {});
+        syncPorts();
+    }
+    ~PolyBox() override { voices_.clear(); }
+
+    Patch* inner() const override { return voices_[0]->patch.get(); }
+    std::vector<Patch*> inners() const override {
+        std::vector<Patch*> v;
+        for (auto& x : voices_) v.push_back(x->patch.get());
+        return v;
+    }
+    void attached() override { for (auto& v : voices_) v->patch->parent = patch; }
+    void loadbang() override { for (auto& v : voices_) v->patch->loadbangAll(); }
+
+    void syncPorts() override {
+        std::vector<Port> ip, op;
+        for (size_t k = 0; k < voices_.size(); ++k) {
+            std::vector<InletBox*> in;
+            std::vector<OutletBox*> out;
+            collectPorts(*voices_[k]->patch, in, out);
+            for (size_t j = 0; j < in.size(); ++j) {
+                in[j]->index = (int)j;
+                if (k == 0) ip.push_back(in[j]->isSig() ? P::Signal : P::Control);
+            }
+            for (size_t j = 0; j < out.size(); ++j) {
+                out[j]->index = (int)j;
+                if (k == 0) op.push_back(out[j]->isSig() ? P::Signal : P::Control);
+            }
+        }
+        if (ip != ins || op != outs) setPorts(ip, op);
+    }
+
+    void message(int in, const Message& m) override {
+        if (in < 0 || in >= numIns()) return;
+        if (ins[in] == P::Signal) {
+            if (m[0].isFloat()) setScalar(in, m[0].f);
+            return;
+        }
+        if (m[0].is("note")) {
+            int v = pick();
+            Voice& x = *voices_[(size_t)v];
+            x.used = ++clock_;
+            x.loud.store(false);
+            x.busy.store(true);
+            deliver(v, in, tailOf(m));
+        } else if (m[0].is("target")) {
+            target_ = std::clamp((int)argf(m, 1, 0.f), 0, (int)voices_.size());
+        } else if (m[0].is("mute")) {
+            int v = (int)argf(m, 1, 0.f);
+            bool on = argf(m, 2, 1.f) != 0.f;
+            for (int k = 0; k < (int)voices_.size(); ++k)
+                if (v == 0 || v == k + 1) voices_[(size_t)k]->muted.store(on);
+        } else if (target_ > 0) {
+            deliver(target_ - 1, in, m);
+        } else {
+            for (int k = 0; k < (int)voices_.size(); ++k) deliver(k, in, m);
+        }
+    }
+
+    void dsp(int n) override {
+        for (int k = 0; k < numOuts(); ++k)
+            if (outs[k] == P::Signal) dsp::fill(sigOut(k), 0.f, n);
+        for (auto& v : voices_)
+            if (!v->muted.load(std::memory_order_relaxed)) v->patch->runChain(n);
+    }
+
+    // for thispoly~
+    int voiceOf(const Patch* p) const {
+        for (; p; p = p->parent)
+            for (size_t k = 0; k < voices_.size(); ++k)
+                if (voices_[k]->patch.get() == p) return (int)k;
+        return -1;
+    }
+    Voice* voice(int k) { return k >= 0 && k < (int)voices_.size() ? voices_[(size_t)k].get() : nullptr; }
+    int busyCount() const {
+        int c = 0;
+        for (auto& v : voices_) c += v->busy.load();
+        return c;
+    }
+
+private:
+    int pick() {
+        int best = -1;
+        for (int k = 0; k < (int)voices_.size(); ++k)       // the free voice idle longest
+            if (!voices_[(size_t)k]->busy.load() &&
+                (best < 0 || voices_[(size_t)k]->used < voices_[(size_t)best]->used))
+                best = k;
+        if (best >= 0) return best;
+        best = 0;                                           // all busy: steal the oldest note
+        for (int k = 1; k < (int)voices_.size(); ++k)
+            if (voices_[(size_t)k]->used < voices_[(size_t)best]->used) best = k;
+        return best;
+    }
+    void deliver(int v, int in, const Message& m) {
+        if (m.empty()) return;
+        for (auto& b : voices_[(size_t)v]->patch->boxes)
+            if (auto ib = dynamic_cast<InletBox*>(b.get()))
+                if (ib->index == in && !ib->isSig()) ib->receive(m);
+    }
+
+    std::string name_;
+    std::vector<std::unique_ptr<Voice>> voices_;
+    int target_ = 0;
+    uint64_t clock_ = 0;
+};
+
+// thispoly~: inside a poly~ voice. Outputs the voice number (from 1) on
+// bang and at load. The voice stays busy while the signal in its inlet is
+// not zero (connect the amplitude envelope); a number sets busy directly,
+// "mute 1|0" mutes the voice.
+class ThispolyBox : public Box {
+public:
+    ThispolyBox() { setPorts({P::Signal}, {P::Control}); }
+    void resolve() override {
+        poly_ = nullptr;
+        for (Patch* p = patch; p && !poly_; p = p->parent) poly_ = dynamic_cast<PolyBox*>(p->owner);
+        voice_ = poly_ ? poly_->voiceOf(patch) : -1;
+    }
+    void loadbang() override { outletFloat(0, (float)(voice_ + 1)); }
+    void message(int, const Message& m) override {
+        if (m[0].is("bang")) { outletFloat(0, (float)(voice_ + 1)); return; }
+        PolyBox::Voice* v = poly_ ? poly_->voice(voice_) : nullptr;
+        if (!v) return;
+        if (m[0].isFloat()) v->busy.store(m[0].f != 0.f);
+        else if (m[0].is("mute")) v->muted.store(argf(m, 1, 1.f) != 0.f);
+    }
+    void dsp(int n) override {
+        PolyBox::Voice* v = poly_ ? poly_->voice(voice_) : nullptr;
+        if (!v || inSrc[0].empty()) return;
+        const float* x = sigIn(0, n);
+        bool sound = false;
+        for (int i = 0; i < n && !sound; ++i) sound = std::fabs(x[i]) > 1e-6f;
+        if (sound) {
+            v->loud.store(true);
+            v->busy.store(true);
+        } else if (v->loud.exchange(false)) {
+            v->busy.store(false);                // the envelope has finished
+        }
+    }
+
+private:
+    PolyBox* poly_ = nullptr;
+    int voice_ = -1;
+};
+
 // ================================================================ spectral tools
 
 // cartopol~: real, imaginary -> amplitude, phase
@@ -412,7 +588,7 @@ protected:
         const Patch::Spectral* sp = patch->spectralContext();
         int size = sp ? sp->bins : 1;
         if ((int)mem_.size() != size) mem_.assign((size_t)size, 0.f);
-        return mem_[(size_t)(sp ? (sp->framePos + i) % size : 0)];
+        return mem_[(size_t)(sp ? i % size : 0)];
     }
     std::vector<float> mem_;
 };
@@ -433,18 +609,25 @@ public:
 };
 
 // frameaccum~ [wrap]: running sum per bin; with wrap 1 the sum is kept
-// in -pi..pi (phase accumulation for a phase vocoder)
+// in -pi..pi (phase accumulation for a phase vocoder). Where the third
+// inlet is not zero, that bin restarts from the value in the second inlet
+// instead (for example the analysed phase, after a jump in the sound).
 class FrameaccumBox : public FrameMemory {
 public:
     explicit FrameaccumBox(const Message& a) : wrap_(argf(a, 0, 0.f) != 0.f) {
-        setPorts({P::Signal}, {P::Signal});
+        setPorts({P::Signal, P::Signal, P::Signal}, {P::Signal});
+    }
+    void message(int in, const Message& m) override {
+        if (m[0].isFloat()) setScalar(in, m[0].f);
     }
     void dsp(int n) override {
         const float* x = sigIn(0, n);
+        const float* to = sigIn(1, n);
+        const float* reset = sigIn(2, n);
         float* y = sigOut(0);
         for (int i = 0; i < n; ++i) {
             float& m = slot(i);
-            m += x[i];
+            m = reset[i] != 0.f ? to[i] : m + x[i];
             if (wrap_) m = dsp::wrapPhase(m);
             y[i] = m;
         }
@@ -452,6 +635,82 @@ public:
 
 private:
     bool wrap_;
+};
+
+// pvlock~: phase vocoder resynthesis phase with identity phase locking
+// (Laroche and Dolson). Inlets: amplitude, analysed phase, phase difference
+// from the previous analysis frame, reset. For each frame it finds the
+// amplitude peaks; a peak advances its own previous output phase by its
+// phase difference, and every other bin takes the phase of its peak plus
+// the analysed offset between the two. That keeps the bins of one partial
+// in step, so time-stretched sounds stay clean. Where reset is not zero the
+// output is the analysed phase. Needs a whole frame: use it inside pfft~.
+class PvlockBox : public Box {
+public:
+    PvlockBox() { setPorts({P::Signal, P::Signal, P::Signal, P::Signal}, {P::Signal}); }
+    void message(int in, const Message& m) override {
+        if (m[0].isFloat()) setScalar(in, m[0].f);
+    }
+    void dsp(int n) override {
+        const float *a = sigIn(0, n), *ph = sigIn(1, n), *d = sigIn(2, n), *rs = sigIn(3, n);
+        float* y = sigOut(0);
+        if ((int)prev_.size() != n) prev_.assign((size_t)n, 0.f);
+        bool reset = false;
+        for (int k = 0; k < n && !reset; ++k) reset = rs[k] != 0.f;
+        if (reset) {
+            for (int k = 0; k < n; ++k) y[k] = prev_[(size_t)k] = ph[k];
+            return;
+        }
+        peaks_.clear();
+        for (int k = 1; k + 1 < n; ++k)
+            if (a[k] > a[k - 1] && a[k] >= a[k + 1]) peaks_.push_back(k);
+        if (peaks_.empty()) {
+            for (int k = 0; k < n; ++k) y[k] = prev_[(size_t)k] = dsp::wrapPhase(prev_[(size_t)k] + d[k]);
+            return;
+        }
+        int start = 0;
+        for (size_t j = 0; j < peaks_.size(); ++j) {
+            int p = peaks_[j], end = n;
+            if (j + 1 < peaks_.size()) {                 // region ends at the lowest bin between peaks
+                int q = peaks_[j + 1];
+                end = p;
+                for (int k = p; k <= q; ++k)
+                    if (a[k] < a[end]) end = k;
+            }
+            float th = dsp::wrapPhase(prev_[(size_t)p] + d[p]);
+            for (int k = start; k < end; ++k) y[k] = dsp::wrapPhase(th + ph[k] - ph[p]);
+            start = end;
+        }
+        std::copy(y, y + n, prev_.begin());
+    }
+
+private:
+    std::vector<float> prev_;
+    std::vector<int> peaks_;
+};
+
+// lrshift~ n: shifts the signal vector n samples (positive = right); inside
+// pfft~ it moves each bin's value to the bin n above, so bins can be
+// combined with their neighbours. Samples shifted in are 0.
+class LrshiftBox : public Box {
+public:
+    explicit LrshiftBox(const Message& a) : n_((int)argf(a, 0, 0.f)) {
+        setPorts({P::Signal}, {P::Signal});
+    }
+    void message(int, const Message& m) override {
+        if (m[0].isFloat()) setScalar(0, m[0].f);
+    }
+    void dsp(int n) override {
+        const float* x = sigIn(0, n);
+        float* y = sigOut(0);
+        for (int i = 0; i < n; ++i) {
+            int j = i - n_;
+            y[i] = j >= 0 && j < n ? x[j] : 0.f;
+        }
+    }
+
+private:
+    int n_;
 };
 
 // phasewrap~: wraps into -pi..pi
@@ -534,8 +793,8 @@ private:
 
 // count~ [min max loop]: a sample counter. bang starts it from min, a
 // number from that value, stop stops it. It wraps to min at max when loop
-// is 1 (default) and otherwise stops there. Inside pfft~ a restart waits
-// for the start of the next frame so the count stays aligned to bins.
+// is 1 (default) and otherwise stops there. Inside pfft~ it restarts at a
+// frame boundary, so the count stays aligned to bins.
 class CountBox : public Box {
 public:
     explicit CountBox(const Message& a) {
@@ -551,11 +810,8 @@ public:
         else if (m[0].is("stop")) stop_.store(true);
     }
     void dsp(int n) override {
-        const Patch::Spectral* sp = patch->spectralContext();
-        if (!sp || sp->framePos == 0) {
-            double s = startAt_.exchange(-1e30);
-            if (s > -1e29) { v_ = (long)s; running_ = true; }
-        }
+        double s = startAt_.exchange(-1e30);    // inside pfft~ a call is a whole frame
+        if (s > -1e29) { v_ = (long)s; running_ = true; }
         if (stop_.exchange(false)) running_ = false;
         float* y = sigOut(0);
         for (int i = 0; i < n; ++i) {
@@ -642,13 +898,21 @@ void registerPatcherObjects(ClassTable& t) {
         {"inlet~", "Patching", "subpatcher signal inlet", [](M, Patch*) { return std::make_unique<InletBox>(true); }},
         {"outlet", "Patching", "subpatcher outlet", [](M, Patch*) { return std::make_unique<OutletBox>(false); }},
         {"outlet~", "Patching", "subpatcher signal outlet", [](M, Patch*) { return std::make_unique<OutletBox>(true); }},
+        {"poly~", "Patching", "polyphony: name voices [args]", [](M a, Patch* c) { return std::make_unique<PolyBox>(a, c); }},
+        {"thispoly~", "Patching", "voice number; busy while its signal sounds", plain<ThispolyBox>()},
+        {"in", "", "inlet (poly~ name)", [](M, Patch*) { return std::make_unique<InletBox>(false); }},
+        {"in~", "", "inlet~ (poly~ name)", [](M, Patch*) { return std::make_unique<InletBox>(true); }},
+        {"out", "", "outlet (poly~ name)", [](M, Patch*) { return std::make_unique<OutletBox>(false); }},
+        {"out~", "", "outlet~ (poly~ name)", [](M, Patch*) { return std::make_unique<OutletBox>(true); }},
         {"pfft~", "Spectral", "FFT patcher: name fftsize overlap", [](M a, Patch* c) { return std::make_unique<PfftBox>(a, c); }},
         {"fftin~", "Spectral", "pfft~ input: real imag bin", with<FftinBox>()},
         {"fftout~", "Spectral", "pfft~ output: real imag", with<FftoutBox>()},
         {"cartopol~", "Spectral", "real/imag to amplitude/phase", plain<CartopolBox>()},
         {"poltocar~", "Spectral", "amplitude/phase to real/imag", plain<PoltocarBox>()},
         {"framedelta~", "Spectral", "difference from the previous frame", plain<FramedeltaBox>()},
-        {"frameaccum~", "Spectral", "running sum per bin [wrap]", with<FrameaccumBox>()},
+        {"frameaccum~", "Spectral", "running sum per bin [wrap]; reset value, reset", with<FrameaccumBox>()},
+        {"pvlock~", "Spectral", "phase vocoder phase with peak locking", plain<PvlockBox>()},
+        {"lrshift~", "Spectral", "shift a frame by n bins (neighbours)", with<LrshiftBox>()},
         {"phasewrap~", "Spectral", "wrap a phase to -pi..pi", plain<PhasewrapBox>()},
         {"expr~", "Signal Math", "signal expression: $v1 * 2", with<ExprSigBox>()},
         {"sah~", "Signal Math", "sample and hold on a rising trigger", with<SahBox>()},
