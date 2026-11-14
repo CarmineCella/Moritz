@@ -1,0 +1,25 @@
+; xsynth.mlsp - spectral patch for cross.mlsp, run by pfft~ once per FFT
+; frame, one bin per sample. The carrier's spectrum (fftin~ 1) is shaped by
+; the amplitude spectrum of the modulator (fftin~ 2).
+(patch
+  (obj c0 comment "cross synthesis: carrier bins x modulator amplitude" (pos 20 10))
+  (obj car fftin~ 1 (pos 20 45))
+  (obj mod fftin~ 2 (pos 240 45))
+  (obj amp cartopol~ (pos 240 90))
+  (obj c1 comment "amplitude, phase" (pos 330 91))
+  (obj gin inlet (pos 400 130))
+  (obj c2 comment "gain" (pos 450 131))
+  (obj gain *~ 0.01 (pos 240 170))
+  (obj re *~ (pos 20 220))
+  (obj im *~ (pos 110 220))
+  (obj out fftout~ 1 (pos 20 270))
+  (connect mod 0 amp 0)
+  (connect mod 1 amp 1)
+  (connect amp 0 gain 0)
+  (connect gin 0 gain 1)
+  (connect car 0 re 0)
+  (connect car 1 im 0)
+  (connect gain 0 re 1)
+  (connect gain 0 im 1)
+  (connect re 0 out 0)
+  (connect im 0 out 1))

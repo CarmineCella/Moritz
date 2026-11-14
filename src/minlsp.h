@@ -1,7 +1,7 @@
 // minlsp.h — a minimal Max/MSP-like patcher
 //
-// Patch model (boxes, connections, messages), patch file format, audio
-// engine and GUI declarations. DSP kernels live in dsp.h.
+// Patch model (boxes, connections, messages), patch file format and audio
+// engine. DSP kernels live in dsp.h, the GUI in gui.h.
 //
 // Threading model
 //   * Everything except Patch::process() runs on the GUI (main) thread:
@@ -15,6 +15,12 @@
 //     snapshot~) are atomics read by the GUI.
 //   * Timed objects (metro, delay, line, ...) use the patch's scheduler,
 //     which runs on the GUI thread (like Max with Overdrive off).
+//
+// Nesting
+//   * Subpatchers (p), abstractions and pfft~ own a child Patch. The top
+//     patch (root) owns everything shared: the DSP lock, sample rate,
+//     scheduler, audio I/O, send/receive and buffer~ names. A child's signal
+//     chain is run by its owner box from inside the root's chain.
 
 #pragma once
 
@@ -28,15 +34,6 @@
 
 #include "dsp.h"
 #include "miniaudio.h"
-
-#include <FL/Fl.H>
-#include <FL/Fl_Box.H>
-#include <FL/Fl_Double_Window.H>
-#include <FL/Fl_Group.H>
-#include <FL/Fl_Input.H>
-#include <FL/Fl_Sys_Menu_Bar.H>
-#include <FL/Fl_Text_Buffer.H>
-#include <FL/Fl_Text_Display.H>
 
 namespace mlsp {
 
@@ -98,6 +95,11 @@ public:
     std::string id;          // name used in the patch file
     std::string cls;         // object class, e.g. "cycle~"
     Message args;            // creation arguments
+    // Inside an abstraction, arguments as written (with #1, #0 ...): shown,
+    // edited and saved instead of the substituted ones the box was made from.
+    Message rawArgs;
+    bool keepRaw = false;
+    std::string label() const;   // text shown on the canvas
     int x = 0, y = 0, w = 60, h = 22;
     Patch* patch = nullptr;
     BoxKind kind = BoxKind::Object;
@@ -112,6 +114,12 @@ public:
     virtual bool wantsInput() const { return false; }     // uses audio input (adc~)
     virtual void attached() {}         // box joined a patch (GUI thread): load files, start timers
     virtual void resolve() {}          // during compile, DSP lock held: look up buffers/taps
+
+    // ---- boxes holding a patch (p, abstractions, pfft~)
+    virtual Patch* inner() const { return nullptr; }
+    virtual bool savesInner() const { return false; }   // written inline as (patch ...)
+    virtual void syncPorts() {}        // during compile: ports follow the inner inlets/outlets
+    virtual void loadInner(const SExpr& form, std::vector<std::string>& warnings) {}
 
     // ---- interface objects (BoxKind::UI): drawn and clicked in locked mode
     virtual void uiSize(int& w, int& h) const {}
@@ -155,9 +163,17 @@ struct Connection {
     bool selected = false;
 };
 
-// Creates a box of class `cls`. Unknown classes produce a "broken" box that
-// keeps its text so the patch round-trips unchanged.
-std::unique_ptr<Box> makeBox(const std::string& cls, const Message& args);
+// Creates a box of class `cls`. `context` is the patch it is created for:
+// it is used to find abstractions (cls.mlsp next to the patch). Unknown
+// classes produce a "broken" box that keeps its text so the patch
+// round-trips unchanged.
+std::unique_ptr<Box> makeBox(const std::string& cls, const Message& args,
+                             Patch* context = nullptr);
+
+// Extra folders searched for abstractions after the patch's own folder.
+std::vector<std::string>& abstractionPath();
+std::string findAbstraction(const std::string& name, const Patch* context);
+bool readFile(const std::string& path, std::string& out);
 
 // Checks port ranges, signal/control compatibility and duplicates.
 bool canConnect(const std::vector<Connection>& conns, Box* from, int outlet, Box* to,
@@ -179,6 +195,33 @@ public:
     std::vector<std::unique_ptr<Box>> boxes;
     std::vector<Connection> conns;
 
+    // ---- nesting
+    Patch* parent = nullptr;     // enclosing patch; nullptr for the top patch
+    Box* owner = nullptr;        // the p / abstraction / pfft~ box holding this patch
+    Patch* root() { Patch* p = this; while (p->parent) p = p->parent; return p; }
+    const Patch* root() const { const Patch* p = this; while (p->parent) p = p->parent; return p; }
+    std::mutex& mutex() { return root()->dspMutex; }
+    void forEachBox(const std::function<void(Box*)>& fn);   // this patch and all inner ones
+    void runChain(int n) { for (Box* b : chain_) b->dsp(n); }   // called by the owner box
+    void structureChanged();     // notify this patch and the ones around it
+
+    // abstractions: file, arguments (#1..#9) and instance number (#0)
+    bool isAbstraction = false;
+    std::string file;
+    Message absArgs;
+    int instance = 0;
+    Atom substitute(const Atom& a) const;    // replaces #0..#9 inside abstractions
+
+    // pfft~: the spectral frame being processed (set by pfft~ on its patch)
+    struct Spectral {
+        int fftSize = 0, bins = 0;
+        int framePos = 0;       // bin index of the current 64-sample chunk
+    } spectral;
+    const Spectral* spectralContext() const;   // nearest pfft~ frame, or nullptr
+
+    // called when any Patch is destroyed (the GUI closes its window)
+    static std::function<void(Patch*)> onDestroyed;
+
     // GUI hooks
     std::function<void()> onRedraw;
     std::function<void(const std::string&)> onStatus;
@@ -188,6 +231,9 @@ public:
     std::function<void()> onSchedule;    // timer queue changed: re-arm the GUI timer
 
     // ---- editing (GUI thread)
+    // Makes a box for this patch from arguments as written: inside an
+    // abstraction #0..#9 are substituted (and the written form kept).
+    std::unique_ptr<Box> create(const std::string& cls, const Message& written);
     Box* addBox(std::unique_ptr<Box> b, int x, int y, const std::string& id = "");
     Box* replaceBox(Box* old, std::unique_ptr<Box> nb);   // keeps valid connections
     void removeBoxes(const std::vector<Box*>& bs);
@@ -198,20 +244,24 @@ public:
     std::string uniqueId(const std::string& cls) const;
 
     // ---- file format
-    std::string serialize() const;
+    std::string serialize(int indent = 0) const;
     bool load(const std::string& src, std::string& err);
+    bool load(const SExpr& form, std::string& err);   // a parsed (patch ...) form
     void loadbangAll();
 
     // ---- messaging (GUI thread)
     void sendTo(const std::string& name, const Message& m);  // send / ; remote
     int depth = 0;                                           // recursion guard
-    void status(const std::string& s) { if (onStatus) onStatus(s); }
+    void status(const std::string& s) {
+        if (onStatus) onStatus(s);
+        else if (parent) parent->status(s);
+    }
     void redraw() { if (onRedraw) onRedraw(); }
     void print(const std::string& s);
 
     // ---- scheduler (GUI thread). Times are in seconds on `clock`.
-    std::function<double()> clock;
-    double time() const { return clock ? clock() : 0.0; }
+    std::function<double()> clock;     // set on the root
+    double time() const { return root()->clock ? root()->clock() : 0.0; }
     void scheduleAt(Box* owner, double t, std::function<void()> fn);
     void schedule(Box* owner, double delay, std::function<void()> fn) {
         scheduleAt(owner, time() + delay, std::move(fn));
@@ -221,7 +271,7 @@ public:
     double nextDue() const;   // +inf when idle
 
     // ---- files
-    std::string dir;          // folder of the patch file, for relative paths
+    std::string dir;          // folder of the patch file, for relative paths ("" = parent's)
     std::string resolvePath(const std::string& p) const;
     void rebuild();           // recompile after a box changed what it refers to
 
@@ -241,7 +291,8 @@ public:
     std::mutex dspMutex;
 
 private:
-    void compile();        // caller holds dspMutex
+    void compile();        // caller holds the DSP lock; compiles inner patches too
+    void recompile() { root()->compile(); }
     bool reaches(Box* from, Box* to) const;   // signal path from -> to
     std::vector<Box*> chain_;
     struct Timer {
@@ -291,130 +342,6 @@ private:
     ma_context context_;
     ma_device device_;
     bool contextOk_ = false, running_ = false, duplex_ = false;
-};
-
-// ====================================================================== GUI
-
-class MainWindow;
-
-class Canvas : public Fl_Group {
-public:
-    Canvas(int x, int y, int w, int h, MainWindow* win);
-
-    void draw() override;
-    int handle(int e) override;
-
-    void setLocked(bool l);
-    bool locked() const { return locked_; }
-    void newBoxAt(const std::string& cls, int x, int y);   // Patch > New
-    void newBoxAtMouse(const std::string& cls);
-    void deleteSelection();
-    void selectAll();
-    void commitEdit();
-    void cancelEdit();
-    void reset();          // forget selection and edit state (after load/undo)
-    void duplicateSelection();   // option-drag: copies boxes and their inner cables
-
-    // object-name completion while typing in a new/edited object box
-    void updateSuggestions();
-    bool hasSuggestions() const { return !sugg_.empty(); }
-    void moveSuggestion(int delta);
-    bool acceptSuggestion(bool commit);
-    void clearSuggestions();
-
-private:
-    struct Hit {
-        enum What { None, Body, Inlet, Outlet, Cable } what = None;
-        Box* box = nullptr;
-        int port = -1;
-        int cable = -1;
-    };
-    Hit hitTest(int mx, int my) const;
-    int inletAt(Box* b, int mx) const;
-    void portPos(Box* b, bool out, int i, int& px, int& py) const;
-    void layoutBox(Box* b) const;
-    void drawBox(Box* b);
-    void beginEdit(Box* b, bool isNew);
-    void clearSelection();
-    std::vector<Box*> selectedBoxes() const;
-    void numberDrag(int dy);
-    static void editCb(Fl_Widget* w, void* data);
-
-    MainWindow* win_;
-    bool locked_ = false;
-    Fl_Input* editor_;
-    Box* editing_ = nullptr;
-    bool editingNew_ = false;
-
-    enum class Drag { None, Move, Cable, Rubber, Number, UI } drag_ = Drag::None;
-    int pressX_ = 0, pressY_ = 0, curX_ = 0, curY_ = 0;
-    bool moved_ = false;
-    Box* dragBox_ = nullptr;
-    int dragPort_ = 0;
-    double dragStartValue_ = 0.0, dragStep_ = 1.0;
-    Box* typingBox_ = nullptr;     // number box receiving typed digits
-    std::string typed_;
-    int mouseX_ = 60, mouseY_ = 60;
-
-    std::vector<std::string> sugg_;
-    int suggSel_ = 0;
-    int suggX_ = 0, suggY_ = 0, suggW_ = 0;   // popup geometry (window coords)
-    void drawSuggestions();
-    int suggestionAt(int ex, int ey) const;
-};
-
-class MainWindow : public Fl_Double_Window {
-public:
-    MainWindow(int w, int h);
-    ~MainWindow() override;
-
-    Patch patch;
-    AudioEngine audio;
-
-    // File
-    void newPatch();
-    void openPatch();
-    bool openFile(const std::string& path);
-    bool save();
-    bool saveAs();
-    void quit();
-    // Edit
-    void pushUndo();
-    void dropUndo();     // discard the last pushUndo() when nothing changed
-    void undo();
-    void redo();
-    void markDirty();
-    // Patch
-    void toggleLock();
-    void toggleAudio();
-    void setAudio(bool on);
-    void audioSetup();
-
-    void setStatus(const std::string& s);
-    void refreshStatus();
-    void print(const std::string& s);   // append to the console
-    void showConsole();
-    void armTimer();                    // schedule the next patch timer event
-    void updateTitle();
-    bool confirmDiscard();
-    int handle(int e) override;
-
-    Canvas* canvas = nullptr;
-
-private:
-    void buildMenu();
-    void restore(const std::string& snapshot);
-
-    Fl_Sys_Menu_Bar* menu_;
-    Fl_Box* statusBar_;
-    std::string path_;
-    bool dirty_ = false;
-    std::vector<std::string> undo_, redo_;
-    std::string message_;
-    Fl_Double_Window* console_ = nullptr;
-    Fl_Text_Display* consoleView_ = nullptr;
-    Fl_Text_Buffer* consoleBuf_ = nullptr;
-    std::vector<std::string> consoleLines_;   // kept until the console opens
 };
 
 }  // namespace mlsp

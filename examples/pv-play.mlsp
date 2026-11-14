@@ -1,0 +1,30 @@
+; pv-play.mlsp - phase vocoder resynthesis, run by pfft~ in pvoc.mlsp.
+; A frame position advances by "speed" frames per frame (frameaccum~ of a
+; constant). Each bin reads its stored amplitude and phase difference at
+; that frame, and frameaccum~ integrates the phase differences, so pitch
+; stays put while time stretches, stops or runs backwards.
+(patch
+  (obj c0 comment "resynthesis: read frames at any speed, accumulate phase" (pos 20 10))
+  (obj in fftin~ 1 (pos 20 45))
+  (obj c1 comment "third outlet: bin number" (pos 110 46))
+  (obj spd inlet (pos 300 45))
+  (obj c2 comment "speed (frames per frame)" (pos 350 46))
+  (obj s sig~ 0.25 (pos 300 85))
+  (obj pos frameaccum~ (pos 300 125))
+  (obj idx expr~ "int(fmod(fmod($v1, 400) + 400, 400)) * 512 + $v2" (pos 20 170))
+  (obj ia index~ pvamp (pos 20 215))
+  (obj ip index~ pvphase (pos 200 215))
+  (obj acc frameaccum~ 1 (pos 200 255))
+  (obj pc poltocar~ (pos 20 300))
+  (obj out fftout~ 1 (pos 20 345))
+  (connect spd 0 s 0)
+  (connect s 0 pos 0)
+  (connect pos 0 idx 0)
+  (connect in 2 idx 1)
+  (connect idx 0 ia 0)
+  (connect idx 0 ip 0)
+  (connect ip 0 acc 0)
+  (connect ia 0 pc 0)
+  (connect acc 0 pc 1)
+  (connect pc 0 out 0)
+  (connect pc 1 out 1))

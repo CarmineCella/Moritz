@@ -41,9 +41,14 @@ The editor follows Max's conventions:
   - Drag a number box up or down. On a `flonum`, dragging left of the decimal
     point changes it by 1 and right of it by 0.01. You can also click the box,
     type a value and press Enter.
-- **Audio**: Patch > Audio On (**Cmd+/**), and Patch > Audio Setup... to pick
+- **Audio**: the **Audio** button in the toolbar (or Patch > Audio On,
+  **Cmd+/**) starts and stops audio; it turns green while audio runs. The
+  **Edit** button next to it switches edit mode. Patch > Audio Setup... picks
   devices, sample rate and buffer size. Audio input opens only while the patch
   contains `adc~`; macOS asks for microphone access the first time.
+- **Subpatchers**: in locked mode, double-click a `p`, an abstraction or a
+  `pfft~` to open it in its own window (Cmd+double-click does the same in
+  edit mode). Undo, Save and the other menu commands work there too.
 - **Console**: Patch > Console (**Shift+Cmd+M**) shows what `print` objects
   print, plus errors such as a missing sound file or a bad `expr`.
 - **Undo/redo**: Cmd+Z and Shift+Cmd+Z.
@@ -83,6 +88,8 @@ and `r` work too.
 | --- | --- |
 | `+~ -~ *~ /~ [arg]` | Signal arithmetic |
 | `clip~ [min max]`, `abs~`, `tanh~` | Limiting, rectifying and soft saturation |
+| `expr~ ...` | `expr` evaluated per sample. `$v1`..`$v9` are the inlets, which take signals or floats |
+| `sah~ [threshold]` | Sample and hold: keeps the left signal each time the right one rises above the threshold |
 
 **Delay**
 
@@ -102,6 +109,19 @@ and `r` work too.
 | `groove~ name` | Variable-speed playback; the rate is the signal in the left inlet. A float there jumps to that position in ms. `loop 1` turns looping on, and inlets 2 and 3 set the loop points. The last outlet is a sync ramp |
 | `record~ name` | Records into a buffer: `1` starts, `0` stops, `loop 1` wraps around at the end |
 | `sfplay~ [channels]` | Plays a file directly: `open file`, `1`/`0`, `loop 1`, `speed x` |
+| `index~ name`, `poke~ name` | Read or write a buffer~ at a sample index given as a signal |
+| `count~ [min max loop]` | Sample counter: bang starts it from `min`, `stop` stops it. It wraps at `max`, or stops there when `loop` is 0 |
+
+**Spectral** (inside a `pfft~` patch, a signal carries one frame: one bin per sample)
+
+| Object | Description |
+| --- | --- |
+| `pfft~ name [size overlap]` | Runs the abstraction `name.mlsp` once per FFT frame (default 512, overlap 4, Hann window). Its signal inlets and outlets come from the `fftin~` and `fftout~` objects inside; `inlet` and `outlet` add control ports after them. Latency is one frame |
+| `fftin~ n` | Real part, imaginary part and bin number of `pfft~` signal inlet `n` (bins 0 to size/2 - 1) |
+| `fftout~ n` | Real and imaginary parts for `pfft~` signal outlet `n` |
+| `cartopol~`, `poltocar~` | Real/imaginary to amplitude/phase, and back |
+| `framedelta~`, `frameaccum~ [wrap]` | Per bin: difference from the previous frame, and running sum (with `1`, kept in -pi..pi) |
+| `phasewrap~` | Wraps a phase into -pi..pi |
 
 **Analysis**
 
@@ -149,6 +169,14 @@ sending `; dsp start` or `; dsp stop`.
 | `send name`, `receive name` | Wireless messages |
 | `print [name]` | Prints to the console |
 
+**Patching**
+
+| Object | Description |
+| --- | --- |
+| `p name` | Subpatcher, saved inside the parent's file |
+| `inlet`, `inlet~`, `outlet`, `outlet~` | A subpatcher's ports, numbered left to right by position |
+| any `name` | An abstraction: the patch `name.mlsp`, found next to the patch (or in the bundled examples). Its arguments replace `#1`..`#9` inside it, and `#0` becomes a number unique to each copy, for local `send`/`receive`/`buffer~` names. Saving from its window writes the abstraction's file |
+
 **Interface**
 
 | Object | Description |
@@ -171,11 +199,12 @@ sending `; dsp start` or `; dsp stop`.
   (connect gain 0 out 0))
 ```
 
-`(obj id class args...)` creates a box, and `(pos x y)` is optional.
+`(obj id class args...)` creates a box, and `(pos x y)` is optional. A `p`
+box holds its contents as a nested `(patch ...)` form.
 `(connect from outlet to inlet)` connects two boxes, counting ports from 0.
 `;` starts a comment outside strings.
 
-`examples/` has thirteen demos. They are also inside the app bundle, and
+`examples/` has eighteen demos, plus the abstractions they use. They are also inside the app bundle, and
 File > Open starts there.
 
 - `sine.mlsp`: the patch from the spec, with frequency and volume controls.
@@ -198,18 +227,41 @@ File > Open starts there.
   `sfplay~`.
 - `lfo.mlsp`: a tremolo, with `snapshot~`/`peakamp~` showing signal values as
   numbers.
+- `fm.mlsp`: two-operator FM, with the operator inside a `p fm` subpatcher,
+  envelopes on amplitude and index, and bell/brass/glass/gong presets.
+- `fm-bells.mlsp`: generative bells from two copies of the `fmvoice`
+  abstraction (`fmvoice.mlsp`), each with its own harmonicity, index and decay.
+- `granulator.mlsp`: four copies of the `grain` abstraction (`grain.mlsp`)
+  granulating a sung phrase, with rate, pitch, position and spread.
+- `cross.mlsp`: cross synthesis in `pfft~` (`xsynth.mlsp`): a sawtooth chord
+  takes on the spectral envelope of a voice.
+- `pvoc.mlsp`: a phase vocoder. `pv-rec.mlsp` analyses the phrase into two
+  buffers, and `pv-play.mlsp` resynthesises it at any speed, frozen or
+  backwards, without changing its pitch.
 
 `examples/sounds/bell.wav` was synthesized with minlsp itself, from
-`click~` and five `reson~` filters.
+`click~` and five `reson~` filters. `voice.wav` is a synthetic sung phrase
+(glottal pulses through moving vowel formants).
 
 ## Source layout
 
-- `dsp.h`: DSP kernels (oscillators, filters, ramps, delay lines, a lock-free
-  queue), with no dependencies.
-- `minlsp.h`: declarations for atoms, boxes, the patch, the audio engine and
-  the GUI.
-- `minlsp.cpp`: the object classes, patch editing and file I/O, signal-graph
-  ordering, the miniaudio engine, the FLTK canvas and window, and `main`.
+All sources are in `src/`:
+
+- `dsp.h`: DSP kernels (oscillators, filters, ramps, delay lines, FFT, a
+  lock-free queue), with no dependencies.
+- `minlsp.h`, `core.cpp`: atoms, the s-expression reader, boxes and the
+  patch: editing, nesting, signal-graph ordering, scheduler, messaging and
+  file format.
+- `objects.h`, `classes.cpp`: helpers shared by the objects, and the class
+  table that creates boxes by name and finds abstractions.
+- `objects_signal.cpp`, `objects_control.cpp`, `objects_samples.cpp`,
+  `objects_patcher.cpp`: the objects; the last one holds `p`, abstractions,
+  `pfft~` and the spectral and sample-index objects. `expr.h` is the
+  expression language of `expr` and `expr~`.
+- `audio.cpp`: the miniaudio engine.
+- `gui.h`, `theme.h`, `canvas.cpp`, `mainwindow.cpp`: the FLTK editor, main
+  window, toolbar and subpatcher windows.
+- `main.cpp`: `main` and the `--render` mode.
 
 The audio callback only ever `try_lock`s the patch. If the GUI is changing the
 graph at that moment, the callback outputs one block of silence instead of
@@ -219,8 +271,16 @@ waiting. Values sent to signal inlets while audio runs go through atomics, and
 Overdrive off). Signal feedback loops are refused when you connect, as in MSP,
 except through `tapin~`/`tapout~`.
 
+Subpatchers, abstractions and `pfft~` each own an inner patch. The top
+patch owns everything shared (the DSP lock, the scheduler, audio I/O, and
+the `send`/`receive` and `buffer~` names, which are global as in Max), and
+an inner patch's signal chain runs inside its owner box. `pfft~` buffers
+its input, and every hop it runs the inner chain over the frame's bins in
+64-sample chunks, then overlap-adds the inverse FFT.
+
 To run a patch offline for testing, use
-`minlsp --render patch.mlsp seconds [out.wav] [bang=<id>] [send=<id>:<message>] ...`.
+`minlsp --render patch.mlsp seconds [out.wav] [bang=<id>] [send=<id>:<message>] ...`
+(`<id>` can name a box inside a subpatcher, as `p1/osc`).
 The scheduler follows sample time, so `metro` and the other timed objects work
 offline too. It prints the peak and RMS level of each channel, sends `print`
 output to stdout, and can write a WAV file.

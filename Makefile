@@ -9,7 +9,7 @@
 
 APP        := minlsp
 BUNDLE     := $(APP).app
-VERSION    := 0.1
+VERSION    := 0.2
 
 FLTK_VER   := 1.4.4
 FLTK_URL   := https://github.com/fltk/fltk/releases/download/release-$(FLTK_VER)/fltk-$(FLTK_VER)-source.tar.gz
@@ -33,7 +33,7 @@ ARCHFLAGS  := $(addprefix -arch ,$(ARCHS)) -mmacosx-version-min=$(MACOS_MIN)
 CXX        := clang++
 CC         := clang
 CXXFLAGS   := -std=c++17 -O2 -Wall -Wextra -Wno-unused-parameter $(ARCHFLAGS) \
-              -I$(FLTK_INST)/include -I$(MA_DIR) -DMINLSP_VERSION=\"$(VERSION)\"
+              -I$(FLTK_INST)/include -I$(MA_DIR) -Isrc -DMINLSP_VERSION=\"$(VERSION)\"
 MAFLAGS    := -O2 $(ARCHFLAGS) -DMA_NO_RUNTIME_LINKING
 FRAMEWORKS := -framework Cocoa -framework CoreAudio -framework AudioToolbox \
               -framework CoreFoundation -weak_framework UniformTypeIdentifiers
@@ -85,11 +85,15 @@ $(BUILD)/miniaudio.o: $(MA_HDR)
 	@mkdir -p $(BUILD)
 	$(CC) $(MAFLAGS) -x c -DMINIAUDIO_IMPLEMENTATION -c $(MA_HDR) -o $@
 
-$(BUILD)/minlsp.o: minlsp.cpp minlsp.h dsp.h $(FLTK_LIB) $(MA_HDR)
-	@mkdir -p $(BUILD)
-	$(CXX) $(CXXFLAGS) -c minlsp.cpp -o $@
+SOURCES    := $(wildcard src/*.cpp)
+OBJECTS    := $(patsubst src/%.cpp,$(BUILD)/%.o,$(SOURCES))
+HEADERS    := $(wildcard src/*.h)
 
-$(APP): $(BUILD)/minlsp.o $(BUILD)/miniaudio.o
+$(BUILD)/%.o: src/%.cpp $(HEADERS) $(FLTK_LIB) $(MA_HDR)
+	@mkdir -p $(BUILD)
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+$(APP): $(OBJECTS) $(BUILD)/miniaudio.o
 	$(CXX) $(LDFLAGS) $^ $(FLTK_LIB) $(FRAMEWORKS) -o $@
 
 # ---------------------------------------------------------------- bundle
