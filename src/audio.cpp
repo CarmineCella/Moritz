@@ -4,6 +4,7 @@
 #include "minlsp.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cstring>
 
 namespace mlsp {
@@ -11,11 +12,12 @@ namespace mlsp {
 
 AudioEngine::AudioEngine(Patch& p) : patch_(p) {
     contextOk_ = ma_context_init(nullptr, 0, nullptr, &context_) == MA_SUCCESS;
+    patch_.ioBufferFrames = settings.bufferFrames;
     refreshDevices();
 }
 
 AudioEngine::~AudioEngine() {
-    stop();
+    close();
     if (contextOk_) ma_context_uninit(&context_);
 }
 
@@ -34,12 +36,30 @@ void AudioEngine::callback(ma_device* d, void* out, const void* in, ma_uint32 fr
     static thread_local bool ftz = (dsp::flushDenormals(), true);
     (void)ftz;
     auto* self = static_cast<AudioEngine*>(d->pUserData);
+    auto t0 = std::chrono::steady_clock::now();
     self->patch_.process(static_cast<const float*>(in), (int)d->capture.channels,
                          static_cast<float*>(out), (int)d->playback.channels, (int)frames);
+    // CPU load: time spent over the time the buffer lasts, smoothed over ~20 buffers
+    double used = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+    double period = (double)frames / std::max<ma_uint32>(1, d->sampleRate);
+    float load = (float)(used / period), c = self->patch_.cpuLoad.load(std::memory_order_relaxed);
+    self->patch_.cpuLoad.store(c + 0.05f * (load - c), std::memory_order_relaxed);
 }
 
 bool AudioEngine::start(std::string& err) {
-    stop();
+    bool ok = open(err);
+    patch_.audioChanged();
+    return ok;
+}
+
+void AudioEngine::stop() {
+    if (!running_) return;
+    close();
+    patch_.audioChanged();
+}
+
+bool AudioEngine::open(std::string& err) {
+    close();
     if (!contextOk_) {
         err = "could not initialise the audio system";
         return false;
@@ -68,6 +88,8 @@ bool AudioEngine::start(std::string& err) {
             return false;
         }
         patch_.sampleRate = (double)device_.sampleRate;
+        patch_.ioBufferFrames = (int)device_.playback.internalPeriodSizeInFrames;
+        patch_.cpuLoad = 0.f;
         if (ma_device_start(&device_) != MA_SUCCESS) {
             ma_device_uninit(&device_);
             err = "could not start the audio device";
@@ -82,7 +104,7 @@ bool AudioEngine::start(std::string& err) {
     return false;
 }
 
-void AudioEngine::stop() {
+void AudioEngine::close() {
     if (!running_) return;
     ma_device_uninit(&device_);
     running_ = false;

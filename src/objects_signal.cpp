@@ -173,6 +173,46 @@ private:
     std::vector<int> ch_;
 };
 
+// ---------------------------------------------------------------- dspstatus~
+// dspstatus~ [ms]: reports the audio state on bang, whenever audio starts,
+// stops or is reopened, and every ms while audio runs (0 = never). Outlets,
+// right to left: signal vector size, I/O buffer size, sample rate, CPU load
+// in %, and 1/0 for audio on/off. Sample rate and buffer size are the last
+// device settings while audio is off.
+class DspStatusBox : public Box {
+public:
+    explicit DspStatusBox(const Message& a) : interval_(std::max(0.f, argf(a, 0, 0.f))) {
+        setPorts({P::Control}, std::vector<Port>(5, P::Control));
+    }
+    void attached() override { restart(); }
+    void audioChanged() override { report(); }
+    void message(int, const Message& m) override {
+        const Atom* v = m[0].isFloat() ? &m[0] : (m[0].is("interval") && m.size() > 1 ? &m[1] : nullptr);
+        if (v && v->isFloat()) { interval_ = std::max(0.f, v->f); restart(); }
+        else if (m[0].is("bang")) report();
+    }
+
+private:
+    void report() {
+        Patch* r = patch->root();
+        bool on = r->dspRunning;
+        outletFloat(4, (float)patch->vectorSize());
+        outletFloat(3, (float)r->ioBufferFrames.load());
+        outletFloat(2, (float)r->sampleRate.load());
+        outletFloat(1, on ? std::round(r->cpuLoad.load() * 1000.f) / 10.f : 0.f);
+        outletFloat(0, on ? 1.f : 0.f);
+    }
+    void restart() {
+        patch->cancel(this);
+        if (interval_ > 0.f) patch->schedule(this, interval_ / 1000.0, [this] { tick(); });
+    }
+    void tick() {
+        if (patch->root()->dspRunning) report();
+        patch->schedule(this, std::max(20.f, interval_) / 1000.0, [this] { tick(); });
+    }
+    float interval_;
+};
+
 
 // ---------------------------------------------------------------- line~
 // line~: signal ramp. "target time" pairs make segments ("1 10 0 300");
@@ -647,6 +687,7 @@ void registerSignalObjects(ClassTable& t) {
         {"allpass~", "Delay", "allpass filter (max, delay, gain)", with<AllpassBox>()},
         {"adc~", "I/O", "audio input", with<AdcBox>()},
         {"dac~", "I/O", "audio output", with<DacBox>()},
+        {"dspstatus~", "I/O", "audio state: on, CPU, sample rate, buffer [ms]", with<DspStatusBox>()},
     });
 }
 

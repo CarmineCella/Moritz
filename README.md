@@ -162,7 +162,12 @@ and `r` work too.
 
 **Audio I/O**: `adc~ [ch...]` and `dac~ [ch...]`. The default channels are 1
 and 2. `start` and `stop` turn audio on and off, and so does a message box
-sending `; dsp start` or `; dsp stop`.
+sending `; dsp start` or `; dsp stop`. `dspstatus~ [ms]` reports the audio
+state on bang, whenever audio starts, stops or is reopened, and every `ms`
+while audio runs. Its outlets, left to right, are 1/0 for audio on/off, the CPU
+load in %, the sample rate, the I/O buffer size and the signal vector size (64,
+or the frame's bin count inside `pfft~`). While audio is off it still reports
+the last sample rate and buffer size.
 
 **Timing**
 
@@ -212,7 +217,7 @@ sending `; dsp start` or `; dsp stop`.
 
 | Object | Description |
 | --- | --- |
-| `message` | Sends its contents when clicked. `$1`..`$9` are replaced by the incoming values, `,` separates messages, and `; name value` sends to `receive name` |
+| `message` | Sends its contents when clicked. `$1`..`$9` are replaced by the incoming values, `,` separates messages, and `; name value` sends to `receive name`. As in Max, the box starts a new line after each `;`, so `; cf 1200; q 8` shows as three lines. When editing, Return finishes and Shift+Return adds a line break; line breaks count as spaces |
 | `flonum`, `number` | Number boxes |
 | `button`, `toggle` | Bang, and on/off |
 | `slider [min max]` | Horizontal slider. It outputs integers when both limits are integers |

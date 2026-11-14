@@ -153,6 +153,7 @@ MainWindow::MainWindow(int w, int h)
 }
 
 MainWindow::~MainWindow() {
+    patch.onDsp = nullptr;
     audio.stop();
     Patch::onDestroyed = nullptr;
     for (auto* w : subwindows_) w->detach();
@@ -490,6 +491,7 @@ bool MainWindow::saveAs() {
 
 void MainWindow::quit() {
     if (!confirmDiscard()) return;
+    patch.onDsp = nullptr;      // a dspstatus~ reacting to the stop can't restart audio
     audio.stop();
     hide();
 }

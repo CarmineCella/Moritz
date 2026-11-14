@@ -115,6 +115,7 @@ public:
     virtual bool wantsInput() const { return false; }     // uses audio input (adc~)
     virtual void attached() {}         // box joined a patch (GUI thread): load files, start timers
     virtual void resolve() {}          // during compile, DSP lock held: look up buffers/taps
+    virtual void audioChanged() {}     // audio started, stopped or reopened (GUI thread)
 
     // ---- boxes holding a patch (p, abstractions, pfft~)
     virtual Patch* inner() const { return nullptr; }       // the one a window shows
@@ -289,6 +290,10 @@ public:
     std::string dspError;   // non-empty when the signal graph has a loop
     std::atomic<bool> dspRunning{false};
     uint64_t blockCount = 0;  // audio thread: 64-sample blocks processed
+    // set by the audio engine on the root, for dspstatus~
+    std::atomic<int> ioBufferFrames{0};   // device buffer (I/O vector) size; kept while off
+    std::atomic<float> cpuLoad{0.f};      // share of each buffer's time spent computing, smoothed
+    void audioChanged() { forEachBox([](Box* b) { b->audioChanged(); }); }
 
     // current I/O block, valid inside process() for adc~/dac~
     const float* ioIn = nullptr;
@@ -347,6 +352,8 @@ public:
 
 private:
     static void callback(ma_device* d, void* out, const void* in, ma_uint32 frames);
+    bool open(std::string& err);
+    void close();
     Patch& patch_;
     ma_context context_;
     ma_device device_;

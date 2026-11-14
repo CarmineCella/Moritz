@@ -45,6 +45,7 @@ public:
     void moveSuggestion(int delta);
     bool acceptSuggestion(bool commit);
     void clearSuggestions();
+    void fitEditor();      // size the text field to what is being typed
 
 private:
     struct Hit {

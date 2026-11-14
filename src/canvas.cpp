@@ -25,6 +25,46 @@ double segDist(double px, double py, double ax, double ay, double bx, double by)
 
 void flashTimer(void* data) { static_cast<Canvas*>(data)->redraw(); }
 
+// Message box text as shown, like Max: a line break after each ";", so
+// "; cf 1200; q 8" reads ";" / "cf 1200;" / "q 8". Only the display
+// changes; the box keeps its text on one line.
+std::vector<std::string> messageLines(const std::string& text) {
+    std::vector<std::string> lines;
+    std::string cur;
+    for (auto& tok : splitTokens(text)) {
+        if (tok == ";" || tok == ",") {
+            cur += tok;
+            if (tok == ";") { lines.push_back(cur); cur.clear(); }
+            continue;
+        }
+        if (!cur.empty()) cur += ' ';
+        cur += tok;
+    }
+    if (!cur.empty() || lines.empty()) lines.push_back(cur);
+    return lines;
+}
+
+int lineHeight() {
+    fl_font(kFont, kFontSize);
+    return fl_height();
+}
+
+std::vector<std::string> splitLines(const std::string& t) {
+    std::vector<std::string> v(1);
+    for (char c : t) {
+        if (c == '\n') v.emplace_back();
+        else v.back() += c;
+    }
+    return v;
+}
+
+int widestLine(const std::vector<std::string>& lines) {
+    fl_font(kFont, kFontSize);
+    int w = 0;
+    for (auto& l : lines) w = std::max(w, (int)fl_width(l.c_str()));
+    return w;
+}
+
 // Text field for box editing. While the completion popup is open it takes
 // Up/Down (choose), Tab (complete, keep typing) and Enter (complete and
 // create); every other key edits the text and refreshes the suggestions.
@@ -32,6 +72,12 @@ class CompletingInput : public Fl_Input {
 public:
     CompletingInput(int x, int y, int w, int h, Canvas* c) : Fl_Input(x, y, w, h), canvas_(c) {}
     int handle(int e) override {
+        if (e == FL_KEYBOARD && input_type() == FL_MULTILINE_INPUT &&
+            (Fl::event_key() == FL_Enter || Fl::event_key() == FL_KP_Enter) && Fl::event_state(FL_SHIFT)) {
+            replace(insert_position(), mark(), "\n", 1);   // Shift+Return: new line
+            canvas_->fitEditor();
+            return 1;
+        }
         if (e == FL_KEYBOARD && canvas_->hasSuggestions()) {
             switch (Fl::event_key()) {
                 case FL_Down: canvas_->moveSuggestion(1); return 1;
@@ -45,7 +91,10 @@ public:
             }
         }
         int r = Fl_Input::handle(e);
-        if (e == FL_KEYBOARD || e == FL_PASTE) canvas_->updateSuggestions();
+        if (e == FL_KEYBOARD || e == FL_PASTE) {
+            canvas_->updateSuggestions();
+            canvas_->fitEditor();
+        }
         return r;
     }
 
@@ -79,7 +128,11 @@ void Canvas::layoutBox(Box* b) const {
     b->h = kBoxH;
     if (b->kind == BoxKind::UI) b->uiSize(b->w, b->h);
     else if (b->kind == BoxKind::Number) b->w = std::max(56, tw + 24);
-    else if (b->kind == BoxKind::Message) b->w = std::max(36, tw + 20);
+    else if (b->kind == BoxKind::Message) {
+        auto lines = messageLines(t);
+        b->w = std::max(36, widestLine(lines) + 20);
+        b->h = kBoxH + ((int)lines.size() - 1) * lineHeight();
+    }
     else if (b->kind == BoxKind::Comment) b->w = std::max(40, tw + 12);
     else b->w = std::max({tw + 16, ports * (kPortW + 8) + 2 * kPortInset, 40});
 }
@@ -111,7 +164,7 @@ void Canvas::drawBox(Box* b) {
     }
 
     // message boxes are pills, everything else a softly rounded box
-    int r = b->kind == BoxKind::Message ? H / 2 : kRadius;
+    int r = b->kind == BoxKind::Message ? std::min(H, kBoxH) / 2 : kRadius;
     Fl_Color fill = kBoxFill;
     if (b->kind == BoxKind::Message) fill = flash ? kFlash : kMsgFill;
     else if (b->kind == BoxKind::Number || b->kind == BoxKind::UI) fill = kNumFill;
@@ -152,7 +205,15 @@ void Canvas::drawBox(Box* b) {
         }
         fl_color(kText);
         fl_push_clip(X + 2, Y + 1, W - 4, H - 2);
-        fl_draw(t.c_str(), tx, Y + H / 2 + fl_height() / 2 - fl_descent());
+        if (b->kind == BoxKind::Message) {
+            int base = Y + kBoxH / 2 + fl_height() / 2 - fl_descent(), lh = fl_height();
+            for (auto& line : messageLines(t)) {
+                fl_draw(line.c_str(), tx, base);
+                base += lh;
+            }
+        } else {
+            fl_draw(t.c_str(), tx, Y + H / 2 + fl_height() / 2 - fl_descent());
+        }
         fl_pop_clip();
     }
 
@@ -539,12 +600,34 @@ void Canvas::beginEdit(Box* b, bool isNew) {
     std::string t = b->label();
     bool content = b->kind == BoxKind::Message || b->kind == BoxKind::Comment;
     if (isNew && !content && !t.empty()) t += " ";
-    editor_->resize(x() + b->x, y() + b->y, std::max(b->w, 160), kBoxH);
+    bool multi = b->kind == BoxKind::Message;   // edited as shown, one line per ";"
+    if (multi) {
+        auto lines = messageLines(t);
+        t.clear();
+        for (size_t k = 0; k < lines.size(); ++k) t += (k ? "\n" : "") + lines[k];
+    }
+    editor_->type(multi ? FL_MULTILINE_INPUT : FL_NORMAL_INPUT);
     editor_->value(t.c_str());
+    fitEditor();
     editor_->show();
     editor_->take_focus();
     editor_->insert_position((int)t.size());
     redraw();
+}
+
+void Canvas::fitEditor() {
+    if (!editing_) return;
+    Box* b = editing_;
+    int W = std::max(b->w, 160), H = kBoxH;
+    if (editor_->input_type() == FL_MULTILINE_INPUT) {
+        auto lines = splitLines(editor_->value());
+        W = std::max(W, widestLine(lines) + 24);
+        H = kBoxH + ((int)lines.size() - 1) * lineHeight();
+    }
+    if (W != editor_->w() || H != editor_->h()) {
+        editor_->resize(x() + b->x, y() + b->y, W, H);
+        redraw();
+    }
 }
 
 void Canvas::editCb(Fl_Widget*, void* data) { static_cast<Canvas*>(data)->commitEdit(); }
@@ -556,6 +639,7 @@ void Canvas::commitEdit() {
     sugg_.clear();
     std::string t = editor_->value();
     editor_->hide();
+    std::replace(t.begin(), t.end(), '\n', ' ');   // message lines are display only
     // trim
     t.erase(0, t.find_first_not_of(" \t"));
     t.erase(t.find_last_not_of(" \t") + 1);
@@ -566,7 +650,8 @@ void Canvas::commitEdit() {
         win_->dropUndo();
     } else if (b->kind == BoxKind::Message || b->kind == BoxKind::Comment) {
         // message and comment boxes keep their text verbatim
-        if (t != b->label()) {
+        if (splitTokens(t) != splitTokens(b->label()) ||
+            (b->kind == BoxKind::Comment && t != b->label())) {
             if (!editingNew_) win_->pushUndo();
             p.replaceBox(b, p.create(b->cls, {Atom(t)}));
             win_->markDirty();

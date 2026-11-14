@@ -59,6 +59,7 @@ int renderCli(int argc, char** argv) {
     p.clock = [&frame] { return (double)frame / sr; };     // the scheduler follows sample time
     p.sampleRate = sr;
     p.dspRunning = true;
+    p.ioBufferFrames = blk;
     size_t slash = path.find_last_of('/');
     p.dir = slash == std::string::npos ? "." : path.substr(0, slash);
     if (std::string ex = mlsp::examplesDir(); !ex.empty()) mlsp::abstractionPath().push_back(ex);

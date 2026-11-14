@@ -99,6 +99,9 @@ const std::map<std::string, PortDocs>& docs() {
         // I/O
         {"adc~", {{"start / stop: turn audio on or off"}, {"audio input channel"}}},
         {"dac~", {{"signal to this output channel; start / stop turn audio on or off"}, {}}},
+        {"dspstatus~", {{"bang: report now; a number: also report every ms while audio runs (0 = off)"},
+                        {"1 while audio runs, 0 when off", "CPU load (% of the buffer's time)",
+                         "sample rate (Hz)", "I/O buffer size (samples)", "signal vector size (samples)"}}},
         // timing
         {"metro", {{"1 or bang starts, 0 or stop stops", "interval (ms)"}, {"bang every interval"}}},
         {"delay", {{"bang starts (or restarts), stop cancels; a number sets the time and starts", "delay time (ms)"},
