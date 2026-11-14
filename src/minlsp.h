@@ -337,6 +337,8 @@ public:
     bool running() const { return running_; }
     bool hasInput() const { return duplex_; }
     int sampleRate() const { return running_ ? (int)device_.sampleRate : 0; }
+    std::string deviceName() const { return running_ ? device_.playback.name : ""; }
+    int bufferFrames() const { return running_ ? (int)device_.playback.internalPeriodSizeInFrames : 0; }
     void refreshDevices();
     void updateInputNeed();   // reopen with/without input when adc~ appears/disappears
 

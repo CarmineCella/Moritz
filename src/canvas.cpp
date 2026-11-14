@@ -260,6 +260,101 @@ int Canvas::suggestionAt(int ex, int ey) const {
     return std::min((int)sugg_.size() - 1, (ey - suggY_ - 3) / kSuggRowH);
 }
 
+// ---- port help
+
+void Canvas::tipTimer(void* data) {
+    auto* c = static_cast<Canvas*>(data);
+    if (!c->tipBox_) return;
+    c->tipShown_ = true;
+    c->redraw();
+}
+
+void Canvas::hidePortTip() {
+    Fl::remove_timeout(tipTimer, this);
+    bool was = tipShown_;
+    tipBox_ = nullptr;
+    tipPort_ = -1;
+    tipShown_ = false;
+    if (was) redraw();
+}
+
+// Finds the inlet or outlet under the mouse (edit mode) and shows its help
+// after a short rest.
+void Canvas::updatePortTip(int mx, int my) {
+    Box* box = nullptr;
+    bool out = false;
+    int port = -1;
+    if (!locked_ && !editing_ && drag_ == Drag::None) {
+        for (auto it = patch_->boxes.rbegin(); it != patch_->boxes.rend() && port < 0; ++it) {
+            Box* b = it->get();
+            if (mx < b->x - 3 || mx > b->x + b->w + 3) continue;
+            bool top = my >= b->y - 4 && my <= b->y + 5;
+            bool bottom = my >= b->y + b->h - 5 && my <= b->y + b->h + 4;
+            int n = top ? b->numIns() : bottom ? b->numOuts() : 0;
+            for (int k = 0; k < n; ++k) {
+                int px, py;
+                portPos(b, bottom, k, px, py);
+                if (mx >= px - 3 && mx <= px + kPortW + 3) {
+                    box = b;
+                    out = bottom;
+                    port = k;
+                    break;
+                }
+            }
+        }
+    }
+    if (box == tipBox_ && out == tipOut_ && port == tipPort_) return;
+    hidePortTip();
+    if (!box) return;
+    tipBox_ = box;
+    tipOut_ = out;
+    tipPort_ = port;
+    Fl::add_timeout(0.35, tipTimer, this);
+}
+
+void Canvas::drawPortTip() {
+    if (!tipShown_ || !tipBox_) return;
+    bool alive = false;
+    for (auto& b : patch_->boxes) alive = alive || b.get() == tipBox_;
+    if (!alive || tipPort_ >= (tipOut_ ? tipBox_->numOuts() : tipBox_->numIns())) return;
+    std::string help = portHelp(tipBox_, tipOut_, tipPort_);
+    std::string title = help.substr(0, help.find('\n'));
+    std::string body = help.find('\n') == std::string::npos ? "" : help.substr(help.find('\n') + 1);
+
+    int px, py;
+    portPos(tipBox_, tipOut_, tipPort_, px, py);
+    px += x();
+    py += y();
+    fl_color(kAccent);                                  // ring around the port
+    fl_line_style(FL_SOLID, 2);
+    fl_rounded_rect(px - 3, (tipOut_ ? py - kPortH - 4 : py - 3), kPortW + 6, kPortH + 7, 3);
+    fl_line_style(0);
+
+    fl_font(FL_HELVETICA_BOLD, 11);
+    int tw = (int)fl_width(title.c_str());
+    fl_font(kFont, 12);
+    int bw = (int)fl_width(body.c_str());
+    int W = std::max(tw, bw) + 20, H = body.empty() ? 24 : 42;
+    int X = std::clamp(px - 12, x() + 4, x() + w() - W - 4);
+    int Y = tipOut_ ? py + 8 : py - H - 8;
+    if (Y < y() + 4) Y = py + 12;
+    if (Y + H > y() + h() - 4) Y = py - H - 12;
+    fl_color(fl_rgb_color(10, 10, 12));
+    fl_rounded_rectf(X + 2, Y + 3, W, H, 6);
+    fl_color(kPopup);
+    fl_rounded_rectf(X, Y, W, H, 6);
+    fl_color(kBorder);
+    fl_rounded_rect(X, Y, W, H, 6);
+    fl_font(FL_HELVETICA_BOLD, 11);
+    fl_color(tipBox_->outs.empty() && tipOut_ ? kDim : kAccent);
+    fl_draw(title.c_str(), X + 10, Y + 16);
+    if (!body.empty()) {
+        fl_font(kFont, 12);
+        fl_color(kText);
+        fl_draw(body.c_str(), X + 10, Y + 34);
+    }
+}
+
 // ---- option-drag duplication
 
 void Canvas::duplicateSelection() {
@@ -344,6 +439,7 @@ void Canvas::draw() {
         fl_rounded_rect(editor_->x() - 1, editor_->y() - 1, editor_->w() + 2, editor_->h() + 2, 3);
     }
     drawSuggestions();
+    drawPortTip();
     fl_pop_clip();
 }
 
@@ -414,6 +510,7 @@ void Canvas::selectAll() {
 }
 
 void Canvas::reset() {
+    hidePortTip();
     if (editor_->visible()) editor_->hide();
     editing_ = nullptr;
     sugg_.clear();
@@ -425,6 +522,7 @@ void Canvas::reset() {
 }
 
 void Canvas::setLocked(bool l) {
+    hidePortTip();
     commitEdit();
     locked_ = l;
     clearSelection();
@@ -491,7 +589,7 @@ void Canvas::commitEdit() {
                 made->loadInner(form[0], warnings);
         }
         Box* nb = p.replaceBox(b, std::move(made));
-        if (nb->kind == BoxKind::Broken) win_->setStatus("unknown object: " + cls);
+        if (nb->kind == BoxKind::Broken) win_->print("unknown object: " + cls + " (no class and no " + cls + ".mlsp next to the patch)");
         else if (nb->inner()) nb->loadbang();       // a new abstraction starts like a loaded one
         win_->markDirty();
     }
@@ -557,17 +655,21 @@ void Canvas::numberDrag(int dy) {
 
 int Canvas::handle(int e) {
     switch (e) {
-        case FL_ENTER:
         case FL_LEAVE:
+            hidePortTip();
+            return 1;
+        case FL_ENTER:
         case FL_FOCUS:
         case FL_UNFOCUS:
             return 1;
         case FL_MOVE:
             mouseX_ = Fl::event_x() - x();
             mouseY_ = Fl::event_y() - y();
+            updatePortTip(mouseX_, mouseY_);
             return 1;
 
         case FL_PUSH: {
+            hidePortTip();
             if (editor_->visible() && Fl::event_inside(editor_)) return Fl_Group::handle(e);
             int pick = editing_ ? suggestionAt(Fl::event_x(), Fl::event_y()) : -1;
             if (pick >= 0) {                                // click on a completion
@@ -702,9 +804,9 @@ int Canvas::handle(int e) {
                     if (canConnect(p.conns, dragBox_, dragPort_, h.box, in, &err)) {
                         win_->pushUndo();
                         if (p.connect(dragBox_, dragPort_, h.box, in, &err)) win_->markDirty();
-                        else { win_->dropUndo(); win_->setStatus(err); }
+                        else { win_->dropUndo(); win_->print("can't connect: " + err); }
                     } else if (err != "already connected") {
-                        win_->setStatus(err);
+                        win_->print("can't connect: " + err);
                     }
                 }
             } else if (drag_ == Drag::Rubber) {

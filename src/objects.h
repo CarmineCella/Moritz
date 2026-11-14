@@ -240,4 +240,7 @@ private:
 
 BufferBox* findBuffer(Patch* p, const std::string& name);   // searches the whole patch tree
 
+// "cycle~ · inlet 1 (signal)\nfrequency in Hz ...": help for a port (ports.cpp)
+std::string portHelp(const Box* b, bool outlet, int index);
+
 }  // namespace mlsp

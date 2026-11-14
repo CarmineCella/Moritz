@@ -81,6 +81,16 @@ private:
     std::string typed_;
     int mouseX_ = 60, mouseY_ = 60;
 
+    // port help: shown after the mouse rests on an inlet/outlet in edit mode
+    Box* tipBox_ = nullptr;
+    bool tipOut_ = false;
+    int tipPort_ = -1;
+    bool tipShown_ = false;
+    void updatePortTip(int mx, int my);
+    void hidePortTip();
+    void drawPortTip();
+    static void tipTimer(void* data);
+
     std::vector<std::string> sugg_;
     int suggSel_ = 0;
     int suggX_ = 0, suggY_ = 0, suggW_ = 0;   // popup geometry (window coords)
@@ -137,6 +147,7 @@ public:
     void toggleLock();
     void toggleAudio();
     void setAudio(bool on);
+    void clearConsole();
     void audioSetup();
 
     // subpatcher windows
@@ -147,7 +158,8 @@ public:
 
     void setStatus(const std::string& s);
     void refreshStatus();
-    void print(const std::string& s);   // append to the console
+    void print(const std::string& s);   // append to the console and the status bar
+    void log(const std::string& s);     // append to the console only
     void showConsole();
     void armTimer();                    // schedule the next patch timer event
     void updateTitle();

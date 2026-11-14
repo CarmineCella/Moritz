@@ -1,9 +1,9 @@
-; cross.mlsp - cross synthesis with pfft~: a sawtooth chord (carrier) takes
-; on the spectral envelope of a sung phrase (modulator), so the chord
-; "sings" the vowels. The spectral work is in xsynth.mlsp: double-click the
-; pfft~ box in locked mode to open it.
+; cross.mlsp - cross synthesis with pfft~ (xsynth.mlsp): each bin takes its
+; phase from signal 1, a sawtooth chord, and its amplitude from signal 2, a
+; sung phrase, so the chord's pitches speak with the voice's vowels.
+; Double-click the pfft~ box in locked mode to open it.
 (patch
-  (obj title comment "cross synthesis: a saw chord shaped by the spectrum of a voice" (pos 20 12))
+  (obj title comment "cross synthesis: the phases of a saw chord with the amplitudes of a voice" (pos 20 12))
   (obj buf buffer~ voice sounds/voice.wav (pos 20 40))
   (obj lb loadbang (pos 20 75))
   (obj init message "loop 1, 0" (pos 20 110))
@@ -19,9 +19,9 @@
   (obj mix +~ (pos 300 155))
   (obj c2 comment "carrier: chord + a little noise" (pos 360 156))
   (obj xs pfft~ xsynth 1024 4 (pos 20 215))
-  (obj gain flonum 0.01 (pos 240 215))
-  (obj c3 comment "spectral gain" (pos 310 216))
-  (obj vol *~ 0.4 (pos 20 260))
+  (obj gain flonum 1 (pos 240 215))
+  (obj c3 comment "amplitude gain" (pos 310 216))
+  (obj vol *~ 0.7 (pos 20 260))
   (obj out dac~ (pos 20 305))
   (obj sc scope~ (pos 140 300))
   (obj c4 comment "chords" (pos 360 260))

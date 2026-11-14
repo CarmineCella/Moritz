@@ -32,6 +32,7 @@ The editor follows Max's conventions:
     Up/Down to choose, Tab to complete and keep typing arguments, Enter to
     complete and create the box, or click an entry.
   - Drag from an outlet (bottom edge) to an inlet (top edge) to connect.
+    Rest the mouse on an inlet or outlet to see what it expects or sends.
   - Click or rubber-band to select. Drag to move. **Option-drag** copies the
     selection, including the cables between the copied boxes. Backspace
     deletes boxes and cables. Double-click a box to edit its text.
@@ -49,8 +50,11 @@ The editor follows Max's conventions:
 - **Subpatchers**: in locked mode, double-click a `p`, an abstraction or a
   `pfft~` to open it in its own window (Cmd+double-click does the same in
   edit mode). Undo, Save and the other menu commands work there too.
-- **Console**: Patch > Console (**Shift+Cmd+M**) shows what `print` objects
-  print, plus errors such as a missing sound file or a bad `expr`.
+- **Console**: Patch > Console (**Shift+Cmd+M**) is minlsp's log. It shows
+  what `print` objects print (`print name` writes `name: message`), errors
+  (a missing sound file, a bad `expr`, an unknown object, a refused
+  connection), and audio and file events (the device and sample rate when
+  audio starts, patches opened and saved). Clear empties it.
 - **Undo/redo**: Cmd+Z and Shift+Cmd+Z. **Cmd+W** closes the front window:
   a subpatcher or the console, or else the patch itself (asking to save).
 
@@ -89,6 +93,7 @@ and `r` work too.
 | --- | --- |
 | `+~ -~ *~ /~ [arg]` | Signal arithmetic |
 | `clip~ [min max]`, `abs~`, `tanh~` | Limiting, rectifying and soft saturation |
+| `gain~ [ramp amplitude]` | A fader that scales the signal in its left inlet. Every change ramps linearly over `ramp` ms (20 by default), so it never clicks. The fader runs in dB from silence to +6 dB; a number sets the amplitude (1 = unity), the right inlet sets the ramp time, the right outlet reports the amplitude |
 | `expr~ ...` | `expr` evaluated per sample. `$v1`..`$v9` are the inlets, which take signals or floats |
 | `sah~ [threshold]` | Sample and hold: keeps the left signal each time the right one rises above the threshold |
 
@@ -240,20 +245,23 @@ File > Open starts there.
   subpatcher fires grains at random intervals, positions and pans, and
   `poly~` plays each in one of 32 `grainvoice.mlsp` voices (a Hann window
   and read position driven by one `line~` ramp). Sliders and presets for
-  density, size, pitch, position and spread.
+  density, size, pitch, position and spread. It reads `sounds/flute.wav`.
 - `poly-synth.mlsp`: `poly~` with eight voices of `polyvoice.mlsp` (detuned
   saws, filter, pluck envelope feeding `thispoly~`), played by chord buttons
   or a random arpeggiator, through a stereo delay.
-- `cross.mlsp`: cross synthesis in `pfft~` (`xsynth.mlsp`): a sawtooth chord
-  takes on the spectral envelope of a voice.
+- `cross.mlsp`: cross synthesis in `pfft~` (`xsynth.mlsp`): both inputs go
+  through `cartopol~`, and `poltocar~` combines the phases of a sawtooth
+  chord with the amplitudes of a sung phrase.
 - `pvoc.mlsp`: a phase vocoder. `pv-rec.mlsp` analyses the phrase into
   buffers (amplitude, phase, phase difference), and `pv-play.mlsp`
   resynthesises it at any speed, frozen or backwards, without changing its
-  pitch, using `pvlock~` to keep the partials coherent.
+  pitch, using `pvlock~` to keep the partials coherent. The flute phrase plays
+  once while it is analysed; then the stretched version starts.
 
 `examples/sounds/bell.wav` was synthesized with minlsp itself, from
 `click~` and five `reson~` filters. `voice.wav` is a synthetic sung phrase
-(glottal pulses through moving vowel formants).
+(glottal pulses through moving vowel formants), and `flute.wav` a flute-like
+phrase made by `tools/make_flute.py` (soft harmonics, vibrato, breath).
 
 ## Source layout
 

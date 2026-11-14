@@ -79,6 +79,15 @@ std::string examplesDir() {
 
 namespace {
 
+// Centres a window on the usable area of the screen showing `ref` (or the
+// main screen), shifted by dx, dy.
+void centerOnScreen(Fl_Window* w, Fl_Window* ref = nullptr, int dx = 0, int dy = 0) {
+    int X, Y, W, H;
+    int n = ref ? Fl::screen_num(ref->x() + ref->w() / 2, ref->y() + ref->h() / 2) : 0;
+    Fl::screen_work_area(X, Y, W, H, n);
+    w->position(X + std::max(0, (W - w->w()) / 2) + dx, Y + std::max(0, (H - w->h()) / 2) + dy);
+}
+
 struct NewItem {
     MainWindow* win;
     std::string cls;
@@ -135,8 +144,11 @@ MainWindow::MainWindow(int w, int h)
     }, this);
 
     buildMenu();
+    centerOnScreen(this);
     updateTitle();
     setAudio(true);
+    log("minlsp " MINLSP_VERSION " - created by Carmine-Emanuele Cella (2026)");
+    log("this console shows print objects, errors, audio and file events");
     setStatus("double-click to create an object · Cmd+E toggles edit mode");
 }
 
@@ -230,9 +242,19 @@ void MainWindow::armTimer() {
 
 void MainWindow::showConsole() {
     if (!console_) {
-        console_ = new Fl_Double_Window(520, 300, "minlsp Console");
+        console_ = new Fl_Double_Window(560, 320, "minlsp Console");
+        centerOnScreen(console_, this);
+        console_->color(kStatusBg);
         consoleBuf_ = new Fl_Text_Buffer();
-        consoleView_ = new Fl_Text_Display(0, 0, 520, 300);
+        consoleView_ = new Fl_Text_Display(0, 0, 560, 290);
+        auto* clear = new Fl_Button(470, 294, 82, 22, "Clear");
+        clear->labelsize(11);
+        clear->callback([](Fl_Widget*, void* d) { static_cast<MainWindow*>(d)->clearConsole(); }, this);
+        auto* hint = new Fl_Box(8, 294, 450, 22,
+                                "print objects, errors, audio and file events");
+        hint->labelsize(11);
+        hint->labelcolor(kDim);
+        hint->align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE);
         consoleView_->buffer(consoleBuf_);
         consoleView_->box(FL_FLAT_BOX);
         consoleView_->color(fl_rgb_color(20, 21, 24));
@@ -247,7 +269,17 @@ void MainWindow::showConsole() {
     consoleView_->scroll(consoleBuf_->count_lines(0, consoleBuf_->length()), 0);
 }
 
+void MainWindow::clearConsole() {
+    consoleLines_.clear();
+    if (consoleBuf_) consoleBuf_->text("");
+}
+
 void MainWindow::print(const std::string& s) {
+    log(s);
+    setStatus(s);
+}
+
+void MainWindow::log(const std::string& s) {
     consoleLines_.push_back(s);
     if (consoleLines_.size() > 2000) consoleLines_.erase(consoleLines_.begin());
     if (consoleBuf_) {
@@ -255,7 +287,6 @@ void MainWindow::print(const std::string& s) {
         if (consoleBuf_->length() > 200000) consoleBuf_->remove(0, consoleBuf_->length() - 150000);
         consoleView_->scroll(consoleBuf_->count_lines(0, consoleBuf_->length()), 0);
     }
-    setStatus(s);
 }
 
 void MainWindow::setStatus(const std::string& s) {
@@ -315,6 +346,7 @@ void MainWindow::closeFront() {
 
 void MainWindow::about() {
     Fl_Double_Window dlg(360, 330, "About minlsp");
+    centerOnScreen(&dlg, this);
     dlg.color(kBgLocked);
     Fl_Box icon(116, 18, 128, 128);
     std::string base = exeDir();
@@ -398,8 +430,10 @@ bool MainWindow::openFile(const std::string& path) {
     dirty_ = false;
     canvas->setLocked(true);           // Max opens patches locked
     updateTitle();
+    log("opened " + path);
     if (!err.empty()) print(baseName(path) + ":\n" + err);
     else setStatus("opened " + baseName(path));
+    if (!patch.dspError.empty()) log(baseName(path) + ": " + patch.dspError);
     patch.loadbangAll();
     canvas->redraw();
     return true;
@@ -418,6 +452,7 @@ bool MainWindow::save() {
                     fl_alert("Can't write %s", p->file.c_str());
                     return false;
                 }
+                log("saved abstraction " + p->file);
                 setStatus("saved abstraction " + baseName(p->file) +
                           " (other copies update when the patch is reopened)");
                 return true;
@@ -431,6 +466,7 @@ bool MainWindow::save() {
     }
     dirty_ = false;
     updateTitle();
+    log("saved " + path_);
     setStatus("saved " + baseName(path_));
     return true;
 }
@@ -514,9 +550,14 @@ void MainWindow::toggleAudio() { setAudio(!audio.running()); }
 void MainWindow::setAudio(bool on) {
     std::string err;
     if (on) {
-        if (!audio.start(err)) { setStatus(err); return; }
+        if (!audio.start(err)) { print("audio: " + err); return; }
+        log("audio on: " + audio.deviceName() + ", " + std::to_string(audio.sampleRate()) +
+            " Hz, " + std::to_string(audio.bufferFrames()) + "-sample buffer, " +
+            (audio.hasInput() ? "input and output" : "output only"));
+        if (!err.empty()) log("audio: " + err);
         setStatus(err);              // the status bar already says "audio on"
     } else {
+        if (audio.running()) log("audio off");
         audio.stop();
         setStatus("");
     }
@@ -525,6 +566,7 @@ void MainWindow::setAudio(bool on) {
 void MainWindow::audioSetup() {
     audio.refreshDevices();
     Fl_Double_Window dlg(440, 230, "Audio Setup");
+    centerOnScreen(&dlg, this);
     Fl_Choice outC(130, 15, 290, 25, "Output device:");
     Fl_Choice inC(130, 50, 290, 25, "Input device:");
     Fl_Choice srC(130, 85, 120, 25, "Sample rate:");
@@ -613,6 +655,9 @@ void MainWindow::openSubpatch(Box* b) {
     }
     auto* w = new PatchWindow(this, p, patchTitle(p));
     w->size(std::min(W, 1400), std::min(H + 22, 900));
+    int shown = 0;
+    for (auto* o : subwindows_) shown += o->shown();
+    centerOnScreen(w, this, 28 * shown, 28 * shown);   // cascade over the centre
     subwindows_.push_back(w);
     w->show();
 }

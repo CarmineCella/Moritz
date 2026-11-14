@@ -1,25 +1,26 @@
 ; xsynth.mlsp - spectral patch for cross.mlsp, run by pfft~ once per FFT
-; frame, one bin per sample. The carrier's spectrum (fftin~ 1) is shaped by
-; the amplitude spectrum of the modulator (fftin~ 2).
+; frame, one bin per sample. Both inputs go through cartopol~; the result
+; takes its phases from signal 1 (the carrier) and its amplitudes from
+; signal 2 (the modulator), and poltocar~ turns them back into a spectrum.
 (patch
-  (obj c0 comment "cross synthesis: carrier bins x modulator amplitude" (pos 20 10))
+  (obj c0 comment "cross synthesis: phases of signal 1, amplitudes of signal 2" (pos 20 10))
   (obj car fftin~ 1 (pos 20 45))
   (obj mod fftin~ 2 (pos 240 45))
-  (obj amp cartopol~ (pos 240 90))
+  (obj cp1 cartopol~ (pos 20 90))
+  (obj cp2 cartopol~ (pos 240 90))
   (obj c1 comment "amplitude, phase" (pos 330 91))
   (obj gin inlet (pos 400 130))
   (obj c2 comment "gain" (pos 450 131))
-  (obj gain *~ 0.01 (pos 240 170))
-  (obj re *~ (pos 20 220))
-  (obj im *~ (pos 110 220))
-  (obj out fftout~ 1 (pos 20 270))
-  (connect mod 0 amp 0)
-  (connect mod 1 amp 1)
-  (connect amp 0 gain 0)
+  (obj gain *~ 1 (pos 240 170))
+  (obj pc poltocar~ (pos 20 220))
+  (obj out fftout~ 1 (pos 20 265))
+  (connect car 0 cp1 0)
+  (connect car 1 cp1 1)
+  (connect mod 0 cp2 0)
+  (connect mod 1 cp2 1)
+  (connect cp2 0 gain 0)
   (connect gin 0 gain 1)
-  (connect car 0 re 0)
-  (connect car 1 im 0)
-  (connect gain 0 re 1)
-  (connect gain 0 im 1)
-  (connect re 0 out 0)
-  (connect im 0 out 1))
+  (connect gain 0 pc 0)
+  (connect cp1 1 pc 1)
+  (connect pc 0 out 0)
+  (connect pc 1 out 1))

@@ -3,6 +3,8 @@
 
 #include "objects.h"
 
+#include <FL/fl_draw.H>
+
 #include <atomic>
 #include <cstring>
 
@@ -509,6 +511,101 @@ private:
 };
 
 
+// ---------------------------------------------------------------- gain~
+// gain~ [ramp ms] [amplitude]: a fader that scales the signal in its left
+// inlet. Every change ramps linearly over `ramp` ms (20 by default), so
+// moving it never clicks. The fader runs in dB from silence to +6 dB; a
+// number in the left inlet sets the amplitude (1 = unity), the right inlet
+// sets the ramp time. The right outlet reports the amplitude.
+class GainBox : public Box {
+public:
+    explicit GainBox(const Message& a) {
+        kind = BoxKind::UI;
+        setPorts({P::Signal, P::Control}, {P::Signal, P::Control});
+        ramp_.store(std::max(0.f, argf(a, 0, 20.f)));
+        amp_ = std::clamp(argf(a, 1, 1.f), 0.f, 2.f);
+        target_.store(amp_);
+        cur_ = goal_ = amp_;
+    }
+    void uiSize(int& w, int& h) const override { w = 38; h = 132; }
+    Message saveArgs() const override { return {Atom(ramp_.load()), Atom(amp_)}; }
+    void message(int in, const Message& m) override {
+        if (!m[0].isFloat()) {
+            if (m[0].is("bang")) outletFloat(1, amp_);
+            return;
+        }
+        if (in == 1) ramp_.store(std::max(0.f, m[0].f));
+        else set(m[0].f, false);
+    }
+    void uiMouse(int e, int, int my) override {
+        if (e == FL_RELEASE) return;
+        double p = 1.0 - (my - 10.0) / (h - 30.0);
+        set(ampAt(std::clamp(p, 0.0, 1.0)), true);
+    }
+    void drawUI(int X, int Y) override {
+        int tx = X + w / 2, top = Y + 10, len = h - 30;
+        double p = posOf(amp_);
+        fl_color(fl_rgb_color(30, 31, 36));
+        fl_rounded_rectf(tx - 3, top, 6, len, 3);
+        int ky = top + (int)((1.0 - p) * len);
+        fl_color(kSignal);
+        fl_rounded_rectf(tx - 3, ky, 6, top + len - ky, 3);
+        int uy = top + (int)((1.0 - posOf(1.0)) * len);       // unity mark
+        fl_color(kDim);
+        fl_line(X + 4, uy, X + 9, uy);
+        fl_line(X + w - 10, uy, X + w - 5, uy);
+        fl_color(kText);
+        fl_rounded_rectf(X + 6, ky - 4, w - 12, 8, 3);
+        char buf[16];
+        if (amp_ <= 0.f) std::snprintf(buf, sizeof buf, "-inf");
+        else std::snprintf(buf, sizeof buf, "%.1f", 20.0 * std::log10(amp_));
+        fl_font(kFont, 10);
+        fl_color(kDim);
+        fl_draw(buf, X, Y + h - 16, w, 14, FL_ALIGN_CENTER);
+    }
+    void dsp(int n) override {
+        const float* x = sigIn(0, n);
+        float* y = sigOut(0);
+        float tgt = target_.load(std::memory_order_relaxed);
+        if (tgt != goal_) {                       // start a new ramp from where we are
+            goal_ = tgt;
+            left_ = std::max(1L, (long)(ramp_.load() * patch->root()->sampleRate / 1000.0));
+            inc_ = (goal_ - cur_) / (double)left_;
+        }
+        for (int i = 0; i < n; ++i) {
+            if (left_ > 0) {
+                cur_ += inc_;
+                if (--left_ == 0) cur_ = goal_;
+            }
+            y[i] = x[i] * (float)cur_;
+        }
+    }
+
+private:
+    // fader position 0..1 <-> amplitude: the bottom 2% is silence, then dB
+    static double posOf(double a) {
+        if (a <= 0.0) return 0.0;
+        double db = std::clamp(20.0 * std::log10(a), -70.0, 6.0);
+        return 0.02 + 0.98 * (db + 70.0) / 76.0;
+    }
+    static float ampAt(double p) {
+        if (p <= 0.02) return 0.f;
+        return (float)std::pow(10.0, (-70.0 + 76.0 * (p - 0.02) / 0.98) / 20.0);
+    }
+    void set(float a, bool out) {
+        a = std::clamp(a, 0.f, 2.f);
+        bool changed = a != amp_;
+        amp_ = a;
+        target_.store(a);
+        if (patch) patch->redraw();
+        if (out && changed) outletFloat(1, a);
+    }
+    float amp_ = 1.f;                              // GUI side
+    std::atomic<float> target_{1.f}, ramp_{20.f};
+    double cur_ = 1.0, goal_ = 1.0, inc_ = 0.0;     // audio side
+    long left_ = 0;
+};
+
 }  // namespace
 
 void registerSignalObjects(ClassTable& t) {
@@ -540,6 +637,7 @@ void registerSignalObjects(ClassTable& t) {
         {"-~", "Signal Math", "subtract signals", sigop(dsp::Op::Sub)},
         {"*~", "Signal Math", "multiply signals", sigop(dsp::Op::Mul)},
         {"/~", "Signal Math", "divide signals", sigop(dsp::Op::Div)},
+        {"gain~", "Signal Math", "click-free gain fader [ramp ms]", with<GainBox>()},
         {"clip~", "Signal Math", "limit a signal (min, max)", with<ClipBox>()},
         {"abs~", "Signal Math", "absolute value", unary([](float x) { return std::fabs(x); })},
         {"tanh~", "Signal Math", "soft saturation", unary([](float x) { return std::tanh(x); })},
