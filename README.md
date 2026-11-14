@@ -16,6 +16,27 @@ statically linked with FLTK and ad-hoc signed. It needs the Xcode command line
 tools, cmake and curl. `make clean` removes the build products, and
 `make distclean` also removes `deps/`.
 
+### Releases and code signing
+
+`make dist` builds `build/minlsp-<version>-macos-universal.zip`, which holds
+the app, the examples, the README and the license. By default the app is
+signed ad-hoc. That is enough on the Mac that built it, but macOS blocks a
+downloaded ad-hoc app. To open a downloaded copy, either run
+
+```sh
+xattr -dr com.apple.quarantine minlsp.app
+```
+
+or try to open it once, then click **Open Anyway** in System Settings >
+Privacy & Security.
+
+A release that opens anywhere without these steps needs an Apple Developer
+ID. Store notary credentials once with `xcrun notarytool store-credentials`,
+then run `make notarize SIGN_ID="Developer ID Application: Name (TEAMID)"`.
+This signs the app with the hardened runtime (microphone entitlement in
+`resources/minlsp.entitlements`), notarizes and staples it, and rebuilds the
+zip.
+
 ## Using it
 
 The editor follows Max's conventions:

@@ -2,6 +2,8 @@
 #
 #   make          download + build deps (first run only), build minlsp.app
 #   make run      build and open the app
+#   make dist     build the release zip (app + examples + license) in build/
+#   make notarize sign with a Developer ID, notarize and staple (see below)
 #   make clean    remove build products
 #   make distclean  also remove downloaded dependencies
 #
@@ -27,6 +29,26 @@ FLTK_LIBS  := $(FLTK_INST)/lib/libfltk_images.a $(FLTK_INST)/lib/libfltk_png.a \
               $(FLTK_INST)/lib/libfltk_z.a $(FLTK_LIB)
 MA_DIR     := $(DEPS)/miniaudio-$(MA_VER)
 MA_HDR     := $(MA_DIR)/miniaudio.h
+
+# Code signing. By default the bundle is signed ad-hoc ("-"): it runs on the
+# machine that built it, but macOS blocks it when downloaded. For a release
+# that opens anywhere, sign with your Developer ID and notarize:
+#   make notarize SIGN_ID="Developer ID Application: Your Name (TEAMID)" \
+#                 NOTARY_PROFILE=minlsp
+# after storing notary credentials once with
+#   xcrun notarytool store-credentials minlsp --apple-id you@example.com \
+#         --team-id TEAMID --password <app-specific password>
+SIGN_ID        ?= -
+NOTARY_PROFILE ?= minlsp
+ENTITLEMENTS   := resources/minlsp.entitlements
+ifeq ($(SIGN_ID),-)
+CODESIGN_FLAGS := --force --deep --sign -
+else
+CODESIGN_FLAGS := --force --deep --options runtime --timestamp --entitlements $(ENTITLEMENTS) \
+                  --sign "$(SIGN_ID)"
+endif
+DIST_NAME  := $(APP)-$(VERSION)
+DIST_ZIP   := $(BUILD)/$(DIST_NAME)-macos-universal.zip
 
 ARCHS      := arm64 x86_64
 MACOS_MIN  := 11.0
@@ -139,8 +161,40 @@ $(BUNDLE): $(APP) $(wildcard examples/*.mlsp examples/sounds/* resources/*) LICE
 	cp resources/minlsp.icns resources/about.png LICENSE $(BUNDLE)/Contents/Resources/
 	echo "$$INFO_PLIST" > $(BUNDLE)/Contents/Info.plist
 	printf 'APPL????' > $(BUNDLE)/Contents/PkgInfo
-	codesign --force --sign - $(BUNDLE)
+	xattr -cr $(BUNDLE)          # Finder/quarantine detritus would break the signature
+	codesign $(CODESIGN_FLAGS) $(BUNDLE)
+	codesign --verify --deep --strict $(BUNDLE)
 	@lipo -info $(BUNDLE)/Contents/MacOS/$(APP)
+
+# ---------------------------------------------------------------- release
+# The zip holds the app (with the examples inside), the examples as a
+# folder next to it, the README and the license. --norsrc leaves out
+# resource forks and extended attributes, which would otherwise travel as
+# ._ files and can invalidate the signature once unzipped on another Mac.
+dist: $(BUNDLE)
+	@echo "==> packaging $(DIST_ZIP)"
+	rm -rf $(BUILD)/dist $(DIST_ZIP)
+	mkdir -p $(BUILD)/dist/$(DIST_NAME)
+	ditto $(BUNDLE) $(BUILD)/dist/$(DIST_NAME)/$(BUNDLE)
+	ditto examples $(BUILD)/dist/$(DIST_NAME)/examples
+	cp LICENSE README.md $(BUILD)/dist/$(DIST_NAME)/
+	find $(BUILD)/dist -name .DS_Store -delete
+	xattr -cr $(BUILD)/dist
+	codesign --verify --deep --strict $(BUILD)/dist/$(DIST_NAME)/$(BUNDLE)
+	cd $(BUILD)/dist && ditto -c -k --norsrc --keepParent $(DIST_NAME) ../$(notdir $(DIST_ZIP))
+	@ls -l $(DIST_ZIP)
+
+notarize: $(BUNDLE)
+	@if [ "$(SIGN_ID)" = "-" ]; then \
+	  echo "notarize needs SIGN_ID=\"Developer ID Application: ...\" (see the top of this Makefile)"; \
+	  exit 1; fi
+	@echo "==> notarizing $(BUNDLE)"
+	rm -f $(BUILD)/notarize.zip
+	ditto -c -k --norsrc --keepParent $(BUNDLE) $(BUILD)/notarize.zip
+	xcrun notarytool submit $(BUILD)/notarize.zip --keychain-profile "$(NOTARY_PROFILE)" --wait
+	xcrun stapler staple $(BUNDLE)
+	spctl --assess --type execute --verbose $(BUNDLE)
+	$(MAKE) dist SIGN_ID="$(SIGN_ID)"
 
 run: $(BUNDLE)
 	open $(BUNDLE)
@@ -151,4 +205,4 @@ clean:
 distclean: clean
 	rm -rf $(DEPS)
 
-.PHONY: all deps run clean distclean
+.PHONY: all deps run dist notarize clean distclean
