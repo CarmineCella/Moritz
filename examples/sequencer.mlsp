@@ -1,6 +1,7 @@
 ; sequencer.mlsp - metro -> counter -> expr picks 8 pitches; trigger sends
 ; each pitch to a band-limited saw, then re-triggers a line~ envelope.
-; Sliders: step time and filter cutoff.
+; Sliders: step time and filter cutoff. reverb~ (a stereo Freeverb
+; abstraction) adds space; its number boxes set the mix and the decay T60.
 (patch
   (obj title comment "step sequencer: toggle starts it, sliders shape it" (pos 20 12))
   (obj lb loadbang (pos 20 45))
@@ -24,7 +25,12 @@
   (obj clabel comment "cutoff (Hz)" (pos 445 406))
   (obj filt lores~ 1500 0.6 (pos 120 485))
   (obj vol *~ 0.2 (pos 120 525))
-  (obj out dac~ (pos 120 575))
+  (obj rv reverb~ 0.25 1.5 (pos 120 565))
+  (obj mix flonum 0.25 (pos 495 525))
+  (obj mlabel comment "reverb mix" (pos 570 526))
+  (obj t60 flonum 1.5 (pos 495 565))
+  (obj tlabel2 comment "reverb T60 (s)" (pos 570 566))
+  (obj out dac~ (pos 120 615))
   (obj lvl meter~ (pos 250 485))
   (obj sc scope~ (pos 290 485))
   (connect lb 0 on 0)
@@ -47,7 +53,10 @@
   (connect vca 0 filt 0)
   (connect cut 0 filt 1)
   (connect filt 0 vol 0)
-  (connect vol 0 out 0)
-  (connect vol 0 out 1)
+  (connect vol 0 rv 0)
+  (connect mix 0 rv 1)
+  (connect t60 0 rv 2)
+  (connect rv 0 out 0)
+  (connect rv 1 out 1)
   (connect vca 0 lvl 0)
   (connect vca 0 sc 0))

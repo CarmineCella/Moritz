@@ -211,6 +211,7 @@ the last sample rate and buffer size.
 | `inlet`, `inlet~`, `outlet`, `outlet~` | A subpatcher's ports, numbered left to right by position (`in`, `in~`, `out`, `out~` are the same objects) |
 | `poly~ name voices [args]` | `voices` copies of the abstraction `name.mlsp`, with their signal outlets summed. `note ...` sends the rest of the message to a free voice, stealing the oldest note when all are busy; `target n` sends later messages to voice `n` only (`0` = all); `mute n 1/0` stops or restarts voice `n`; anything else goes to the target voice or to all |
 | `thispoly~` | Inside a `poly~` voice: outputs the voice number at load or on bang. The voice stays busy while the signal in its inlet (the envelope) is not zero; a number sets busy directly |
+| `reverb~ [mix] [T60]` | A stereo Freeverb, written as an abstraction (`examples/reverb~.mlsp`), so it works in any patch. Inlets: the signal, wet/dry mix (0-1, default 0.3) and decay time T60 in seconds (0.1-100, default 2). Outlets: left and right. Per channel, eight damped combs (`fvcomb~.mlsp`) in parallel, then four `allpass~` in series; the right channel's delays are 23 samples longer, so the outputs are decorrelated. Each comb's feedback is `g = 10^(-3 d / T60)` for its delay `d` in seconds, so low frequencies fall by 60 dB in T60 seconds, and highs a little faster (damping) |
 | any `name` | An abstraction: the patch `name.mlsp`, found next to the patch (or in the bundled examples). Its arguments replace `#1`..`#9` inside it, and `#0` becomes a number unique to each copy, for local `send`/`receive`/`buffer~` names. Saving from its window writes the abstraction's file |
 
 **Interface**
@@ -240,7 +241,7 @@ box holds its contents as a nested `(patch ...)` form.
 `(connect from outlet to inlet)` connects two boxes, counting ports from 0.
 `;` starts a comment outside strings.
 
-`examples/` has nineteen demos, plus the abstractions they use. They are also inside the app bundle, and
+`examples/` has twenty demos, plus the abstractions they use. They are also inside the app bundle, and
 File > Open starts there.
 
 - `sine.mlsp`: the patch from the spec, with frequency and volume controls.
@@ -248,8 +249,8 @@ File > Open starts there.
 - `clicks.mlsp`: `click~` striking two resonators.
 - `thru.mlsp`: audio input passed to the output.
 - `sequencer.mlsp`: `metro` → `counter` → `expr` → `mtof`, driving a `saw~`
-  through `lores~` with a `line~` envelope. Sliders set the step time and the
-  cutoff.
+  through `lores~` with a `line~` envelope, then `reverb~`. Sliders set the
+  step time and the cutoff, number boxes the reverb mix and T60.
 - `synth.mlsp`: notes played through `trigger`, a pulse and a triangle, and an
   attack/decay/release envelope.
 - `echo.mlsp`: noise bursts into a `tapin~`/`tapout~` feedback delay.
@@ -261,6 +262,8 @@ File > Open starts there.
   `gate`, `delay`, `line` and `print`. Open the console to see the output.
 - `reverb.mlsp`: a Schroeder reverb (4 × `comb~` → 2 × `allpass~`) on
   `sfplay~`.
+- `freeverb.mlsp`: the `reverb~` abstraction on the bell, with number boxes
+  for mix and decay time.
 - `lfo.mlsp`: a tremolo, with `snapshot~`/`peakamp~` showing signal values as
   numbers.
 - `fm.mlsp`: two-operator FM, with the operator inside a `p fm` subpatcher,

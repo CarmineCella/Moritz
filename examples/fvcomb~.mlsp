@@ -1,0 +1,39 @@
+; fvcomb~.mlsp - an abstraction: one Freeverb comb filter, used by reverb~.
+;   fvcomb~ <delay ms> <name>
+; A feedback comb with a one-pole low-pass in the loop (damping), as in
+; Jezar's Freeverb. biquad~ 0.8 0 0 -0.2 0 is the low-pass
+; y = 0.8 x + 0.2 y[n-1] (Freeverb's damping 0.5); its gain at 0 Hz is 1.
+;
+; The feedback gain comes from the decay time T60 (seconds), received on
+; "<name>-t60". After one trip round the loop the signal is multiplied by
+; g, so after T60 seconds (T60 / d trips) it is g^(T60 / d). A 60 dB fall is
+; a factor of 10^-3, so
+;     g = 10^(-3 d / T60)          d = delay in seconds
+; Each comb gets its own g, so all of them die away in the same time.
+; High frequencies decay faster, because the low-pass takes more of them
+; on each trip.
+(patch
+  (obj c0 comment "fvcomb~ #1 #2: Freeverb comb, #1 ms, T60 from #2-t60" (pos 20 10))
+  (obj in inlet~ (pos 20 40))
+  (obj add +~ (pos 20 80))
+  (obj tin tapin~ 100 (pos 20 120))
+  (obj tout tapout~ #1 (pos 20 160))
+  (obj damp biquad~ 0.8 0 0 -0.2 0 (pos 160 200))
+  (obj fb *~ (pos 160 240))
+  (obj out outlet~ (pos 20 280))
+  (obj t60 receive #2-t60 (pos 320 40))
+  (obj g expr "pow(10, -3 * #1 / 1000 / $f1)" (pos 320 80))
+  (obj c1 comment "g = 10^(-3 d / T60)" (pos 560 80))
+  (obj ramp message "$1 50" (pos 320 120))
+  (obj gline line~ (pos 320 160))
+  (connect in 0 add 0)
+  (connect add 0 tin 0)
+  (connect tin 0 tout 0)
+  (connect tout 0 out 0)
+  (connect tout 0 damp 0)
+  (connect damp 0 fb 0)
+  (connect fb 0 add 1)
+  (connect t60 0 g 0)
+  (connect g 0 ramp 0)
+  (connect ramp 0 gline 0)
+  (connect gline 0 fb 1))
