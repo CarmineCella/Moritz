@@ -215,6 +215,13 @@ public:
     void audioSetup();
     void midiSetup();
     void about();
+    // the browser (browser.cpp): tutorials, examples, objects, recent files
+    void showBrowser();
+    void hideBrowser();
+    bool browserAtStartup();
+    void setBrowserAtStartup(bool on);
+    std::vector<std::string> recentFiles();
+    void addRecent(const std::string& path);
     void showBanner();                  // Shift+Cmd+J: Max und Moritz
     void showConsole();
     void clearConsole();

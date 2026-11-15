@@ -1,5 +1,6 @@
 ; freeverb.moritz - the reverb~ abstraction (a stereo Freeverb) on a gong.
 ; Drag the number boxes in locked mode: mix 0-1 and decay time T60 in seconds.
+; topic: Filters and effects
 (patch
   (obj title comment "reverb~ mix T60: stereo Freeverb (see reverb~.moritz, fvcomb~.moritz)" (pos 20 12))
   (obj lb loadbang (pos 20 40))

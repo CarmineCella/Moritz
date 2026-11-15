@@ -314,6 +314,7 @@ void App::buildMenu(Fl_Menu_Bar* m) {
             }
             fl_filename_free_list(&list, n);
         }
+    m->add("Help/Browser...", FL_COMMAND + FL_SHIFT + 'b', APP_CB(showBrowser), nullptr, FL_MENU_DIVIDER);
     for (auto& path : tutorials) {
         std::string name = baseName(path);
         name = name.substr(0, name.size() - 7);             // "01-first-patch" -> "01 first patch"
@@ -451,6 +452,7 @@ void App::closeFront() {
     if (auto d = dynamic_cast<MainWindow*>(w)) {
         if (d->confirmDiscard()) closeDocument(d);
     }
+    else if (w && w->visible()) w->hide();        // the browser, an about box...
 }
 
 void App::quit() {
@@ -464,6 +466,7 @@ void App::quit() {
     for (auto* d : std::vector<MainWindow*>(docs)) d->closeAllSubwindows();
     for (auto* w : helpWindows_) w->hide();
     for (auto* w : textWindows_) w->hide();
+    hideBrowser();
     if (console_) console_->hide();
     for (auto* d : docs) d->hide();
 }
@@ -796,6 +799,7 @@ bool MainWindow::openFile(const std::string& path) {
     canvas->setLocked(true);           // Max opens patches locked
     updateTitle();
     log("opened " + path);
+    App::get().addRecent(path);
     if (!err.empty()) print(baseName(path) + ":\n" + err);
     else setStatus("opened " + baseName(path));
     if (!patch.dspError.empty()) log(baseName(path) + ": " + patch.dspError);
@@ -873,8 +877,11 @@ bool MainWindow::saveAs() {
     const char* ext = fl_filename_ext(p.c_str());
     if (!ext || !*ext) p += std::string(".") + kExt;
     path_ = p;
+    suggested_.clear();
     patch.dir = dirOf(p);
-    return save();
+    if (!save()) return false;
+    App::get().addRecent(p);
+    return true;
 }
 
 // ---- Edit

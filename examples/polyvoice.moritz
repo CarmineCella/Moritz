@@ -1,6 +1,7 @@
 ; polyvoice.moritz - one voice of poly-synth.moritz, run by poly~.
 ; "pitch velocity" in, a plucked detuned-saw tone out. Its envelope also
 ; feeds thispoly~, so poly~ knows the voice is free once it fades out.
+; topic: hidden
 (patch
   (obj c0 comment "a poly~ voice: pitch velocity -> plucked saws" (pos 20 10))
   (obj in in (pos 20 40))

@@ -30,7 +30,7 @@
   (obj m3 message "freq $1" (pos 160 645))
   (obj pr print tutorial (pos 160 680))
   (obj cpr comment "print writes to the console: Patch > Console (Shift+Cmd+M)" (pos 250 681))
-  (obj next comment "Next: the help patch of each object (right-click a box) and the examples (File > Open)." (pos 20 720))
+  (obj next comment "Next: tutorial 3, sound files. Every object also has a help patch (right-click a box)." (pos 20 720))
   (connect a 0 add 0)
   (connect b 0 add 1)
   (connect add 0 sum 0)

@@ -4,6 +4,7 @@
 ; and holds while the key is down. Velocity 0 (the note-off) releases it in
 ; 400 ms. thispoly~ watches the envelope, so the voice stays busy until the
 ; release has finished.
+; topic: hidden
 (patch
   (obj c0 comment "keyvoice: pitch velocity in, sustain and release" (pos 20 10))
   (obj in inlet (pos 20 40))

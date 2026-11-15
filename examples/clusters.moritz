@@ -10,6 +10,7 @@
 ; snare, bright = hat. This loop has one snare per bar: too few frames for
 ; a cluster of its own, so kmeans counts it with the kicks. Mix the original
 ; and the replacement to compare.
+; topic: Analysis and learning
 (patch
   (obj title comment "kmeans: a drum loop classified into clusters it learnt by itself, then replayed with synthesized drums" (pos 20 12))
   (obj buf buffer~ cldrums sounds/drums.wav (pos 20 40))

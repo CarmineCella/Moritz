@@ -3,6 +3,7 @@
 ; midinote, so note-offs release the right voice, and out to the "Moritz"
 ; MIDI port with noteout, so another synth can play along. The mod wheel
 ; (ctlin 1) sets the reverb mix.
+; topic: MIDI and patching
 (patch
   (obj title comment "MIDI: notein from a keyboard, kslider, makenote improvising; ctlin 1 (mod wheel) sets the reverb" (pos 20 12))
   (obj ni notein (pos 20 45))

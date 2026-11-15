@@ -5,6 +5,7 @@
 ; (from one sound to the other). "cross mode buffer" chooses the mode and the
 ; second sound, read at the same position as the first; the amount (0 to 1)
 ; goes to sparkle~'s fourth inlet.
+; topic: Spectral
 (patch
   (obj title comment "sparkle~ cross-synthesis: two sounds become one" (pos 20 12))
   (obj sub comment "Turn the audio on, click a preset, then move the amount. Each preset sets the first sound, the mode and the second sound." (pos 20 34))

@@ -2,6 +2,7 @@
 ; "note pitch velocity" goes to a free voice; when all eight are sounding
 ; the oldest is stolen. Click the chords, or turn on the arpeggiator.
 ; Double-click poly~ in locked mode to open voice 1.
+; topic: Synthesis
 (patch
   (obj title comment "poly~: eight voices of polyvoice.moritz, allocated per note" (pos 20 12))
   (obj c1 comment "chords" (pos 20 40))

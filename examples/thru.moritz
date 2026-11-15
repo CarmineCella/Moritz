@@ -1,5 +1,6 @@
 ; thru.moritz - audio input to output at half level. Use headphones!
 ; macOS asks for microphone access the first time.
+; topic: First steps
 (patch
   (obj in adc~ (pos 40 40))
   (obj l *~ 0.5 (pos 40 100))

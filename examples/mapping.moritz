@@ -4,6 +4,7 @@
 ; move the sliders. To teach it a new sound: set the three number boxes
 ; (carrier, ratio, index), put the sliders where you want it, and click
 ; "record". "write" saves what it learnt, "read" loads it back.
+; topic: Analysis and learning
 (patch
   (obj title comment "knn mapping: two sliders control three FM parameters, learnt from examples you can record" (pos 20 12))
   (obj presets message "add 0 0 -> 110 1 2, add 100 0 -> 220 3.5 8, add 0 100 -> 440 1.41 4, add 100 100 -> 165 7 1" (pos 20 40))

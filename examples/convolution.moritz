@@ -2,6 +2,7 @@
 ; (a real hall, stereo), a bell and a gong (any sound can be a response: the
 ; source then rings like the bell or the gong). "set" switches the response;
 ; a source played into conv~ ir 2 alone feeds both channels.
+; topic: Filters and effects
 (patch
   (obj title comment "conv~: a voice, Beethoven's 7th or drums in the Concertgebouw, or convolved with a bell or a gong" (pos 20 12))
   (obj hall buffer~ convhall sounds/hall.wav (pos 20 40))

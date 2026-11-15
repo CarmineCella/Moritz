@@ -5,6 +5,7 @@
 ; (inlet 3) then moves the formants alone. robot and whisper replace the
 ; phases; threshold drops the weak bins (denoising). The same works on the
 ; live input: sparkle~ without a buffer~ transforms the signal it receives.
+; topic: Spectral
 (patch
   (obj title comment "Pitch shifting with sparkle~: transpose, keep or move the formants" (pos 20 12))
   (obj sub comment "Audio on, then play. Drag the semitones; switch formant preservation on and off to hear the difference." (pos 20 34))

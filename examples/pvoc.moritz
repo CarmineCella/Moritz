@@ -3,6 +3,7 @@
 ; pv-play (another pfft~) reads them back at any speed. 0 freezes the
 ; sound, negative speeds play it backwards. The phrase plays once as it is
 ; analysed, then the stretched version starts. Open either pfft~ to see how.
+; topic: Spectral
 (patch
   (obj title comment "phase vocoder: time stretching and freezing with pfft~" (pos 20 12))
   (obj buf buffer~ pvguitar sounds/Gambale_cut.wav (pos 20 40))

@@ -5,6 +5,7 @@
 ; chords, melody), into four parts, one per channel. Nothing tells nmf which
 ; part is which instrument: a part may take a whole stem, half of one, or
 ; bits of two.
+; topic: Analysis and learning
 (patch
   (obj title comment "separation: hpss (harmonic / percussive) on hpss_demo.wav, nmf (four parts) on a four-stem mix" (pos 20 12))
   (obj bsrc buffer~ sephp sounds/hpss_demo.wav (pos 20 40))

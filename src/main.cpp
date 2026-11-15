@@ -267,7 +267,9 @@ int main(int argc, char** argv) {
         if (std::string(argv[k]) == "--no-audio") app.startAudio = false;
     for (int k = 1; k < argc; ++k)       // each patch on the command line in its window
         if (argv[k][0] != '-') app.openDocument(moritz::portablePath(argv[k]));
+    bool opened = !app.docs.empty();
     if (app.docs.empty()) app.newDocument();
+    if (!opened && app.browserAtStartup()) app.showBrowser();   // a first look around
     // On macOS the program stays open without windows (the menu bar is
     // still there); elsewhere closing the last window quits.
     while (!app.quitting && !Fl::program_should_quit()) {

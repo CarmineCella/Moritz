@@ -4,6 +4,7 @@
 ; divides y's spectrum by h's, undoing a convolution by h. Here a voice is
 ; put in the Concertgebouw and taken out again, and made to ring through a
 ; gong, whose sound is then recovered from the result.
+; topic: Filters and effects
 (patch
   (obj title comment "condec: convolve and deconvolve whole sounds (offline, on demand)" (pos 20 12))
   (obj sub comment "Click 1 to 4 in order: each computes a new buffer~ (the button flashes when it's ready). Then play any of them." (pos 20 34))

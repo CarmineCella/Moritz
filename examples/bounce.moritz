@@ -3,6 +3,7 @@
 ; loads the patch afresh, applies the sends (seed, pitch, speed) and writes
 ; six seconds of its output into a buffer~. Render them all, then play and
 ; compare; edit the messages to make new variations.
+; topic: Samples
 (patch
   (obj title comment "moritz~: four variations of a generative patch rendered offline into buffers, then played" (pos 20 12))
   (obj b1 buffer~ var1 (pos 20 40))

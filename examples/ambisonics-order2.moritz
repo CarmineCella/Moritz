@@ -4,6 +4,7 @@
 ; speakers: at order 2 the sound gathers on fewer speakers around its
 ; direction (energy vector 0.87 instead of 0.71), so it is sharper to
 ; locate. On headphones, switch between the two binaural renderings.
+; topic: Space
 (patch
   (obj title comment "Ambisonics, order 1 and order 2: a sharper image with more channels" (pos 20 12))
   (obj sub comment "Audio on and headphones. The voice circles by itself (turns per second; 0 stops it). Compare orders 1 and 2 by ear and on the meters." (pos 20 34))

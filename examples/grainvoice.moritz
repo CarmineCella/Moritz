@@ -3,6 +3,7 @@
 ; "start size pitch pan" in: a line~ ramp from 0 to 1 over the grain drives
 ; both a Hann window and the read position, so every grain is a smooth,
 ; self-contained window. thispoly~ frees the voice when the window closes.
+; topic: hidden
 (patch
   (obj c0 comment "one grain: start ms, size ms, pitch, pan" (pos 20 10))
   (obj in in (pos 20 40))

@@ -2,6 +2,7 @@
 ; For every frame it stores each bin's amplitude, its phase difference from
 ; the previous frame (the bin's true frequency) and its phase, in three
 ; buffer~s. count~ numbers the bins frame after frame: frame * 512 + bin.
+; topic: hidden
 (patch
   (obj c0 comment "analysis: amplitude, phase difference and phase into buffers" (pos 20 10))
   (obj in fftin~ 1 (pos 20 45))

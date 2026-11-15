@@ -1,6 +1,7 @@
 ; echo.moritz - noise bursts into a feedback delay. tapin~ -> tapout~ is a
 ; tap link, so the feedback loop through lores~ and *~ back into tapin~
 ; is allowed. The metro re-triggers every 2 s; click the button too.
+; topic: Filters and effects
 (patch
   (obj title comment "tapin~ / tapout~ feedback echo" (pos 20 12))
   (obj lb loadbang (pos 20 40))

@@ -1,5 +1,6 @@
 ; reverb.moritz - a Schroeder reverb: four comb~ filters in parallel, then
 ; two allpass~ in series. sfplay~ plays the drums every 4.5 seconds.
+; topic: Filters and effects
 (patch
   (obj title comment "Schroeder reverb: 4 x comb~ in parallel -> 2 x allpass~" (pos 20 12))
   (obj lb loadbang (pos 20 40))

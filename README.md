@@ -172,7 +172,16 @@ The editor follows Max's conventions:
   running untouched, so the sound goes on; a text that doesn't read as a patch
   is not applied, and the status line says why. Text edits are undone with
   Cmd+Z like any other edit.
-- **Tutorials**: Help > Tutorials opens the tutorial patches, in order.
+- **Browser**: the window shown when Moritz starts (Help > Browser,
+  **Shift+Cmd+B**): the tutorials to start with, the examples by topic, every
+  object (opening its help patch) and the recent files, with a search box
+  over names and descriptions. Each example describes itself: the comment at
+  the top of the file, and a `; topic:` line that files it.
+- **Tutorials**: eight patches that explain themselves as you play with
+  them, in Help > Tutorials and at the top of the browser: 1 a first patch,
+  2 numbers and messages, 3 sound files and buffers, 4 filters, 5 the
+  spectrum (partials, time, pitch, colour), 6 grains, 7 sound in space,
+  8 separating sounds.
 - **Import from Max**: File > Import from Max... (**Shift+Cmd+I**) converts a
   Max patch (`.maxpat` or `.maxhelp`): boxes, arguments, cables, positions,
   subpatchers, sliders and keyboards. Abstractions next to it (`poly~`
@@ -507,6 +516,12 @@ File > Open starts there.
   field, turned with `ambirot~` and decoded to four speakers.
 - `binaural.moritz`: the same scene on headphones with `binaural~`, the drums
   also moving up and down.
+- `helicopter.moritz`: a synthesised helicopter (rotor chop and thump, tail
+  rotor, turbine) on four flights around the listener: over the head and
+  away behind, circling, a low pass on the right, a climb overhead. Distance
+  is heard through level, air absorption and Doppler (a delay of distance /
+  343 m/s); the direction through plain stereo, `binaural~` or `hrtf~`, to
+  compare. The sound, the flight path and the distance are in subpatchers.
 - `hrtf.moritz`: `hrtf~`: a voice or noise bursts flying around and above
   the listener, or placed by hand; switch to an order-2 ambisonic rendering
   to hear how much clearer height is with the direct responses.
@@ -594,7 +609,7 @@ All sources are in `src/`:
   `App` (audio, MIDI, console, help windows, the open patches), a window per
   patch with its toolbar, and subpatcher windows. `textview.cpp` is the text
   view of a patch.
-- `maximport.cpp`, `json.h`: Import from Max.
+- `maximport.cpp`, `json.h`: Import from Max. `browser.cpp`: the browser.
 - `main.cpp`: `main` and the command-line modes (`--render`, `--import`).
 
 `library/` holds the abstractions usable in any patch (`reverb~`), `help/`

@@ -3,6 +3,7 @@
 ;   carrier frequency c, harmonicity h, modulation index I:
 ;   out = cos(2 pi c t + I * h c * cos(2 pi h c t))
 ; Click a note. Presets change h, the index peak and the decay.
+; topic: Synthesis
 (patch
   (obj title comment "FM synthesis: notes, presets, and a p subpatcher holding the operator" (pos 20 12))
   (obj n1 message 48 (pos 20 45))

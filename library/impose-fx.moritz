@@ -1,6 +1,7 @@
 ; impose-fx.moritz - spectral patch of impose~ (run by pfft~ once per frame):
 ; the carrier's fine structure (its amplitudes divided by its envelope)
 ; times the modulator's envelope, with the carrier's phases.
+; topic: hidden
 (patch
   (obj c0 comment "carrier fine structure x modulator envelope, carrier phases" (pos 20 10))
   (obj m fftin~ 1 (pos 20 45))

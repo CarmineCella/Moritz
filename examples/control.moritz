@@ -1,5 +1,6 @@
 ; control.moritz - a tour of the control objects. Open Patch > Console
 ; (Shift+Cmd+M) to see what the print objects print.
+; topic: First steps
 (patch
   (obj title comment "open Patch > Console to watch the prints" (pos 20 12))
   (obj c1 comment "dice: random, select" (pos 20 45))

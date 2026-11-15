@@ -1,6 +1,7 @@
 ; sampler.moritz - buffer~ loads sounds/drums.wav (relative to this patch).
 ; groove~ loops it at any rate (negative plays backwards); play~ plays it
 ; once from the start.
+; topic: Samples
 (patch
   (obj title comment "buffer~ with groove~ (looping) and play~ (one shot)" (pos 20 12))
   (obj buf buffer~ drums sounds/drums.wav (pos 20 40))

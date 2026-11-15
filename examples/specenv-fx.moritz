@@ -7,6 +7,7 @@
 ;      speaks: cross-synthesis by envelope, the classic "talking orchestra")
 ;   3  the voice's fine structure with the carrier's envelope
 ; The second control inlet is specenv~'s order (its resolution).
+; topic: hidden
 (patch
   (obj c0 comment "mode 1: voice; 2: carrier fine x voice envelope; 3: voice fine x carrier envelope" (pos 20 10))
   (obj v fftin~ 1 (pos 20 45))

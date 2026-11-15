@@ -1,6 +1,7 @@
 ; sine.moritz - the patch from the spec, with a frequency box, a volume box
 ; and three message boxes acting as presets. Click a message box (patch
 ; locked) or drag a number box up/down.
+; topic: First steps
 (patch
   (obj p1 message 220 (pos 40 30))
   (obj p2 message 440 (pos 90 30))

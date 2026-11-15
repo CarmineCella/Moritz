@@ -1,5 +1,6 @@
 ; noise-presets.moritz - white noise through reson~. The message boxes on the
 ; right are presets: ";" sends each value to the matching receive object.
+; topic: Synthesis
 (patch
   (obj noise noise~ (pos 40 40))
   (obj rcf r cf (pos 140 40))

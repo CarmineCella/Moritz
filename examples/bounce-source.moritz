@@ -3,6 +3,7 @@
 ; from receives that moritz~ sets with "send": seed (the random sequence),
 ; pitch (the lowest MIDI note) and speed (ms between notes). Two fmvoices
 ; with different timbres play every note. It plays as soon as it is loaded.
+; topic: hidden
 (patch
   (obj c0 comment "rendered by bounce.moritz: receive seed, pitch, speed" (pos 20 10))
   (obj rseed receive seed (pos 20 40))

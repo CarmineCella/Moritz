@@ -175,6 +175,11 @@ Done, not released yet:
 - `slider` typed by its written limits (`slider 0. 1.` gives decimals);
   `--render` takes timed actions (`bang=id@4.5`).
 
+After v0.6: a browser at startup (tutorials, examples by topic from a
+`; topic:` line in each example, objects with their help, recent files,
+search), and tutorials 3-8 (sound files, filters, spectrum, grains, space,
+separation).
+
 Not done from the week-2 list: a separate cepstrum object (`specenv~` uses
 the cepstrum inside; denoising and spectral morphing are `sparkle~`'s
 `threshold` and cross mode 3).

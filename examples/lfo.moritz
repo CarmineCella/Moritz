@@ -1,5 +1,6 @@
 ; lfo.moritz - tremolo: a tri~ LFO scaled to 0..1 multiplies a cycle~.
 ; snapshot~ and peakamp~ turn signals into numbers you can watch.
+; topic: Synthesis
 (patch
   (obj title comment "tremolo, plus snapshot~ and peakamp~ as signal-to-number probes" (pos 20 12))
   (obj rate flonum 4 (pos 160 40))

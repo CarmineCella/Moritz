@@ -2,6 +2,7 @@
 ; note-off (velocity 0) goes to the voice that played the note, so each key
 ; sustains while held and releases when let go. The lower keyboard is in
 ; toggle mode (third argument 1): click keys to hold a chord, flush releases.
+; topic: MIDI and patching
 (patch
   (obj title comment "kslider -> midinote -> poly~: click and hold keys (locked mode)" (pos 20 12))
   (obj play kslider 4 36 (pos 20 45))

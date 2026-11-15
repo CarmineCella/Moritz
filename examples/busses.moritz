@@ -3,6 +3,7 @@
 ; the dry sound, and gate~ sends each player to a reverb bus or an echo bus,
 ; also by name. receive~ sums every send~ of its name, so any number of
 ; sources can share a bus.
+; topic: MIDI and patching
 (patch
   (obj title comment "send~ / receive~: two players send by name; gate~ routes each one to a reverb or an echo bus" (pos 20 12))
   (obj go toggle (pos 20 45))

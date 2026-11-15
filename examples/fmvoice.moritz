@@ -1,6 +1,7 @@
 ; fmvoice.moritz - an abstraction: one FM voice. Used by fm-bells.moritz as
 ;   fmvoice <harmonicity> <index peak> <decay ms>
 ; A MIDI note in the inlet plays it. #1, #2 and #3 are the arguments.
+; topic: hidden
 (patch
   (obj c0 comment "fmvoice #1 #2 #3: harmonicity, index peak, decay ms" (pos 20 10))
   (obj in inlet (pos 20 40))

@@ -4,6 +4,7 @@
 ; ambirot~ turns the whole scene; ambidec~ decodes it to a square of
 ; speakers: front left, back left, back right, front right (outputs 1 to 4
 ; of the sound card). On headphones, open binaural.moritz instead.
+; topic: Space
 (patch
   (obj title comment "Ambisonics: two sources in a sound field, decoded to four speakers" (pos 20 12))
   (obj sub comment "Needs a four-channel output (1 FL, 2 BL, 3 BR, 4 FR). The voice circles by itself; place the drums with the slider." (pos 20 34))

@@ -4,6 +4,7 @@
 ; of a biquad~ for eight classic shapes (Robert Bristow-Johnson's cookbook,
 ; as in Musil), from a frequency, a Q and a gain; filterplot draws the
 ; frequency response. Drag on the plot to move the filter.
+; topic: Filters and effects
 (patch
   (obj title comment "1. svf~ swept by phasor~: left = low-pass, right = band-pass" (pos 20 12))
   (obj src saw~ 55 (pos 20 50))

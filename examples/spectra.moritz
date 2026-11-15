@@ -2,6 +2,7 @@
 ; source for spectroscope~ and scope~. The fifth source is noise through a
 ; band-pass whose centre jumps to random frequencies; slide~ glides between
 ; them. dspstate~ shows the sample rate and the CPU load.
+; topic: Spectral
 (patch
   (obj title comment "spectroscope~: the spectrum of a sine, a saw, a pulse, noise and a swept band-pass" (pos 20 12))
   (obj s1 message 1 (pos 20 45))

@@ -2,6 +2,7 @@
 ; each pitch to a band-limited saw, then re-triggers a line~ envelope.
 ; Sliders: step time and filter cutoff. reverb~ (a stereo Freeverb
 ; abstraction) adds space; its number boxes set the mix and the decay T60.
+; topic: First steps
 (patch
   (obj title comment "step sequencer: toggle starts it, sliders shape it" (pos 20 12))
   (obj lb loadbang (pos 20 45))

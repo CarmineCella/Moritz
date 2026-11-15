@@ -1,6 +1,7 @@
 ; recorder.moritz - record up to 4 s from the audio input into buffer~,
 ; while groove~ loops the buffer. Use headphones; macOS asks for
 ; microphone access the first time.
+; topic: Samples
 (patch
   (obj title comment "toggle on records into the loop, off stops; headphones!" (pos 20 12))
   (obj buf buffer~ loop 4000 (pos 20 40))

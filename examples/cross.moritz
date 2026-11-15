@@ -5,6 +5,7 @@
 ; The presets set X x q Y y and the denoise threshold; the first, the
 ; geometric mean of the two spectra with the carrier's phases, makes the
 ; orchestra speak. Double-click the pfft~ box in locked mode to open it.
+; topic: Spectral
 (patch
   (obj title comment "cross synthesis: Beethoven's 7th (or a saw chord) speaking with a voice: A = X a1 + x a2 + q sqrt(a1 a2), phi = Y phi1 + y phi2" (pos 20 12))
   (obj buf buffer~ crossvox sounds/Vox.wav (pos 20 40))

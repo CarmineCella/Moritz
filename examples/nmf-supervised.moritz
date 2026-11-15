@@ -6,6 +6,7 @@
 ; parts only: each source comes out whole. Here the examples are the very
 ; recordings that are mixed, which makes it easy; in practice they are other
 ; recordings of the same voice and the same drums.
+; topic: Analysis and learning
 (patch
   (obj title comment "NMF source separation: unsupervised (run) and supervised (learn, separate)" (pos 20 12))
   (obj sub comment "Audio on. 1 records a mix of the voice and the drums (4 s). 2 learns each source alone and separates the mix. 3 does it blindly." (pos 20 34))

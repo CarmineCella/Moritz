@@ -1,5 +1,6 @@
 ; synth.moritz - click a note: trigger sends the pitch to a pulse and a
 ; triangle oscillator, then bangs a line~ envelope (attack, decay, release).
+; topic: First steps
 (patch
   (obj title comment "click a note (patch locked); the slider sets the pulse width" (pos 20 12))
   (obj n1 message 60 (pos 20 40))

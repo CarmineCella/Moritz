@@ -3,6 +3,7 @@
 ; fifteen seconds, then play. With envelope 60 the formants stay where they are, so
 ; the voice keeps its timbre while its pitch moves. Freeze stops time on the
 ; current sound; the cursor on the waveform shows where sparkle~ reads.
+; topic: Samples
 (patch
   (obj title comment "sparkle~ + function: draw the speed and the pitch over 15 s, then play (locked mode: click/drag/Shift-click points)" (pos 20 12))
   (obj buf buffer~ stretchvoice sounds/Vox.wav (pos 20 45))

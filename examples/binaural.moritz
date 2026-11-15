@@ -5,6 +5,7 @@
 ; (the MIT KEMAR dummy head), so the sound seems to come from outside the
 ; head, from its direction. ambirot~ turns the scene, as a head turning the
 ; other way would. The drums can also go up and down (elevation).
+; topic: Space
 (patch
   (obj title comment "Binaural: the same sound field on headphones (binaural~)" (pos 20 12))
   (obj sub comment "Use headphones. The voice circles around your head by itself; place the drums with the sliders, and turn the scene." (pos 20 34))

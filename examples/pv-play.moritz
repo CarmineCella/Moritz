@@ -6,6 +6,7 @@
 ; it, so a partial's bins stay in step: pitch stays put while time
 ; stretches, stops or runs backwards, without phasing or buzz. Where the
 ; position jumps (start, loop) the phases restart from the analysis.
+; topic: hidden
 (patch
   (obj c0 comment "resynthesis: read frames at any speed, phase-locked" (pos 20 10))
   (obj in fftin~ 1 (pos 20 45))

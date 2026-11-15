@@ -1,6 +1,7 @@
 ; fm-bells.moritz - generative FM bells built from the fmvoice abstraction
 ; (fmvoice.moritz, next to this patch). Each copy takes its own arguments:
 ; harmonicity, index peak and decay. Turn on "play".
+; topic: Synthesis
 (patch
   (obj title comment "two copies of the fmvoice abstraction, alternating notes on a pentatonic scale" (pos 20 12))
   (obj play toggle (pos 20 45))

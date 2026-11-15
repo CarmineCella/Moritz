@@ -3,6 +3,7 @@
 ; mixed by the morph amount. Each preset sets the prototypes and the
 ; parameters (the second number after a parameter is its randomness, as a
 ; ratio); the sliders then change density, length, frequency and morph.
+; topic: Synthesis
 (patch
   (obj title comment "nebula~: granular clouds of waveforms and sounds" (pos 20 12))
   (obj sub comment "Audio on, turn the cloud on, choose a preset, then play with the sliders." (pos 20 34))

@@ -3,6 +3,7 @@
 ; density, each from a random place within the spread and with a random
 ; pan; poly~ plays each one in a free grainvoice (32 of them). Random
 ; timing keeps the texture smooth: no grain-rate buzz.
+; topic: Synthesis
 (patch
   (obj title comment "granulator: poly~ with 32 grain voices reading a voice (sounds/Vox.wav)" (pos 20 12))
   (obj buf buffer~ grainvox sounds/Vox.wav (pos 20 40))

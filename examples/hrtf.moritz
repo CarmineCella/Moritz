@@ -7,6 +7,7 @@
 ; several responses and blurs those notches. Switch between the two to
 ; compare. Generic responses: up/down and front/back are less sure than
 ; left/right for most listeners.
+; topic: Space
 (patch
   (obj title comment "hrtf~: a sound anywhere around and above you, on headphones" (pos 20 12))
   (obj sub comment "Headphones. Choose a source and let it fly (circling, rising and falling), or place it with the sliders. Compare hrtf~ and ambisonics." (pos 20 34))

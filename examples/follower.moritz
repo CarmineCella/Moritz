@@ -2,6 +2,7 @@
 ; synthesizer: f0 sets the pitch of a sawtooth, the centroid (brightness)
 ; opens its filter, the rms level shapes its amplitude. Mix it with the
 ; voice, or hear it alone; the numbers show what descriptors~ measures.
+; topic: Analysis and learning
 (patch
   (obj title comment "descriptors~ -> synthesis: f0, centroid and rms of the voice drive a filtered sawtooth" (pos 20 12))
   (obj buf buffer~ follvoice sounds/Vox.wav (pos 20 45))
