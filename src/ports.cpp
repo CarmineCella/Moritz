@@ -115,6 +115,17 @@ const std::map<std::string, PortDocs>& docs() {
         {"kslider", {{"pitch (or pitch velocity): lights the key and passes through; set p v; flush; clear",
                       "velocity for pitches sent to the left inlet"},
                      {"pitch", "velocity (0 = note-off)"}}},
+        {"sparkle~", {{"speed (1 normal, 0 frozen, < 0 backwards), or the input without a buffer~; "
+                       "start [ms], stop, loop 1/0, envelope C, threshold x, robot 1/0, whisper 1/0",
+                       "pitch ratio (2 = an octave up)", "formant ratio (with envelope: moves the formants)"},
+                      {"output (channel)", "read position, 0 to 1"}}},
+        {"conv~", {{"signal to convolve with the buffer~ (channel); set name, gain x, normalize 0/1",
+                    "signal for the next channel (unconnected: the channel before)"},
+                   {"convolved signal (channel)"}}},
+        {"condec", {{"conv x h out [scale mix] or deconv y h out [threshold scale]: buffer~ names"},
+                    {"bang when the result is in the out buffer~"}}},
+        {"function", {{"bang: the curve for line~; a number (ms): the value there; domain, range, clear, set"},
+                      {"value at the time received", "the curve for line~: first value, then value-time pairs"}}},
         {"notein", {{}, {"pitch", "velocity (0 = note-off)", "channel (1-16)"}}},
         {"ctlin", {{}, {"controller value (0-127)", "controller number, or channel", "channel (1-16)"}}},
         {"bendin", {{}, {"pitch bend, 0-127 (64 = centre)", "channel (1-16)"}}},
@@ -218,6 +229,28 @@ std::string portHelp(const Box* b, bool outlet, int i) {
             text = route ? "messages starting with \"" + key + "\", without that word"
                          : "bang when the input is " + key;
         }
+    } else if (c == "descriptors~") {
+        static const std::vector<std::pair<std::string, std::string>> d = {
+            {"rms", "rms: root mean square level"},
+            {"centroid", "centroid (Hz): amplitude-weighted mean frequency"},
+            {"spread", "spread (Hz): spectral standard deviation around the centroid"},
+            {"skewness", "skewness: asymmetry of the spectrum"},
+            {"kurtosis", "kurtosis: peakedness of the spectrum"},
+            {"flux", "flux: how much the spectrum grew since the last frame"},
+            {"hfc", "hfc: high frequency content"},
+            {"zcr", "zcr: zero crossings per second"},
+            {"flatness", "flatness: 0 tonal .. 1 noisy"},
+            {"periodicity", "periodicity: autocorrelation peak, 0..1"},
+            {"f0", "f0 (Hz) from the autocorrelation; 0 when unvoiced"}};
+        std::vector<std::string> chosen;
+        for (auto& x : b->args)
+            if (x.isSymbol())
+                for (auto& e : d)
+                    if (e.first == x.s) chosen.push_back(e.second);
+        if (chosen.empty())
+            for (auto& e : d) chosen.push_back(e.second);
+        if (!outlet) text = "signal to analyse; bang: analyse now; hop n";
+        else if (i < (int)chosen.size()) text = chosen[(size_t)i];
     } else if (c == "groove~" && outlet && i == nOuts - 1) {
         text = "sync: position in the loop, 0 to 1";
     } else if (b->inner() && c != "p" && c != "pfft~" && c != "poly~") {

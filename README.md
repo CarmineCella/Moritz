@@ -136,6 +136,7 @@ and `r` work too.
 | `lores~ [cf res]` | Resonant low-pass; `res` goes from 0 to 1 |
 | `svf~ [freq q]` | State-variable filter with low, high, band and notch outlets. `q` goes from 0 to 1 |
 | `biquad~ [a0 a1 a2 b1 b2]` | Raw biquad: `y = a0 x + a1 x1 + a2 x2 - b1 y1 - b2 y2`. The coefficient inlets take numbers (or a list of five in the left inlet), not signals |
+| `conv~ buffer [channels]` | Convolution with the impulse response in a `buffer~`, with no latency (the first 256 taps directly, the rest by partitioned FFT). Channel c uses the response's channel c, or its last; an unconnected inlet takes the channel before, so a mono source into `conv~ hall 2` gives a stereo reverb. Normalised to unit energy (`normalize 0` to turn off), `gain x`, `set name` |
 | `slide~ [up down]` | Smooths a signal: `y += (x - y) / slide`, with `up` samples while rising and `down` while falling (1 = no smoothing); `reset` jumps to the input |
 
 **Signal math**
@@ -176,6 +177,7 @@ and `r` work too.
 | `sfplay~ [channels]` | Plays a file directly: `open file`, `1` (or bang) / `0`, `loop 1`, `speed x` (negative plays backwards) |
 | `sfrecord~ [channels]` | Records its inlets (1 channel by default) to a 24-bit WAV: `open file.wav`, then `1` starts and `0` stops. The outlet reports the recorded time in ms. Samples go through a buffer to a writer thread, so recording never holds up the audio |
 | `waveform~ name [width height]` | Shows a `buffer~`, one lane per channel. In locked mode, drag to select a region: the outlets give its start and end in ms. A number draws a cursor (ms); `select start end`, `set name` |
+| `condec` | Convolution and deconvolution of whole buffers (the author's *condec*): `conv x h out [scale mix]` and `deconv y h out [threshold scale]` write into the `buffer~` `out`, then bang. Deconvolution divides the spectra where the response is above `threshold` (0.001) times its peak, so a recording can be "un-reverberated" by its impulse response |
 | `index~ name [channel]`, `poke~ name [channel]` | Read or write a buffer~ at a sample index given as a signal (no interpolation); `set name` |
 | `count~ [min max loop]` | Sample counter: bang starts it from `min` (a number: from there), `stop` stops it. It wraps at `max` (0 = never), or stops there when `loop` is 0. While stopped it outputs `min` |
 
@@ -189,6 +191,7 @@ and `r` work too.
 | `cartopol~`, `poltocar~` | Real/imaginary to amplitude/phase, and back |
 | `framedelta~`, `frameaccum~ [wrap]` | Per bin: difference from the previous frame, and running sum (with `1`, kept in -pi..pi). Where `frameaccum~`'s third inlet is not zero, that bin restarts from the value in its second inlet |
 | `pvlock~` | Phase vocoder resynthesis phase with identity phase locking: inlets amplitude, analysed phase, phase difference, reset. Each spectral peak advances by its own frequency and the bins around it keep their analysed offsets from it, so stretched sounds stay clean |
+| `sparkle~ [buffer] [channels] [window] [overlap]` | The phase vocoder of the author's *sparkle*, with phase locking around spectral peaks and formant (spectral envelope) preservation. With a `buffer~` it plays it: the left inlet is the speed (1 as recorded, 0 frozen, negative backwards), `start [ms]` or bang plays, `stop`, `loop 1`. Without one it transforms its input, one window late. Inlets 2 and 3: pitch and formant ratios. `envelope C` keeps the formants (C cepstral coefficients, 30-80 for voices); `threshold x` drops weak bins; `robot 1`, `whisper 1`. The last outlet is the read position, 0 to 1. Window 2048, overlap 8 by default |
 | `lrshift~ n` | Shifts a frame by `n` bins, to combine bins with their neighbours |
 | `phasewrap~` | Wraps a phase into -pi..pi |
 
@@ -199,6 +202,7 @@ and `r` work too.
 | `snapshot~ [ms]` | Outputs the signal's current value on bang, or every `ms` |
 | `peakamp~ [ms]` | Outputs the peak level since the last report |
 | `meter~`, `scope~ [samples]` | Level meter and a triggered oscilloscope, drawn live |
+| `descriptors~ [size] [hop] [names...]` | Low-level descriptors every `hop` samples (1024) over `size` (2048): `rms centroid spread skewness kurtosis flux hfc zcr flatness periodicity f0`, one outlet each, in the order named (all by default). Centroid and spread are in Hz, zcr in crossings per second; f0 comes from the autocorrelation (0 when unvoiced) and periodicity is the height of its peak. Formulas from *sound_math*'s `features.h` |
 | `spectroscope~ [width height]` | Live spectrum: 2048-point FFT, log frequency from 20 Hz to half the sample rate, 0 dB (a full-scale sine) down to -90 dB |
 
 **Audio I/O**: `adc~ [ch...]` and `dac~ [ch...]`. The default channels are 1
@@ -274,6 +278,7 @@ the last sample rate and buffer size.
 | `button`, `toggle` | Bang, and on/off |
 | `slider [min max]` | Horizontal slider. It outputs integers when both limits are integers |
 | `comment` | A text note |
+| `function [domain] [lo] [hi]` | Breakpoint editor: in locked mode click to add a point, drag it, Shift-click to delete it. bang outputs the curve for `line~` (the first value, then value-time pairs over `domain` ms); a number (ms) outputs the value there. `domain`, `range`, `clear`, `set x y ...`; the points are saved with the patch |
 | `kslider [octaves] [lowest] [mode]` | Piano keyboard (4 octaves from note 36). Outlets: pitch and velocity; the velocity depends on where you click (louder lower down). Mode 0 plays while the mouse is down and sends velocity 0 on release (drag to glide); mode 1 toggles keys, for chords. A pitch in the left inlet lights its key and passes through with the velocity from the right inlet; `set p v` only lights it, `flush` releases every held key, `clear` unlights them all without output |
 
 **Library** (abstractions in `library/`, usable in any patch)
@@ -300,7 +305,7 @@ box holds its contents as a nested `(patch ...)` form.
 `(connect from outlet to inlet)` connects two boxes, counting ports from 0.
 `;` starts a comment outside strings.
 
-`examples/` has twenty-five demos, plus the abstractions they use. They are also inside the app bundle, and
+`examples/` has twenty-eight demos, plus the abstractions they use. They are also inside the app bundle, and
 File > Open starts there.
 
 - `sine.moritz`: the patch from the spec, with frequency and volume controls.
@@ -313,15 +318,15 @@ File > Open starts there.
 - `synth.moritz`: notes played through `trigger`, a pulse and a triangle, and an
   attack/decay/release envelope.
 - `echo.moritz`: noise bursts into a `tapin~`/`tapout~` feedback delay.
-- `sampler.moritz`: `buffer~` with `groove~` at any rate, including backwards,
-  and one-shot `play~`.
+- `sampler.moritz`: drums in a `buffer~`, with `groove~` at any rate,
+  including backwards, and one-shot `play~`.
 - `recorder.moritz`: records from the microphone into a looping buffer.
 - `filters.moritz`: `svf~` swept by a `phasor~` LFO in the signal domain.
 - `control.moritz`: `random`, `select`, `route`, `pack`, `expr`, `counter`,
   `gate`, `delay`, `line` and `print`. Open the console to see the output.
 - `reverb.moritz`: a Schroeder reverb (4 × `comb~` → 2 × `allpass~`) on
-  `sfplay~`.
-- `freeverb.moritz`: the `reverb~` abstraction on the bell, with number boxes
+  drums played by `sfplay~`.
+- `freeverb.moritz`: the `reverb~` abstraction on a gong, with number boxes
   for mix and decay time.
 - `lfo.moritz`: a tremolo, with `snapshot~`/`peakamp~` showing signal values as
   numbers.
@@ -333,13 +338,13 @@ File > Open starts there.
   subpatcher fires grains at random intervals, positions and pans, and
   `poly~` plays each in one of 32 `grainvoice.moritz` voices (a Hann window
   and read position driven by one `line~` ramp). Sliders and presets for
-  density, size, pitch, position and spread. It reads `sounds/flute.wav`.
+  density, size, pitch, position and spread. It reads a voice (`sounds/Vox.wav`).
 - `spectra.moritz`: `spectroscope~` and `scope~` showing a sine, a saw, a
   pulse, noise and a band-pass whose centre glides (`slide~`) to random
   frequencies; `selector~` picks the source, `dspstatus~` shows the sample
   rate and CPU load.
 - `tape.moritz`: a four-second tape loop: `record~` fills a `buffer~` from the
-  microphone or the sung phrase, `waveform~` shows it, and dragging across it
+  microphone or a voice (`Vox.wav`), `waveform~` shows it, and dragging across it
   picks the region `groove~` loops, with a moving cursor. `sfrecord~` saves
   what you hear to the Desktop.
 - `busses.moritz`: two players in subpatchers send their sound with `send~`;
@@ -348,25 +353,39 @@ File > Open starts there.
 - `midi-keys.moritz`: `notein` from a MIDI keyboard, a `kslider`, or
   `makenote` improvising, into `poly~` with `midinote` and out through
   `noteout`; the mod wheel (`ctlin 1`) sets the `reverb~` mix.
+- `stretch.moritz`: `sparkle~` reading a voice (`Vox.wav`) with two
+  `function` curves over 15 s, one for the speed (down to frozen) and one for the pitch; with
+  `envelope 60` the formants stay put while the pitch moves.
+- `convolution.moritz`: `conv~` with three impulse responses, the
+  Concertgebouw (`hall.wav`, stereo), a bell and a gong, on a voice,
+  Beethoven's Seventh or drums, with a wet/dry mix.
+- `follower.moritz`: `descriptors~` follows a voice (`Vox.wav`); its f0, centroid and
+  level drive a filtered sawtooth that imitates it.
 - `keyboard.moritz`: two `kslider`s play `poly~` with `midinote`: one plays
   while you hold the mouse, the other holds chords. Each `keyvoice.moritz`
   voice sustains while its key is down and releases when it goes up.
 - `poly-synth.moritz`: `poly~` with eight voices of `polyvoice.moritz` (detuned
   saws, filter, pluck envelope feeding `thispoly~`), played by chord buttons
   or a random arpeggiator, through a stereo delay.
-- `cross.moritz`: cross synthesis in `pfft~` (`xsynth.moritz`): both inputs go
-  through `cartopol~`, and `poltocar~` combines the phases of a sawtooth
-  chord with the amplitudes of a sung phrase.
-- `pvoc.moritz`: a phase vocoder. `pv-rec.moritz` analyses the phrase into
+- `cross.moritz`: cross synthesis in `pfft~` (`xsynth.moritz`) between
+  Beethoven's Seventh (or a sawtooth chord) and a voice (`Vox.wav`). Every
+  bin mixes the two amplitudes and phases, `A = X a1 + x a2 + q sqrt(a1 a2)`
+  and `phi = Y phi1 + y phi2`, with a denoise threshold on `A`; presets for
+  the geometric mean of the two spectra, the classic exchange, an amplitude
+  mix and a phase blend.
+- `pvoc.moritz`: a phase vocoder built from spectral objects, to see how
+  one works (`sparkle~` is the ready-made one). `pv-rec.moritz` analyses a
+  guitar phrase (`Gambale_cut.wav`) into
   buffers (amplitude, phase, phase difference), and `pv-play.moritz`
   resynthesises it at any speed, frozen or backwards, without changing its
-  pitch, using `pvlock~` to keep the partials coherent. The flute phrase plays
+  pitch, using `pvlock~` to keep the partials coherent. The phrase plays
   once while it is analysed; then the stretched version starts.
 
-`examples/sounds/bell.wav` was synthesized with Moritz itself, from
-`click~` and five `reson~` filters. `voice.wav` is a synthetic sung phrase
-(glottal pulses through moving vowel formants), and `flute.wav` a flute-like
-phrase made by `tools/make_flute.py` (soft harmonics, vibrato, breath).
+The sounds in `examples/sounds/` come from the examples of Musil: `Vox.wav`
+(a voice), `Beethoven_Symph7.wav` (an excerpt of the Seventh Symphony),
+`drums.wav`, `Gambale_cut.wav` (guitar), `archeos-bell.wav`,
+`gong_c_sharp.wav`, and `hall.wav`, a stereo impulse response of the
+Concertgebouw in Amsterdam (5 s).
 
 ## Source layout
 
@@ -383,6 +402,10 @@ All sources are in `src/`:
   `objects_midi.cpp`, `objects_patcher.cpp`: the objects; the last one holds `p`, abstractions,
   `pfft~` and the spectral and sample-index objects. `expr.h` is the
   expression language of `expr` and `expr~`.
+- `objects_sound.cpp`: `sparkle~`, `conv~`, `condec`, `descriptors~` and
+  `function`, adapted from the author's *sound_math* tools (sparkle, pconv,
+  condec, features); `vocoder.h` is sparkle's phase vocoder and
+  `partconv.h` the zero-latency convolver.
 - `audio.cpp`: the miniaudio engine. `midi.h`, `midi.cpp`: MIDI through
   RtMidi; its callbacks queue the messages for the GUI thread.
 - `gui.h`, `theme.h`, `canvas.cpp`, `mainwindow.cpp`: the FLTK editor, main

@@ -61,6 +61,7 @@ void registerControlObjects(ClassTable& t);
 void registerSampleObjects(ClassTable& t);
 void registerPatcherObjects(ClassTable& t);
 void registerMidiObjects(ClassTable& t);
+void registerSoundObjects(ClassTable& t);
 
 // abstraction lookup, used by makeBox for unknown class names
 std::unique_ptr<Box> makeAbstraction(const std::string& path, const Message& args, Patch* context);
@@ -217,24 +218,37 @@ public:
             { std::lock_guard<std::mutex> lk(patch->mutex()); copy = buf; }
             if (!writeWavFile(patch->resolvePath(m[1].str()), copy, err)) patch->print(err);
         } else if (m[0].is("size") && m.size() > 1 && m[1].isFloat()) {
-            std::lock_guard<std::mutex> lk(patch->mutex());
-            buf.frames = std::max(0L, (long)(m[1].f / 1000.0 * buf.sr));
-            buf.data.resize((size_t)buf.frames * buf.channels, 0.f);
+            {
+                std::lock_guard<std::mutex> lk(patch->mutex());
+                buf.frames = std::max(0L, (long)(m[1].f / 1000.0 * buf.sr));
+                buf.data.resize((size_t)buf.frames * buf.channels, 0.f);
+                ++version;
+            }
+            patch->rebuild();
         } else if (m[0].is("clear")) {
-            std::lock_guard<std::mutex> lk(patch->mutex());
-            std::fill(buf.data.begin(), buf.data.end(), 0.f);
+            {
+                std::lock_guard<std::mutex> lk(patch->mutex());
+                std::fill(buf.data.begin(), buf.data.end(), 0.f);
+                ++version;
+            }
+            patch->rebuild();
         }
     }
     std::string name;
     SampleBuffer buf;        // touched by the audio thread only under the DSP lock
+    int version = 0;         // changes with the contents (read, size, clear): conv~ reloads
 
 private:
     void read(const std::string& file) {
         SampleBuffer b;
         std::string err;
         if (!decodeAudioFile(patch->resolvePath(file), b, err)) { patch->print("buffer~ " + name + ": " + err); return; }
-        std::lock_guard<std::mutex> lk(patch->mutex());
-        buf = std::move(b);
+        {
+            std::lock_guard<std::mutex> lk(patch->mutex());
+            buf = std::move(b);
+            ++version;
+        }
+        patch->rebuild();        // objects that prepare the data (conv~) reload it
     }
     std::string file_;
     float ms_ = 0.f;

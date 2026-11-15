@@ -1,18 +1,18 @@
 ; tape.moritz - a four-second tape loop. record~ fills the buffer~ from the
-; microphone or the sung phrase; waveform~ shows it; drag across the
+; microphone or a voice (Vox.wav); waveform~ shows it; drag across the
 ; waveform (locked mode) to choose the part groove~ loops. The cursor follows
 ; the playback. sfrecord~ saves what you hear to ~/Desktop/moritz-take.wav.
 (patch
   (obj title comment "waveform~: record into a buffer~, drag a region to loop it, save the result with sfrecord~" (pos 20 12))
   (obj buf buffer~ tape 4000 (pos 20 45))
   (obj lb loadbang (pos 160 45))
-  (obj opn message "open sounds/voice.wav, loop 1, 1" (pos 160 75))
+  (obj opn message "open sounds/Vox.wav, loop 1, 1" (pos 160 75))
   (obj setup message "loop 1, select 0 4000" (pos 400 75))
   (obj mic adc~ 1 (pos 20 115))
   (obj voice sfplay~ (pos 160 115))
   (obj src1 message 1 (pos 20 150))
   (obj src2 message 2 (pos 60 150))
-  (obj csrc comment "source: 1 microphone, 2 the sung phrase" (pos 100 151))
+  (obj csrc comment "source: 1 microphone, 2 a voice (Vox.wav)" (pos 100 151))
   (obj sel selector~ 2 2 (pos 20 185))
   (obj rec record~ tape (pos 20 220))
   (obj r1 message 1 (pos 140 220))

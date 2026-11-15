@@ -1,11 +1,11 @@
-; pvoc.moritz - a phase vocoder: time-stretch a flute phrase without changing
-; its pitch. pv-rec (inside a pfft~) analyses flute.wav into buffers;
+; pvoc.moritz - a phase vocoder: time-stretch a guitar phrase without changing
+; its pitch. pv-rec (inside a pfft~) analyses Gambale_cut.wav into buffers;
 ; pv-play (another pfft~) reads them back at any speed. 0 freezes the
 ; sound, negative speeds play it backwards. The phrase plays once as it is
 ; analysed, then the stretched version starts. Open either pfft~ to see how.
 (patch
   (obj title comment "phase vocoder: time stretching and freezing with pfft~" (pos 20 12))
-  (obj buf buffer~ flute sounds/flute.wav (pos 20 40))
+  (obj buf buffer~ pvguitar sounds/Gambale_cut.wav (pos 20 40))
   (obj amp buffer~ pvamp 12000 (pos 240 40))
   (obj ph buffer~ pvphase 12000 (pos 410 40))
   (obj ab buffer~ pvabs 12000 (pos 580 40))
@@ -13,7 +13,7 @@
   (obj rec message "analyse" (pos 110 80))
   (obj go t b b (pos 20 120))
   (obj start message start (pos 110 160))
-  (obj src play~ flute (pos 110 200))
+  (obj src play~ pvguitar (pos 110 200))
   (obj an pfft~ pv-rec 1024 4 (pos 20 245))
   (obj c1 comment "analysis: 980 frames (5.7 s); playback starts when it is done" (pos 170 246))
   (obj c2 comment "speed" (pos 380 130))

@@ -1,26 +1,47 @@
 ; xsynth.moritz - spectral patch for cross.moritz, run by pfft~ once per FFT
-; frame, one bin per sample. Both inputs go through cartopol~; the result
-; takes its phases from signal 1 (the carrier) and its amplitudes from
-; signal 2 (the modulator), and poltocar~ turns them back into a spectrum.
+; frame, one bin per sample. Both inputs go through cartopol~ (amplitudes a1
+; a2, phases phi1 phi2), and each bin of the result is
+;     A   = X a1 + x a2 + q sqrt(a1 a2)      (0 where A is below denoise)
+;     phi = Y phi1 + y phi2
+; X, x, q, Y, y and denoise arrive in the control inlets. With X = x = 0,
+; q = 1, Y = 1, y = 0 the amplitudes are the geometric mean of the two
+; spectra with the phases of signal 1: signal 1 takes on the spectral shape
+; and the rhythm of signal 2. X = 0, x = 1, q = 0, Y = 1 is the classic
+; exchange (amplitudes of 2, phases of 1).
 (patch
-  (obj c0 comment "cross synthesis: phases of signal 1, amplitudes of signal 2" (pos 20 10))
-  (obj car fftin~ 1 (pos 20 45))
-  (obj mod fftin~ 2 (pos 240 45))
-  (obj cp1 cartopol~ (pos 20 90))
-  (obj cp2 cartopol~ (pos 240 90))
-  (obj c1 comment "amplitude, phase" (pos 330 91))
-  (obj gin inlet (pos 400 130))
-  (obj c2 comment "gain" (pos 450 131))
-  (obj gain *~ 1 (pos 240 170))
-  (obj pc poltocar~ (pos 20 220))
-  (obj out fftout~ 1 (pos 20 265))
-  (connect car 0 cp1 0)
-  (connect car 1 cp1 1)
-  (connect mod 0 cp2 0)
-  (connect mod 1 cp2 1)
-  (connect cp2 0 gain 0)
-  (connect gin 0 gain 1)
-  (connect gain 0 pc 0)
-  (connect cp1 1 pc 1)
+  (obj c0 comment "A = X a1 + x a2 + q sqrt(a1 a2) (gated by denoise), phi = Y phi1 + y phi2" (pos 20 10))
+  (obj s1 fftin~ 1 (pos 20 45))
+  (obj s2 fftin~ 2 (pos 150 45))
+  (obj X inlet (pos 300 45))
+  (obj x inlet (pos 350 45))
+  (obj q inlet (pos 400 45))
+  (obj Y inlet (pos 450 45))
+  (obj y inlet (pos 500 45))
+  (obj dn inlet (pos 550 45))
+  (obj cin comment "X x q Y y denoise" (pos 300 75))
+  (obj cp1 cartopol~ (pos 20 105))
+  (obj cp2 cartopol~ (pos 150 105))
+  (obj amp expr~ "$v3 * $v1 + $v4 * $v2 + $v5 * sqrt($v1 * $v2)" (pos 20 165))
+  (obj gate expr~ "$v1 * ($v1 > $v2)" (pos 20 205))
+  (obj phase expr~ "$v3 * $v1 + $v4 * $v2" (pos 330 165))
+  (obj pc poltocar~ (pos 20 250))
+  (obj out fftout~ 1 (pos 20 290))
+  (connect s1 0 cp1 0)
+  (connect s1 1 cp1 1)
+  (connect s2 0 cp2 0)
+  (connect s2 1 cp2 1)
+  (connect cp1 0 amp 0)
+  (connect cp2 0 amp 1)
+  (connect X 0 amp 2)
+  (connect x 0 amp 3)
+  (connect q 0 amp 4)
+  (connect amp 0 gate 0)
+  (connect dn 0 gate 1)
+  (connect cp1 1 phase 0)
+  (connect cp2 1 phase 1)
+  (connect Y 0 phase 2)
+  (connect y 0 phase 3)
+  (connect gate 0 pc 0)
+  (connect phase 0 pc 1)
   (connect pc 0 out 0)
   (connect pc 1 out 1))

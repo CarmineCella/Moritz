@@ -3,7 +3,7 @@
   (obj title comment "groove~ name [channels]: variable-speed, looping playback of a buffer~" (pos 20 12))
   (obj sub comment "Left inlet: the rate as a signal (1 = normal, 0.5 = half, -1 = backwards); a float there jumps to that position (ms)." (pos 20 34))
   (obj sub2 comment "loop 1/0 turns looping on/off. Middle/right inlets: loop start and end (ms, 0 = buffer end). Drag on the waveform to set them." (pos 20 52))
-  (obj buf buffer~ helpgroove ../examples/sounds/flute.wav (pos 20 80))
+  (obj buf buffer~ helpgroove ../examples/sounds/Gambale_cut.wav (pos 20 80))
   (obj wf waveform~ helpgroove 290 100 (pos 410 80))
   (obj r1 message 1 (pos 210 120))
   (obj r2 message 0.5 (pos 245 120))

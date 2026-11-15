@@ -84,6 +84,7 @@ private:
     int pressX_ = 0, pressY_ = 0, curX_ = 0, curY_ = 0;
     bool moved_ = false;
     Box* dragBox_ = nullptr;
+    std::string uiBefore_;          // what an interface box saved before a mouse edit
     int dragPort_ = 0;
     double dragStartValue_ = 0.0, dragStep_ = 1.0;
     Box* typingBox_ = nullptr;     // number box receiving typed digits

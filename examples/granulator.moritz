@@ -4,8 +4,8 @@
 ; pan; poly~ plays each one in a free grainvoice (32 of them). Random
 ; timing keeps the texture smooth: no grain-rate buzz.
 (patch
-  (obj title comment "granulator: poly~ with 32 grain voices reading sounds/flute.wav" (pos 20 12))
-  (obj buf buffer~ flute sounds/flute.wav (pos 20 40))
+  (obj title comment "granulator: poly~ with 32 grain voices reading a voice (sounds/Vox.wav)" (pos 20 12))
+  (obj buf buffer~ grainvox sounds/Vox.wav (pos 20 40))
   (obj lb loadbang (pos 20 75))
   (obj init message "25 90 1 2200 150" (pos 20 110))
   (obj on message 1 (pos 130 110))
@@ -25,7 +25,7 @@
   (obj pitch slider 0.25 2 (pos 20 265))
   (obj s3 s gr-pitch (pos 170 265))
   (obj l3 comment "pitch (1 = original)" (pos 290 266))
-  (obj pos slider 0 5500 (pos 20 300))
+  (obj pos slider 0 15000 (pos 20 300))
   (obj s4 s gr-pos (pos 170 300))
   (obj l4 comment "position in the file (ms)" (pos 290 301))
   (obj spread slider 0 800 (pos 20 335))
@@ -79,7 +79,7 @@
       (connect pan 0 pk 3)
       (connect pk 0 nm 0)
       (connect nm 0 out 0)))
-  (obj poly poly~ grainvoice 32 flute (pos 20 460))
+  (obj poly poly~ grainvoice 32 grainvox (pos 20 460))
   (obj left *~ 0.6 (pos 20 500))
   (obj right *~ 0.6 (pos 160 500))
   (obj out dac~ (pos 20 540))

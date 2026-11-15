@@ -34,6 +34,7 @@ const ClassTable& classDefs() {
         registerControlObjects(v);
         registerPatcherObjects(v);
         registerMidiObjects(v);
+        registerSoundObjects(v);
         std::stable_sort(v.begin(), v.end(), [](const ClassDef& a, const ClassDef& b) {
             return groupRank(a.group) < groupRank(b.group);
         });
@@ -120,6 +121,7 @@ std::string helpName(const std::string& cls) {
         group("meter~", {"meter~", "scope~"});
         group("ctlin", {"ctlin", "bendin", "pgmin"});
         group("noteout", {"noteout", "ctlout"});
+        group("conv~", {"conv~", "condec"});
         r["t"] = "trigger";
         r["sel"] = "select";
         r["del"] = "delay";

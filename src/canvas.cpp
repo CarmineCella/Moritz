@@ -823,6 +823,8 @@ int Canvas::handle(int e) {
                 } else if (h.box && h.box->kind == BoxKind::UI) {
                     drag_ = Drag::UI;
                     dragBox_ = h.box;
+                    uiBefore_ = messageToString(h.box->saveArgs());   // edits that change it can be undone
+                    if (win_) win_->pushUndo();
                     h.box->uiMouse(FL_PUSH, mx - h.box->x, my - h.box->y);
                 } else if (h.box && h.box->cls == "loadbang" && Fl::event_clicks()) {
                     h.box->loadbang();
@@ -907,8 +909,13 @@ int Canvas::handle(int e) {
 
         case FL_RELEASE: {
             int mx = Fl::event_x() - x(), my = Fl::event_y() - y();
-            if (drag_ == Drag::UI && dragBox_)
+            if (drag_ == Drag::UI && dragBox_) {
                 dragBox_->uiMouse(FL_RELEASE, mx - dragBox_->x, my - dragBox_->y);
+                if (win_) {
+                    if (messageToString(dragBox_->saveArgs()) != uiBefore_) win_->markDirty();
+                    else win_->dropUndo();
+                }
+            }
             if (drag_ == Drag::Cable && dragBox_) {
                 Hit h = hitTest(mx, my);
                 if (h.box && h.box != dragBox_) {
