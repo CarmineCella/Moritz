@@ -300,7 +300,7 @@ box holds its contents as a nested `(patch ...)` form.
 `(connect from outlet to inlet)` connects two boxes, counting ports from 0.
 `;` starts a comment outside strings.
 
-`examples/` has twenty-one demos, plus the abstractions they use. They are also inside the app bundle, and
+`examples/` has twenty-five demos, plus the abstractions they use. They are also inside the app bundle, and
 File > Open starts there.
 
 - `sine.moritz`: the patch from the spec, with frequency and volume controls.
@@ -334,6 +334,20 @@ File > Open starts there.
   `poly~` plays each in one of 32 `grainvoice.moritz` voices (a Hann window
   and read position driven by one `line~` ramp). Sliders and presets for
   density, size, pitch, position and spread. It reads `sounds/flute.wav`.
+- `spectra.moritz`: `spectroscope~` and `scope~` showing a sine, a saw, a
+  pulse, noise and a band-pass whose centre glides (`slide~`) to random
+  frequencies; `selector~` picks the source, `dspstatus~` shows the sample
+  rate and CPU load.
+- `tape.moritz`: a four-second tape loop: `record~` fills a `buffer~` from the
+  microphone or the sung phrase, `waveform~` shows it, and dragging across it
+  picks the region `groove~` loops, with a moving cursor. `sfrecord~` saves
+  what you hear to the Desktop.
+- `busses.moritz`: two players in subpatchers send their sound with `send~`;
+  the main patch receives it, and `gate~` routes each player to a reverb bus
+  or an echo bus, also by name.
+- `midi-keys.moritz`: `notein` from a MIDI keyboard, a `kslider`, or
+  `makenote` improvising, into `poly~` with `midinote` and out through
+  `noteout`; the mod wheel (`ctlin 1`) sets the `reverb~` mix.
 - `keyboard.moritz`: two `kslider`s play `poly~` with `midinote`: one plays
   while you hold the mouse, the other holds chords. Each `keyvoice.moritz`
   voice sustains while its key is down and releases when it goes up.
