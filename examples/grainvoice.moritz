@@ -6,8 +6,8 @@
 (patch
   (obj c0 comment "one grain: start ms, size ms, pitch, pan" (pos 20 10))
   (obj in in (pos 20 40))
-  (obj up unpack 0 0 0 0 (pos 20 75))
-  (obj len * 1 (pos 120 115))
+  (obj up unpack 0. 0. 0. 0. (pos 20 75))
+  (obj len * 1. (pos 120 115))
   (obj c1 comment "file ms per grain = size * pitch" (pos 180 116))
   (obj rmsg message "0, 1 $1" (pos 400 115))
   (obj ramp line~ (pos 400 150))

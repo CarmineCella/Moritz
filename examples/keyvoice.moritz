@@ -22,7 +22,7 @@
   (obj amp expr "$f1 / 127" (pos 330 115))
   (obj both t f f (pos 330 150))
   (obj sus * 0.7 (pos 420 185))
-  (obj ad pack 0 0 (pos 330 220))
+  (obj ad pack 0. 0. (pos 330 220))
   (obj atk message "$1 10 $2 300" (pos 330 255))
   (obj env line~ (pos 260 295))
   (obj busy thispoly~ (pos 380 335))

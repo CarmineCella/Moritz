@@ -15,7 +15,7 @@
   (obj km kmeans (pos 20 270))
   (obj cn number (pos 20 310))
   (obj ccn comment "its cluster" (pos 80 311))
-  (obj cen unpack 0 0 (pos 180 310))
+  (obj cen unpack 0. 0. (pos 180 310))
   (obj c0 flonum (pos 180 345))
   (obj c1 flonum (pos 260 345))
   (obj ccen comment "the cluster's centroid" (pos 340 346))

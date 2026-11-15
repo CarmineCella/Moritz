@@ -15,7 +15,7 @@
   (obj x flonum 5 (pos 380 85))
   (obj cx comment "x" (pos 445 86))
   (obj tff t f f (pos 380 130))
-  (obj add + (pos 380 175))
+  (obj add + 0. (pos 380 175))
   (obj sum flonum (pos 380 215))
   (obj csum comment "x + x" (pos 445 216))
   (obj cuse comment "t f f: the right outlet fills the cold inlet of + first, then the left one makes + output." (pos 20 255))

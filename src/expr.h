@@ -3,6 +3,10 @@
 //
 // C-like expressions over $f1..$f9 (floats), $i1..$i9 (truncated) and, for
 // expr~, $v1..$v9 (signals; in expr they read like $f).
+//
+// As in Max, values are typed: $i, integer constants (12) and comparisons
+// are integers, $f, $v and decimal constants (12.) are floats. An operation
+// between two integers is an integer one: 7 / 2 is 3, 7. / 2 is 3.5.
 #pragma once
 
 #include "dsp.h"
@@ -49,12 +53,12 @@ private:
     }
     Fn parseOr() {
         Fn a = parseAnd();
-        while (eat("||")) { Fn b = parseAnd(); a = [a, b](const double* v) { return (a(v) != 0 || b(v) != 0) ? 1.0 : 0.0; }; }
+        while (eat("||")) { Fn b = parseAnd(); int_ = true; a = [a, b](const double* v) { return (a(v) != 0 || b(v) != 0) ? 1.0 : 0.0; }; }
         return a;
     }
     Fn parseAnd() {
         Fn a = parseCmp();
-        while (eat("&&")) { Fn b = parseCmp(); a = [a, b](const double* v) { return (a(v) != 0 && b(v) != 0) ? 1.0 : 0.0; }; }
+        while (eat("&&")) { Fn b = parseCmp(); int_ = true; a = [a, b](const double* v) { return (a(v) != 0 && b(v) != 0) ? 1.0 : 0.0; }; }
         return a;
     }
     Fn parseCmp() {
@@ -65,6 +69,7 @@ private:
             else if (eat(">=")) op = 3; else if (eat("<")) op = 4; else if (eat(">")) op = 5;
             else return a;
             Fn b = parseAdd();
+            int_ = true;
             a = [a, b, op](const double* v) {
                 double x = a(v), y = b(v);
                 bool r = op == 0 ? x == y : op == 1 ? x != y : op == 2 ? x <= y
@@ -76,23 +81,30 @@ private:
     Fn parseAdd() {
         Fn a = parseMul();
         for (;;) {
-            if (eat("+")) { Fn b = parseMul(); a = [a, b](const double* v) { return a(v) + b(v); }; }
-            else if (eat("-")) { Fn b = parseMul(); a = [a, b](const double* v) { return a(v) - b(v); }; }
+            bool ia = int_;
+            if (eat("+")) { Fn b = parseMul(); int_ = ia && int_; a = [a, b](const double* v) { return a(v) + b(v); }; }
+            else if (eat("-")) { Fn b = parseMul(); int_ = ia && int_; a = [a, b](const double* v) { return a(v) - b(v); }; }
             else return a;
         }
     }
     Fn parseMul() {
         Fn a = parseUnary();
         for (;;) {
-            if (eat("*")) { Fn b = parseUnary(); a = [a, b](const double* v) { return a(v) * b(v); }; }
-            else if (eat("/")) { Fn b = parseUnary(); a = [a, b](const double* v) { double d = b(v); return d == 0 ? 0.0 : a(v) / d; }; }
-            else if (eat("%")) { Fn b = parseUnary(); a = [a, b](const double* v) { double d = b(v); return d == 0 ? 0.0 : std::fmod(a(v), d); }; }
+            bool ia = int_;
+            if (eat("*")) { Fn b = parseUnary(); int_ = ia && int_; a = [a, b](const double* v) { return a(v) * b(v); }; }
+            else if (eat("/")) {
+                Fn b = parseUnary();
+                int_ = ia && int_;
+                if (int_) a = [a, b](const double* v) { double d = b(v); return d == 0 ? 0.0 : std::trunc(a(v) / d); };
+                else a = [a, b](const double* v) { double d = b(v); return d == 0 ? 0.0 : a(v) / d; };
+            }
+            else if (eat("%")) { Fn b = parseUnary(); int_ = ia && int_; a = [a, b](const double* v) { double d = b(v); return d == 0 ? 0.0 : std::fmod(a(v), d); }; }
             else return a;
         }
     }
     Fn parseUnary() {
         if (eat("-")) { Fn a = parseUnary(); return [a](const double* v) { return -a(v); }; }
-        if (eat("!")) { Fn a = parseUnary(); return [a](const double* v) { return a(v) == 0 ? 1.0 : 0.0; }; }
+        if (eat("!")) { Fn a = parseUnary(); int_ = true; return [a](const double* v) { return a(v) == 0 ? 1.0 : 0.0; }; }
         if (eat("+")) return parseUnary();
         return parsePrimary();
     }
@@ -114,13 +126,16 @@ private:
             if (k < 1 || k > 9) fail("use $f1..$f9 or $i1..$i9");
             maxVar_ = std::max(maxVar_, k);
             int idx = k - 1;
+            int_ = t == 'i';
             if (t == 'i') return [idx](const double* v) { return std::trunc(v[idx]); };
             return [idx](const double* v) { return v[idx]; };
         }
         if (std::isdigit((unsigned char)c) || c == '.') {
             char* end = nullptr;
             double d = std::strtod(s_.c_str() + pos_, &end);
+            std::string lit = s_.substr(pos_, (size_t)(end - s_.c_str()) - pos_);
             pos_ = (size_t)(end - s_.c_str());
+            int_ = lit.find_first_of(".eE") == std::string::npos;
             return [d](const double*) { return d; };
         }
         if (std::isalpha((unsigned char)c) || c == '_') {
@@ -128,14 +143,18 @@ private:
             while (pos_ < s_.size() && (std::isalnum((unsigned char)s_[pos_]) || s_[pos_] == '_')) ++pos_;
             std::string name = s_.substr(b, pos_ - b);
             if (!eat("(")) {
-                if (name == "pi") return [](const double*) { return dsp::kPi; };
+                if (name == "pi") { int_ = false; return [](const double*) { return dsp::kPi; }; }
                 fail("unknown name '" + name + "'");
             }
             std::vector<Fn> args;
+            bool allInt = true;
             if (!eat(")")) {
-                do args.push_back(parseOr()); while (eat(","));
+                do { args.push_back(parseOr()); allInt = allInt && int_; } while (eat(","));
                 if (!eat(")")) fail("missing ')' after arguments of " + name);
             }
+            // int(), floor() ... give integers; abs, min, max keep the type
+            int_ = name == "int" || name == "floor" || name == "ceil" || name == "round" ||
+                   ((name == "abs" || name == "min" || name == "max") && allInt);
             return call(name, args);
         }
         fail(std::string("unexpected '") + c + "'");
@@ -182,6 +201,7 @@ private:
     std::string s_;
     size_t pos_ = 0;
     int maxVar_ = 0;
+    bool int_ = false;   // type of the subexpression just parsed
 };
 
 }  // namespace moritz

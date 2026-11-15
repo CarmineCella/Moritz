@@ -29,7 +29,7 @@
   (obj spk sparkle~ helpspk (pos 20 305))
   (obj wf waveform~ helpspk 300 70 (pos 350 290))
   (obj snap snapshot~ 30 (pos 230 330))
-  (obj ms * 15100 (pos 230 360))
+  (obj ms * 15100. (pos 230 360))
   (obj cwf comment "the read position" (pos 350 365))
   (obj on message "0.2 50" (pos 20 345))
   (obj off message "0 50" (pos 85 345))

@@ -114,7 +114,9 @@ Objects follow their Max/MSP namesakes. Signal objects end in `~`. An
 unconnected signal inlet takes a float instead. For control objects, the left
 inlet is "hot" (it makes the object output) and the other inlets are "cold"
 (they only store a value). The short names `t`, `sel`, `del`, `i`, `f`, `s`
-and `r` work too.
+and `r` work too. Numbers follow Max's types: an argument written with a
+point (`2.`, `0.5`) makes `+ - * / %`, the comparisons, `pack`, `unpack` and
+`scale` work in decimals; an integer argument, or none, makes them truncate.
 
 **Oscillators and generators**
 
@@ -256,11 +258,11 @@ the last sample rate and buffer size.
 
 | Object | Description |
 | --- | --- |
-| `+ - * / % [arg]` | Arithmetic, always in floats (`7 / 2` is 3.5, unlike Max); dividing by 0 gives 0 |
-| `== != > < >= <= [arg]` | Comparisons that output 1 or 0 |
+| `+ - * / % [arg]` | Arithmetic. As in Max, the argument sets the type: with an integer argument (or none) the inputs are truncated and `7 / 2` is 3; with a decimal one (`/ 2.`) it is 3.5. Dividing by 0 gives 0 |
+| `== != > < >= <= [arg]` | Comparisons that output 1 or 0, typed like the arithmetic (`> 0` truncates its input, `> 0.` does not) |
 | `mtof`, `ftom`, `dbtoa`, `atodb` | MIDI note ↔ Hz and dB ↔ amplitude conversions |
-| `scale inlo inhi outlo outhi [exp]` | Maps a range linearly, or along a curve when `exp` is given |
-| `expr ...` | Expressions over `$f1`..`$f9` and `$i1`..`$i9`, with `+ - * / % == != < > <= >= && \|\| !`, functions such as `sin`, `pow`, `sqrt`, `min`, `max`, `int` and `random(lo, hi)`, and the constant `pi` |
+| `scale inlo inhi outlo outhi [exp]` | Maps a range linearly, or along a curve when `exp` is given. Four integer arguments give integer output, as in Max |
+| `expr ...` | Expressions over `$f1`..`$f9` and `$i1`..`$i9`, typed as in Max (`7 / 2` is 3, `7. / 2` is 3.5), with `+ - * / % == != < > <= >= && \|\| !`, functions such as `sin`, `pow`, `sqrt`, `min`, `max`, `int` and `random(lo, hi)`, and the constant `pi` |
 | `random [n]` | Bang outputs a random integer from 0 to n-1. `seed x` makes the sequence repeatable |
 | `counter [max]` or `counter min max` | Each bang (or number) outputs the count, then steps it; `max` is included before it wraps back. `reset`, `set n` |
 
@@ -269,7 +271,7 @@ the last sample rate and buffer size.
 | Object | Description |
 | --- | --- |
 | `trigger b f i l a s ...` | Outputs right to left, converting the input to the type of each outlet |
-| `pack`, `unpack [items]` | Build a list or split one |
+| `pack`, `unpack [items]` | Build a list or split one. Each argument gives a slot its type, as in Max: `0` or `i` integer (truncates), `0.` or `f` decimal, `s` symbol; no arguments means two integers |
 | `route a b ...` | Sends a message out the outlet matching its first word, with that word removed. Unmatched messages go out the last outlet |
 | `select a b ...` | Bangs the outlet matching the input; other values pass through the last outlet |
 | `gate [n] [open]` | The left inlet picks the outlet (0 closes it); the right inlet is the data |

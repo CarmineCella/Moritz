@@ -45,6 +45,9 @@ struct Atom {
     Type type = Float;
     float f = 0.f;
     std::string s;
+    // A number written with a decimal point ("2.", "0.5"): in arguments it
+    // makes Max objects work in floats ([+ 2.], [pack 0. 0]); kept on save.
+    bool dec = false;
 
     Atom() = default;
     Atom(float v) : type(Float), f(v) {}
@@ -56,6 +59,8 @@ struct Atom {
     bool isFloat() const { return type == Float; }
     bool isSymbol() const { return type == Symbol; }
     bool is(const char* sym) const { return type == Symbol && s == sym; }
+    bool isDecimal() const { return type == Float && dec; }
+    static Atom decimal(float v) { Atom a(v); a.dec = true; return a; }
     std::string str() const;
 };
 

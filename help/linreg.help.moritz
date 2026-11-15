@@ -10,7 +10,7 @@
   (obj x1 flonum 3 (pos 20 175))
   (obj x2 flonum 2 (pos 100 175))
   (obj tq t b f (pos 100 205))
-  (obj pk pack 3 2 (pos 20 235))
+  (obj pk pack 3. 2. (pos 20 235))
   (obj cq comment "x1, x2" (pos 180 176))
   (obj lr linreg (pos 20 270))
   (obj y flonum (pos 20 310))

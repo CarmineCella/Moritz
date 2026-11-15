@@ -45,7 +45,13 @@ std::string formatFloat(float v) {
     return buf;
 }
 
-std::string Atom::str() const { return type == Float ? formatFloat(f) : s; }
+static std::string numberText(const Atom& a) {
+    std::string t = formatFloat(a.f);
+    if (a.dec && t.find_first_not_of("-0123456789") == std::string::npos) t += '.';
+    return t;
+}
+
+std::string Atom::str() const { return type == Float ? numberText(*this) : s; }
 
 Atom parseAtom(const std::string& tok) {
     if (tok.empty()) return Atom(tok);
@@ -55,7 +61,11 @@ Atom parseAtom(const std::string& tok) {
     if (numeric) {
         char* end = nullptr;
         float v = std::strtof(tok.c_str(), &end);
-        if (end && *end == '\0') return Atom(v);
+        if (end && *end == '\0') {
+            Atom a(v);
+            a.dec = tok.find_first_of(".eE") != std::string::npos;
+            return a;
+        }
     }
     return Atom(tok);
 }
@@ -176,7 +186,7 @@ static std::string quoteSymbol(const std::string& s) {
 }
 
 static std::string writeAtom(const Atom& a) {
-    return a.isFloat() ? formatFloat(a.f) : quoteSymbol(a.s);
+    return a.isFloat() ? numberText(a) : quoteSymbol(a.s);
 }
 
 

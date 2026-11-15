@@ -9,7 +9,7 @@
   (obj q1 message "1100 0.25 0.5" (pos 80 135))
   (obj q2 message "3000 0.1 0.9" (pos 190 135))
   (obj z zscore (pos 20 175))
-  (obj split unpack 0 0 0 (pos 20 210))
+  (obj split unpack 0. 0. 0. (pos 20 210))
   (obj a flonum (pos 20 245))
   (obj b flonum (pos 100 245))
   (obj c flonum (pos 180 245))

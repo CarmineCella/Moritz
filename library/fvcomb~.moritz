@@ -22,7 +22,7 @@
   (obj fb *~ (pos 160 240))
   (obj out outlet~ (pos 20 280))
   (obj t60 receive #2-t60 (pos 320 40))
-  (obj g expr "pow(10, -3 * #1 / 1000 / $f1)" (pos 320 80))
+  (obj g expr "pow(10, -3. * #1 / 1000. / $f1)" (pos 320 80))
   (obj c1 comment "g = 10^(-3 d / T60)" (pos 560 80))
   (obj ramp message "$1 50" (pos 320 120))
   (obj gline line~ (pos 320 160))

@@ -9,7 +9,7 @@
   (obj det * 1.006 (pos 120 160))
   (obj o1 saw~ (pos 20 200))
   (obj o2 saw~ (pos 120 200))
-  (obj cf * 3 (pos 220 160))
+  (obj cf * 3. (pos 220 160))
   (obj mix +~ (pos 20 245))
   (obj lp lores~ 1000 0.4 (pos 20 285))
   (obj amp expr "$f1 / 127 * 0.15" (pos 330 120))

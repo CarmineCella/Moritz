@@ -36,7 +36,7 @@
   (obj pr2 message "0 1 0 1 0 0" (pos 335 300))
   (obj pr3 message "0.5 0.5 0 1 0 0" (pos 430 300))
   (obj pr4 message "0 0 2 0.5 0.5 0" (pos 550 300))
-  (obj split unpack 0 0 0 0 0 0 (pos 240 335))
+  (obj split unpack 0. 0. 0. 0. 0. 0. (pos 240 335))
   (obj pX flonum (pos 240 370))
   (obj px flonum (pos 300 370))
   (obj pq flonum (pos 360 370))

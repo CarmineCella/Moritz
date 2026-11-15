@@ -23,7 +23,7 @@
   (obj fr message 0 (pos 260 290))
   (obj cfr comment "freeze" (pos 295 291))
   (obj snap snapshot~ 30 (pos 200 370))
-  (obj ms * 15100 (pos 200 400))
+  (obj ms * 15100. (pos 200 400))
   (obj wf waveform~ stretchvoice 360 60 (pos 330 400))
   (obj on message "0.25 50" (pos 20 370))
   (obj off message "0 50" (pos 90 370))

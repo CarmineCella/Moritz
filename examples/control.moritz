@@ -22,7 +22,7 @@
   (obj c3 comment "pack (left inlet is hot) into expr" (pos 540 45))
   (obj a flonum 3 (pos 540 70))
   (obj b flonum 4 (pos 620 70))
-  (obj pk pack 0 0 (pos 540 115))
+  (obj pk pack 0. 0. (pos 540 115))
   (obj hyp expr "sqrt($f1 * $f1 + $f2 * $f2)" (pos 540 155))
   (obj ph print hypot (pos 540 195))
   (obj c4 comment "counter through a gate" (pos 250 245))

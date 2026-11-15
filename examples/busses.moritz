@@ -13,7 +13,7 @@
       (obj in inlet (pos 20 40))
       (obj met metro 450 (pos 20 75))
       (obj pick random 6 (pos 20 110))
-      (obj scl expr "880 * pow(2, ($i1 * 2 + ($i1 > 2)) / 12)" (pos 20 145))
+      (obj scl expr "880 * pow(2, ($i1 * 2 + ($i1 > 2)) / 12.)" (pos 20 145))
       (obj f sig~ 880 (pos 20 180))
       (obj hit click~ (pos 200 145))
       (obj res reson~ 1 880 60 (pos 200 215))

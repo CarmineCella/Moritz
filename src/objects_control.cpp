@@ -16,26 +16,31 @@ namespace {
 
 // ---------------------------------------------------------------- + - * / % == != > < >= <=
 // Left inlet is hot (outputs), right inlet is cold (stores the operand).
-using BinFn = float (*)(float, float);
+// As in Max, the argument sets the type: [+ 2] or [+] works in integers
+// (inputs are truncated, 7 / 2 is 3), [+ 2.] works in decimals (3.5).
+using BinFn = double (*)(double, double, bool);   // a, b, integer mode
 class CtlOpBox : public Box {
 public:
-    CtlOpBox(BinFn fn, const Message& a) : fn_(fn), b_(argf(a, 0, 0.f)) {
+    CtlOpBox(BinFn fn, const Message& a)
+        : fn_(fn), int_(a.empty() || !a[0].isDecimal()), b_(in(argf(a, 0, 0.f))) {
         setPorts({P::Control, P::Control}, {P::Control});
     }
-    void message(int in, const Message& m) override {
-        if (in == 1) { if (m[0].isFloat()) b_ = m[0].f; return; }
+    void message(int inl, const Message& m) override {
+        if (inl == 1) { if (m[0].isFloat()) b_ = in(m[0].f); return; }
         if (m[0].isFloat()) {
-            a_ = m[0].f;
-            if (m.size() > 1 && m[1].isFloat()) b_ = m[1].f;
+            a_ = in(m[0].f);
+            if (m.size() > 1 && m[1].isFloat()) b_ = in(m[1].f);
         } else if (!m[0].is("bang")) {
             return;
         }
-        outletFloat(0, fn_(a_, b_));
+        outletFloat(0, (float)fn_(a_, b_, int_));
     }
 
 private:
+    double in(float v) const { return int_ ? std::trunc((double)v) : (double)v; }
     BinFn fn_;
-    float a_ = 0.f, b_;
+    bool int_;
+    double a_ = 0.0, b_;
 };
 
 
@@ -463,39 +468,68 @@ private:
 // ---------------------------------------------------------------- pack / unpack
 class PackBox : public Box {
 public:
+    // As in Max: each argument sets a slot's type and initial value. An
+    // integer (0, i) truncates what it receives, a decimal (0., f) keeps
+    // it, a symbol (s, or any word) stores words. No arguments: two integers.
     explicit PackBox(const Message& a) {
         Message t = a.empty() ? Message{Atom(0.f), Atom(0.f)} : a;
         for (auto& x : t) {
-            if (x.is("f") || x.is("i")) vals_.push_back(Atom(0.f));
-            else if (x.is("s")) vals_.push_back(Atom(""));
-            else vals_.push_back(x);
+            if (x.is("i")) { kind_.push_back('i'); vals_.push_back(Atom(0.f)); }
+            else if (x.is("f")) { kind_.push_back('f'); vals_.push_back(Atom(0.f)); }
+            else if (x.is("s")) { kind_.push_back('s'); vals_.push_back(Atom("")); }
+            else if (x.isSymbol()) { kind_.push_back('s'); vals_.push_back(x); }
+            else { kind_.push_back(x.dec ? 'f' : 'i'); vals_.push_back(Atom(x.f)); }
         }
         setPorts(std::vector<Port>(vals_.size(), P::Control), {P::Control});
     }
     void message(int in, const Message& m) override {
         if (in == 0) {
             if (m[0].is("bang")) { outlet(0, vals_); return; }
-            for (size_t k = 0; k < m.size() && k < vals_.size(); ++k) vals_[k] = m[k];
+            if (m[0].is("set")) {
+                for (size_t k = 1; k < m.size() && k - 1 < vals_.size(); ++k) vals_[k - 1] = store(k - 1, m[k]);
+                return;
+            }
+            for (size_t k = 0; k < m.size() && k < vals_.size(); ++k) vals_[k] = store(k, m[k]);
             outlet(0, vals_);
         } else {
-            vals_[(size_t)in] = m[0];
+            for (size_t k = 0; k < m.size() && (size_t)in + k < vals_.size(); ++k)
+                vals_[(size_t)in + k] = store((size_t)in + k, m[k]);
         }
     }
 
 private:
+    Atom store(size_t k, const Atom& x) const {
+        if (kind_[k] == 's') return x;
+        if (!x.isFloat()) return Atom(0.f);     // a word in a number slot is 0, as in Max
+        return Atom(kind_[k] == 'i' ? std::trunc(x.f) : x.f);
+    }
+    std::string kind_;
     Message vals_;
 };
 
 class UnpackBox : public Box {
 public:
+    // Typed outlets as in Max: integers (0, i, the default) are truncated,
+    // decimals (0., f) pass as they are, symbols (s) pass words.
     explicit UnpackBox(const Message& a) {
-        size_t n = a.empty() ? 2 : a.size();
-        setPorts({P::Control}, std::vector<Port>(n, P::Control));
+        Message t = a.empty() ? Message{Atom(0.f), Atom(0.f)} : a;
+        for (auto& x : t)
+            kind_ += x.is("f") || x.isDecimal() ? 'f' : x.is("s") || (x.isSymbol() && !x.is("i")) ? 's' : 'i';
+        setPorts({P::Control}, std::vector<Port>(kind_.size(), P::Control));
     }
     void message(int, const Message& m) override {
-        for (int k = std::min(numOuts(), (int)m.size()) - 1; k >= 0; --k)
-            outlet(k, {m[(size_t)k]});
+        if (m[0].is("bang")) return;
+        for (int k = std::min(numOuts(), (int)m.size()) - 1; k >= 0; --k) {
+            const Atom& x = m[(size_t)k];
+            char t = kind_[(size_t)k];
+            if (t == 's') outlet(k, {x});
+            else if (!x.isFloat()) outletFloat(k, 0.f);
+            else outletFloat(k, t == 'i' ? std::trunc(x.f) : x.f);
+        }
     }
+
+private:
+    std::string kind_;
 };
 
 // ---------------------------------------------------------------- route
@@ -662,6 +696,9 @@ public:
         setPorts(std::vector<Port>(6, P::Control), {P::Control});
         const float def[5] = {0, 127, 0, 1, 1};
         for (int k = 0; k < 5; ++k) p_[k] = argf(a, (size_t)k, def[k]);
+        // As in Max: four integer arguments give integer output
+        int_ = a.size() == 4;
+        for (auto& x : a) int_ = int_ && x.isFloat() && !x.dec;
     }
     void message(int in, const Message& m) override {
         if (in > 0) { if (m[0].isFloat()) p_[in - 1] = m[0].f; return; }
@@ -670,10 +707,12 @@ public:
         double range = p_[1] - p_[0];
         double k = range == 0 ? 0 : (x_ - p_[0]) / range;
         if (p_[4] != 1.f) k = k >= 0 ? std::pow(k, p_[4]) : -std::pow(-k, p_[4]);
-        outletFloat(0, (float)(p_[2] + k * (p_[3] - p_[2])));
+        double y = p_[2] + k * (p_[3] - p_[2]);
+        outletFloat(0, (float)(int_ ? std::trunc(y) : y));
     }
 
 private:
+    bool int_ = false;
     float p_[5];
     float x_ = 0.f;
 };
@@ -729,17 +768,19 @@ void registerControlObjects(ClassTable& t) {
         {"delay", "Timing", "delayed bang (ms)", with<DelayBox>()},
         {"line", "Timing", "control ramps: target time [grain]", with<LineBox>()},
         {"loadbang", "Timing", "bang when the patch opens", plain<LoadbangBox>()},
-        {"+", "Control Math", "add numbers", ctlop([](float a, float b) { return a + b; })},
-        {"-", "Control Math", "subtract numbers", ctlop([](float a, float b) { return a - b; })},
-        {"*", "Control Math", "multiply numbers", ctlop([](float a, float b) { return a * b; })},
-        {"/", "Control Math", "divide numbers", ctlop([](float a, float b) { return b == 0 ? 0.f : a / b; })},
-        {"%", "Control Math", "remainder", ctlop([](float a, float b) { return b == 0 ? 0.f : std::fmod(a, b); })},
-        {"==", "Control Math", "equal: 1 or 0", ctlop([](float a, float b) { return a == b ? 1.f : 0.f; })},
-        {"!=", "Control Math", "not equal: 1 or 0", ctlop([](float a, float b) { return a != b ? 1.f : 0.f; })},
-        {">", "Control Math", "greater than: 1 or 0", ctlop([](float a, float b) { return a > b ? 1.f : 0.f; })},
-        {"<", "Control Math", "less than: 1 or 0", ctlop([](float a, float b) { return a < b ? 1.f : 0.f; })},
-        {">=", "Control Math", "greater or equal: 1 or 0", ctlop([](float a, float b) { return a >= b ? 1.f : 0.f; })},
-        {"<=", "Control Math", "less or equal: 1 or 0", ctlop([](float a, float b) { return a <= b ? 1.f : 0.f; })},
+        {"+", "Control Math", "add (integers; [+ 0.] for decimals)", ctlop([](double a, double b, bool) { return a + b; })},
+        {"-", "Control Math", "subtract (integers; [- 0.] for decimals)", ctlop([](double a, double b, bool) { return a - b; })},
+        {"*", "Control Math", "multiply (integers; [* 0.] for decimals)", ctlop([](double a, double b, bool) { return a * b; })},
+        {"/", "Control Math", "divide (integers; [/ 1.] for decimals)", ctlop([](double a, double b, bool i) {
+             return b == 0 ? 0.0 : i ? std::trunc(a / b) : a / b; })},
+        {"%", "Control Math", "remainder (integers; [% 1.] for decimals)", ctlop([](double a, double b, bool) {
+             return b == 0 ? 0.0 : std::fmod(a, b); })},
+        {"==", "Control Math", "equal: 1 or 0", ctlop([](double a, double b, bool) { return a == b ? 1.0 : 0.0; })},
+        {"!=", "Control Math", "not equal: 1 or 0", ctlop([](double a, double b, bool) { return a != b ? 1.0 : 0.0; })},
+        {">", "Control Math", "greater than: 1 or 0", ctlop([](double a, double b, bool) { return a > b ? 1.0 : 0.0; })},
+        {"<", "Control Math", "less than: 1 or 0", ctlop([](double a, double b, bool) { return a < b ? 1.0 : 0.0; })},
+        {">=", "Control Math", "greater or equal: 1 or 0", ctlop([](double a, double b, bool) { return a >= b ? 1.0 : 0.0; })},
+        {"<=", "Control Math", "less or equal: 1 or 0", ctlop([](double a, double b, bool) { return a <= b ? 1.0 : 0.0; })},
         {"mtof", "Control Math", "MIDI note to frequency", unary(mtof)},
         {"ftom", "Control Math", "frequency to MIDI note", unary(ftom)},
         {"dbtoa", "Control Math", "decibels to amplitude", unary(dbtoa)},
