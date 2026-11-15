@@ -319,6 +319,7 @@ public:
     // set by the audio engine on the root, for dspstatus~
     std::atomic<int> ioBufferFrames{0};   // device buffer (I/O vector) size; kept while off
     std::atomic<float> cpuLoad{0.f};      // share of each buffer's time spent computing, smoothed
+    int renderDepth = 0;                  // moritz~: how deep this patch is rendered inside others
     void audioChanged() { forEachBox([](Box* b) { b->audioChanged(); }); }
 
     // ---- MIDI (GUI thread): input goes to every box; output to the root's hook

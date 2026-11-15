@@ -214,6 +214,24 @@ load in %, the sample rate, the I/O buffer size and the signal vector size (64,
 or the frame's bin count inside `pfft~`). While audio is off it still reports
 the last sample rate and buffer size.
 
+**Offline processing** (background jobs: the patch keeps running while they work; outlets: progress 0..1, then a bang when the result is in its `buffer~`; `stop` cancels)
+
+| Object | Description |
+| --- | --- |
+| `moritz~ [patch] [channels]` | Renders another patch offline, faster than real time, into a `buffer~`: `open patch.moritz`, `send name value` (sets its `receive name` before every render), `input buffer` (feeds its `adc~`), `render buffer seconds`. Each render starts the patch afresh; it has its own `send`/`receive` and `buffer~` names. Renders asked for while one runs wait their turn |
+| `nmf [components] [iterations]` | Non-negative matrix factorisation of the magnitude spectrogram (KL updates, as Musil's): `run source dest` writes one part per channel of `dest`, resynthesised with the original phases, so the parts add up to the source (mixed to mono). `components`, `iterations`, `size` (FFT), `seed` |
+| `hpss [kernel] [size]` | Harmonic/percussive separation (Musil's): median filters along time and frequency make soft masks; `run source harmonic percussive` writes two `buffer~`s that add up to the source |
+
+**Learning** (examples are messages: `add x1 x2 ...` or `add x1 x2 ... -> y1 y2 ...`; `clear`, `write file`, `read file`, `print`; a list asks the model)
+
+| Object | Description |
+| --- | --- |
+| `knn [k]` | k nearest neighbours. Regression (the mean of the k nearest outputs; `weighted 1` weights them by inverse distance, gliding smoothly between examples as Wekinator does) or classification (words as outputs, or `classify 1`). Inputs are standardised (`normalize 0` to turn off). Outlets: the prediction, the nearest example's index |
+| `kmeans` | `train k [iterations]` clusters the points (k-means++, best of 10 starts); a list then gives its cluster (0..k-1) and that cluster's centroid. `centroid i`, `seed n`, `normalize 0/1` |
+| `pca` | `train [dims]` finds the principal components and outputs the share of variance of each; a list then gives its coordinates along them |
+| `zscore` | `train` measures each value's mean and standard deviation; a list then comes out standardised |
+| `linreg` | `train` fits y = b0 + b1 x1 + ... by least squares, one set of weights per output; a list then gives the predictions; `weights` outputs them |
+
 **MIDI** (devices in Patch > MIDI Setup; channels 1-16)
 
 | Object | Description |
@@ -305,7 +323,7 @@ box holds its contents as a nested `(patch ...)` form.
 `(connect from outlet to inlet)` connects two boxes, counting ports from 0.
 `;` starts a comment outside strings.
 
-`examples/` has twenty-eight demos, plus the abstractions they use. They are also inside the app bundle, and
+`examples/` has thirty-two demos, plus the abstractions they use. They are also inside the app bundle, and
 File > Open starts there.
 
 - `sine.moritz`: the patch from the spec, with frequency and volume controls.
@@ -361,6 +379,18 @@ File > Open starts there.
   Beethoven's Seventh or drums, with a wet/dry mix.
 - `follower.moritz`: `descriptors~` follows a voice (`Vox.wav`); its f0, centroid and
   level drive a filtered sawtooth that imitates it.
+- `bounce.moritz`: `moritz~` renders `bounce-source.moritz` (generative FM
+  bells) offline four times, with different seeds, pitches and speeds, into
+  four `buffer~`s to play and compare.
+- `separation.moritz`: `hpss` splits `hpss_demo.wav` into its sustained and
+  its percussive parts, and `nmf` a mix of four stems (`stems_demo.wav`:
+  drums, bass, chords, melody) into four parts, as background jobs.
+- `mapping.moritz`: `knn` learns four FM sounds placed on an x/y plane and
+  glides between them as the sliders move; record your own, save them.
+- `clusters.moritz`: `kmeans` learns the sounds of a drum loop by itself
+  (from the descriptors of its frames, in two passes), then classifies every
+  hit and replays the loop with synthesized drums: the brightness of each
+  cluster picks kick, snare or hat.
 - `keyboard.moritz`: two `kslider`s play `poly~` with `midinote`: one plays
   while you hold the mouse, the other holds chords. Each `keyvoice.moritz`
   voice sustains while its key is down and releases when it goes up.
@@ -384,7 +414,8 @@ File > Open starts there.
 The sounds in `examples/sounds/` come from the examples of Musil: `Vox.wav`
 (a voice), `Beethoven_Symph7.wav` (an excerpt of the Seventh Symphony),
 `drums.wav`, `Gambale_cut.wav` (guitar), `archeos-bell.wav`,
-`gong_c_sharp.wav`, and `hall.wav`, a stereo impulse response of the
+`gong_c_sharp.wav`, `hpss_demo.wav`, `stems_demo.wav` (a mix of four stems),
+and `hall.wav`, a stereo impulse response of the
 Concertgebouw in Amsterdam (5 s).
 
 ## Source layout
@@ -402,6 +433,10 @@ All sources are in `src/`:
   `objects_midi.cpp`, `objects_patcher.cpp`: the objects; the last one holds `p`, abstractions,
   `pfft~` and the spectral and sample-index objects. `expr.h` is the
   expression language of `expr` and `expr~`.
+- `objects_offline.cpp`: `moritz~`, `nmf` and `hpss`, which run as
+  background jobs (`jobs.h`, `jobs.cpp`: a worker thread per job, results
+  handed back to the GUI thread). `objects_learn.cpp`: `knn`, `kmeans`,
+  `pca`, `zscore` and `linreg`.
 - `objects_sound.cpp`: `sparkle~`, `conv~`, `condec`, `descriptors~` and
   `function`, adapted from the author's *sound_math* tools (sparkle, pconv,
   condec, features); `vocoder.h` is sparkle's phase vocoder and

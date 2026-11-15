@@ -2,6 +2,7 @@
 // gui.h — FLTK editor: canvas, main window, subpatcher windows
 #pragma once
 
+#include "jobs.h"
 #include "midi.h"
 #include "moritz.h"
 

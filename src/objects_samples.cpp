@@ -565,7 +565,7 @@ public:
         fl_font(kFont, 9);
         if (!sb || sb->frames <= 0) {
             fl_color(kDim);
-            fl_draw(("no buffer~ " + name_).c_str(), x0 + 6, y0 + H / 2 + 3);
+            fl_draw((sb ? name_ + ": empty" : "no buffer~ " + name_).c_str(), x0 + 6, y0 + H / 2 + 3);
             return;
         }
         double dur = sb->frames / sb->sr * 1000.0;

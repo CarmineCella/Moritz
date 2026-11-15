@@ -108,6 +108,7 @@ int renderCli(int argc, char** argv) {
     p.sampleRate = sr;
     p.dspRunning = true;
     p.ioBufferFrames = blk;
+    moritz::jobsSynchronous = true;        // background jobs finish before the next message
     size_t slash = path.find_last_of('/');
     p.dir = slash == std::string::npos ? "." : path.substr(0, slash);
     moritz::setupSearchPaths();

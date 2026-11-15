@@ -162,6 +162,7 @@ MainWindow::MainWindow(int w, int h)
     // MIDI: RtMidi's thread wakes the GUI thread, which hands the messages to
     // the patch; noteout & co. send through the engine. Devices are checked
     // once a second, so plugging one in just works.
+    mainWake = [] { Fl::awake([](void*) { drainMain(); }, nullptr); };   // background jobs report back
     midi.wake = [this] { Fl::awake([](void* d) { static_cast<MainWindow*>(d)->midi.drain(); }, this); };
     midi.onMessage = [this](const std::vector<unsigned char>& m) { patch.midiIn(m); };
     patch.onMidiOut = [this](const std::vector<unsigned char>& m) { midi.send(m); };

@@ -62,6 +62,8 @@ void registerSampleObjects(ClassTable& t);
 void registerPatcherObjects(ClassTable& t);
 void registerMidiObjects(ClassTable& t);
 void registerSoundObjects(ClassTable& t);
+void registerOfflineObjects(ClassTable& t);
+void registerLearnObjects(ClassTable& t);
 
 // abstraction lookup, used by makeBox for unknown class names
 std::unique_ptr<Box> makeAbstraction(const std::string& path, const Message& args, Patch* context);
