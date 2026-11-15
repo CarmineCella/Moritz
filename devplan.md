@@ -81,19 +81,19 @@ and publishes the builds as a release for every `v*` tag.
 
 ## Steps
 
-| Step | Planned | Block | Content |
-|---|---|---|---|
-| 1 | 16-22 Nov | Foundations | Windows port, CI on macOS/Linux/Windows rendering every patch, releases built by CI. Several patches open at once. Clipboard as `.moritz` text. Code view. Tutorials. Import from Max. v0.5 |
-| 2 | 23-29 Nov | Signal processing | Cross-synthesis in `sparkle~`. Supervised `nmf`. Filter design, spectral envelope. `nebula~`. Ambisonics and binaural. v0.6 |
-| 3 | 30 Nov-6 Dec | Analysis and MIR | Onsets and segmentation. Mel, MFCC, chroma (live and offline). Key, tempo, beat tracking. Self-similarity, novelty. Loudness, register, polyphony curves. Plots and matrix display. |
-| 4 | 7-13 Dec | Maple and SoundTypes | Maple with FFT matching, dictionaries (frames, onsets, files, Gabor/gammatone), decomposition, hybridisation. SoundTypes: types, matching, Markov generation. Dataset: Maple dictionaries. |
-| 5 | 14-20 Dec | Recursive score | Score model, roll, rendering, playback, MusicXML, save/load. Database layer and `db-gen`. Dataset: TinySOL. |
-| 6 | 21 Dec-3 Jan | Orchestration | Orchidea mimetic orchestration (static, dynamic) into scores; granular and morphological orchestration; playability checks. |
-| 7 | 4-10 Jan | Neural networks | `mlp`, classifier, `autoencoder`/`vae` with a playable latent space, images as data. Dataset: MNIST. |
-| 8 | 11-17 Jan | Research | VAE on matching pursuit; 2-D corpus map. |
-| 9 | 18-24 Jan | Integration | Export to Max, generated documentation site, complete tutorials. |
-| 10 | 25-31 Jan | Stabilisation | Fixes, performance, testing on real Windows machines. Feature freeze: v1.0-rc. |
-| 11 | Feb | Pilot | Classes at CNSM, evaluation, v1.0, system paper (ICMC, SMC or NIME). |
+| Step | Block | Content |
+|---|---|---|
+| 1 | Foundations | Windows port, CI on macOS/Linux/Windows rendering every patch, releases built by CI. Several patches open at once. Clipboard as `.moritz` text. Code view. Tutorials. Import from Max. v0.5 |
+| 2 | Signal processing | Cross-synthesis in `sparkle~`. Supervised `nmf`. Filter design, spectral envelope. `nebula~`. Ambisonics and binaural. v0.6 |
+| 3 | Analysis and MIR | Onsets and segmentation. Mel, MFCC, chroma (live and offline). Key, tempo, beat tracking. Self-similarity, novelty. Loudness, register, polyphony curves. Plots and matrix display. |
+| 4 | Maple and SoundTypes | Maple with FFT matching, dictionaries (frames, onsets, files, Gabor/gammatone), decomposition, hybridisation. SoundTypes: types, matching, Markov generation. Dataset: Maple dictionaries. |
+| 5 | Recursive score | Score model, roll, rendering, playback, MusicXML, save/load. Database layer and `db-gen`. Dataset: TinySOL. |
+| 6 | Orchestration | Orchidea mimetic orchestration (static, dynamic) into scores; granular and morphological orchestration; playability checks. |
+| 7 | Neural networks | `mlp`, classifier, `autoencoder`/`vae` with a playable latent space, images as data. Dataset: MNIST. |
+| 8 | Research | VAE on matching pursuit; 2-D corpus map. |
+| 9 | Integration | Export to Max, generated documentation site, complete tutorials. |
+| 10 | Stabilisation | Fixes, performance, testing on real Windows machines. Feature freeze: v1.0-rc. |
+| 11 | Pilot | Classes at CNSM, evaluation, v1.0, system paper (ICMC, SMC or NIME). |
 
 Later: multitrack, transport and clip-grid views; a plugin host (CLAP and
 VST3, floating editors); the transformer on atom sequences; `concat~`.
