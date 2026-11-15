@@ -123,8 +123,8 @@ Windows; Windows builds natively in MSYS2 or cross-compiled):
 - Windows: `make` in MSYS2, or `make windows` cross-compiled with MinGW-w64
   (static, no DLLs, UTF-8 code page through the manifest, icon). Rendered
   by CI on Windows; not yet tried by hand on a Windows machine.
-- CI: `.github/workflows/build.yml` (macOS, Linux, Windows built on Linux and
-  tested on Windows, release on tags) and `tools/test-patches.sh`.
+- CI: `.github/workflows/build.yml` (macOS, Linux and Windows, each built
+  on its own system; release on tags) and `tools/test-patches.sh`.
 - Several patches open at once (an invisible host patch runs them all as
   extras); per-window menus on Windows/Linux, one menu bar on macOS.
 - Cut/copy/paste/duplicate through the system clipboard as `.moritz` text,
