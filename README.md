@@ -1,10 +1,9 @@
 # Moritz
 
-A minimal clone of Max/MSP: patch boxes together on a canvas and hear the
-result in real time. Moritz was called minlsp until version 0.4; the name
-comes from Wilhelm Busch's *Max und Moritz*. It still opens `.mlsp` patches
-and finds `.mlsp` abstractions. It's written in C++ and uses FLTK for the GUI and
-miniaudio for audio and RtMidi for MIDI. It runs on macOS and Linux.
+Moritz is a Max-like sound computing environment: patch boxes together on a
+canvas and hear the result in real time. It's written in C++ and uses FLTK
+for the GUI, miniaudio for audio and RtMidi for MIDI. It runs on macOS and
+Linux.
 
 ## Build
 
