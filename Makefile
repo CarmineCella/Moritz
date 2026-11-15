@@ -250,7 +250,7 @@ $(LX_BUILD)/%.o: src/%.cpp $(HEADERS) $(LX_FLTK_LIB) $(MA_HDR) $(RTMIDI_HDR)
 $(LX_DIR)/$(APP): $(LX_OBJECTS) $(LX_BUILD)/miniaudio.o $(LX_BUILD)/RtMidi.o
 	@mkdir -p $(LX_DIR)
 	$(LX_CXX) $^ $$($(LX_FLTK)/bin/fltk-config --use-images --ldstaticflags) \
-	  -lasound -lpthread -ldl -lm -o $@
+	  -static-libstdc++ -static-libgcc -lasound -lpthread -ldl -lm -o $@
 
 linux: $(LX_DIR)/$(APP) $(wildcard examples/*.moritz examples/sounds/* library/* help/*)
 	rm -rf $(LX_DIR)/examples $(LX_DIR)/library $(LX_DIR)/help

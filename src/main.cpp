@@ -15,6 +15,8 @@
 #include <FL/Fl_PNG_Image.H>
 #ifdef __APPLE__
 #include <FL/platform.H>   // fl_open_callback (on Linux it would pull in X11's macros)
+#else
+void fl_open_display();    // declared in FL/platform.H, which drags in X11 here
 #endif
 
 #include <algorithm>
