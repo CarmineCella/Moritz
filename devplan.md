@@ -6,8 +6,8 @@ at version 0.4.
 
 ## Vision
 
-Moritz is Carmine-Emanuele Cella's own sound computing environment: a
-Max-like patcher that brings together his research (sparkle, condec/pconv,
+Moritz is Carmine-Emanuele Cella's own Max-like environment for sound and
+music computing. It brings together his research (sparkle, condec/pconv,
 Maple, SoundTypes, Orchidea, the scores and computer-assisted composition of
 Musil, WEFT) in a single, free, open-source system (BSD 2-Clause) for macOS,
 Linux and Windows.

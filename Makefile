@@ -1,4 +1,4 @@
-# Moritz — a minimal Max/MSP-like patcher
+# Moritz — a Max-like environment for sound and music computing
 #
 #   make          download + build deps (first run only), then build:
 #                 on macOS Moritz.app, on Linux build/linux/Moritz/ (= make linux),
@@ -206,7 +206,7 @@ $(BUNDLE): $(APP) $(wildcard examples/*.moritz examples/sounds/* library/* help/
 	mkdir -p $(BUNDLE)/Contents/MacOS $(BUNDLE)/Contents/Resources
 	cp $(APP) $(BUNDLE)/Contents/MacOS/$(APP)
 	cp -R examples library help tutorials $(BUNDLE)/Contents/Resources/ 2>/dev/null || true
-	cp resources/moritz.icns resources/about.png LICENSE $(BUNDLE)/Contents/Resources/
+	cp resources/moritz.icns resources/about.png resources/maxundmoritz.png LICENSE $(BUNDLE)/Contents/Resources/
 	echo "$$INFO_PLIST" > $(BUNDLE)/Contents/Info.plist
 	printf 'APPL????' > $(BUNDLE)/Contents/PkgInfo
 	xattr -cr $(BUNDLE)          # Finder/quarantine detritus would break the signature
@@ -270,8 +270,9 @@ $(LX_DIR)/$(APP): $(LX_OBJECTS) $(LX_BUILD)/miniaudio.o $(LX_BUILD)/RtMidi.o
 	  -static-libstdc++ -static-libgcc -lasound -lpthread -ldl -lm -o $@
 
 linux: $(LX_DIR)/$(APP) $(wildcard examples/*.moritz examples/sounds/* library/* help/* tutorials/*)
-	rm -rf $(LX_DIR)/examples $(LX_DIR)/library $(LX_DIR)/help $(LX_DIR)/tutorials
+	rm -rf $(LX_DIR)/examples $(LX_DIR)/library $(LX_DIR)/help $(LX_DIR)/tutorials $(LX_DIR)/resources
 	cp -R examples library help tutorials LICENSE README.md $(LX_DIR)/
+	mkdir -p $(LX_DIR)/resources && cp resources/about.png resources/maxundmoritz.png $(LX_DIR)/resources/
 	@echo "==> built $(LX_DIR)/$(APP)"
 
 LX_TGZ := $(BUILD)/$(DIST_NAME)-linux-x86_64.tar.gz
@@ -350,8 +351,9 @@ $(WIN_DIR)/$(APP).exe: $(WIN_OBJECTS) $(WIN_BUILD)/miniaudio.o $(WIN_BUILD)/RtMi
 	  -lgdi32 -lgdiplus -lwinspool -lws2_32 -lshell32 -ladvapi32 -limm32 -loleaut32 -o $@
 
 windows: $(WIN_DIR)/$(APP).exe $(wildcard examples/*.moritz examples/sounds/* library/* help/* tutorials/*)
-	rm -rf $(WIN_DIR)/examples $(WIN_DIR)/library $(WIN_DIR)/help $(WIN_DIR)/tutorials
+	rm -rf $(WIN_DIR)/examples $(WIN_DIR)/library $(WIN_DIR)/help $(WIN_DIR)/tutorials $(WIN_DIR)/resources
 	cp -R examples library help tutorials LICENSE README.md $(WIN_DIR)/
+	mkdir -p $(WIN_DIR)/resources && cp resources/about.png resources/maxundmoritz.png $(WIN_DIR)/resources/
 	@echo "==> built $(WIN_DIR)/$(APP).exe"
 
 windows-zip: windows

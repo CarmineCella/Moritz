@@ -1,5 +1,5 @@
 // Copyright (c) 2026 Carmine-Emanuele Cella. SPDX-License-Identifier: BSD-2-Clause
-// moritz.h — a minimal Max/MSP-like patcher
+// moritz.h — Moritz, a Max-like environment for sound and music computing
 //
 // Patch model (boxes, connections, messages), patch file format and audio
 // engine. DSP kernels live in dsp.h, the GUI in gui.h.

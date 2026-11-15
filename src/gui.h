@@ -201,6 +201,7 @@ public:
     void audioSetup();
     void midiSetup();
     void about();
+    void showBanner();                  // Shift+Cmd+J: Max und Moritz
     void showConsole();
     void clearConsole();
     void print(const std::string& s);   // console, and the front document's status bar

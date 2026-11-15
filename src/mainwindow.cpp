@@ -124,6 +124,8 @@ void centerOnScreen(Fl_Window* w, Fl_Window* ref = nullptr, int dx = 0, int dy =
     w->position(X + std::max(0, (W - w->w()) / 2) + dx, Y + std::max(0, (H - w->h()) / 2) + dy);
 }
 
+int eggHandler(int e);          // Shift+Cmd+J (defined with the banner below)
+
 void midiTick(void*) {          // look for MIDI devices plugged in or out
     App::get().midi.refresh();
     Fl::repeat_timeout(1.0, midiTick);
@@ -213,6 +215,7 @@ void App::init() {
     host.onMidiOut = [this](const std::vector<unsigned char>& m) { midi.send(m); };
     midi.refresh();
     Fl::add_timeout(1.0, midiTick);
+    Fl::add_handler(eggHandler);
 #ifdef __APPLE__
     // one menu bar for every window, at the top of the screen
     Fl_Group* cur = Fl_Group::current();
@@ -1046,6 +1049,76 @@ int PatchWindow::handle(int e) {
 }
 
 // ---- dialogs
+namespace {
+// Shift+Cmd+J, from any window: a little homage to Wilhelm Busch
+int eggHandler(int e) {
+    if (e != FL_SHORTCUT) return 0;
+    int s = Fl::event_state();
+    if ((s & FL_COMMAND) && (s & FL_SHIFT) && Fl::event_key() == 'j') {
+        App::get().showBanner();
+        return 1;
+    }
+    return 0;
+}
+
+class Banner : public Fl_Double_Window {
+public:
+    Banner(Fl_Image* img) : Fl_Double_Window(480, 445), img_(img) {
+        border(0);
+        end();
+        Fl::add_timeout(8.0, timeUp, this);
+    }
+    ~Banner() override {
+        Fl::remove_timeout(timeUp, this);
+        delete img_;
+    }
+    static void timeUp(void* d) { static_cast<Banner*>(d)->close(); }
+    void draw() override {
+        Fl_Color paper = fl_rgb_color(247, 241, 227), ink = fl_rgb_color(40, 34, 28);
+        fl_color(paper);
+        fl_rectf(0, 0, w(), h());
+        fl_color(fl_rgb_color(150, 132, 104));
+        fl_rect(6, 6, w() - 12, h() - 12);
+        if (img_) img_->draw((w() - img_->w()) / 2, 22);
+        int y = 22 + (img_ ? img_->h() : 340) + 14;
+        fl_color(ink);
+        fl_font(FL_TIMES_ITALIC, 18);
+        fl_draw("Max und Moritz, Wilhelm Busch (1865)", 0, y, w(), 24, FL_ALIGN_CENTER);
+        fl_color(fl_rgb_color(110, 96, 80));
+        fl_font(FL_HELVETICA, 10);
+        fl_draw("Moritz goes nowhere without Max  ·  click to close", 0, h() - 26, w(), 14, FL_ALIGN_CENTER);
+    }
+    int handle(int e) override {
+        bool modifier = Fl::event_key() >= FL_Shift_L && Fl::event_key() <= FL_Meta_R;
+        if (e == FL_PUSH || ((e == FL_KEYBOARD || e == FL_SHORTCUT) && !modifier)) { close(); return 1; }
+        return Fl_Double_Window::handle(e);
+    }
+    void close() {
+        if (closing_) return;
+        closing_ = true;
+        Fl::remove_timeout(timeUp, this);
+        hide();
+        Fl::delete_widget(this);
+    }
+
+private:
+    Fl_Image* img_;
+    bool closing_ = false;
+};
+}  // namespace
+
+void App::showBanner() {
+    std::string base = exeDir();
+    Fl_Image* img = nullptr;
+    for (std::string p : {base + "/../Resources/maxundmoritz.png", base + "/resources/maxundmoritz.png"}) {
+        Fl_PNG_Image png(p.c_str());
+        if (png.fail() == 0) { img = png.copy(440, 440 * png.h() / std::max(1, png.w())); break; }
+    }
+    auto* b = new Banner(img);
+    centerOnScreen(b, frontDoc());
+    b->show();
+}
+
 void App::about() {
     Fl_Double_Window dlg(360, 330, "About Moritz");
     centerOnScreen(&dlg, frontDoc());
@@ -1071,7 +1144,7 @@ void App::about() {
     };
     text(152, 30, "Moritz", 24, FL_HELVETICA_BOLD, kText);
     text(182, 18, ("version " MORITZ_VERSION), 12, FL_HELVETICA, kDim);
-    text(206, 20, "A minimal Max/MSP-style patcher", 13, FL_HELVETICA, kText);
+    text(206, 20, "A Max-like environment for sound and music computing", 12, FL_HELVETICA, kText);
     text(236, 20, "Created by Carmine-Emanuele Cella (2026)", 13, FL_HELVETICA_BOLD, kAccent);
     text(258, 18, "BSD 2-Clause License", 11, FL_HELVETICA, kDim);
     Fl_Return_Button ok(260, 288, 85, 28, "OK");

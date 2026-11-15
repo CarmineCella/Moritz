@@ -1,9 +1,18 @@
 # Moritz
 
-Moritz is a Max-like sound computing environment: patch boxes together on a
-canvas and hear the result in real time. It's written in C++ and uses FLTK
-for the GUI, miniaudio for audio and RtMidi for MIDI. It runs on macOS,
-Linux and Windows.
+Moritz is a Max-like environment for sound and music computing: patch boxes
+together on a canvas and hear the result in real time. It's written in C++
+and uses FLTK for the GUI, miniaudio for audio and RtMidi for MIDI. It runs
+on macOS, Linux and Windows.
+
+### The name
+
+Max, the patching environment Moritz follows, was named after Max Mathews,
+the pioneer of computer music. In German, Max never goes far without
+Moritz: *Max und Moritz* (1865), Wilhelm Busch's story of two boys and their
+seven pranks, is one of the best-known picture books in the language. Moritz
+is Max's companion: it works the way Max does, and gets up to some mischief
+of its own. (Busch's two boys are hiding somewhere in the program, too.)
 
 ## Build
 
@@ -567,3 +576,7 @@ output to stdout, and can write a WAV file.
 
 Moritz is released under the BSD 2-Clause License; see `LICENSE`.
 Created by Carmine-Emanuele Cella (2026).
+
+The drawing of Max and Moritz in `resources/maxundmoritz.png` is Wilhelm
+Busch's own, from *Max und Moritz* (1865); it is in the public domain (scan
+from Wikimedia Commons, "Max und Moritz (Busch) 001.png").
