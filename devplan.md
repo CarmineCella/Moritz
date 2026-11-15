@@ -115,16 +115,16 @@ Weeks start on Monday. One block a week assumes 3-5 working sessions.
 
 ### Status of week 1 (15 November)
 
-Done, not yet released:
+Released as v0.5 on 15 November (built and tested by CI on macOS, Linux and
+Windows; Windows builds natively in MSYS2 or cross-compiled):
 
 - Max arithmetic (committed): typed `+ - * / %`, comparisons, `pack`/`unpack`,
   `scale`, `expr`; `2.` kept as written.
-- Windows: `make windows` / `make windows-zip` cross-compile with MinGW-w64
-  (static, no DLLs, UTF-8 code page through the manifest, icon). Not yet run
-  on a real Windows machine: the CI job does that.
+- Windows: `make` in MSYS2, or `make windows` cross-compiled with MinGW-w64
+  (static, no DLLs, UTF-8 code page through the manifest, icon). Rendered
+  by CI on Windows; not yet tried by hand on a Windows machine.
 - CI: `.github/workflows/build.yml` (macOS, Linux, Windows built on Linux and
-  tested on Windows, release on tags) and `tools/test-patches.sh`. Runs on
-  the first push.
+  tested on Windows, release on tags) and `tools/test-patches.sh`.
 - Several patches open at once (an invisible host patch runs them all as
   extras); per-window menus on Windows/Linux, one menu bar on macOS.
 - Cut/copy/paste/duplicate through the system clipboard as `.moritz` text,
