@@ -1,10 +1,18 @@
 # Moritz — a minimal Max/MSP-like patcher
 #
 #   make          download + build deps (first run only), then build:
-#                 on macOS Moritz.app, on Linux build/linux/Moritz/ (= make linux)
+#                 on macOS Moritz.app, on Linux build/linux/Moritz/ (= make linux),
+#                 on Windows (MSYS2) build/windows/Moritz/ (= make windows)
 #   make run      build and open the app
 #   make linux    the Linux build: build/linux/Moritz/moritz with the examples,
 #                 library and help next to it (needs the packages listed below)
+#   make windows  the Windows build: build/windows/Moritz/moritz.exe and its
+#                 folders. On Windows, in an MSYS2 MINGW64 shell, plain `make`
+#                 does it (packages listed below); on macOS or Linux it
+#                 cross-compiles with MinGW-w64 (brew install mingw-w64, or
+#                 apt install mingw-w64)
+#   make windows-zip  the same, zipped for a release
+#   make linux-dist   the Linux build as a .tar.gz for a release
 #   make dist     macOS: build the release zip (app + examples + license) in build/
 #   make notarize macOS: sign with a Developer ID, notarize and staple (see below)
 #   make clean    remove build products
@@ -14,14 +22,21 @@
 # with FLTK. Dependencies are downloaded into deps/ on the first build: FLTK
 # (built with cmake), miniaudio (audio) and RtMidi (MIDI).
 #
+# Windows (MSYS2, https://www.msys2.org, in the "MSYS2 MINGW64" shell):
+#   pacman -S make curl zip mingw-w64-x86_64-gcc mingw-w64-x86_64-cmake
+#
 # Linux packages (Debian/Ubuntu names): build-essential cmake curl
 #   libasound2-dev libx11-dev libxext-dev libxft-dev libxinerama-dev
 #   libxcursor-dev libxrender-dev libxfixes-dev libfontconfig1-dev
 
 APP        := moritz
 BUNDLE     := Moritz.app
-VERSION    := 0.4
+VERSION    := 0.5
 UNAME      := $(shell uname -s)
+# MSYS2 on Windows reports MINGW64_NT-..., UCRT64_NT-..., MSYS_NT-...
+ifneq (,$(findstring _NT,$(UNAME)))
+WINDOWS_HOST := 1
+endif
 
 FLTK_VER   := 1.4.4
 FLTK_URL   := https://github.com/fltk/fltk/releases/download/release-$(FLTK_VER)/fltk-$(FLTK_VER)-source.tar.gz
@@ -80,6 +95,8 @@ LDFLAGS    := $(ARCHFLAGS)
 
 ifeq ($(UNAME),Linux)
 all: linux
+else ifdef WINDOWS_HOST
+all: windows
 else
 all: $(BUNDLE)
 endif
@@ -183,12 +200,12 @@ define INFO_PLIST
 endef
 export INFO_PLIST
 
-$(BUNDLE): $(APP) $(wildcard examples/*.moritz examples/sounds/* library/* help/* resources/*) LICENSE
+$(BUNDLE): $(APP) $(wildcard examples/*.moritz examples/sounds/* library/* help/* tutorials/* resources/*) LICENSE
 	@echo "==> creating $(BUNDLE)"
 	rm -rf $(BUNDLE)
 	mkdir -p $(BUNDLE)/Contents/MacOS $(BUNDLE)/Contents/Resources
 	cp $(APP) $(BUNDLE)/Contents/MacOS/$(APP)
-	cp -R examples library help $(BUNDLE)/Contents/Resources/ 2>/dev/null || true
+	cp -R examples library help tutorials $(BUNDLE)/Contents/Resources/ 2>/dev/null || true
 	cp resources/moritz.icns resources/about.png LICENSE $(BUNDLE)/Contents/Resources/
 	echo "$$INFO_PLIST" > $(BUNDLE)/Contents/Info.plist
 	printf 'APPL????' > $(BUNDLE)/Contents/PkgInfo
@@ -252,10 +269,95 @@ $(LX_DIR)/$(APP): $(LX_OBJECTS) $(LX_BUILD)/miniaudio.o $(LX_BUILD)/RtMidi.o
 	$(LX_CXX) $^ $$($(LX_FLTK)/bin/fltk-config --use-images --ldstaticflags) \
 	  -static-libstdc++ -static-libgcc -lasound -lpthread -ldl -lm -o $@
 
-linux: $(LX_DIR)/$(APP) $(wildcard examples/*.moritz examples/sounds/* library/* help/*)
-	rm -rf $(LX_DIR)/examples $(LX_DIR)/library $(LX_DIR)/help
-	cp -R examples library help LICENSE README.md $(LX_DIR)/
+linux: $(LX_DIR)/$(APP) $(wildcard examples/*.moritz examples/sounds/* library/* help/* tutorials/*)
+	rm -rf $(LX_DIR)/examples $(LX_DIR)/library $(LX_DIR)/help $(LX_DIR)/tutorials
+	cp -R examples library help tutorials LICENSE README.md $(LX_DIR)/
 	@echo "==> built $(LX_DIR)/$(APP)"
+
+LX_TGZ := $(BUILD)/$(DIST_NAME)-linux-x86_64.tar.gz
+linux-dist: linux
+	tar -czf $(LX_TGZ) -C $(LX_BUILD) Moritz
+	@ls -l $(LX_TGZ)
+
+# ---------------------------------------------------------------- Windows
+# Cross-compiled with MinGW-w64 (WIN_PREFIX is the tools' prefix; set it
+# empty to build natively in MSYS2). Everything is linked statically, so
+# moritz.exe needs no DLLs. The manifest in resources/moritz.rc sets the
+# UTF-8 code page, so file names with accents work through fopen and argv.
+ifdef WINDOWS_HOST
+WIN_PREFIX   ?=
+WIN_CMAKE    := -G "MSYS Makefiles"
+else
+WIN_PREFIX   ?= x86_64-w64-mingw32-
+WIN_CMAKE    := -DCMAKE_SYSTEM_NAME=Windows
+endif
+WIN_BUILD    := $(BUILD)/windows
+WIN_DIR      := $(WIN_BUILD)/Moritz
+WIN_FLTK_BLD := $(DEPS)/fltk-windows-build
+WIN_FLTK     := $(DEPS)/fltk-windows
+WIN_FLTK_LIB := $(WIN_FLTK)/lib/libfltk.a
+WIN_CXX      := $(WIN_PREFIX)g++
+WIN_CC       := $(WIN_PREFIX)gcc
+WIN_RC       := $(WIN_PREFIX)windres
+WIN_CXXFLAGS := -std=c++17 -O2 -Wall -Wextra -Wno-unused-parameter -I$(WIN_FLTK)/include \
+                -I$(MA_DIR) -I$(RTMIDI_DIR) -Isrc -DMORITZ_VERSION=\"$(VERSION)\" -D__WINDOWS_MM__ -DNOMINMAX \
+                -DWIN32 -DUNICODE -D_UNICODE
+WIN_OBJECTS  := $(patsubst src/%.cpp,$(WIN_BUILD)/%.o,$(SOURCES))
+WIN_ZIP      := $(BUILD)/$(DIST_NAME)-windows-x86_64.zip
+
+$(WIN_FLTK_LIB): $(FLTK_TGZ)
+	@echo "==> building FLTK $(FLTK_VER) for Windows (static, MinGW-w64)"
+	rm -rf $(WIN_FLTK_BLD) $(WIN_FLTK)
+	[ -d $(FLTK_SRC) ] || tar -xzf $(FLTK_TGZ) -C $(DEPS)
+	cmake -S $(FLTK_SRC) -B $(WIN_FLTK_BLD) \
+	  $(WIN_CMAKE) \
+	  -DCMAKE_C_COMPILER=$(WIN_CC) -DCMAKE_CXX_COMPILER=$(WIN_CXX) -DCMAKE_RC_COMPILER=$(WIN_RC) \
+	  -DCMAKE_BUILD_TYPE=Release \
+	  -DCMAKE_INSTALL_PREFIX=$(abspath $(WIN_FLTK)) \
+	  -DFLTK_BUILD_SHARED_LIBS=OFF \
+	  -DFLTK_BUILD_GL=OFF \
+	  -DFLTK_BUILD_TEST=OFF \
+	  -DFLTK_BUILD_EXAMPLES=OFF \
+	  -DFLTK_BUILD_FLUID=OFF \
+	  -DFLTK_BUILD_FLTK_OPTIONS=OFF \
+	  -DFLTK_USE_SYSTEM_LIBJPEG=OFF \
+	  -DFLTK_USE_SYSTEM_LIBPNG=OFF \
+	  -DFLTK_USE_SYSTEM_ZLIB=OFF
+	cmake --build $(WIN_FLTK_BLD) --parallel
+	cmake --install $(WIN_FLTK_BLD)
+	@touch $@
+
+$(WIN_BUILD)/miniaudio.o: $(MA_HDR)
+	@mkdir -p $(WIN_BUILD)
+	$(WIN_CC) -O2 -x c -DMINIAUDIO_IMPLEMENTATION -c $(MA_HDR) -o $@
+
+$(WIN_BUILD)/RtMidi.o: $(RTMIDI_HDR)
+	@mkdir -p $(WIN_BUILD)
+	$(WIN_CXX) -std=c++17 -O2 -D__WINDOWS_MM__ -w -c $(RTMIDI_SRC) -o $@
+
+$(WIN_BUILD)/resources.o: resources/moritz.rc resources/moritz.ico resources/moritz.manifest
+	@mkdir -p $(WIN_BUILD)
+	$(WIN_RC) -I resources resources/moritz.rc -O coff -o $@
+
+$(WIN_BUILD)/%.o: src/%.cpp $(HEADERS) $(WIN_FLTK_LIB) $(MA_HDR) $(RTMIDI_HDR)
+	@mkdir -p $(WIN_BUILD)
+	$(WIN_CXX) $(WIN_CXXFLAGS) -c $< -o $@
+
+$(WIN_DIR)/$(APP).exe: $(WIN_OBJECTS) $(WIN_BUILD)/miniaudio.o $(WIN_BUILD)/RtMidi.o $(WIN_BUILD)/resources.o
+	@mkdir -p $(WIN_DIR)
+	$(WIN_CXX) -mwindows -static -s $^ $(WIN_FLTK)/lib/libfltk_images.a $(WIN_FLTK)/lib/libfltk_png.a \
+	  $(WIN_FLTK)/lib/libfltk_z.a $(WIN_FLTK_LIB) -lwinmm -lole32 -luuid -lcomctl32 -lcomdlg32 \
+	  -lgdi32 -lgdiplus -lwinspool -lws2_32 -lshell32 -ladvapi32 -limm32 -loleaut32 -o $@
+
+windows: $(WIN_DIR)/$(APP).exe $(wildcard examples/*.moritz examples/sounds/* library/* help/* tutorials/*)
+	rm -rf $(WIN_DIR)/examples $(WIN_DIR)/library $(WIN_DIR)/help $(WIN_DIR)/tutorials
+	cp -R examples library help tutorials LICENSE README.md $(WIN_DIR)/
+	@echo "==> built $(WIN_DIR)/$(APP).exe"
+
+windows-zip: windows
+	rm -f $(WIN_ZIP)
+	cd $(WIN_BUILD) && zip -qr -X ../$(notdir $(WIN_ZIP)) Moritz -x '*.DS_Store'
+	@ls -l $(WIN_ZIP)
 
 # ---------------------------------------------------------------- release (macOS)
 # The zip holds the app (with the examples inside), the examples as a
@@ -290,6 +392,9 @@ notarize: $(BUNDLE)
 ifeq ($(UNAME),Linux)
 run: linux
 	$(LX_DIR)/$(APP)
+else ifdef WINDOWS_HOST
+run: windows
+	$(WIN_DIR)/$(APP).exe
 else
 run: $(BUNDLE)
 	open $(BUNDLE)
@@ -301,4 +406,4 @@ clean:
 distclean: clean
 	rm -rf $(DEPS)
 
-.PHONY: all deps run linux dist notarize clean distclean
+.PHONY: all deps run linux linux-dist windows windows-zip dist notarize clean distclean

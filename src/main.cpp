@@ -1,7 +1,9 @@
 // Copyright (c) 2026 Carmine-Emanuele Cella. SPDX-License-Identifier: BSD-2-Clause
 // main.cpp — entry point: the GUI, or a headless `--render` mode for tests
 //
-//   moritz [patch.moritz]
+//   moritz [--no-audio] [patch.moritz ...]
+//   moritz --import patch.maxpat [out.moritz]   converts a Max patch (to stdout,
+//          or to out.moritz with its abstractions converted next to the original)
 //   moritz --render patch.moritz seconds [out.wav] [bang=<id>] [send=<id>:<message>] ...
 //          [png=<file.png>] [edit] [size=<w>x<h>] [extra=<patch.moritz>]
 //          [midi=<seconds>:<bytes>]   e.g. midi=0.5:144 60 100 (MIDI output is printed)
@@ -10,6 +12,7 @@
 // mode, or edit mode with "edit"), so drawing can be checked without a screen.
 
 #include "gui.h"
+#include "maximport.h"
 
 #include <FL/Fl_Image_Surface.H>
 #include <FL/Fl_PNG_Image.H>
@@ -17,6 +20,10 @@
 #include <FL/platform.H>   // fl_open_callback (on Linux it would pull in X11's macros)
 #else
 void fl_open_display();    // declared in FL/platform.H, which drags in X11 here
+#endif
+
+#ifdef _WIN32
+#include <windows.h>
 #endif
 
 #include <algorithm>
@@ -30,11 +37,9 @@ void fl_open_display();    // declared in FL/platform.H, which drags in X11 here
 
 namespace {
 
-moritz::MainWindow* gWin = nullptr;
-
 #ifdef __APPLE__
-void openFromFinder(const char* path) {
-    if (gWin && gWin->confirmDiscard()) gWin->openFile(path);
+void openFromFinder(const char* path) {    // double-clicked in the Finder: its own window
+    moritz::App::get().openDocument(path);
 }
 #endif
 
@@ -111,8 +116,7 @@ int renderCli(int argc, char** argv) {
     p.dspRunning = true;
     p.ioBufferFrames = blk;
     moritz::jobsSynchronous = true;        // background jobs finish before the next message
-    size_t slash = path.find_last_of('/');
-    p.dir = slash == std::string::npos ? "." : path.substr(0, slash);
+    p.dir = moritz::dirOf(path);
     moritz::setupSearchPaths();
     if (!p.load(src, err)) { std::fprintf(stderr, "error: %s\n", err.c_str()); return 1; }
     if (!err.empty()) std::fprintf(stderr, "warning: %s\n", err.c_str());
@@ -139,8 +143,7 @@ int renderCli(int argc, char** argv) {
             std::string xsrc, xerr, xpath = a.substr(6);
             if (!moritz::readFile(xpath, xsrc)) { std::fprintf(stderr, "can't read %s\n", xpath.c_str()); return 1; }
             auto xp = std::make_unique<moritz::Patch>();
-            size_t xs = xpath.find_last_of('/');
-            xp->dir = xs == std::string::npos ? "." : xpath.substr(0, xs);
+            xp->dir = moritz::dirOf(xpath);
             moritz::Patch* q = p.addExtra(std::move(xp));
             if (!q->load(xsrc, xerr)) { std::fprintf(stderr, "error: %s\n", xerr.c_str()); return 1; }
             q->loadbangAll();
@@ -199,7 +202,34 @@ int renderCli(int argc, char** argv) {
 }  // namespace
 
 int main(int argc, char** argv) {
+#ifdef _WIN32
+    // moritz.exe is a GUI program: from a command prompt, print to that
+    // console (unless the output is already redirected to a file or pipe)
+    if (argc >= 2 && argv[1][0] == '-' && AttachConsole(ATTACH_PARENT_PROCESS)) {
+        HANDLE h = GetStdHandle(STD_OUTPUT_HANDLE);
+        if (!h || h == INVALID_HANDLE_VALUE || GetFileType(h) == FILE_TYPE_CHAR) {
+            std::freopen("CONOUT$", "w", stdout);
+            std::freopen("CONOUT$", "w", stderr);
+        }
+    }
+#endif
     if (argc >= 2 && std::string(argv[1]) == "--render") return renderCli(argc, argv);
+    if (argc >= 3 && std::string(argv[1]) == "--import") {     // Max patch -> Moritz text
+        moritz::setupSearchPaths();
+        std::string text, err;
+        moritz::MaxImportReport rep;
+        bool write = argc >= 4;
+        if (!moritz::importMaxPatch(moritz::portablePath(argv[2]), write, text, rep, err)) {
+            std::fprintf(stderr, "error: %s\n", err.c_str());
+            return 1;
+        }
+        std::fprintf(stderr, "%s\n", rep.summary().c_str());
+        if (!write) { std::fputs(text.c_str(), stdout); return 0; }
+        FILE* f = std::fopen(argv[3], "wb");
+        if (!f || std::fputs(text.c_str(), f) < 0) { std::fprintf(stderr, "can't write %s\n", argv[3]); return 1; }
+        std::fclose(f);
+        return 0;
+    }
     if (argc >= 2 && std::string(argv[1]) == "--version") {
         std::printf("Moritz %s\n", MORITZ_VERSION);
         return 0;
@@ -213,15 +243,24 @@ int main(int argc, char** argv) {
     Fl::foreground(226, 228, 234);
     Fl::set_color(FL_SELECTION_COLOR, 52, 92, 160);
     moritz::setupSearchPaths();
-    auto* win = new moritz::MainWindow(960, 640);
-    gWin = win;
+    auto& app = moritz::App::get();
+    app.init();
 #ifdef __APPLE__
     fl_open_callback(openFromFinder);    // double-clicked .moritz files in the Finder
 #endif
-    win->show();
     for (int k = 1; k < argc; ++k)
-        if (argv[k][0] != '-') { win->openFile(argv[k]); break; }
-    int r = Fl::run();
-    delete win;
-    return r;
+        if (std::string(argv[k]) == "--no-audio") app.startAudio = false;
+    for (int k = 1; k < argc; ++k)       // each patch on the command line in its window
+        if (argv[k][0] != '-') app.openDocument(moritz::portablePath(argv[k]));
+    if (app.docs.empty()) app.newDocument();
+    // On macOS the program stays open without windows (the menu bar is
+    // still there); elsewhere closing the last window quits.
+    while (!app.quitting && !Fl::program_should_quit()) {
+#ifndef __APPLE__
+        if (!Fl::first_window()) break;
+#endif
+        Fl::wait(1e20);
+    }
+    app.audio.stop();
+    return 0;
 }

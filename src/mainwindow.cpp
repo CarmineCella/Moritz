@@ -3,9 +3,11 @@
 // setup, console) and the windows of subpatchers.
 
 #include "gui.h"
+#include "maximport.h"
 #include "objects.h"
 
 #include <FL/Fl_Choice.H>
+#include <FL/Fl_Text_Editor.H>
 #include <FL/Fl_PNG_Image.H>
 #include <FL/Fl_Native_File_Chooser.H>
 #include <FL/Fl_Return_Button.H>
@@ -23,6 +25,9 @@
 #elif defined(__linux__)
 #include <climits>
 #include <unistd.h>
+#elif defined(_WIN32)
+#include <FL/fl_utf8.h>
+#include <windows.h>
 #endif
 
 #ifndef MORITZ_VERSION
@@ -64,7 +69,7 @@ std::string exeDir() {
         char real[4096];
         if (realpath(buf, real)) {
             std::string s = real;
-            return s.substr(0, s.find_last_of('/'));
+            return dirOf(s);
         }
     }
 #elif defined(__linux__)
@@ -72,7 +77,15 @@ std::string exeDir() {
     ssize_t n = readlink("/proc/self/exe", buf, sizeof buf - 1);
     if (n > 0) {
         std::string s(buf, (size_t)n);
-        return s.substr(0, s.find_last_of('/'));
+        return dirOf(s);
+    }
+#elif defined(_WIN32)
+    wchar_t buf[MAX_PATH * 2];
+    DWORD n = GetModuleFileNameW(nullptr, buf, (DWORD)(sizeof buf / sizeof buf[0]));
+    if (n > 0) {
+        char utf8[MAX_PATH * 8];
+        fl_utf8fromwc(utf8, sizeof utf8, buf, n);
+        return dirOf(portablePath(utf8));
     }
 #endif
     return ".";
@@ -91,8 +104,8 @@ void setupSearchPaths() {
     libraryPath().clear();
     abstractionPath().clear();
     helpPath().clear();
-    if (const char* home = std::getenv("HOME")) {
-        std::string user = std::string(home) + "/Documents/Moritz/library";
+    if (std::string home = homeDir(); !home.empty()) {
+        std::string user = home + "/Documents/Moritz/library";
         if (fl_filename_isdir(user.c_str())) libraryPath().push_back(user);
     }
     if (std::string d = resourceDir("library"); !d.empty()) libraryPath().push_back(d);
@@ -111,196 +124,368 @@ void centerOnScreen(Fl_Window* w, Fl_Window* ref = nullptr, int dx = 0, int dy =
     w->position(X + std::max(0, (W - w->w()) / 2) + dx, Y + std::max(0, (H - w->h()) / 2) + dy);
 }
 
-void midiTick(void* d) {          // look for MIDI devices plugged in or out
-    static_cast<MainWindow*>(d)->midi.refresh();
-    Fl::repeat_timeout(1.0, midiTick, d);
+void midiTick(void*) {          // look for MIDI devices plugged in or out
+    App::get().midi.refresh();
+    Fl::repeat_timeout(1.0, midiTick);
 }
 
-struct NewItem {
-    MainWindow* win;
-    std::string cls;
-};
-}  // namespace
-
-MainWindow::MainWindow(int w, int h)
-    : Fl_Double_Window(w, h, "Moritz"), audio(patch) {
-    menu_ = new Fl_Sys_Menu_Bar(0, 0, w, kMenuH);
-    auto* bar = new Fl_Group(0, kMenuH, w, kToolH);
-    bar->box(FL_FLAT_BOX);
-    bar->color(kStatusBg);
-    audioBtn_ = new ToolButton(8, kMenuH + 5, 104, kToolH - 10, ToolButton::Power, "Audio");
-    audioBtn_->tooltip("Start or stop audio (Cmd+/)");
-    audioBtn_->callback([](Fl_Widget*, void* d) { static_cast<MainWindow*>(d)->toggleAudio(); }, this);
-    editBtn_ = new ToolButton(118, kMenuH + 5, 92, kToolH - 10, ToolButton::Pencil, "Edit");
-    editBtn_->tooltip("Edit mode on/off (Cmd+E)");
-    editBtn_->callback([](Fl_Widget*, void* d) { static_cast<MainWindow*>(d)->toggleLock(); }, this);
-    auto* spacer = new Fl_Box(216, kMenuH, w - 216, kToolH);
-    spacer->box(FL_NO_BOX);
-    bar->resizable(spacer);
-    bar->end();
-    canvas = new Canvas(0, kMenuH + kToolH, w, h - kMenuH - kToolH - kStatusH, this, &patch);
-    statusBar_ = new Fl_Box(0, h - kStatusH, w, kStatusH);
-    statusBar_->box(FL_FLAT_BOX);
-    statusBar_->color(kStatusBg);
-    statusBar_->labelcolor(kDim);
-    statusBar_->labelsize(11);
-    statusBar_->align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE | FL_ALIGN_CLIP);
-    end();
-    resizable(canvas);
-    size_range(400, 300);
-
-    patch.onRedraw = [this] { canvas->redraw(); };
-    Patch::onDestroyed = [this](Patch* p) { closeSubpatchWindows(p); };
-    patch.onStatus = [this](const std::string& s) { setStatus(s); };
-    patch.onDsp = [this](bool on) { setAudio(on); };
-    patch.onPrint = [this](const std::string& s) { print(s); };
-    static const auto t0 = std::chrono::steady_clock::now();
-    patch.clock = [] {
-        return std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
-    };
-    patch.onSchedule = [this] { armTimer(); };
-    // MIDI: RtMidi's thread wakes the GUI thread, which hands the messages to
-    // the patch; noteout & co. send through the engine. Devices are checked
-    // once a second, so plugging one in just works.
-    mainWake = [] { Fl::awake([](void*) { drainMain(); }, nullptr); };   // background jobs report back
-    midi.wake = [this] { Fl::awake([](void* d) { static_cast<MainWindow*>(d)->midi.drain(); }, this); };
-    midi.onMessage = [this](const std::vector<unsigned char>& m) { patch.midiIn(m); };
-    patch.onMidiOut = [this](const std::vector<unsigned char>& m) { midi.send(m); };
-    midi.refresh();
-    Fl::add_timeout(1.0, midiTick, this);
-    patch.onStructure = [this] {
-        audio.updateInputNeed();
-        refreshStatus();
-        canvas->redraw();                 // an inner edit can change a box's ports
-    };
-
-    callback([](Fl_Widget*, void* d) {
-        // Escape must not close the window; everything else (close box, Quit) does.
-        if (Fl::event() == FL_SHORTCUT && Fl::event_key() == FL_Escape) return;
-        static_cast<MainWindow*>(d)->quit();
-    }, this);
-
-    buildMenu();
-    centerOnScreen(this);
-    updateTitle();
-    setAudio(true);
-    log("Moritz " MORITZ_VERSION " - created by Carmine-Emanuele Cella (2026)");
-    log("this console shows print objects, errors, audio and file events");
-    setStatus("double-click to create an object · Cmd+E toggles edit mode");
+void schedulerTimer(void*) {
+    Patch& h = App::get().host;
+    h.runDue(h.time());           // re-arms through onSchedule
 }
 
-MainWindow::~MainWindow() {
-    Fl::remove_timeout(midiTick, this);
-    midi.wake = nullptr;
-    patch.onDsp = nullptr;
-    audio.stop();
-    Patch::onDestroyed = nullptr;
-    for (auto* w : subwindows_) w->detach();
-}
-
-void MainWindow::buildMenu() {
-#define MW_CB(method) [](Fl_Widget*, void* d) { static_cast<MainWindow*>(d)->method(); }
-    menu_->add("File/New", FL_COMMAND + 'n', MW_CB(newPatch), this);
-    menu_->add("File/Open...", FL_COMMAND + 'o', MW_CB(openPatch), this);
-    menu_->add("File/Save", FL_COMMAND + 's', MW_CB(save), this);
-    menu_->add("File/Close", FL_COMMAND + 'w', MW_CB(closeFront), this);
-    menu_->add("File/Save as...", FL_COMMAND + FL_SHIFT + 's', MW_CB(saveAs), this,
-               FL_MENU_DIVIDER);
-    menu_->add("File/Quit", FL_COMMAND + 'q', MW_CB(quit), this);
-    menu_->add("Edit/Undo", FL_COMMAND + 'z', MW_CB(undo), this);
-    menu_->add("Edit/Redo", FL_COMMAND + FL_SHIFT + 'z', MW_CB(redo), this, FL_MENU_DIVIDER);
-    menu_->add("Edit/Select All", FL_COMMAND + 'a',
-               [](Fl_Widget*, void* d) { static_cast<MainWindow*>(d)->activeCanvas()->selectAll(); },
-               this);
-
-    static std::vector<std::unique_ptr<NewItem>> items;
-    for (auto& c : classInfos()) {
-        if (c.group.empty()) continue;                 // short aliases
-        items.push_back(std::make_unique<NewItem>(NewItem{this, c.name}));
-        std::string path = "Patch/New/" + c.group + "/" + escapeMenu(c.name);
-        menu_->add(path.c_str(), 0,
-                   [](Fl_Widget*, void* d) {
-                       auto it = static_cast<NewItem*>(d);
-                       it->win->activeCanvas()->newBoxAtMouse(it->cls);
-                   },
-                   items.back().get());
+// Size of a window that shows all of a patch's boxes.
+void fitPatch(Patch* p, int& W, int& H) {
+    W = 420;
+    H = 300;
+    fl_font(kFont, kFontSize);
+    for (auto& x : p->boxes) {
+        int bw = std::max(x->w, (int)fl_width(x->label().c_str()) + 24);
+        W = std::max(W, x->x + bw + 40);
+        H = std::max(H, x->y + x->h + 50);
     }
-    for (auto& name : libraryNames()) {                // abstractions in the libraries
-        items.push_back(std::make_unique<NewItem>(NewItem{this, name}));
-        std::string path = "Patch/New/Library/" + escapeMenu(name);
-        menu_->add(path.c_str(), 0,
-                   [](Fl_Widget*, void* d) {
-                       auto it = static_cast<NewItem*>(d);
-                       it->win->activeCanvas()->newBoxAtMouse(it->cls);
-                   },
-                   items.back().get());
-    }
-    menu_->add("Patch/Edit Mode", FL_COMMAND + 'e', MW_CB(toggleLock), this, FL_MENU_TOGGLE);
-    menu_->add("Patch/Audio On", FL_COMMAND + '/', MW_CB(toggleAudio), this,
-               FL_MENU_TOGGLE | FL_MENU_DIVIDER);
-    menu_->add("Patch/Audio Setup...", 0, MW_CB(audioSetup), this);
-    menu_->add("Patch/MIDI Setup...", 0, MW_CB(midiSetup), this, FL_MENU_DIVIDER);
-    menu_->add("Patch/Console", FL_COMMAND + FL_SHIFT + 'm', MW_CB(showConsole), this);
-#ifdef __APPLE__
-    fl_mac_set_about(MW_CB(about), this);          // Moritz > About Moritz
-#else
-    menu_->add("Help/About Moritz", 0, MW_CB(about), this);
-#endif
-#undef MW_CB
+    W = std::min(W, 1400);
+    H = std::min(H + 22, 900);
 }
 
-static void setMenuCheck(Fl_Sys_Menu_Bar* m, const char* path, bool on) {
+std::string patchTitle(Patch* p) {
+    std::string t = p->owner ? p->owner->label() : "patch";
+    if (p->isAbstraction) t += "  (" + baseName(p->file) + ")";
+    return t;
+}
+
+// path of box ids from the top patch, e.g. "p1/fm2", to reopen after undo
+std::string pathOf(Patch* p) {
+    std::string r;
+    for (; p && p->owner; p = p->parent) r = p->owner->id + (r.empty() ? "" : "/" + r);
+    return r;
+}
+
+void setMenuCheck(Fl_Menu_Bar* m, const char* path, bool on) {
+    if (!m) return;
     auto it = const_cast<Fl_Menu_Item*>(m->find_item(path));
     if (!it) return;
     if (on) it->set();
     else it->clear();
     m->update();
 }
+}  // namespace
 
-void MainWindow::refreshStatus() {
-    std::string s = canvas->locked() ? "LOCKED" : "EDIT";
-    if (audio.running())
-        s += "   ·   audio " + std::to_string(audio.sampleRate()) + " Hz" +
-             (audio.hasInput() ? " in/out" : " out");
-    else
-        s += "   ·   audio off";
-    if (!patch.dspError.empty()) s += "   ·   " + patch.dspError;
-    if (!message_.empty()) s += "   ·   " + message_;
-    statusBar_->copy_label(("  " + s).c_str());
-    setMenuCheck(menu_, "Patch/Edit Mode", !canvas->locked());
-    setMenuCheck(menu_, "Patch/Audio On", audio.running());
-    audioBtn_->value(audio.running());
-    audioBtn_->copy_label(audio.running() ? "Audio On" : "Audio Off");
-    editBtn_->value(!canvas->locked());
-    editBtn_->copy_label(canvas->locked() ? "Locked" : "Edit");
-    audioBtn_->redraw();
-    editBtn_->redraw();
+// ============================================================================
+// App: audio, MIDI, console, help windows, documents
+// ============================================================================
+
+App& App::get() {
+    static App* app = new App;      // never destroyed: windows may outlive main's scope
+    return *app;
+}
+
+void App::init() {
+    Patch::onDestroyed = [this](Patch* p) {
+        for (auto* d : docs) d->closeSubpatchWindows(p);
+        closeText(p);
+        for (auto* w : std::vector<PatchWindow*>(helpWindows_))
+            if (w->patch == p) {
+                w->detach();
+                helpWindows_.erase(std::remove(helpWindows_.begin(), helpWindows_.end(), w),
+                                   helpWindows_.end());
+                w->hide();
+                Fl::delete_widget(w);
+            }
+    };
+    host.onDsp = [this](bool on) { setAudio(on); };
+    host.onPrint = [this](const std::string& s) { print(s); };
+    host.onStatus = [this](const std::string& s) {
+        if (auto* d = frontDoc()) d->setStatus(s);
+    };
+    static const auto t0 = std::chrono::steady_clock::now();
+    host.clock = [] {
+        return std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+    };
+    host.onSchedule = [this] { armTimer(); };
+    host.onStructure = [this] { audio.updateInputNeed(); };
+    // MIDI: RtMidi's thread wakes the GUI thread, which hands the messages to
+    // the patches; noteout & co. send through the engine. Devices are checked
+    // once a second, so plugging one in just works.
+    mainWake = [] { Fl::awake([](void*) { drainMain(); }, nullptr); };   // background jobs report back
+    midi.wake = [] { Fl::awake([](void*) { App::get().midi.drain(); }, nullptr); };
+    midi.onMessage = [this](const std::vector<unsigned char>& m) { host.midiIn(m); };
+    host.onMidiOut = [this](const std::vector<unsigned char>& m) { midi.send(m); };
+    midi.refresh();
+    Fl::add_timeout(1.0, midiTick);
+#ifdef __APPLE__
+    // one menu bar for every window, at the top of the screen
+    Fl_Group* cur = Fl_Group::current();
+    Fl_Group::current(nullptr);
+    sysMenu_ = new Fl_Sys_Menu_Bar(0, 0, 0, 0);
+    Fl_Group::current(cur);
+    buildMenu(sysMenu_);
+    static_cast<Fl_Sys_Menu_Bar*>(sysMenu_)->create_window_menu();
+    fl_mac_set_about([](Fl_Widget*, void*) { App::get().about(); }, nullptr);
+#endif
+    log("Moritz " MORITZ_VERSION " - created by Carmine-Emanuele Cella (2026)");
+    log("this console shows print objects, errors, audio and file events");
+}
+
+Fl_Menu_Bar* App::menuFor(MainWindow* w) {
+    if (sysMenu_) return w == frontDoc() ? sysMenu_ : nullptr;
+    return w ? w->menu_ : nullptr;
 }
 
 namespace {
-void schedulerTimer(void* d) {
-    auto* w = static_cast<MainWindow*>(d);
-    w->patch.runDue(w->patch.time());           // re-arms through onSchedule
+// the text editor the Edit menu should act on: the focused one, or the
+// editor of a text view that is the front window
+Fl_Text_Editor* frontTextEditor() {
+    if (auto* ed = dynamic_cast<Fl_Text_Editor*>(Fl::focus())) return ed;
+    if (auto* tw = dynamic_cast<PatchTextWindow*>(Fl::first_window())) return tw->editor();
+    return nullptr;
 }
+
+struct NewItem {
+    std::string cls;
+};
 }  // namespace
 
-void MainWindow::armTimer() {
-    Fl::remove_timeout(schedulerTimer, this);
-    double next = patch.nextDue();
-    if (std::isfinite(next))
-        Fl::add_timeout(std::max(0.0, next - patch.time()), schedulerTimer, this);
+void App::buildMenu(Fl_Menu_Bar* m) {
+#define APP_CB(method) [](Fl_Widget*, void*) { App::get().method(); }
+#define DOC_CB(method) [](Fl_Widget*, void*) { if (auto* d = App::get().frontDoc()) d->method(); }
+    m->add("File/New", FL_COMMAND + 'n', APP_CB(newDocument), nullptr);
+    m->add("File/Open...", FL_COMMAND + 'o', APP_CB(openDialog), nullptr);
+    m->add("File/Import from Max...", FL_COMMAND + FL_SHIFT + 'i', APP_CB(importDialog), nullptr,
+           FL_MENU_DIVIDER);
+    m->add("File/Save", FL_COMMAND + 's', DOC_CB(save), nullptr);
+    m->add("File/Close", FL_COMMAND + 'w', APP_CB(closeFront), nullptr);
+    m->add("File/Save as...", FL_COMMAND + FL_SHIFT + 's', DOC_CB(saveAs), nullptr, FL_MENU_DIVIDER);
+    m->add("File/Quit", FL_COMMAND + 'q', APP_CB(quit), nullptr);
+    // with a text view in front, the Edit commands work on its text
+#define TEXT_OR(kf, call) [](Fl_Widget*, void*) {                                  \
+        if (auto* ed = frontTextEditor()) { Fl_Text_Editor::kf(0, ed); return; } \
+        call; }
+    m->add("Edit/Undo", FL_COMMAND + 'z',
+           TEXT_OR(kf_undo, if (auto* d = App::get().frontDoc()) d->undo()), nullptr);
+    m->add("Edit/Redo", FL_COMMAND + FL_SHIFT + 'z',
+           TEXT_OR(kf_redo, if (auto* d = App::get().frontDoc()) d->redo()), nullptr, FL_MENU_DIVIDER);
+    m->add("Edit/Cut", FL_COMMAND + 'x',
+           TEXT_OR(kf_cut, if (auto* c = App::get().activeCanvas()) c->cutSelection()), nullptr);
+    m->add("Edit/Copy", FL_COMMAND + 'c',
+           TEXT_OR(kf_copy, if (auto* c = App::get().activeCanvas()) c->copySelection()), nullptr);
+    m->add("Edit/Paste", FL_COMMAND + 'v',
+           TEXT_OR(kf_paste, if (auto* c = App::get().activeCanvas()) c->paste()), nullptr);
+    m->add("Edit/Duplicate", FL_COMMAND + 'd',
+           [](Fl_Widget*, void*) { if (auto* c = App::get().activeCanvas()) c->duplicateSelection(15, 15); },
+           nullptr, FL_MENU_DIVIDER);
+    m->add("Edit/Select All", FL_COMMAND + 'a',
+           TEXT_OR(kf_select_all, if (auto* c = App::get().activeCanvas()) c->selectAll()), nullptr);
+#undef TEXT_OR
+
+    static std::vector<std::unique_ptr<NewItem>> items;
+    auto addNew = [&](const std::string& path, const std::string& cls) {
+        items.push_back(std::make_unique<NewItem>(NewItem{cls}));
+        m->add(path.c_str(), 0,
+               [](Fl_Widget*, void* d) {
+                   if (auto* c = App::get().activeCanvas()) c->newBoxAtMouse(static_cast<NewItem*>(d)->cls);
+               },
+               items.back().get());
+    };
+    for (auto& c : classInfos())
+        if (!c.group.empty())                            // not the short aliases
+            addNew("Patch/New/" + c.group + "/" + escapeMenu(c.name), c.name);
+    for (auto& name : libraryNames())                    // abstractions in the libraries
+        addNew("Patch/New/Library/" + escapeMenu(name), name);
+    m->add("Patch/Edit Mode", FL_COMMAND + 'e', DOC_CB(toggleLock), nullptr, FL_MENU_TOGGLE);
+    m->add("Patch/Code View", FL_COMMAND + 't', [](Fl_Widget*, void*) { App::get().showText(); }, nullptr);
+    m->add("Patch/Audio On", FL_COMMAND + '/', APP_CB(toggleAudio), nullptr,
+           FL_MENU_TOGGLE | FL_MENU_DIVIDER);
+    m->add("Patch/Audio Setup...", 0, APP_CB(audioSetup), nullptr);
+    m->add("Patch/MIDI Setup...", 0, APP_CB(midiSetup), nullptr, FL_MENU_DIVIDER);
+    m->add("Patch/Console", FL_COMMAND + FL_SHIFT + 'm', APP_CB(showConsole), nullptr);
+    // Help > Tutorials: the numbered patches in the tutorials folder
+    static std::vector<std::string> tutorials;
+    if (tutorials.empty())
+        if (std::string dir = resourceDir("tutorials"); !dir.empty()) {
+            dirent** list = nullptr;
+            int n = fl_filename_list(dir.c_str(), &list, fl_casealphasort);
+            for (int k = 0; k < n; ++k) {
+                std::string f = list[k]->d_name;
+                if (f.size() > 7 && f.compare(f.size() - 7, 7, ".moritz") == 0) tutorials.push_back(dir + "/" + f);
+            }
+            fl_filename_free_list(&list, n);
+        }
+    for (auto& path : tutorials) {
+        std::string name = baseName(path);
+        name = name.substr(0, name.size() - 7);             // "01-first-patch" -> "01 first patch"
+        for (auto& c : name) if (c == '-') c = ' ';
+        m->add(("Help/Tutorials/" + escapeMenu(name)).c_str(), 0,
+               [](Fl_Widget*, void* d) { App::get().openDocument(*static_cast<std::string*>(d)); },
+               &path);
+    }
+    if (tutorials.empty()) m->add("Help/Tutorials", 0, nullptr, nullptr, FL_MENU_INACTIVE);
+#ifndef __APPLE__
+    m->add("Help/About Moritz", 0, APP_CB(about), nullptr);
+#endif
+#undef APP_CB
+#undef DOC_CB
 }
 
-void MainWindow::showConsole() {
+MainWindow* App::frontDoc() {
+    for (Fl_Window* w = Fl::first_window(); w; w = Fl::next_window(w)) {
+        if (auto mw = dynamic_cast<MainWindow*>(w)) return mw;
+        if (auto pw = dynamic_cast<PatchWindow*>(w); pw && pw->doc) return pw->doc;
+    }
+    return docs.empty() ? nullptr : docs.back();
+}
+
+Canvas* App::activeCanvas() {
+    for (Fl_Window* w = Fl::first_window(); w; w = Fl::next_window(w)) {
+        if (auto mw = dynamic_cast<MainWindow*>(w)) return mw->canvas;
+        if (auto pw = dynamic_cast<PatchWindow*>(w)) return pw->canvas;
+    }
+    return docs.empty() ? nullptr : docs.back()->canvas;
+}
+
+MainWindow* App::newDocument() {
+    MainWindow* front = frontDoc();
+    auto* w = new MainWindow(960, 640);
+    if (front) {                                     // cascade from the front window
+        int X, Y, W, H;
+        Fl::screen_work_area(X, Y, W, H, Fl::screen_num(front->x(), front->y()));
+        int nx = front->x() + 30, ny = front->y() + 30;
+        if (nx + w->w() > X + W || ny + w->h() > Y + H) { nx = X + 20; ny = Y + 20; }
+        w->position(nx, ny);
+    } else {
+        centerOnScreen(w);
+    }
+    w->show();
+    if (docs.size() == 1 && !audio.running() && startAudio) setAudio(true);
+    return w;
+}
+
+MainWindow* App::openDocument(const std::string& path) {
+    for (auto* d : docs)                              // already open: bring it forward
+        if (!d->path().empty() && d->path() == path) { d->show(); return d; }
+    MainWindow* d = frontDoc();
+    bool fresh = !(d && d->isEmptyUntitled());
+    if (fresh) d = newDocument();
+    if (!d->openFile(path)) {
+        if (fresh) closeDocument(d);
+        return nullptr;
+    }
+    d->show();
+    return d;
+}
+
+void App::openDialog() {
+    Fl_Native_File_Chooser fc;
+    fc.title("Open Patch");
+    fc.type(Fl_Native_File_Chooser::BROWSE_FILE);
+    fc.filter("Moritz patch\t*.{moritz,mlsp}\nAll files\t*");
+    MainWindow* front = frontDoc();
+    std::string dir = front && !front->path().empty() ? dirOf(front->path()) : examplesDir();
+    if (!dir.empty()) fc.directory(dir.c_str());
+    if (fc.show() != 0) return;
+    openDocument(portablePath(fc.filename()));
+}
+
+void App::importDialog() {
+    Fl_Native_File_Chooser fc;
+    fc.title("Import from Max");
+    fc.type(Fl_Native_File_Chooser::BROWSE_FILE);
+    fc.filter("Max patch\t*.{maxpat,maxhelp}\nAll files\t*");
+    if (fc.show() != 0) return;
+    importMax(portablePath(fc.filename()));
+}
+
+MainWindow* App::importMax(const std::string& path) {
+    std::string text, err;
+    MaxImportReport rep;
+    if (!importMaxPatch(path, true, text, rep, err)) {
+        fl_alert("Can't import %s:\n%s", baseName(path).c_str(), err.c_str());
+        return nullptr;
+    }
+    std::string name = baseName(path);
+    name = name.substr(0, name.find_last_of('.'));
+    MainWindow* d = frontDoc();
+    bool fresh = !(d && d->isEmptyUntitled());
+    if (fresh) d = newDocument();
+    if (!d->loadConverted(text, dirOf(path), name)) {
+        if (fresh) closeDocument(d);
+        return nullptr;
+    }
+    log("imported " + path + ": " + rep.summary());
+    if (!rep.unknown.empty() || !rep.problems.empty()) showConsole();
+    d->setStatus("imported from Max: " + std::to_string(rep.boxes) + " boxes" +
+                 (rep.unknown.empty() ? "" : ", some not converted (see the console)"));
+    d->show();
+    return d;
+}
+
+void App::closeDocument(MainWindow* w) {
+    docs.erase(std::remove(docs.begin(), docs.end(), w), docs.end());
+    w->closeAllSubwindows();
+    w->hide();
+    w->canvas->reset();
+    Patch* p = &w->patch;
+    p->onRedraw = nullptr;
+    p->onStatus = nullptr;
+    p->onPrint = nullptr;
+    p->onStructure = nullptr;
+    Fl::delete_widget(w);              // later: the window must not touch the patch then
+    host.removeExtra(p);               // stops its sound, timers and jobs
+#ifndef __APPLE__
+    if (docs.empty()) quit();          // no menu bar is left to do anything else
+#endif
+    refreshStatus();
+}
+
+void App::closeFront() {
+    Fl_Window* w = Fl::first_window();
+    if (auto pw = dynamic_cast<PatchWindow*>(w)) {
+        pw->do_callback();             // hides it (and closes a help patch)
+        return;
+    }
+    if (w && w == console_) { w->hide(); return; }
+    if (auto tw = dynamic_cast<PatchTextWindow*>(w)) { tw->do_callback(); return; }
+    if (auto d = dynamic_cast<MainWindow*>(w)) {
+        if (d->confirmDiscard()) closeDocument(d);
+    }
+}
+
+void App::quit() {
+    for (auto* d : std::vector<MainWindow*>(docs)) {
+        d->show();
+        if (!d->confirmDiscard()) return;
+    }
+    quitting = true;
+    host.onDsp = nullptr;      // a dspstate~ reacting to the stop can't restart audio
+    audio.stop();
+    for (auto* d : std::vector<MainWindow*>(docs)) d->closeAllSubwindows();
+    for (auto* w : helpWindows_) w->hide();
+    for (auto* w : textWindows_) w->hide();
+    if (console_) console_->hide();
+    for (auto* d : docs) d->hide();
+}
+
+void App::refreshStatus() {
+    for (auto* d : docs) d->refreshStatus();
+}
+
+void App::armTimer() {
+    Fl::remove_timeout(schedulerTimer);
+    double next = host.nextDue();
+    if (std::isfinite(next))
+        Fl::add_timeout(std::max(0.0, next - host.time()), schedulerTimer);
+}
+
+void App::showConsole() {
     if (!console_) {
         console_ = new Fl_Double_Window(560, 320, "Moritz Console");
-        centerOnScreen(console_, this);
+        centerOnScreen(console_, frontDoc());
         console_->color(kStatusBg);
         consoleBuf_ = new Fl_Text_Buffer();
         consoleView_ = new Fl_Text_Display(0, 0, 560, 290);
         auto* clear = new Fl_Button(470, 294, 82, 22, "Clear");
         clear->labelsize(11);
-        clear->callback([](Fl_Widget*, void* d) { static_cast<MainWindow*>(d)->clearConsole(); }, this);
+        clear->callback([](Fl_Widget*, void*) { App::get().clearConsole(); });
         auto* hint = new Fl_Box(8, 294, 450, 22,
                                 "print objects, errors, audio and file events");
         hint->labelsize(11);
@@ -320,17 +505,17 @@ void MainWindow::showConsole() {
     consoleView_->scroll(consoleBuf_->count_lines(0, consoleBuf_->length()), 0);
 }
 
-void MainWindow::clearConsole() {
+void App::clearConsole() {
     consoleLines_.clear();
     if (consoleBuf_) consoleBuf_->text("");
 }
 
-void MainWindow::print(const std::string& s) {
+void App::print(const std::string& s) {
     log(s);
-    setStatus(s);
+    if (auto* d = frontDoc()) d->setStatus(s);
 }
 
-void MainWindow::log(const std::string& s) {
+void App::log(const std::string& s) {
     consoleLines_.push_back(s);
     if (consoleLines_.size() > 2000) consoleLines_.erase(consoleLines_.begin());
     if (consoleBuf_) {
@@ -340,13 +525,219 @@ void MainWindow::log(const std::string& s) {
     }
 }
 
+void App::setAudio(bool on) {
+    std::string err;
+    if (on) {
+        if (!audio.start(err)) { print("audio: " + err); refreshStatus(); return; }
+        log("audio on: " + audio.deviceName() + ", " + std::to_string(audio.sampleRate()) +
+            " Hz, " + std::to_string(audio.bufferFrames()) + "-sample buffer, " +
+            (audio.hasInput() ? "input and output" : "output only"));
+        if (!err.empty()) log("audio: " + err);
+        for (auto* d : docs) d->setStatus(err);     // the status bar already says "audio on"
+    } else {
+        if (audio.running()) log("audio off");
+        audio.stop();
+        for (auto* d : docs) d->setStatus("");
+    }
+}
+
+PatchTextWindow* App::textWindow(Patch* p) {
+    for (auto* w : textWindows_)
+        if (w->patch == p) return w;
+    return nullptr;
+}
+
+void App::showText() {
+    for (Fl_Window* w = Fl::first_window(); w; w = Fl::next_window(w)) {
+        if (auto tw = dynamic_cast<PatchTextWindow*>(w)) { tw->do_callback(); return; }   // toggles
+        if (auto mw = dynamic_cast<MainWindow*>(w)) {
+            showText(mw, &mw->patch, mw->label() ? mw->label() : "patch", false);
+            return;
+        }
+        if (auto pw = dynamic_cast<PatchWindow*>(w); pw && pw->patch) {
+            showText(pw->doc, pw->patch, pw->label() ? pw->label() : "patch", pw->help);
+            return;
+        }
+    }
+}
+
+void App::showText(MainWindow* doc, Patch* p, const std::string& title, bool readOnly) {
+    PatchTextWindow* tw = textWindow(p);
+    if (!tw) {
+        std::string t = title;
+        if (size_t k = t.find(" — Moritz"); k != std::string::npos) t.resize(k);
+        tw = new PatchTextWindow(doc, p, t, readOnly);
+        textWindows_.push_back(tw);
+        Fl_Window* beside = nullptr;                     // beside the patch's window
+        for (Fl_Window* w = Fl::first_window(); w && !beside; w = Fl::next_window(w))
+            if (auto mw = dynamic_cast<MainWindow*>(w); mw && &mw->patch == p) beside = w;
+            else if (auto pw = dynamic_cast<PatchWindow*>(w); pw && pw->patch == p) beside = w;
+        if (beside) {
+            int X, Y, W, H;
+            Fl::screen_work_area(X, Y, W, H, Fl::screen_num(beside->x(), beside->y()));
+            int x = beside->x() + beside->w() + 8;
+            if (x + tw->w() > X + W) x = std::max(X, X + W - tw->w());
+            tw->resize(x, beside->y(), tw->w(), std::min(beside->h(), H));
+        }
+    }
+    tw->refresh(true);
+    tw->show();
+    refreshStatus();
+}
+
+void App::closeText(Patch* p) {
+    for (auto* w : std::vector<PatchTextWindow*>(textWindows_))
+        if (w->patch == p) {
+            w->detach();
+            textWindows_.erase(std::remove(textWindows_.begin(), textWindows_.end(), w), textWindows_.end());
+            w->hide();
+            Fl::delete_widget(w);
+        }
+}
+
+void App::openHelp(const std::string& cls) {
+    std::string path = findHelp(cls);
+    if (path.empty()) {
+        std::string d = describeClass(cls);
+        print(cls + ": " + (d.empty() ? "no help patch" : d + " (no help patch yet)"));
+        return;
+    }
+    for (auto* w : helpWindows_)                        // already open: bring it forward
+        if (w->patch && w->patch->file == path) { w->show(); return; }
+    std::string src, err;
+    if (!readFile(path, src)) { print("can't read " + path); return; }
+    auto hp = std::make_unique<Patch>();
+    hp->dir = dirOf(path);
+    Patch* p = host.addExtra(std::move(hp));
+    p->file = path;                       // identifies the window; not an abstraction
+    if (!p->load(src, err)) {
+        print(baseName(path) + ": " + err);
+        host.removeExtra(p);
+        return;
+    }
+    if (!err.empty()) print(baseName(path) + ": " + err);
+    p->loadbangAll();
+    int W, H;
+    fitPatch(p, W, H);
+    std::string name = baseName(path);
+    name = name.substr(0, name.find(".help."));
+    auto* w = new PatchWindow(nullptr, p, name + " help", true);
+    w->size(W, H);
+    centerOnScreen(w, frontDoc(), 40, 40);
+    helpWindows_.push_back(w);
+    w->show();
+    log("help: " + path);
+}
+
+void App::closeHelp(Patch* p) {
+    host.removeExtra(p);   // its destruction closes and deletes the window
+}
+
+// ============================================================================
+// MainWindow: one document
+// ============================================================================
+
+MainWindow::MainWindow(int w, int h)
+    : Fl_Double_Window(w, h, "Moritz"), patch(*App::get().host.addExtra(std::make_unique<Patch>())) {
+#ifndef __APPLE__
+    menu_ = new Fl_Menu_Bar(0, 0, w, kMenuH);
+    App::get().buildMenu(menu_);
+#endif
+    auto* bar = new Fl_Group(0, kMenuH, w, kToolH);
+    bar->box(FL_FLAT_BOX);
+    bar->color(kStatusBg);
+    audioBtn_ = new ToolButton(8, kMenuH + 5, 104, kToolH - 10, ToolButton::Power, "Audio");
+    audioBtn_->tooltip("Start or stop audio (Cmd+/)");
+    audioBtn_->callback([](Fl_Widget*, void*) { App::get().toggleAudio(); });
+    editBtn_ = new ToolButton(118, kMenuH + 5, 92, kToolH - 10, ToolButton::Pencil, "Edit");
+    editBtn_->tooltip("Edit mode on/off (Cmd+E)");
+    editBtn_->callback([](Fl_Widget*, void* d) { static_cast<MainWindow*>(d)->toggleLock(); }, this);
+    textBtn_ = new ToolButton(216, kMenuH + 5, 86, kToolH - 10, ToolButton::Code, "Code");
+    textBtn_->tooltip("The patch as code (its text), kept in sync with the drawing (Cmd+T)");
+    textBtn_->callback([](Fl_Widget*, void* d) {
+        auto* mw = static_cast<MainWindow*>(d);
+        App& app = App::get();
+        if (auto* tw = app.textWindow(&mw->patch); tw && tw->shown()) { tw->do_callback(); app.refreshStatus(); }
+        else app.showText(mw, &mw->patch, mw->label() ? mw->label() : "patch", false);
+    }, this);
+    auto* spacer = new Fl_Box(308, kMenuH, w - 308, kToolH);
+    spacer->box(FL_NO_BOX);
+    bar->resizable(spacer);
+    bar->end();
+    canvas = new Canvas(0, kMenuH + kToolH, w, h - kMenuH - kToolH - kStatusH, this, &patch);
+    statusBar_ = new Fl_Box(0, h - kStatusH, w, kStatusH);
+    statusBar_->box(FL_FLAT_BOX);
+    statusBar_->color(kStatusBg);
+    statusBar_->labelcolor(kDim);
+    statusBar_->labelsize(11);
+    statusBar_->align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE | FL_ALIGN_CLIP);
+    end();
+    resizable(canvas);
+    size_range(400, 300);
+
+    patch.onRedraw = [this] { canvas->redraw(); };
+    patch.onStatus = [this](const std::string& s) { setStatus(s); };
+    patch.onPrint = [this](const std::string& s) { print(s); };
+    patch.onStructure = [this] {
+        refreshStatus();
+        canvas->redraw();                 // an inner edit can change a box's ports
+    };
+
+    callback([](Fl_Widget* w, void*) {
+        // Escape must not close the window; everything else (close box) does.
+        if (Fl::event() == FL_SHORTCUT && Fl::event_key() == FL_Escape) return;
+        auto* d = static_cast<MainWindow*>(w);
+        if (d->confirmDiscard()) App::get().closeDocument(d);
+    });
+
+    App::get().docs.push_back(this);
+    updateTitle();
+    canvas->setLocked(false);
+    setStatus("double-click to create an object · Cmd+E toggles edit mode");
+}
+
+MainWindow::~MainWindow() {
+    for (auto* w : subwindows_) w->detach();
+}
+
+void MainWindow::refreshStatus() {
+    App& app = App::get();
+    std::string s = canvas->locked() ? "LOCKED" : "EDIT";
+    if (app.audio.running())
+        s += "   ·   audio " + std::to_string(app.audio.sampleRate()) + " Hz" +
+             (app.audio.hasInput() ? " in/out" : " out");
+    else
+        s += "   ·   audio off";
+    if (!patch.dspError.empty()) s += "   ·   " + patch.dspError;
+    if (!message_.empty()) s += "   ·   " + message_;
+    statusBar_->copy_label(("  " + s).c_str());
+    Fl_Menu_Bar* m = app.menuFor(this);
+    setMenuCheck(m, "Patch/Edit Mode", !canvas->locked());
+    setMenuCheck(m, "Patch/Audio On", app.audio.running());
+    audioBtn_->value(app.audio.running());
+    audioBtn_->copy_label(app.audio.running() ? "Audio On" : "Audio Off");
+    editBtn_->value(!canvas->locked());
+    editBtn_->copy_label(canvas->locked() ? "Locked" : "Edit");
+    auto* tw = app.textWindow(&patch);
+    textBtn_->value(tw && tw->shown());
+    audioBtn_->redraw();
+    editBtn_->redraw();
+    textBtn_->redraw();
+}
+
+void MainWindow::print(const std::string& s) {
+    App::get().log(s);
+    setStatus(s);
+}
+
 void MainWindow::setStatus(const std::string& s) {
     message_ = s;
     refreshStatus();
 }
 
 void MainWindow::updateTitle() {
-    std::string t = (path_.empty() ? std::string("Untitled") : baseName(path_)) +
+    std::string t = (path_.empty() ? (suggested_.empty() ? std::string("Untitled") : suggested_ + " (from Max)")
+                                   : baseName(path_)) +
                     (dirty_ ? " — edited" : "") + " — Moritz";
     copy_label(t.c_str());
 }
@@ -363,7 +754,9 @@ int MainWindow::handle(int e) {
         activeCanvas()->cancelEdit();
         return 1;
     }
-    return Fl_Double_Window::handle(e);
+    int r = Fl_Double_Window::handle(e);
+    if (e == FL_FOCUS || e == FL_SHOW) refreshStatus();   // macOS: the shared menu follows
+    return r;
 }
 
 // ---- File
@@ -378,89 +771,6 @@ bool MainWindow::confirmDiscard() {
     return true;
 }
 
-void MainWindow::closeFront() {
-    Fl_Window* w = Fl::first_window();
-    if (auto pw = dynamic_cast<PatchWindow*>(w)) {
-        pw->canvas->commitEdit();
-        pw->hide();
-        return;
-    }
-    if (w && w != this && w == console_) {
-        w->hide();
-        return;
-    }
-    if (!confirmDiscard()) return;
-    dirty_ = false;                       // already asked
-    newPatch();
-    setStatus("closed");
-}
-
-void MainWindow::about() {
-    Fl_Double_Window dlg(360, 330, "About Moritz");
-    centerOnScreen(&dlg, this);
-    dlg.color(kBgLocked);
-    Fl_Box icon(116, 18, 128, 128);
-    std::string base = exeDir();
-    Fl_PNG_Image* png = nullptr;
-    for (std::string p : {base + "/../Resources/about.png", base + "/resources/about.png"}) {
-        png = new Fl_PNG_Image(p.c_str());
-        if (png->fail() == 0) break;
-        delete png;
-        png = nullptr;
-    }
-    Fl_Image* scaled = png ? png->copy(128, 128) : nullptr;
-    if (scaled) icon.image(scaled);
-    auto text = [](int y, int h, const char* s, int size, Fl_Font f, Fl_Color c) {
-        auto* b = new Fl_Box(10, y, 340, h);
-        b->copy_label(s);
-        b->labelsize(size);
-        b->labelfont(f);
-        b->labelcolor(c);
-        return b;
-    };
-    text(152, 30, "Moritz", 24, FL_HELVETICA_BOLD, kText);
-    text(182, 18, ("version " MORITZ_VERSION), 12, FL_HELVETICA, kDim);
-    text(206, 20, "A minimal Max/MSP-style patcher", 13, FL_HELVETICA, kText);
-    text(236, 20, "Created by Carmine-Emanuele Cella (2026)", 13, FL_HELVETICA_BOLD, kAccent);
-    text(258, 18, "BSD 2-Clause License", 11, FL_HELVETICA, kDim);
-    Fl_Return_Button ok(260, 288, 85, 28, "OK");
-    ok.callback([](Fl_Widget* w, void*) { w->window()->hide(); });
-    dlg.end();
-    dlg.set_modal();
-    dlg.show();
-    while (dlg.shown()) Fl::wait();
-    icon.image(nullptr);
-    delete scaled;
-    delete png;
-}
-
-void MainWindow::newPatch() {
-    if (!confirmDiscard()) return;
-    canvas->reset();
-    patch.clear();
-    path_.clear();
-    patch.dir.clear();
-    undo_.clear();
-    redo_.clear();
-    dirty_ = false;
-    canvas->setLocked(false);
-    updateTitle();
-    setStatus("new patch");
-}
-
-void MainWindow::openPatch() {
-    if (!confirmDiscard()) return;
-    Fl_Native_File_Chooser fc;
-    fc.title("Open Patch");
-    fc.type(Fl_Native_File_Chooser::BROWSE_FILE);
-    fc.filter("Moritz patch\t*.{moritz,mlsp}\nAll files\t*");
-    std::string dir = path_.empty() ? examplesDir() : path_.substr(0, path_.find_last_of('/'));
-    if (!dir.empty()) fc.directory(dir.c_str());
-    if (fc.show() != 0) return;
-    dirty_ = false;          // already confirmed
-    openFile(fc.filename());
-}
-
 bool MainWindow::openFile(const std::string& path) {
     std::string src, err;
     if (!readFile(path, src)) {
@@ -468,8 +778,9 @@ bool MainWindow::openFile(const std::string& path) {
         return false;
     }
     canvas->reset();
+    closeAllSubwindows();
     std::string oldDir = patch.dir;
-    patch.dir = path.substr(0, path.find_last_of('/'));
+    patch.dir = dirOf(path);
     if (!patch.load(src, err)) {
         patch.dir = oldDir;
         fl_alert("Can't open %s:\n%s", baseName(path).c_str(), err.c_str());
@@ -485,6 +796,28 @@ bool MainWindow::openFile(const std::string& path) {
     if (!err.empty()) print(baseName(path) + ":\n" + err);
     else setStatus("opened " + baseName(path));
     if (!patch.dspError.empty()) log(baseName(path) + ": " + patch.dspError);
+    patch.loadbangAll();
+    canvas->redraw();
+    return true;
+}
+
+bool MainWindow::loadConverted(const std::string& src, const std::string& dir, const std::string& name) {
+    std::string err;
+    canvas->reset();
+    closeAllSubwindows();
+    patch.dir = dir;                   // abstractions converted next to the original
+    if (!patch.load(src, err)) {
+        fl_alert("Can't load the converted patch:\n%s", err.c_str());
+        return false;
+    }
+    path_.clear();
+    suggested_ = name + "." + kExt;
+    undo_.clear();
+    redo_.clear();
+    dirty_ = true;                     // not saved yet
+    canvas->setLocked(false);
+    updateTitle();
+    if (!err.empty()) log(name + ":\n" + err);
     patch.loadbangAll();
     canvas->redraw();
     return true;
@@ -529,21 +862,16 @@ bool MainWindow::saveAs() {
     fc.type(Fl_Native_File_Chooser::BROWSE_SAVE_FILE);
     fc.filter("Moritz patch\t*.moritz");
     fc.options(Fl_Native_File_Chooser::SAVEAS_CONFIRM | Fl_Native_File_Chooser::USE_FILTER_EXT);
-    fc.preset_file(path_.empty() ? "Untitled.moritz" : baseName(path_).c_str());
+    if (path_.empty() && !suggested_.empty() && !patch.dir.empty()) fc.directory(patch.dir.c_str());
+    fc.preset_file(path_.empty() ? (suggested_.empty() ? "Untitled.moritz" : suggested_.c_str())
+                                 : baseName(path_).c_str());
     if (fc.show() != 0) return false;
-    std::string p = fc.filename();
+    std::string p = portablePath(fc.filename());
     const char* ext = fl_filename_ext(p.c_str());
     if (!ext || !*ext) p += std::string(".") + kExt;
     path_ = p;
-    patch.dir = p.substr(0, p.find_last_of('/'));
+    patch.dir = dirOf(p);
     return save();
-}
-
-void MainWindow::quit() {
-    if (!confirmDiscard()) return;
-    patch.onDsp = nullptr;      // a dspstatus~ reacting to the stop can't restart audio
-    audio.stop();
-    hide();
 }
 
 // ---- Edit
@@ -597,29 +925,171 @@ void MainWindow::toggleLock() {
     c->setLocked(!c->locked());
 }
 
-void MainWindow::toggleAudio() { setAudio(!audio.running()); }
+// ---- subpatcher windows
 
-void MainWindow::setAudio(bool on) {
-    std::string err;
-    if (on) {
-        if (!audio.start(err)) { print("audio: " + err); return; }
-        log("audio on: " + audio.deviceName() + ", " + std::to_string(audio.sampleRate()) +
-            " Hz, " + std::to_string(audio.bufferFrames()) + "-sample buffer, " +
-            (audio.hasInput() ? "input and output" : "output only"));
-        if (!err.empty()) log("audio: " + err);
-        setStatus(err);              // the status bar already says "audio on"
-    } else {
-        if (audio.running()) log("audio off");
-        audio.stop();
-        setStatus("");
+Canvas* MainWindow::activeCanvas() {
+    for (Fl_Window* w = Fl::first_window(); w; w = Fl::next_window(w)) {
+        if (w == this) return canvas;
+        if (auto pw = dynamic_cast<PatchWindow*>(w); pw && pw->doc == this) return pw->canvas;
+    }
+    return canvas;
+}
+
+void MainWindow::openSubpatch(Box* b) {
+    Patch* p = b ? b->inner() : nullptr;
+    if (!p) return;
+    for (auto* w : subwindows_)
+        if (w->patch == p) { w->show(); return; }
+    int W, H;
+    fitPatch(p, W, H);
+    auto* w = new PatchWindow(this, p, patchTitle(p));
+    w->size(W, H);
+    int shown = 0;
+    for (auto* o : subwindows_) shown += o->shown();
+    centerOnScreen(w, this, 28 * shown, 28 * shown);   // cascade over the centre
+    subwindows_.push_back(w);
+    w->show();
+}
+
+void MainWindow::closeSubpatchWindows(Patch* p) {
+    for (auto* w : std::vector<PatchWindow*>(subwindows_))
+        if (w->patch == p) {
+            w->detach();
+            forgetWindow(w);
+            w->hide();
+            Fl::delete_widget(w);
+        }
+}
+
+void MainWindow::closeAllSubwindows() {
+    for (auto* w : subwindows_) {
+        w->detach();
+        w->hide();
+        Fl::delete_widget(w);
+    }
+    subwindows_.clear();
+}
+
+void MainWindow::forgetWindow(PatchWindow* w) {
+    subwindows_.erase(std::remove(subwindows_.begin(), subwindows_.end(), w), subwindows_.end());
+}
+
+std::vector<std::string> MainWindow::openSubpatchPaths() const {
+    std::vector<std::string> v;
+    for (auto* w : subwindows_)
+        if (w->patch && w->shown()) v.push_back(pathOf(w->patch));
+    return v;
+}
+
+void MainWindow::reopenSubpatches(const std::vector<std::string>& paths) {
+    for (auto& path : paths) {
+        Patch* p = &patch;
+        Box* b = nullptr;
+        size_t start = 0;
+        while (p && start <= path.size()) {
+            size_t end = path.find('/', start);
+            std::string id = path.substr(start, end == std::string::npos ? std::string::npos : end - start);
+            b = p->find(id);
+            p = b ? b->inner() : nullptr;
+            if (end == std::string::npos) break;
+            start = end + 1;
+        }
+        if (p && b) openSubpatch(b);
     }
 }
 
-void MainWindow::midiSetup() {
+PatchWindow::PatchWindow(MainWindow* d, Patch* p, const std::string& title, bool isHelp)
+    : Fl_Double_Window(560, 420), patch(p), doc(d), help(isHelp) {
+    copy_label(title.c_str());
+    canvas = new Canvas(0, 0, 560, 420 - kStatusH, d, p);
+    auto* status = new Fl_Box(0, 420 - kStatusH, 560, kStatusH);
+    status->box(FL_FLAT_BOX);
+    status->color(kStatusBg);
+    status->labelcolor(kDim);
+    status->labelsize(11);
+    status->align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE | FL_ALIGN_CLIP);
+    status->copy_label(help ? "  help · runs with your patches while open · right-click any box for its help"
+                       : p->isAbstraction
+                           ? "  abstraction · Cmd+S saves its file · Cmd+E toggles edit mode"
+                           : "  subpatcher · saved with the main patch · Cmd+E toggles edit mode");
+    end();
+    resizable(canvas);
+    size_range(300, 200);
+    canvas->setLocked(true);
+    canvas->readOnly = help;
+    p->onRedraw = [this] { canvas->redraw(); };
+    p->onStructure = [this] { canvas->redraw(); };
+    callback([](Fl_Widget* w, void*) {
+        if (Fl::event() == FL_SHORTCUT && Fl::event_key() == FL_Escape) return;
+        auto* pw = static_cast<PatchWindow*>(w);
+        pw->canvas->commitEdit();
+        pw->hide();                       // a subpatcher is kept: reopening is instant
+        if (pw->help && pw->patch) App::get().closeHelp(pw->patch);   // stops its sound
+    });
+}
+
+PatchWindow::~PatchWindow() { detach(); }
+
+void PatchWindow::detach() {
+    if (!patch) return;
+    patch->onRedraw = nullptr;
+    patch->onStructure = nullptr;
+    patch = nullptr;
+}
+
+int PatchWindow::handle(int e) {
+    if (e == FL_SHORTCUT && Fl::event_key() == FL_Escape) {
+        canvas->cancelEdit();
+        return 1;
+    }
+    return Fl_Double_Window::handle(e);
+}
+
+// ---- dialogs
+void App::about() {
+    Fl_Double_Window dlg(360, 330, "About Moritz");
+    centerOnScreen(&dlg, frontDoc());
+    dlg.color(kBgLocked);
+    Fl_Box icon(116, 18, 128, 128);
+    std::string base = exeDir();
+    Fl_PNG_Image* png = nullptr;
+    for (std::string p : {base + "/../Resources/about.png", base + "/resources/about.png"}) {
+        png = new Fl_PNG_Image(p.c_str());
+        if (png->fail() == 0) break;
+        delete png;
+        png = nullptr;
+    }
+    Fl_Image* scaled = png ? png->copy(128, 128) : nullptr;
+    if (scaled) icon.image(scaled);
+    auto text = [](int y, int h, const char* s, int size, Fl_Font f, Fl_Color c) {
+        auto* b = new Fl_Box(10, y, 340, h);
+        b->copy_label(s);
+        b->labelsize(size);
+        b->labelfont(f);
+        b->labelcolor(c);
+        return b;
+    };
+    text(152, 30, "Moritz", 24, FL_HELVETICA_BOLD, kText);
+    text(182, 18, ("version " MORITZ_VERSION), 12, FL_HELVETICA, kDim);
+    text(206, 20, "A minimal Max/MSP-style patcher", 13, FL_HELVETICA, kText);
+    text(236, 20, "Created by Carmine-Emanuele Cella (2026)", 13, FL_HELVETICA_BOLD, kAccent);
+    text(258, 18, "BSD 2-Clause License", 11, FL_HELVETICA, kDim);
+    Fl_Return_Button ok(260, 288, 85, 28, "OK");
+    ok.callback([](Fl_Widget* w, void*) { w->window()->hide(); });
+    dlg.end();
+    dlg.set_modal();
+    dlg.show();
+    while (dlg.shown()) Fl::wait();
+    icon.image(nullptr);
+    delete scaled;
+    delete png;
+}
+
+void App::midiSetup() {
     midi.refresh();
     std::vector<std::string> ins = midi.inputPorts(), outs = midi.outputPorts();
     Fl_Double_Window dlg(440, 170, "MIDI Setup");
-    centerOnScreen(&dlg, this);
+    centerOnScreen(&dlg, frontDoc());
     Fl_Choice inC(130, 15, 290, 25, "Input:");
     Fl_Choice outC(130, 50, 290, 25, "Output:");
     Fl_Box note(20, 82, 400, 40,
@@ -659,10 +1129,10 @@ void MainWindow::midiSetup() {
     if (!midi.error.empty()) { log("MIDI: " + midi.error); midi.error.clear(); }
 }
 
-void MainWindow::audioSetup() {
+void App::audioSetup() {
     audio.refreshDevices();
     Fl_Double_Window dlg(440, 230, "Audio Setup");
-    centerOnScreen(&dlg, this);
+    centerOnScreen(&dlg, frontDoc());
     Fl_Choice outC(130, 15, 290, 25, "Output device:");
     Fl_Choice inC(130, 50, 290, 25, "Input device:");
     Fl_Choice srC(130, 85, 120, 25, "Sample rate:");
@@ -711,190 +1181,6 @@ void MainWindow::audioSetup() {
     setAudio(true);
 }
 
-// ---- subpatcher windows
-
-namespace {
-std::string patchTitle(Patch* p) {
-    std::string t = p->owner ? p->owner->label() : "patch";
-    if (p->isAbstraction) t += "  (" + baseName(p->file) + ")";
-    return t;
-}
-
-// path of box ids from the top patch, e.g. "p1/fm2", to reopen after undo
-std::string pathOf(Patch* p) {
-    std::string r;
-    for (; p && p->owner; p = p->parent) r = p->owner->id + (r.empty() ? "" : "/" + r);
-    return r;
-}
-}  // namespace
-
-Canvas* MainWindow::activeCanvas() {
-    for (Fl_Window* w = Fl::first_window(); w; w = Fl::next_window(w)) {
-        if (w == this) return canvas;
-        if (auto pw = dynamic_cast<PatchWindow*>(w)) return pw->canvas;
-        if (w->modal() || w == console_) continue;
-    }
-    return canvas;
-}
-
-void MainWindow::openSubpatch(Box* b) {
-    Patch* p = b ? b->inner() : nullptr;
-    if (!p) return;
-    for (auto* w : subwindows_)
-        if (w->patch == p) { w->show(); return; }
-    int W = 420, H = 300;
-    fl_font(kFont, kFontSize);
-    for (auto& x : p->boxes) {
-        int bw = std::max(x->w, (int)fl_width(x->label().c_str()) + 24);
-        W = std::max(W, x->x + bw + 40);
-        H = std::max(H, x->y + x->h + 50);
-    }
-    auto* w = new PatchWindow(this, p, patchTitle(p));
-    w->size(std::min(W, 1400), std::min(H + 22, 900));
-    int shown = 0;
-    for (auto* o : subwindows_) shown += o->shown();
-    centerOnScreen(w, this, 28 * shown, 28 * shown);   // cascade over the centre
-    subwindows_.push_back(w);
-    w->show();
-}
-
-void MainWindow::openHelp(const std::string& cls) {
-    std::string path = findHelp(cls);
-    if (path.empty()) {
-        std::string d = describeClass(cls);
-        print(cls + ": " + (d.empty() ? "no help patch" : d + " (no help patch yet)"));
-        return;
-    }
-    for (auto* w : subwindows_)                         // already open: bring it forward
-        if (w->patch && w->patch->file == path && w->canvas->readOnly) { w->show(); return; }
-    std::string src, err;
-    if (!readFile(path, src)) { print("can't read " + path); return; }
-    auto hp = std::make_unique<Patch>();
-    hp->dir = path.substr(0, path.find_last_of('/'));
-    Patch* p = patch.addExtra(std::move(hp));
-    p->file = path;                       // identifies the window; not an abstraction
-    if (!p->load(src, err)) {
-        print(baseName(path) + ": " + err);
-        patch.removeExtra(p);
-        return;
-    }
-    if (!err.empty()) print(baseName(path) + ": " + err);
-    p->loadbangAll();
-    int W = 420, H = 300;
-    fl_font(kFont, kFontSize);
-    for (auto& x : p->boxes) {
-        int bw = std::max(x->w, (int)fl_width(x->label().c_str()) + 24);
-        W = std::max(W, x->x + bw + 40);
-        H = std::max(H, x->y + x->h + 50);
-    }
-    std::string name = baseName(path);
-    name = name.substr(0, name.find(".help."));
-    auto* w = new PatchWindow(this, p, name + " help", true);
-    w->size(std::min(W, 1400), std::min(H + 22, 900));
-    centerOnScreen(w, this, 40, 40);
-    subwindows_.push_back(w);
-    w->show();
-    log("help: " + path);
-}
-
-void MainWindow::closeHelp(Patch* p) {
-    patch.removeExtra(p);   // its destruction closes and deletes the window
-}
-
-void MainWindow::closeSubpatchWindows(Patch* p) {
-    for (auto* w : std::vector<PatchWindow*>(subwindows_))
-        if (w->patch == p) {
-            w->detach();
-            forgetWindow(w);
-            w->hide();
-            Fl::delete_widget(w);
-        }
-}
-
-void MainWindow::forgetWindow(PatchWindow* w) {
-    subwindows_.erase(std::remove(subwindows_.begin(), subwindows_.end(), w), subwindows_.end());
-}
-
-std::vector<std::string> MainWindow::openSubpatchPaths() const {
-    std::vector<std::string> v;
-    for (auto* w : subwindows_)
-        if (w->patch && w->shown()) v.push_back(pathOf(w->patch));
-    return v;
-}
-
-void MainWindow::reopenSubpatches(const std::vector<std::string>& paths) {
-    for (auto& path : paths) {
-        Patch* p = &patch;
-        Box* b = nullptr;
-        size_t start = 0;
-        while (p && start <= path.size()) {
-            size_t end = path.find('/', start);
-            std::string id = path.substr(start, end == std::string::npos ? std::string::npos : end - start);
-            b = p->find(id);
-            p = b ? b->inner() : nullptr;
-            if (end == std::string::npos) break;
-            start = end + 1;
-        }
-        if (p && b) openSubpatch(b);
-    }
-}
-
-PatchWindow::PatchWindow(MainWindow* main, Patch* p, const std::string& title, bool help)
-    : Fl_Double_Window(560, 420), patch(p) {
-    copy_label(title.c_str());
-    canvas = new Canvas(0, 0, 560, 420 - kStatusH, main, p);
-    auto* status = new Fl_Box(0, 420 - kStatusH, 560, kStatusH);
-    status->box(FL_FLAT_BOX);
-    status->color(kStatusBg);
-    status->labelcolor(kDim);
-    status->labelsize(11);
-    status->align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE | FL_ALIGN_CLIP);
-    status->copy_label(help ? "  help · runs with your patch while open · right-click any box for its help"
-                       : p->isAbstraction
-                           ? "  abstraction · Cmd+S saves its file · Cmd+E toggles edit mode"
-                           : "  subpatcher · saved with the main patch · Cmd+E toggles edit mode");
-    end();
-    resizable(canvas);
-    size_range(300, 200);
-    canvas->setLocked(true);
-    canvas->readOnly = help;
-    p->onRedraw = [this] { canvas->redraw(); };
-    p->onStructure = [this] { canvas->redraw(); };
-    if (help) {
-        callback([](Fl_Widget* w, void* d) {
-            if (Fl::event() == FL_SHORTCUT && Fl::event_key() == FL_Escape) return;
-            auto* pw = static_cast<PatchWindow*>(w);
-            pw->hide();
-            if (pw->patch) static_cast<MainWindow*>(d)->closeHelp(pw->patch);   // stops its sound
-        }, main);
-        return;
-    }
-    callback([](Fl_Widget* w, void* d) {
-        if (Fl::event() == FL_SHORTCUT && Fl::event_key() == FL_Escape) return;
-        auto* pw = static_cast<PatchWindow*>(w);
-        pw->canvas->commitEdit();
-        pw->hide();                       // kept: reopening is instant
-        (void)d;
-    }, main);
-}
-
-PatchWindow::~PatchWindow() { detach(); }
-
-void PatchWindow::detach() {
-    if (!patch) return;
-    patch->onRedraw = nullptr;
-    patch->onStructure = nullptr;
-    patch = nullptr;
-}
-
-int PatchWindow::handle(int e) {
-    if (e == FL_SHORTCUT && Fl::event_key() == FL_Escape) {
-        canvas->cancelEdit();
-        return 1;
-    }
-    return Fl_Double_Window::handle(e);
-}
-
 // ---- toolbar buttons
 
 ToolButton::ToolButton(int x, int y, int w, int h, Icon icon, const char* label)
@@ -920,9 +1206,13 @@ void ToolButton::draw() {
     if (icon_ == Power) {
         fl_arc(cx - r, cy - r, 2 * r, 2 * r, 120, 420);   // open ring with a gap at the top
         fl_line(cx, cy - r - 1, cx, cy);
-    } else {
+    } else if (icon_ == Pencil) {
         fl_line(cx - r, cy + r, cx + r, cy - r);           // a pencil stroke
         fl_line(cx - r, cy + r, cx - r + 3, cy + r);
+    } else {                                               // </>
+        int h = r - 1;
+        fl_line(cx - 2, cy - h, cx - r - 1, cy, cx - 2, cy + h);
+        fl_line(cx + 2, cy - h, cx + r + 1, cy, cx + 2, cy + h);
     }
     fl_line_style(0);
     fl_font(FL_HELVETICA_BOLD, 12);

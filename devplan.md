@@ -113,6 +113,38 @@ Weeks start on Monday. One block a week assumes 3-5 working sessions.
 | 10 | 25-31 Jan | Stabilisation | Fixes, performance, Windows on a real machine. Feature freeze: v1.0-rc. |
 | Feb | | Pilot and paper | CNSM classes, evaluation, v1.0. |
 
+### Status of week 1 (15 November)
+
+Done, not yet released:
+
+- Max arithmetic (committed): typed `+ - * / %`, comparisons, `pack`/`unpack`,
+  `scale`, `expr`; `2.` kept as written.
+- Windows: `make windows` / `make windows-zip` cross-compile with MinGW-w64
+  (static, no DLLs, UTF-8 code page through the manifest, icon). Not yet run
+  on a real Windows machine: the CI job does that.
+- CI: `.github/workflows/build.yml` (macOS, Linux, Windows built on Linux and
+  tested on Windows, release on tags) and `tools/test-patches.sh`. Runs on
+  the first push.
+- Several patches open at once (an invisible host patch runs them all as
+  extras); per-window menus on Windows/Linux, one menu bar on macOS.
+- Cut/copy/paste/duplicate through the system clipboard as `.moritz` text,
+  between windows and patches, without reloading the patch.
+- Code view (Code button, Cmd+T): the patch as text beside the drawing,
+  two views of the same patch kept in sync both ways; text edits apply when
+  typing pauses and keep unchanged boxes running (`Patch::applyText`).
+- `if` (as in Max); `dspstatus~` renamed `dspstate~`, with Max's outlets.
+- Help > Tutorials with the first two tutorials (`tutorials/`).
+- Import from Max (File menu, `moritz --import`): all 733 Max 9 help patches
+  convert and load; 81.6% of their boxes map to Moritz objects. Numbered
+  `in 1`/`out~ 2` now order a voice's ports, as in Max.
+- `--no-audio` start option.
+
+Max objects most often missing in imported patches (candidates for later
+weeks): `prepend`, `zl`, `pak`, `uzi`, `number~`, `umenu`, `multislider`,
+`midiin`/`midiout`/`midiformat`/`midiinfo`, `coll`, `dict`, `change`, `!-`,
+`delay~`, `edge~`, `>~`, `scale~`, `delta~`, `fft~`, `vexpr`, `incdec`,
+`preset`/`pattrstorage`, `attrui`; the `mc.*` family.
+
 After the paper: multitrack/transport/clip-grid views, VST player (CLAP+VST3,
 floating editor; needs the global state refactored per instance), the
 transformer on atom sequences, `concat~`.
@@ -141,7 +173,7 @@ as evaluation (also consider SMC, NIME). Decide in December.
   `kslider` (note-off on release here), `selector~`/`gate~` (5 ms crossfade
   here), `biquad~` (number coefficients here), `expr` (fewer functions;
   `random()` returns decimals). About 30 more have fewer inlets/outlets or
-  options than in Max. Max has no `dspstatus~`, `expr~`, `inlet~`/`outlet~`,
+  options than in Max. Max has no `expr~`, `inlet~`/`outlet~`,
   `lrshift~`.
 - **Musil** (github.com/CarmineCella/musil): `src/music/orchidea.h` (the
   search core), `src/music.mu` (scores, databases, CAC fragments,

@@ -426,20 +426,77 @@ void Canvas::drawPortTip() {
 
 // ---- option-drag duplication
 
-void Canvas::duplicateSelection() {
+void Canvas::duplicateSelection(int dx, int dy) {
+    auto sel = selectedBoxes();
+    if (sel.empty() || readOnly) return;
+    if (win_) win_->pushUndo();
+    std::vector<Box*> added;
+    std::string err;
+    // through the clipboard format, so subpatchers are copied with their contents
+    if (!patch_->merge(patch_->serializeBoxes(sel), dx, dy, added, err)) return;
+    clearSelection();
+    for (Box* b : added) b->selected = true;
+    if (patch_->owner) patch_->rebuild();       // inlets/outlets follow positions
+    if (win_) win_->markDirty();
+    redraw();
+}
+
+void Canvas::copySelection() {
+    if (editing_) { editor_->copy(1); return; }
     auto sel = selectedBoxes();
     if (sel.empty()) return;
-    win_->pushUndo();
-    Patch& p = *patch_;
-    std::map<Box*, Box*> copy;
-    for (Box* b : sel) copy[b] = p.addBox(p.create(b->cls, b->keepRaw ? b->rawArgs : b->saveArgs()), b->x, b->y);
-    auto conns = p.conns;               // connect() appends to p.conns
-    for (auto& c : conns)
-        if (copy.count(c.from) && copy.count(c.to))
-            p.connect(copy[c.from], c.outlet, copy[c.to], c.inlet);
+    std::string t = patch_->serializeBoxes(sel);
+    Fl::copy(t.c_str(), (int)t.size(), 1);
+    if (auto* d = doc())
+        d->setStatus("copied " + std::to_string(sel.size()) + (sel.size() == 1 ? " box" : " boxes"));
+}
+
+void Canvas::cutSelection() {
+    if (editing_) { editor_->copy(1); editor_->cut(); return; }
+    if (readOnly || selectedBoxes().empty()) return;
+    copySelection();
+    deleteSelection();
+}
+
+void Canvas::paste() {
+    if (editing_) { Fl::paste(*editor_, 1); return; }
+    if (readOnly) return;
+    Fl::paste(*this, 1, Fl::clipboard_plain_text);   // arrives as FL_PASTE
+}
+
+// Pastes boxes copied from any patch window (or a .moritz text from another
+// program) with their top-left corner at the mouse.
+void Canvas::pasteText(const std::string& text) {
+    size_t k = text.find_first_not_of(" \t\r\n");
+    while (k != std::string::npos && text[k] == ';') {          // skip comment lines
+        k = text.find('\n', k);
+        if (k != std::string::npos) k = text.find_first_not_of(" \t\r\n", k);
+    }
+    if (k == std::string::npos || text.compare(k, 6, "(patch") != 0) {
+        if (auto* d = doc()) d->setStatus("nothing to paste: the clipboard holds no Moritz boxes");
+        return;
+    }
+    if (win_) win_->pushUndo();
+    std::vector<Box*> added;
+    std::string err;
+    if (!patch_->merge(text.substr(k), 0, 0, added, err) || added.empty()) {
+        if (win_) win_->dropUndo();
+        if (auto* d = doc()) d->print("paste: " + (err.empty() ? std::string("no boxes") : err));
+        return;
+    }
+    int minX = added[0]->x, minY = added[0]->y;
+    for (Box* b : added) { minX = std::min(minX, b->x); minY = std::min(minY, b->y); }
+    int tx = std::max(5, mouseX_), ty = std::max(5, mouseY_);
     clearSelection();
-    for (auto& kv : copy) kv.second->selected = true;
-    win_->markDirty();
+    for (Box* b : added) {
+        b->x += tx - minX;
+        b->y += ty - minY;
+        b->selected = true;
+    }
+    if (patch_->owner) patch_->rebuild();
+    if (!err.empty() && win_) win_->print("paste: " + err);
+    if (win_) win_->markDirty();
+    redraw();
 }
 
 void Canvas::draw() {
@@ -749,6 +806,10 @@ void Canvas::numberDrag(int dy) {
 
 int Canvas::handle(int e) {
     switch (e) {
+        case FL_PASTE:
+            if (editing_ || readOnly) return 0;
+            pasteText(std::string(Fl::event_text(), (size_t)Fl::event_length()));
+            return 1;
         case FL_LEAVE:
             hidePortTip();
             return 1;
@@ -785,9 +846,9 @@ int Canvas::handle(int e) {
             // locked mode: its help, as in Max
             bool menuClick = Fl::event_button() == FL_RIGHT_MOUSE ||
                              (Fl::event_button() == FL_LEFT_MOUSE && Fl::event_state(FL_CTRL));
-            if (h.box && win_ && (menuClick || (locked_ && Fl::event_state(FL_ALT)))) {
+            if (h.box && (menuClick || (locked_ && Fl::event_state(FL_ALT)))) {
                 Box* b = h.box;
-                if (!menuClick) { win_->openHelp(b->cls); return 1; }
+                if (!menuClick) { App::get().openHelp(b->cls); return 1; }
                 std::string helpLabel = "Help for " + b->cls;
                 for (size_t k = 0; k < helpLabel.size(); ++k)     // menu labels treat / and & specially
                     if (helpLabel[k] == '/' || helpLabel[k] == '&') helpLabel.insert(k++, 1, '\\');
@@ -796,8 +857,8 @@ int Canvas::handle(int e) {
                 items[1].label("Open");
                 if (!b->inner()) items[1].deactivate();
                 const Fl_Menu_Item* r = items->popup(Fl::event_x(), Fl::event_y());
-                if (r == &items[0]) win_->openHelp(b->cls);
-                else if (r == &items[1]) win_->openSubpatch(b);
+                if (r == &items[0]) App::get().openHelp(b->cls);
+                else if (r == &items[1]) { if (auto* d = doc()) d->openSubpatch(b); }
                 return 1;
             }
 
@@ -831,7 +892,7 @@ int Canvas::handle(int e) {
                 } else if (h.box && h.box->inner() && Fl::event_clicks()) {
                     Fl::event_clicks(0);
                     drag_ = Drag::None;
-                    win_->openSubpatch(h.box);     // like Max: double-click opens it
+                    if (auto* d = doc()) d->openSubpatch(h.box);     // like Max: double-click opens it
                     return 1;
                 }
                 redraw();
@@ -841,7 +902,7 @@ int Canvas::handle(int e) {
             if (Fl::event_clicks()) {                       // double-click
                 if (h.box && h.box->inner() && Fl::event_state(FL_COMMAND)) {
                     Fl::event_clicks(0);
-                    win_->openSubpatch(h.box);              // Cmd+double-click opens in edit mode
+                    if (auto* d = doc()) d->openSubpatch(h.box);   // Cmd+double-click opens in edit mode
                     return 1;
                 }
                 if (h.box && h.what == Hit::Body && h.box->kind != BoxKind::Number) {
@@ -864,7 +925,7 @@ int Canvas::handle(int e) {
                 case Hit::Body:
                     if (Fl::event_state(FL_ALT)) {          // option-drag copies
                         if (!h.box->selected) { clearSelection(); h.box->selected = true; }
-                        duplicateSelection();
+                        duplicateSelection(0, 0);
                         drag_ = Drag::Move;
                         moved_ = true;                      // undo already recorded
                         break;
@@ -990,5 +1051,7 @@ int Canvas::handle(int e) {
     return Fl_Group::handle(e);
 }
 
+
+MainWindow* Canvas::doc() const { return win_ ? win_ : App::get().frontDoc(); }
 
 }  // namespace moritz

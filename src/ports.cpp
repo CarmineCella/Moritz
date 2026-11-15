@@ -150,9 +150,9 @@ const std::map<std::string, PortDocs>& docs() {
         {"makenote", {{"pitch: note-on now, note-off later; stop, clear", "velocity", "duration (ms)"},
                       {"pitch", "velocity (0 for the note-off)"}}},
         {"stripnote", {{"pitch: passes when the velocity is above 0", "velocity"}, {"pitch", "velocity"}}},
-        {"dspstatus~", {{"bang: report now; a number: also report every ms while audio runs (0 = off)"},
-                        {"1 while audio runs, 0 when off", "CPU load (% of the buffer's time)",
-                         "sample rate (Hz)", "I/O buffer size (samples)", "signal vector size (samples)"}}},
+        {"dspstate~", {{"bang: report now; a number: also report every ms while audio runs (0 = off)"},
+                       {"1 while audio runs, 0 when off", "sample rate (Hz)", "signal vector size (samples)",
+                        "I/O buffer size (samples)", "CPU load (% of the buffer's time)"}}},
         // timing
         {"metro", {{"1 or bang starts, 0 or stop stops", "interval (ms)"}, {"bang every interval"}}},
         {"delay", {{"bang starts (or restarts), stop cancels; a number sets the time and starts", "delay time (ms)"},
@@ -169,6 +169,9 @@ const std::map<std::string, PortDocs>& docs() {
                    {"mapped value"}}},
         {"expr", {{"$f1 / $i1: sets it and outputs; bang outputs", "value of the next $f / $i (stored)"},
                   {"result"}}},
+        {"if", {{"$i1 / $f1 (or a word for $s1): sets it and evaluates; bang evaluates; set ...: store only",
+                 "value of the next $i / $f (stored)"},
+                {"the message after then or else", "messages marked out2"}}},
         {"random", {{"bang: output a random integer; seed x: repeatable"}, {"random integer 0 .. range-1"}}},
         {"counter", {{"bang: output the count, then step", "next value"}, {"count"}}},
         // routing

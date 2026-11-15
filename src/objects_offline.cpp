@@ -206,8 +206,7 @@ private:
         // the patch is made and destroyed on the GUI thread; only processing runs on the worker
         inner_ = std::make_unique<Patch>();
         Patch& p = *inner_;
-        size_t slash = path.find_last_of('/');
-        p.dir = slash == std::string::npos ? "." : path.substr(0, slash);
+        p.dir = dirOf(path);
         p.sampleRate = sr;
         p.dspRunning = true;
         p.ioBufferFrames = dsp::kBlock;

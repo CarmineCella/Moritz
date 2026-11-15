@@ -751,6 +751,80 @@ private:
 
 
 
+// ---------------------------------------------------------------- if
+// if <condition> then <message> [else <message>], as in Max. The condition
+// is an expr expression over $i1..$i9 and $f1..$f9 (one inlet each, the left
+// one hot); the messages are written like message boxes and use the same
+// variables, and $s1 for a word arriving at the left inlet. "out2" before a
+// message sends it from a second outlet, "send name" to receive name.
+class IfBox : public Box {
+public:
+    explicit IfBox(const Message& a) {
+        int part = 0;                                // 0 condition, 1 then, 2 else
+        std::string cond;
+        for (auto& x : a) {
+            if (x.is("then") && part == 0) { part = 1; continue; }
+            if (x.is("else") && part == 1) { part = 2; continue; }
+            if (part == 0) cond += (cond.empty() ? "" : " ") + x.str();
+            else (part == 1 ? then_ : else_).push_back(x);
+        }
+        int nv = 0;
+        if (part == 0) err_ = "if: missing \"then\"";
+        else if (!ExprParser(cond).parse(fn_, nv, err_)) err_ = "if: " + err_;
+        for (auto* m : {&then_, &else_})
+            for (auto& x : *m)
+                if (x.isSymbol() && x.s.size() == 3 && x.s[0] == '$' && std::isdigit((unsigned char)x.s[2]))
+                    nv = std::max(nv, x.s[2] - '0');
+        bool out2 = (!then_.empty() && then_[0].is("out2")) || (!else_.empty() && else_[0].is("out2"));
+        setPorts(std::vector<Port>((size_t)std::clamp(nv, 1, 9), P::Control),
+                 std::vector<Port>(out2 ? 2 : 1, P::Control));
+    }
+    void attached() override { if (!err_.empty()) patch->print(err_); }
+    void message(int in, const Message& m) override {
+        if (m[0].is("set")) {                        // store without evaluating
+            for (size_t k = 1; k < m.size() && k - 1 < 9; ++k)
+                if (m[k].isFloat()) v_[k - 1] = m[k].f;
+            return;
+        }
+        if (in > 0) { if (m[0].isFloat() && in < 9) v_[in] = m[0].f; return; }
+        if (m[0].isSymbol() && !m[0].is("bang")) {
+            s1_ = m[0].s;
+        } else {
+            for (size_t k = 0; k < m.size() && k < 9; ++k)
+                if (m[k].isFloat()) v_[k] = m[k].f;
+        }
+        if (!err_.empty()) return;
+        const Message& part = fn_(v_) != 0.0 ? then_ : else_;
+        if (part.empty()) return;
+        size_t k = 0;
+        int outl = 0;
+        std::string sendTo;
+        if (part[0].is("out2")) { outl = 1; k = 1; }
+        if (k + 1 < part.size() && part[k].is("send")) { sendTo = part[k + 1].str(); k += 2; }
+        Message out;
+        for (; k < part.size(); ++k) {
+            const Atom& x = part[k];
+            if (x.isSymbol() && x.s.size() == 3 && x.s[0] == '$' && std::isdigit((unsigned char)x.s[2])) {
+                int idx = x.s[2] - '1';
+                char t = (char)std::tolower((unsigned char)x.s[1]);
+                if (idx >= 0 && idx < 9 && t == 'i') { out.push_back(Atom((float)std::trunc(v_[idx]))); continue; }
+                if (idx >= 0 && idx < 9 && t == 'f') { out.push_back(Atom((float)v_[idx])); continue; }
+                if (idx == 0 && t == 's') { out.push_back(Atom(s1_)); continue; }
+            }
+            out.push_back(x);
+        }
+        if (out.empty()) return;
+        if (!sendTo.empty()) patch->sendTo(sendTo, out);
+        else outlet(outl, out);
+    }
+
+private:
+    ExprParser::Fn fn_;
+    Message then_, else_;
+    std::string err_, s1_;
+    double v_[9] = {0};
+};
+
 }  // namespace
 
 void registerControlObjects(ClassTable& t) {
@@ -787,6 +861,7 @@ void registerControlObjects(ClassTable& t) {
         {"atodb", "Control Math", "amplitude to decibels", unary(atodb)},
         {"scale", "Control Math", "map a range: in lo hi, out lo hi", with<ScaleBox>()},
         {"expr", "Control Math", "expression: $f1 * 2 + sin($f2)", with<ExprBox>()},
+        {"if", "Control Math", "if $i1 > 5 then ... else ...", with<IfBox>()},
         {"random", "Control Math", "random integer below range", with<RandomBox>()},
         {"counter", "Control Math", "count bangs: [min] max", with<CounterBox>()},
         {"trigger", "Routing", "ordered outputs, right to left", with<TriggerBox>()},

@@ -68,15 +68,22 @@ private:
 
 // ================================================================ p and abstractions
 
-// a patch's inlet and outlet boxes, ordered left to right
+// a patch's inlet and outlet boxes, ordered left to right; numbered ones
+// (in 1, out~ 2, as in Max's poly~ voices) by their number, before the others
 void collectPorts(Patch& p, std::vector<InletBox*>& in, std::vector<OutletBox*>& out) {
     for (auto& b : p.boxes) {
         if (auto i = dynamic_cast<InletBox*>(b.get())) in.push_back(i);
         if (auto o = dynamic_cast<OutletBox*>(b.get())) out.push_back(o);
     }
-    auto byX = [](const Box* a, const Box* b) { return a->x < b->x; };
-    std::stable_sort(in.begin(), in.end(), byX);
-    std::stable_sort(out.begin(), out.end(), byX);
+    auto number = [](const Box* b) {
+        return !b->args.empty() && b->args[0].isFloat() && b->args[0].f >= 1.f ? b->args[0].f : 1e9f;
+    };
+    auto order = [&](const Box* a, const Box* b) {
+        float na = number(a), nb = number(b);
+        return na != nb ? na < nb : a->x < b->x;
+    };
+    std::stable_sort(in.begin(), in.end(), order);
+    std::stable_sort(out.begin(), out.end(), order);
 }
 
 class SubpatchBox : public Box {
@@ -139,21 +146,26 @@ protected:
 };
 
 int gInstances = 1000;      // #0 values
-int gAbsDepth = 0;          // guards against an abstraction containing itself
+std::vector<std::string> gLoading;   // abstraction files being loaded, outermost first
 
 bool loadAbstractionInto(Patch& child, const std::string& path, const Message& args,
                          std::string& err) {
     std::string src;
     if (!readFile(path, src)) { err = "can't read " + path; return false; }
-    if (gAbsDepth > 16) { err = "abstractions nested too deeply (does one contain itself?)"; return false; }
+    // an abstraction containing itself (directly or through others) would never end
+    if (std::find(gLoading.begin(), gLoading.end(), path) != gLoading.end()) {
+        err = "contains itself";
+        return false;
+    }
+    if (gLoading.size() > 16) { err = "abstractions nested too deeply"; return false; }
     child.isAbstraction = true;
     child.file = path;
     child.absArgs = args;
     child.instance = ++gInstances;
-    child.dir = path.substr(0, path.find_last_of('/'));
-    ++gAbsDepth;
+    child.dir = dirOf(path);
+    gLoading.push_back(path);
     bool ok = child.load(src, err);
-    --gAbsDepth;
+    gLoading.pop_back();
     return ok;
 }
 

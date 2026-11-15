@@ -70,6 +70,12 @@ std::string formatFloat(float v);
 Atom parseAtom(const std::string& token);            // number if it parses, else symbol
 std::vector<std::string> splitTokens(const std::string& text);  // ';' and ',' are tokens
 Message parseMessage(const std::string& text);
+
+// ---- paths (portable: macOS, Linux, Windows)
+std::string homeDir();                          // HOME, or USERPROFILE on Windows
+bool isAbsolutePath(const std::string& p);      // /x, C:/x, C:\x, \\server
+std::string portablePath(std::string p);        // on Windows, backslashes become slashes
+std::string dirOf(const std::string& path);     // folder of a file path, "." if none
 std::string messageToString(const Message& m);
 
 // ====================================================================== s-expressions
@@ -286,7 +292,14 @@ public:
     std::string serialize(int indent = 0) const;
     bool load(const std::string& src, std::string& err);
     bool load(const SExpr& form, std::string& err);   // a parsed (patch ...) form
+    // clipboard: the selected boxes as text, and pasting such a text
+    std::string serializeBoxes(const std::vector<Box*>& sel) const;
+    bool merge(const std::string& src, int dx, int dy, std::vector<Box*>& added, std::string& err);
+    // the text view: applies an edited text, keeping the boxes that did not change
+    bool applyText(const std::string& src, std::string& err);
     void loadbangAll();
+    bool build(const SExpr& form, std::vector<std::unique_ptr<Box>>& nb,
+               std::vector<Connection>& nc, std::vector<std::string>& warnings, std::string& err);
 
     // ---- messaging (GUI thread)
     void sendTo(const std::string& name, const Message& m);  // send / ; remote
@@ -321,7 +334,7 @@ public:
     std::string dspError;   // non-empty when the signal graph has a loop
     std::atomic<bool> dspRunning{false};
     uint64_t blockCount = 0;  // audio thread: 64-sample blocks processed
-    // set by the audio engine on the root, for dspstatus~
+    // set by the audio engine on the root, for dspstate~
     std::atomic<int> ioBufferFrames{0};   // device buffer (I/O vector) size; kept while off
     std::atomic<float> cpuLoad{0.f};      // share of each buffer's time spent computing, smoothed
     int renderDepth = 0;                  // moritz~: how deep this patch is rendered inside others

@@ -2,8 +2,8 @@
 
 Moritz is a Max-like sound computing environment: patch boxes together on a
 canvas and hear the result in real time. It's written in C++ and uses FLTK
-for the GUI, miniaudio for audio and RtMidi for MIDI. It runs on macOS and
-Linux.
+for the GUI, miniaudio for audio and RtMidi for MIDI. It runs on macOS,
+Linux and Windows.
 
 ## Build
 
@@ -32,9 +32,44 @@ sudo apt install build-essential cmake curl libasound2-dev libx11-dev libxext-de
 Audio goes through miniaudio (PulseAudio, PipeWire or ALSA, whichever is
 there) and MIDI through ALSA.
 
+### Windows
+
+On Windows, install [MSYS2](https://www.msys2.org), open the **MSYS2 MINGW64**
+shell and install the tools once:
+
+```sh
+pacman -S make curl zip mingw-w64-x86_64-gcc mingw-w64-x86_64-cmake
+```
+
+Then, in the Moritz folder, `make` builds `build/windows/Moritz/moritz.exe`
+with its folders, and `make run` opens it. The same program can also be
+cross-compiled from a Mac (`brew install mingw-w64`) or from Linux
+(`sudo apt install mingw-w64`, with the POSIX thread model selected by
+`update-alternatives`):
+
+```sh
+make windows       # build/windows/Moritz/moritz.exe, with its folders
+make windows-zip   # build/Moritz-<version>-windows-x86_64.zip
+```
+
+`moritz.exe` is linked statically and needs no DLLs; it runs on Windows 10 and
+later. Audio goes through WASAPI and MIDI through the Windows multimedia API.
+On Windows there is no virtual MIDI port, so MIDI output goes to a device chosen
+in Patch > MIDI Setup....
+
+### Continuous integration
+
+Every push to GitHub builds Moritz on macOS, Linux and Windows
+(`.github/workflows/build.yml`), each on its own system with the same
+`make` targets described above, and renders every example, help patch,
+tutorial and library abstraction with `tools/test-patches.sh`. The builds are kept as downloads of
+each run. Pushing a tag `v<version>` also publishes them as a GitHub release.
+`tools/test-patches.sh` runs locally too: `tools/test-patches.sh ./moritz`.
+
 ### Releases and code signing
 
-`make dist` builds `build/Moritz-<version>-macos-universal.zip`, which holds
+`make dist` builds `build/Moritz-<version>-macos-universal.zip`
+(`make linux-dist` the Linux `.tar.gz`, `make windows-zip` the Windows zip), which holds
 the app, the examples, the README and the license. By default the app is
 signed ad-hoc. That is enough on the Mac that built it, but macOS blocks a
 downloaded ad-hoc app. To open a downloaded copy, either run
@@ -73,6 +108,12 @@ The editor follows Max's conventions:
   - Click or rubber-band to select. Drag to move. **Option-drag** copies the
     selection, including the cables between the copied boxes. Backspace
     deletes boxes and cables. Double-click a box to edit its text.
+  - **Cmd+X**, **Cmd+C** and **Cmd+V** cut, copy and paste boxes with the
+    cables between them, through the system clipboard: between windows,
+    between patches, from a help patch into yours. Pasted boxes land at the
+    mouse; names already used are renamed. **Cmd+D** duplicates the selection.
+    The clipboard holds the boxes as `.moritz` text, so a patch fragment can
+    also be pasted from a text editor or a web page.
 - **Locked mode**
   - Click a message box or a `button` to send it, click a `toggle` to switch
     it, and drag a `slider`.
@@ -105,8 +146,34 @@ The editor follows Max's conventions:
   objects, and are listed under **Patch > New > Library** and in completion.
   To add your own, put `name.moritz` (and optionally `name.help.moritz`) in
   `~/Documents/Moritz/library`; it is searched first.
-- **Undo/redo**: Cmd+Z and Shift+Cmd+Z. **Cmd+W** closes the front window:
-  a subpatcher or the console, or else the patch itself (asking to save).
+- **Several patches**: File > New and File > Open... open each patch in its
+  own window. All open patches play at the same time, through the same audio
+  output, and share the `send`/`receive` and `buffer~` names, as in Max.
+- **Undo/redo**: Cmd+Z and Shift+Cmd+Z, per patch. **Cmd+W** closes the front
+  window: a subpatcher, a help patch or the console, or else the patch itself
+  (asking to save). On macOS Moritz stays open without windows; elsewhere
+  closing the last patch quits.
+- **Code view**: the **Code** button in the toolbar, or Patch > Code View
+  (**Cmd+T**), shows the patch as code (its text, in the file format) beside the drawing
+  (in a subpatcher or help window, that patch). The two are views of the same
+  patch: edit the drawing and the text follows; edit the text and, when you
+  pause typing, the drawing follows. Boxes whose line you didn't change keep
+  running untouched, so the sound goes on; a text that doesn't read as a patch
+  is not applied, and the status line says why. Text edits are undone with
+  Cmd+Z like any other edit.
+- **Tutorials**: Help > Tutorials opens the tutorial patches, in order.
+- **Import from Max**: File > Import from Max... (**Shift+Cmd+I**) converts a
+  Max patch (`.maxpat` or `.maxhelp`): boxes, arguments, cables, positions,
+  subpatchers, sliders and keyboards. Abstractions next to it (`poly~`
+  voices, `pfft~` patches, objects named after a `.maxpat`) are converted
+  into `.moritz` files beside the original. Objects Moritz doesn't have stay
+  as unknown boxes with their text, and the console lists them, together with
+  the attributes (`@name value`) left out. The result opens as a new patch, to
+  save where you like. `moritz --import patch.maxpat [out.moritz]` does the
+  same from the command line.
+- **Starting without audio**: `moritz --no-audio` (or
+  `open Moritz.app --args --no-audio`) opens with audio off, for a machine
+  whose audio device misbehaves.
 
 ## Objects
 
@@ -209,11 +276,12 @@ point (`2.`, `0.5`) makes `+ - * / %`, the comparisons, `pack`, `unpack` and
 
 **Audio I/O**: `adc~ [ch...]` and `dac~ [ch...]`. The default channels are 1
 and 2. `start` and `stop` turn audio on and off, and so does a message box
-sending `; dsp start` or `; dsp stop`. `dspstatus~ [ms]` reports the audio
+sending `; dsp start` or `; dsp stop`. `dspstate~ [ms]` reports the audio
 state on bang, whenever audio starts, stops or is reopened, and every `ms`
-while audio runs. Its outlets, left to right, are 1/0 for audio on/off, the CPU
-load in %, the sample rate, the I/O buffer size and the signal vector size (64,
-or the frame's bin count inside `pfft~`). While audio is off it still reports
+while audio runs. Its outlets, left to right, are as in Max: 1/0 for audio
+on/off, the sample rate, the signal vector size (64, or the frame's bin count
+inside `pfft~`) and the I/O buffer size; a fifth outlet gives the CPU load
+in %. While audio is off it still reports
 the last sample rate and buffer size.
 
 **Offline processing** (background jobs: the patch keeps running while they work; outlets: progress 0..1, then a bang when the result is in its `buffer~`; `stop` cancels)
@@ -263,6 +331,7 @@ the last sample rate and buffer size.
 | `mtof`, `ftom`, `dbtoa`, `atodb` | MIDI note ↔ Hz and dB ↔ amplitude conversions |
 | `scale inlo inhi outlo outhi [exp]` | Maps a range linearly, or along a curve when `exp` is given. Four integer arguments give integer output, as in Max |
 | `expr ...` | Expressions over `$f1`..`$f9` and `$i1`..`$i9`, typed as in Max (`7 / 2` is 3, `7. / 2` is 3.5), with `+ - * / % == != < > <= >= && \|\| !`, functions such as `sin`, `pow`, `sqrt`, `min`, `max`, `int` and `random(lo, hi)`, and the constant `pi` |
+| `if cond then msg [else msg]` | As in Max: the condition is written as in `expr` (`$i1 > 5`); the messages like message boxes, with the same `$i`/`$f` variables and `$s1`. `out2` sends from a second outlet, `send name` to a `receive`. One inlet per variable; `set` stores without evaluating |
 | `random [n]` | Bang outputs a random integer from 0 to n-1. `seed x` makes the sequence repeatable |
 | `counter [max]` or `counter min max` | Each bang (or number) outputs the count, then steps it; `max` is included before it wraps back. `reset`, `set n` |
 
@@ -284,7 +353,7 @@ the last sample rate and buffer size.
 | Object | Description |
 | --- | --- |
 | `p name` | Subpatcher, saved inside the parent's file |
-| `inlet`, `inlet~`, `outlet`, `outlet~` | A subpatcher's ports, numbered left to right by position (`in`, `in~`, `out`, `out~` are the same objects) |
+| `inlet`, `inlet~`, `outlet`, `outlet~` | A subpatcher's ports, numbered left to right by position (`in`, `in~`, `out`, `out~` are the same objects). With a number, as Max's `poly~` voices write them (`in 1`, `out~ 2`), they are ordered by that number |
 | `poly~ name voices [args]` | `voices` copies of the abstraction `name.moritz`, with their signal outlets summed. `note ...` sends the rest of the message to a free voice, stealing the oldest note when all are busy; `midinote pitch velocity` does the same for a velocity above 0, and sends a velocity of 0 (the note-off) to the voice playing that pitch; `target n` sends later messages to voice `n` only (`0` = all); `mute n 1/0` stops or restarts voice `n`; anything else goes to the target voice or to all |
 | `thispoly~` | Inside a `poly~` voice: outputs the voice number at load or on bang. The voice stays busy while the signal in its inlet (the envelope) is not zero; a number sets busy directly |
 | any `name` | An abstraction: the patch `name.moritz`, found next to the patch, then in the libraries, then in the bundled examples. Its arguments replace `#1`..`#9` inside it, and `#0` becomes a number unique to each copy, for local `send`/`receive`/`buffer~` names. Saving from its window writes the abstraction's file |
@@ -361,7 +430,7 @@ File > Open starts there.
   density, size, pitch, position and spread. It reads a voice (`sounds/Vox.wav`).
 - `spectra.moritz`: `spectroscope~` and `scope~` showing a sine, a saw, a
   pulse, noise and a band-pass whose centre glides (`slide~`) to random
-  frequencies; `selector~` picks the source, `dspstatus~` shows the sample
+  frequencies; `selector~` picks the source, `dspstate~` shows the sample
   rate and CPU load.
 - `tape.moritz`: a four-second tape loop: `record~` fills a `buffer~` from the
   microphone or a voice (`Vox.wav`), `waveform~` shows it, and dragging across it
@@ -376,6 +445,9 @@ File > Open starts there.
 - `stretch.moritz`: `sparkle~` reading a voice (`Vox.wav`) with two
   `function` curves over 15 s, one for the speed (down to frozen) and one for the pitch; with
   `envelope 60` the formants stay put while the pitch moves.
+- `condec.moritz`: `condec` offline: a voice convolved with the
+  Concertgebouw and recovered by deconvolution, then made to ring through a
+  gong, whose sound deconvolution recovers from the result.
 - `convolution.moritz`: `conv~` with three impulse responses, the
   Concertgebouw (`hall.wav`, stereo), a bell and a gong, on a voice,
   Beethoven's Seventh or drums, with a wet/dry mix.
@@ -445,13 +517,17 @@ All sources are in `src/`:
   `partconv.h` the zero-latency convolver.
 - `audio.cpp`: the miniaudio engine. `midi.h`, `midi.cpp`: MIDI through
   RtMidi; its callbacks queue the messages for the GUI thread.
-- `gui.h`, `theme.h`, `canvas.cpp`, `mainwindow.cpp`: the FLTK editor, main
-  window, toolbar and subpatcher windows.
-- `main.cpp`: `main` and the `--render` mode.
+- `gui.h`, `theme.h`, `canvas.cpp`, `mainwindow.cpp`: the FLTK editor: the
+  `App` (audio, MIDI, console, help windows, the open patches), a window per
+  patch with its toolbar, and subpatcher windows. `textview.cpp` is the text
+  view of a patch.
+- `maximport.cpp`, `json.h`: Import from Max.
+- `main.cpp`: `main` and the command-line modes (`--render`, `--import`).
 
-`library/` holds the abstractions usable in any patch (`reverb~`), and
-`help/` the help patches, `name.help.moritz`, with their helper abstractions
-(`help-*.moritz`). Both are copied into the app bundle.
+`library/` holds the abstractions usable in any patch (`reverb~`), `help/`
+the help patches, `name.help.moritz`, with their helper abstractions
+(`help-*.moritz`), and `tutorials/` the tutorial patches. They are copied
+into the app bundle.
 
 `resources/` holds the app icon and the image in the About box, drawn by
 `tools/make_icon.py` (numpy and Pillow; the results are committed, so the
@@ -466,9 +542,10 @@ Overdrive off). Signal feedback loops are refused when you connect, as in MSP,
 except through `tapin~`/`tapout~`.
 
 Subpatchers, abstractions and `pfft~` each own an inner patch, and `poly~`
-owns one per voice. The top
+owns one per voice. An invisible host
 patch owns everything shared (the DSP lock, the scheduler, audio I/O, and
-the `send`/`receive` and `buffer~` names, which are global as in Max), and
+the `send`/`receive` and `buffer~` names, which are global as in Max); every
+open patch and help patch runs as one of its "extras", and
 an inner patch's signal chain runs inside its owner box. `pfft~` buffers
 its input, and every hop it runs the inner chain once over the whole frame
 (the inner patch's vector size is fftsize/2), then overlap-adds the

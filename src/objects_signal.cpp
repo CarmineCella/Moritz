@@ -346,8 +346,8 @@ private:
     std::vector<SendSigBox*> sends_;
 };
 
-// ---------------------------------------------------------------- dspstatus~
-// dspstatus~ [ms]: reports the audio state on bang, whenever audio starts,
+// ---------------------------------------------------------------- dspstate~
+// dspstate~ [ms]: reports the audio state on bang, whenever audio starts,
 // stops or is reopened, and every ms while audio runs (0 = never). Outlets,
 // right to left: signal vector size, I/O buffer size, sample rate, CPU load
 // in %, and 1/0 for audio on/off. Sample rate and buffer size are the last
@@ -369,10 +369,11 @@ private:
     void report() {
         Patch* r = patch->root();
         bool on = r->dspRunning;
-        outletFloat(4, (float)patch->vectorSize());
+        // Max's four outlets, then the CPU load
+        outletFloat(4, on ? std::round(r->cpuLoad.load() * 1000.f) / 10.f : 0.f);
         outletFloat(3, (float)r->ioBufferFrames.load());
-        outletFloat(2, (float)r->sampleRate.load());
-        outletFloat(1, on ? std::round(r->cpuLoad.load() * 1000.f) / 10.f : 0.f);
+        outletFloat(2, (float)patch->vectorSize());
+        outletFloat(1, (float)r->sampleRate.load());
         outletFloat(0, on ? 1.f : 0.f);
     }
     void restart() {
@@ -865,7 +866,7 @@ void registerSignalObjects(ClassTable& t) {
         {"gate~", "Signal Routing", "send a signal to one of n outlets: n [initial]", with<GateSigBox>()},
         {"send~", "Signal Routing", "send a signal by name", with<SendSigBox>()},
         {"receive~", "Signal Routing", "receive signals sent by name", with<ReceiveSigBox>()},
-        {"dspstatus~", "I/O", "audio state: on, CPU, sample rate, buffer [ms]", with<DspStatusBox>()},
+        {"dspstate~", "I/O", "audio state: on, sample rate, vector sizes, CPU [ms]", with<DspStatusBox>()},
     });
 }
 

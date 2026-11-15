@@ -1,0 +1,7 @@
+# Text files keep LF line endings everywhere (the test script must run in
+# bash on Windows too); sounds and images are binary.
+* text=auto eol=lf
+*.wav binary
+*.png binary
+*.ico binary
+*.icns binary

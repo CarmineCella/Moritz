@@ -83,6 +83,34 @@ std::vector<std::string> splitTokens(const std::string& text) {
     return out;
 }
 
+std::string homeDir() {
+#ifdef _WIN32
+    const char* h = std::getenv("USERPROFILE");    // MSYS2 shells set HOME to /home/...
+    if (!h || !*h) h = std::getenv("HOME");
+#else
+    const char* h = std::getenv("HOME");
+#endif
+    return portablePath(h ? h : "");
+}
+
+bool isAbsolutePath(const std::string& p) {
+    if (p.empty()) return false;
+    if (p[0] == '/' || p[0] == '\\') return true;
+    return p.size() > 2 && std::isalpha((unsigned char)p[0]) && p[1] == ':' && (p[2] == '/' || p[2] == '\\');
+}
+
+std::string portablePath(std::string p) {
+#ifdef _WIN32
+    std::replace(p.begin(), p.end(), '\\', '/');
+#endif
+    return p;
+}
+
+std::string dirOf(const std::string& path) {
+    size_t k = path.find_last_of("/\\");
+    return k == std::string::npos ? "." : k == 0 ? "/" : path.substr(0, k);
+}
+
 Message parseMessage(const std::string& text) {
     Message m;
     for (auto& t : splitTokens(text)) m.push_back(parseAtom(t));
@@ -679,11 +707,8 @@ void Patch::print(const std::string& s) {
 }
 
 std::string Patch::resolvePath(const std::string& p) const {
-    if (p.empty() || p[0] == '/') return p;
-    if (p.rfind("~/", 0) == 0) {
-        const char* home = std::getenv("HOME");
-        return std::string(home ? home : "") + p.substr(1);
-    }
+    if (p.empty() || isAbsolutePath(p)) return p;
+    if (p.rfind("~/", 0) == 0) return homeDir() + p.substr(1);
     for (const Patch* q = this; q; q = q->parent)
         if (!q->dir.empty()) return q->dir + "/" + p;
     return p;
@@ -820,16 +845,17 @@ bool Patch::load(const std::string& src, std::string& err) {
     return load(top[0], err);
 }
 
-bool Patch::load(const SExpr& form, std::string& err) {
+// Makes the boxes and cables of a (patch ...) form for this patch, without
+// adding them yet.
+bool Patch::build(const SExpr& form, std::vector<std::unique_ptr<Box>>& nb,
+                  std::vector<Connection>& nc, std::vector<std::string>& warnings,
+                  std::string& err) {
     if (!form.isList || form.items.empty() || form.items[0].isList ||
         form.items[0].text != "patch") {
         err = "not a patch: expected a (patch ...) form";
         return false;
     }
-    std::vector<std::unique_ptr<Box>> nb;
-    std::vector<Connection> nc;
     std::map<std::string, Box*> byId;
-    std::vector<std::string> warnings;
     int autoY = 20;
     auto headIs = [](const SExpr& e, const char* h) {
         return e.isList && !e.items.empty() && !e.items[0].isList && e.items[0].text == h;
@@ -894,6 +920,14 @@ bool Patch::load(const SExpr& form, std::string& err) {
             warnings.push_back(where + "ignored unknown form");
         }
     }
+    return true;
+}
+
+bool Patch::load(const SExpr& form, std::string& err) {
+    std::vector<std::unique_ptr<Box>> nb;
+    std::vector<Connection> nc;
+    std::vector<std::string> warnings;
+    if (!build(form, nb, nc, warnings, err)) return false;
 
     std::vector<std::unique_ptr<Box>> old;
     if (parent) for (auto& b : boxes) root()->cancel(b.get());
@@ -907,6 +941,149 @@ bool Patch::load(const SExpr& form, std::string& err) {
         old.clear();
     }
     for (size_t k = 0; k < boxes.size(); ++k) boxes[k]->attached();
+    err.clear();
+    for (auto& w : warnings) err += (err.empty() ? "" : "\n") + w;
+    structureChanged();
+    return true;
+}
+
+// Paste: adds the boxes and cables of `src`, a (patch ...) text, moved by
+// dx, dy. Ids already used here are renamed. The rest of the patch keeps
+// running untouched.
+bool Patch::merge(const std::string& src, int dx, int dy, std::vector<Box*>& added,
+                  std::string& err) {
+    std::vector<SExpr> top;
+    if (!parseSExprs(src, top, err)) return false;
+    if (top.size() != 1) { err = "not a patch"; return false; }
+    std::vector<std::unique_ptr<Box>> nb;
+    std::vector<Connection> nc;
+    std::vector<std::string> warnings;
+    if (!build(top[0], nb, nc, warnings, err)) return false;
+    std::set<std::string> taken;
+    for (auto& b : boxes) taken.insert(b->id);
+    for (auto& b : nb) {
+        b->x += dx;
+        b->y += dy;
+        if (taken.count(b->id)) {
+            std::string base = uniqueId(b->cls);          // e.g. cycle3: then step past taken ones
+            std::string stem = base;
+            while (!stem.empty() && std::isdigit((unsigned char)stem.back())) stem.pop_back();
+            for (int k = 1;; ++k)
+                if (!taken.count(stem + std::to_string(k))) { b->id = stem + std::to_string(k); break; }
+        }
+        taken.insert(b->id);
+    }
+    added.clear();
+    {
+        std::lock_guard<std::mutex> lk(mutex());
+        for (auto& b : nb) {
+            added.push_back(b.get());
+            boxes.push_back(std::move(b));
+        }
+        for (auto& c : nc) conns.push_back(c);
+        recompile();
+    }
+    for (Box* b : added) b->attached();
+    err.clear();
+    for (auto& w : warnings) err += (err.empty() ? "" : "\n") + w;
+    structureChanged();
+    return true;
+}
+
+// Copy: the boxes in `sel` and the cables between them, as a (patch ...) text.
+std::string Patch::serializeBoxes(const std::vector<Box*>& sel) const {
+    std::set<const Box*> in(sel.begin(), sel.end());
+    std::ostringstream o;
+    o << "(patch";
+    for (auto& b : boxes) {
+        if (!in.count(b.get())) continue;
+        o << "\n  (obj " << quoteSymbol(b->id) << ' ' << quoteSymbol(b->cls);
+        for (auto& a : b->keepRaw ? b->rawArgs : b->saveArgs()) o << ' ' << writeAtom(a);
+        o << " (pos " << b->x << ' ' << b->y << ")";
+        if (b->savesInner() && b->inner()) o << "\n    " << b->inner()->serialize(4);
+        o << ")";
+    }
+    for (auto& c : conns)
+        if (in.count(c.from) && in.count(c.to))
+            o << "\n  (connect " << quoteSymbol(c.from->id) << ' ' << c.outlet << ' '
+              << quoteSymbol(c.to->id) << ' ' << c.inlet << ')';
+    o << ")\n";
+    return o.str();
+}
+
+// The text view: applies an edited (patch ...) text to this patch. Boxes whose
+// line is unchanged (class, arguments, contents) stay the same objects, with
+// their state and sound; only new or changed boxes are made, and the cables
+// are replaced. Nothing changes if the text has an error.
+bool Patch::applyText(const std::string& src, std::string& err) {
+    std::vector<SExpr> top;
+    if (!parseSExprs(src, top, err)) return false;
+    if (top.size() != 1) { err = "expected a single (patch ...) form"; return false; }
+    std::vector<std::unique_ptr<Box>> nb;
+    std::vector<Connection> nc;
+    std::vector<std::string> warnings;
+    if (!build(top[0], nb, nc, warnings, err)) return false;
+
+    auto signature = [](const Box* b) {
+        std::string t = b->cls;
+        for (auto& a : b->keepRaw ? b->rawArgs : b->saveArgs()) t += ' ' + writeAtom(a);
+        if (b->savesInner() && b->inner()) t += b->inner()->serialize(0);
+        return t;
+    };
+    std::map<std::string, Box*> oldById;
+    for (auto& b : boxes) oldById[b->id] = b.get();
+    std::map<Box*, Box*> replaceWith;            // new box -> the old one kept instead
+    for (auto& b : nb) {
+        auto it = oldById.find(b->id);
+        if (it != oldById.end() && signature(it->second) == signature(b.get())) replaceWith[b.get()] = it->second;
+    }
+    std::vector<Connection> conns2;
+    for (auto c : nc) {
+        if (replaceWith.count(c.from)) c.from = replaceWith[c.from];
+        if (replaceWith.count(c.to)) c.to = replaceWith[c.to];
+        conns2.push_back(c);
+    }
+    std::vector<std::unique_ptr<Box>> next, gone, unused;
+    std::vector<Box*> added;
+    std::set<Box*> kept;
+    for (auto& b : nb) {
+        if (Box* old = replaceWith.count(b.get()) ? replaceWith[b.get()] : nullptr) {
+            old->x = b->x;
+            old->y = b->y;
+            kept.insert(old);
+            unused.push_back(std::move(b));
+        } else {
+            added.push_back(b.get());
+            next.push_back(std::move(b));
+        }
+    }
+    {
+        std::lock_guard<std::mutex> lk(mutex());
+        // keep the text's order: kept boxes go where the text puts them
+        std::vector<std::unique_ptr<Box>> ordered;
+        std::map<Box*, std::unique_ptr<Box>*> oldSlot;
+        for (auto& b : boxes) oldSlot[b.get()] = &b;
+        size_t ni = 0;
+        for (auto& f : top[0].items) {
+            if (!f.isList || f.items.size() < 2 || f.items[0].isList || f.items[0].text != "obj") continue;
+            const std::string& id = f.items[1].text;
+            Box* o = oldById.count(id) ? oldById[id] : nullptr;
+            if (o && kept.count(o)) ordered.push_back(std::move(*oldSlot[o]));
+            else if (ni < next.size()) ordered.push_back(std::move(next[ni++]));
+        }
+        for (; ni < next.size(); ++ni) ordered.push_back(std::move(next[ni]));
+        for (auto& b : boxes)
+            if (b) {
+                root()->cancel(b.get());
+                gone.push_back(std::move(b));
+            }
+        boxes = std::move(ordered);
+        conns = std::move(conns2);
+        recompile();
+        gone.clear();
+    }
+    unused.clear();
+    for (Box* b : added) b->attached();
     err.clear();
     for (auto& w : warnings) err += (err.empty() ? "" : "\n") + w;
     structureChanged();

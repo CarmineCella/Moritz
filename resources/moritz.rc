@@ -1,0 +1,3 @@
+// moritz.rc — Windows resources: the icon and the manifest (UTF-8 code page)
+1 ICON "moritz.ico"
+1 24 "moritz.manifest"

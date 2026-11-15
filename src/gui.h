@@ -12,9 +12,11 @@
 #include <FL/Fl_Double_Window.H>
 #include <FL/Fl_Group.H>
 #include <FL/Fl_Input.H>
+#include <FL/Fl_Menu_Bar.H>
 #include <FL/Fl_Sys_Menu_Bar.H>
 #include <FL/Fl_Text_Buffer.H>
 #include <FL/Fl_Text_Display.H>
+#include <FL/Fl_Text_Editor.H>
 
 namespace moritz {
 
@@ -27,6 +29,7 @@ inline std::string examplesDir() { return resourceDir("examples"); }
 // Fills libraryPath(), abstractionPath() and helpPath(): the user's library
 // (~/Documents/Moritz/library) first, then the bundled library and examples.
 void setupSearchPaths();
+
 
 class Canvas : public Fl_Group {
 public:
@@ -45,7 +48,11 @@ public:
     void commitEdit();
     void cancelEdit();
     void reset();          // forget selection and edit state (after load/undo)
-    void duplicateSelection();   // option-drag: copies boxes and their inner cables
+    void duplicateSelection(int dx, int dy);   // option-drag, Cmd+D: boxes and their cables
+    void copySelection();        // to the system clipboard, as .moritz text
+    void cutSelection();
+    void paste();                // at the mouse; works between windows and documents
+    void pasteText(const std::string& text);
 
     // object-name completion while typing in a new/edited object box
     void updateSuggestions();
@@ -74,7 +81,8 @@ private:
     void numberDrag(int dy);
     static void editCb(Fl_Widget* w, void* data);
 
-    MainWindow* win_;
+    MainWindow* doc() const;   // the document (for help patches: the front one)
+    MainWindow* win_;          // nullptr in help windows and --render snapshots
     Patch* patch_;
     bool locked_ = false;
     Fl_Input* editor_;
@@ -109,21 +117,52 @@ private:
     int suggestionAt(int ex, int ey) const;
 };
 
-// A window showing a subpatcher, abstraction or pfft~ patch.
+// A window showing a subpatcher, abstraction or pfft~ patch, or a help patch.
 class PatchWindow : public Fl_Double_Window {
 public:
-    PatchWindow(MainWindow* main, Patch* p, const std::string& title, bool help = false);
+    // doc: the document the patch belongs to (nullptr for help patches)
+    PatchWindow(MainWindow* doc, Patch* p, const std::string& title, bool help = false);
     ~PatchWindow() override;
     int handle(int e) override;
     void detach();          // forget the patch (it is being destroyed)
     Canvas* canvas = nullptr;
     Patch* patch;
+    MainWindow* doc;
+    bool help;
 };
 
-// Round toolbar button (audio on/off, edit mode).
+// A patch as text, in its own window: a second view on the same patch,
+// kept in sync both ways (see textview.cpp).
+class PatchTextWindow : public Fl_Double_Window {
+public:
+    PatchTextWindow(MainWindow* doc, Patch* p, const std::string& title, bool readOnly);
+    ~PatchTextWindow() override;
+    void detach();                 // the patch is being destroyed
+    void applyNow();               // apply a pending text edit
+    void refresh(bool force);      // show the patch's current text
+    Fl_Text_Editor* editor() const { return editor_; }
+    Patch* patch;
+
+private:
+    static void modified(int pos, int nIns, int nDel, int nRestyled, const char* deleted, void* d);
+    static void applyLater(void* d);
+    static void poll(void* d);
+    void setStatus(const std::string& s, bool error = false);
+    MainWindow* doc_;
+    bool readOnly_;
+    Fl_Text_Buffer* text_;
+    Fl_Text_Buffer* style_;
+    Fl_Text_Editor* editor_;
+    Fl_Box* status_;
+    std::string shown_;            // the text last in sync with the patch
+    bool pending_ = false;         // edited, not applied yet
+    bool syncing_ = false;
+};
+
+// Round toolbar button (audio on/off, edit mode, code view).
 class ToolButton : public Fl_Button {
 public:
-    enum Icon { Power, Pencil };
+    enum Icon { Power, Pencil, Code };
     ToolButton(int x, int y, int w, int h, Icon icon, const char* label);
     void draw() override;
 
@@ -131,24 +170,83 @@ private:
     Icon icon_;
 };
 
+// One per program: the audio and MIDI engines, the console, help windows
+// and the open documents. Every open patch (and help patch) is an extra of
+// `host`, so they all play through the same audio output and share the
+// scheduler and the send/receive and buffer~ names, as in Max.
+class App {
+public:
+    static App& get();
+    Patch host;
+    AudioEngine audio{host};
+    MidiEngine midi;
+    std::vector<MainWindow*> docs;
+    bool quitting = false;
+    bool startAudio = true;     // --no-audio: start with audio off
+
+    void init();                                    // after FLTK is set up
+    MainWindow* newDocument();                      // File > New: an empty window
+    MainWindow* openDocument(const std::string& path);   // reuses an empty Untitled window
+    void openDialog();                              // File > Open...
+    void importDialog();                            // File > Import from Max...
+    MainWindow* importMax(const std::string& path);
+    void closeDocument(MainWindow* w);              // already confirmed
+    void closeFront();                              // Cmd+W
+    void quit();                                    // asks about unsaved documents
+    MainWindow* frontDoc();                         // document of the front patch window
+    Canvas* activeCanvas();                         // canvas of the front patch window
+
+    void setAudio(bool on);
+    void toggleAudio() { setAudio(!audio.running()); }
+    void audioSetup();
+    void midiSetup();
+    void about();
+    void showConsole();
+    void clearConsole();
+    void print(const std::string& s);   // console, and the front document's status bar
+    void log(const std::string& s);     // console only
+    void refreshStatus();               // every document
+    void armTimer();                    // schedule the next patch timer event
+
+    void showText();                         // Patch > Code View: the front patch as text
+    void showText(MainWindow* doc, Patch* p, const std::string& title, bool readOnly);
+    void closeText(Patch* p);                // hide its text window, if any
+    PatchTextWindow* textWindow(Patch* p);
+    void openHelp(const std::string& cls);   // the object's help patch, or its description
+    void closeHelp(Patch* p);
+    void buildMenu(Fl_Menu_Bar* m);
+    Fl_Menu_Bar* menuFor(MainWindow* w);     // the bar showing w's menu state
+
+private:
+    App() = default;
+    std::vector<PatchWindow*> helpWindows_;
+    std::vector<PatchTextWindow*> textWindows_;
+    Fl_Menu_Bar* sysMenu_ = nullptr;          // macOS: one menu bar for all windows
+    Fl_Double_Window* console_ = nullptr;
+    Fl_Text_Display* consoleView_ = nullptr;
+    Fl_Text_Buffer* consoleBuf_ = nullptr;
+    std::vector<std::string> consoleLines_;   // kept until the console opens
+    friend class PatchWindow;
+};
+
+// A document: one patch file in its own window, with its subpatcher windows,
+// undo history and status bar.
 class MainWindow : public Fl_Double_Window {
 public:
     MainWindow(int w, int h);
     ~MainWindow() override;
 
-    Patch patch;
-    AudioEngine audio;
-    MidiEngine midi;
+    Patch& patch;           // an extra of App::host, removed when the window closes
 
     // File
-    void newPatch();
-    void closeFront();      // Cmd+W: the front subpatcher/console window, or the patch
-    void about();
-    void openPatch();
-    bool openFile(const std::string& path);
+    bool openFile(const std::string& path);   // into this window
+    // a patch converted from elsewhere: Untitled, edited, saved as name.moritz in dir
+    bool loadConverted(const std::string& src, const std::string& dir, const std::string& name);
     bool save();
     bool saveAs();
-    void quit();
+    bool confirmDiscard();
+    bool isEmptyUntitled() const { return path_.empty() && !dirty_ && patch.boxes.empty(); }
+    const std::string& path() const { return path_; }
     // Edit
     void pushUndo();
     void dropUndo();     // discard the last pushUndo() when nothing changed
@@ -157,51 +255,41 @@ public:
     void markDirty();
     // Patch
     void toggleLock();
-    void toggleAudio();
-    void setAudio(bool on);
-    void clearConsole();
-    void audioSetup();
-    void midiSetup();
 
     // subpatcher windows
     void openSubpatch(Box* b);
-    void openHelp(const std::string& cls);   // the object's help patch, or its description
-    void closeHelp(Patch* p);
+    void openHelp(const std::string& cls) { App::get().openHelp(cls); }
     void closeSubpatchWindows(Patch* p);    // p is being destroyed
+    void closeAllSubwindows();
     void forgetWindow(PatchWindow* w);
-    Canvas* activeCanvas();                 // canvas of the frontmost patch window
+    Canvas* activeCanvas();                 // this document's front canvas
 
     void setStatus(const std::string& s);
     void refreshStatus();
     void print(const std::string& s);   // append to the console and the status bar
-    void log(const std::string& s);     // append to the console only
-    void showConsole();
-    void armTimer();                    // schedule the next patch timer event
+    void log(const std::string& s) { App::get().log(s); }
     void updateTitle();
-    bool confirmDiscard();
     int handle(int e) override;
 
     Canvas* canvas = nullptr;
 
 private:
-    void buildMenu();
     void restore(const std::string& snapshot);
 
-    Fl_Sys_Menu_Bar* menu_;
+    Fl_Menu_Bar* menu_ = nullptr;   // Windows and Linux: each window has its menu
+    friend class App;
     Fl_Box* statusBar_;
     ToolButton* audioBtn_;
     ToolButton* editBtn_;
+    ToolButton* textBtn_;
     std::vector<PatchWindow*> subwindows_;
     std::vector<std::string> openSubpatchPaths() const;
     void reopenSubpatches(const std::vector<std::string>& paths);
     std::string path_;
+    std::string suggested_;          // Save As proposes this name (imported patches)
     bool dirty_ = false;
     std::vector<std::string> undo_, redo_;
     std::string message_;
-    Fl_Double_Window* console_ = nullptr;
-    Fl_Text_Display* consoleView_ = nullptr;
-    Fl_Text_Buffer* consoleBuf_ = nullptr;
-    std::vector<std::string> consoleLines_;   // kept until the console opens
 };
 
 }  // namespace moritz

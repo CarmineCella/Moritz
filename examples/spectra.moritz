@@ -1,7 +1,7 @@
 ; spectra.moritz - what signals look like in frequency: selector~ picks a
 ; source for spectroscope~ and scope~. The fifth source is noise through a
 ; band-pass whose centre jumps to random frequencies; slide~ glides between
-; them. dspstatus~ shows the sample rate and the CPU load.
+; them. dspstate~ shows the sample rate and the CPU load.
 (patch
   (obj title comment "spectroscope~: the spectrum of a sine, a saw, a pulse, noise and a swept band-pass" (pos 20 12))
   (obj s1 message 1 (pos 20 45))
@@ -32,10 +32,10 @@
   (obj ramp line~ (pos 480 505))
   (obj vca *~ (pos 120 540))
   (obj out dac~ (pos 120 575))
-  (obj ds dspstatus~ 500 (pos 20 540))
+  (obj ds dspstate~ 500 (pos 20 540))
   (obj sr number (pos 20 610))
   (obj cpu flonum (pos 120 610))
-  (obj cds comment "sample rate, CPU % (dspstatus~)" (pos 210 611))
+  (obj cds comment "sample rate, CPU % (dspstate~)" (pos 210 611))
   (connect s1 0 sel 0)
   (connect s2 0 sel 0)
   (connect s3 0 sel 0)
@@ -61,5 +61,5 @@
   (connect ramp 0 vca 1)
   (connect vca 0 out 0)
   (connect vca 0 out 1)
-  (connect ds 2 sr 0)
-  (connect ds 1 cpu 0))
+  (connect ds 1 sr 0)
+  (connect ds 4 cpu 0))
