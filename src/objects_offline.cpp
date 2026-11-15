@@ -273,9 +273,73 @@ private:
 // spectrogram, V ~ W H: W holds a spectrum per component, H when and how
 // loud it sounds. KL multiplicative updates, as Musil's nmf. Each component
 // is resynthesised with the original phases through a soft mask (W_k H_k /
-// W H), so the components add up to the sound. `run source dest` writes one
-// component per channel of the buffer~ dest (the source is mixed to mono).
+// W H), so the components add up to the sound.
+//
+// Unsupervised: `run source dest` writes one component per channel of the
+// buffer~ dest (the source is mixed to mono); which part is which sound, the
+// factorisation decides.
+// Supervised, as Musil's nmf-learn-parts and nmf-separate-with: `learn
+// example` learns `components` parts from a recording of one source alone
+// (call it once per source); `separate mix dest` then explains the mix with
+// those parts only (just H is learned) and writes one source per channel of
+// dest, in the order they were learned. `forget` clears what was learned.
 // `components k`, `iterations n`, `size n` (FFT, 2048), `seed n`.
+
+// V (F x T, V[b * T + t]) ~ W (F x K) H (K x T), KL updates; W stays as given
+// when fixW. Returns false if cancelled.
+bool nmfFactor(const std::vector<float>& V, int F, int T, int K, int iters, std::vector<float>& W,
+               std::vector<float>& H, bool fixW, Job& job, float p0, float p1) {
+    std::vector<float> WH((size_t)F * T), Q((size_t)F * T);
+    const float eps = 1e-9f;
+    auto product = [&] {
+        for (int b = 0; b < F; ++b)
+            for (int t = 0; t < T; ++t) {
+                float v = 0.f;
+                for (int k = 0; k < K; ++k) v += W[(size_t)b * K + k] * H[(size_t)k * T + t];
+                WH[(size_t)b * T + t] = v + eps;
+            }
+    };
+    for (int it = 0; it < iters; ++it) {
+        if (job.cancelled()) return false;
+        // H <- H * (W^T (V / WH)) / (W^T 1)
+        product();
+        for (size_t i = 0; i < Q.size(); ++i) Q[i] = V[i] / WH[i];
+        for (int k = 0; k < K; ++k) {
+            float colsum = 0.f;
+            for (int b = 0; b < F; ++b) colsum += W[(size_t)b * K + k];
+            for (int t = 0; t < T; ++t) {
+                float num = 0.f;
+                for (int b = 0; b < F; ++b) num += W[(size_t)b * K + k] * Q[(size_t)b * T + t];
+                H[(size_t)k * T + t] *= num / (colsum + eps);
+            }
+        }
+        if (!fixW) {
+            // W <- W * ((V / WH) H^T) / (1 H^T)
+            product();
+            for (size_t i = 0; i < Q.size(); ++i) Q[i] = V[i] / WH[i];
+            for (int k = 0; k < K; ++k) {
+                float rowsum = 0.f;
+                for (int t = 0; t < T; ++t) rowsum += H[(size_t)k * T + t];
+                for (int b = 0; b < F; ++b) {
+                    float num = 0.f;
+                    for (int t = 0; t < T; ++t) num += Q[(size_t)b * T + t] * H[(size_t)k * T + t];
+                    W[(size_t)b * K + k] *= num / (rowsum + eps);
+                }
+            }
+            // parts of unit sum, the scale moved into H (as Musil)
+            for (int k = 0; k < K; ++k) {
+                float sum = 0.f;
+                for (int b = 0; b < F; ++b) sum += W[(size_t)b * K + k];
+                sum = std::max(sum, eps);
+                for (int b = 0; b < F; ++b) W[(size_t)b * K + k] /= sum;
+                for (int t = 0; t < T; ++t) H[(size_t)k * T + t] *= sum;
+            }
+        }
+        job.progress(p0 + (p1 - p0) * (it + 1) / iters);
+    }
+    return true;
+}
+
 class NmfBox : public OfflineBox {
 public:
     explicit NmfBox(const Message& a) {
@@ -284,20 +348,64 @@ public:
         setPorts({P::Control}, {P::Control, P::Control});
     }
     void message(int, const Message& m) override {
-        if (m[0].is("stop")) { job_.cancel(); return; }
+        if (m[0].is("stop")) { job_.cancel(); queue_.clear(); return; }
+        // while a job runs, everything waits its turn, in order (so one message
+        // box can say "learn a, learn b, separate mix out")
+        if (job_.running() || !queue_.empty()) {
+            if (job_.running() || !dispatching_) { queue_.push_back(m); return; }
+        }
         if (m[0].is("components")) k_ = std::clamp((int)argf(m, 1, 3.f), 1, 32);
         else if (m[0].is("iterations")) iters_ = std::clamp((int)argf(m, 1, 100.f), 1, 10000);
-        else if (m[0].is("size")) size_ = std::clamp(nextPow2((int)argf(m, 1, 2048.f)), 256, 16384);
+        else if (m[0].is("size")) {
+            int n = std::clamp(nextPow2((int)argf(m, 1, 2048.f)), 256, 16384);
+            if (n != size_) { size_ = n; forget(); }
+        }
         else if (m[0].is("seed")) seed_ = (unsigned)argf(m, 1, 1.f);
         else if (m[0].is("run") && m.size() > 2) start(m[1].str(), m[2].str());
+        else if (m[0].is("learn") && m.size() > 1) learn(m[1].str());
+        else if (m[0].is("separate") && m.size() > 2) separate(m[1].str(), m[2].str());
+        else if (m[0].is("forget")) forget();
     }
 
 private:
+    void finished() override {                // the next waiting messages, up to the next job
+        dispatching_ = true;
+        while (!queue_.empty() && !job_.running()) {
+            Message m = queue_.front();
+            queue_.erase(queue_.begin());
+            message(0, m);
+        }
+        dispatching_ = false;
+    }
+    std::vector<Message> queue_;
+    bool dispatching_ = false;
     static int nextPow2(int n) { int p = 1; while (p < n) p <<= 1; return p; }
+    void forget() {                           // a running job keeps the old list
+        parts_ = std::make_shared<std::vector<std::vector<float>>>();
+        groups_.clear();
+    }
+    BufferBox* source(const std::string& name) {
+        BufferBox* b = findBuffer(patch, name);
+        if (!b || b->buf.frames <= 0) { patch->print("nmf: no sound in buffer~ " + name); return nullptr; }
+        return b;
+    }
+    // the magnitude spectrogram V (bins x frames)
+    static std::vector<float> spectrogram(const Stft& s) {
+        int F = s.bins, T = s.frames;
+        std::vector<float> V((size_t)F * T);
+        for (int t = 0; t < T; ++t)
+            for (int b = 0; b < F; ++b) V[(size_t)b * T + t] = s.mag(t, b);
+        return V;
+    }
+    static void randomise(std::vector<float>& v, unsigned seed) {
+        std::mt19937 rng(seed);
+        std::uniform_real_distribution<float> u(.5f, 1.f);
+        for (auto& x : v) x = u(rng);
+    }
     void start(const std::string& src, const std::string& dst) {
         if (busy()) return;
-        BufferBox* b = findBuffer(patch, src);
-        if (!b || b->buf.frames <= 0) { patch->print("nmf: no sound in buffer~ " + src); return; }
+        BufferBox* b = source(src);
+        if (!b) return;
         auto x = std::make_shared<std::vector<float>>(monoOf(b->buf));
         double sr = b->buf.sr;
         int K = k_, iters = iters_, n = size_;
@@ -308,72 +416,102 @@ private:
                 Stft s;
                 s.analyse(*x, n, n / 4, &job, 0.f, .1f);
                 int F = s.bins, T = s.frames;
-                std::vector<float> V((size_t)F * T);                 // V[b * T + t]
-                for (int t = 0; t < T; ++t)
-                    for (int b = 0; b < F; ++b) V[(size_t)b * T + t] = s.mag(t, b);
-                std::mt19937 rng(seed);
-                std::uniform_real_distribution<float> u(.5f, 1.f);
-                std::vector<float> W((size_t)F * K), H((size_t)K * T), WH((size_t)F * T), Q((size_t)F * T);
-                for (auto& w : W) w = u(rng);
-                for (auto& h : H) h = u(rng);
-                const float eps = 1e-9f;
-                auto product = [&] {
-                    for (int b = 0; b < F; ++b)
-                        for (int t = 0; t < T; ++t) {
-                            float v = 0.f;
-                            for (int k = 0; k < K; ++k) v += W[(size_t)b * K + k] * H[(size_t)k * T + t];
-                            WH[(size_t)b * T + t] = v + eps;
-                        }
-                };
-                for (int it = 0; it < iters; ++it) {
-                    if (job.cancelled()) return;
-                    // H <- H * (W^T (V / WH)) / (W^T 1)
-                    product();
-                    for (size_t i = 0; i < Q.size(); ++i) Q[i] = V[i] / WH[i];
-                    for (int k = 0; k < K; ++k) {
-                        float colsum = 0.f;
-                        for (int b = 0; b < F; ++b) colsum += W[(size_t)b * K + k];
-                        for (int t = 0; t < T; ++t) {
-                            float num = 0.f;
-                            for (int b = 0; b < F; ++b) num += W[(size_t)b * K + k] * Q[(size_t)b * T + t];
-                            H[(size_t)k * T + t] *= num / (colsum + eps);
-                        }
-                    }
-                    // W <- W * ((V / WH) H^T) / (1 H^T)
-                    product();
-                    for (size_t i = 0; i < Q.size(); ++i) Q[i] = V[i] / WH[i];
-                    for (int k = 0; k < K; ++k) {
-                        float rowsum = 0.f;
-                        for (int t = 0; t < T; ++t) rowsum += H[(size_t)k * T + t];
-                        for (int b = 0; b < F; ++b) {
-                            float num = 0.f;
-                            for (int t = 0; t < T; ++t) num += Q[(size_t)b * T + t] * H[(size_t)k * T + t];
-                            W[(size_t)b * K + k] *= num / (rowsum + eps);
-                        }
-                    }
-                    // parts of unit sum, the scale moved into H (as Musil)
-                    for (int k = 0; k < K; ++k) {
-                        float sum = 0.f;
-                        for (int b = 0; b < F; ++b) sum += W[(size_t)b * K + k];
-                        sum = std::max(sum, eps);
-                        for (int b = 0; b < F; ++b) W[(size_t)b * K + k] /= sum;
-                        for (int t = 0; t < T; ++t) H[(size_t)k * T + t] *= sum;
-                    }
-                    job.progress(.1f + .8f * (it + 1) / iters);
-                }
-                product();
-                for (int k = 0; k < K; ++k) {
-                    if (job.cancelled()) return;
-                    result->push_back(s.synthesise([&](int t, int b) {
-                        return W[(size_t)b * K + k] * H[(size_t)k * T + t] / WH[(size_t)b * T + t];
-                    }));
-                    job.progress(.9f + .1f * (k + 1) / K);
-                }
+                std::vector<float> V = spectrogram(s), W((size_t)F * K), H((size_t)K * T);
+                randomise(W, seed);
+                randomise(H, seed + 1);
+                if (!nmfFactor(V, F, T, K, iters, W, H, false, job, .1f, .9f)) return;
+                synthesise(s, W, H, F, T, K, std::vector<std::vector<int>>(), *result, job);
             },
             [this, dst, result, sr] { storeBuffer(patch, dst, *result, sr); });
     }
+    void learn(const std::string& src) {
+        if (busy()) return;
+        BufferBox* b = source(src);
+        if (!b) return;
+        auto x = std::make_shared<std::vector<float>>(monoOf(b->buf));
+        int K = k_, iters = iters_, n = size_;
+        unsigned seed = seed_;
+        auto learned = std::make_shared<std::vector<std::vector<float>>>();
+        run(
+            [x, K, iters, n, seed, learned](Job& job) {
+                Stft s;
+                s.analyse(*x, n, n / 4, &job, 0.f, .1f);
+                int F = s.bins, T = s.frames;
+                std::vector<float> V = spectrogram(s), W((size_t)F * K), H((size_t)K * T);
+                randomise(W, seed);
+                randomise(H, seed + 1);
+                if (!nmfFactor(V, F, T, K, iters, W, H, false, job, .1f, 1.f)) return;
+                for (int k = 0; k < K; ++k) {
+                    std::vector<float> col((size_t)F);
+                    for (int b = 0; b < F; ++b) col[(size_t)b] = W[(size_t)b * K + k];
+                    learned->push_back(std::move(col));
+                }
+            },
+            [this, learned, src] {
+                std::vector<int> group;
+                for (auto& col : *learned) {
+                    group.push_back((int)parts_->size());
+                    parts_->push_back(col);
+                }
+                groups_.push_back(group);
+                patch->print("nmf: learned " + std::to_string(group.size()) + " parts of " + src + " (source " +
+                             std::to_string(groups_.size()) + ")");
+            });
+    }
+    void separate(const std::string& src, const std::string& dst) {
+        if (busy()) return;
+        if (groups_.empty()) { patch->print("nmf: nothing learned yet (learn example first)"); return; }
+        BufferBox* b = source(src);
+        if (!b) return;
+        auto x = std::make_shared<std::vector<float>>(monoOf(b->buf));
+        double sr = b->buf.sr;
+        int iters = iters_, n = size_;
+        unsigned seed = seed_;
+        auto parts = parts_;                     // shared: the job reads them while the GUI may learn more
+        auto groups = groups_;
+        auto result = std::make_shared<std::vector<std::vector<float>>>();
+        run(
+            [x, iters, n, seed, parts, groups, result](Job& job) {
+                Stft s;
+                s.analyse(*x, n, n / 4, &job, 0.f, .1f);
+                int F = s.bins, T = s.frames, K = (int)parts->size();
+                std::vector<float> V = spectrogram(s), W((size_t)F * K), H((size_t)K * T);
+                for (int k = 0; k < K; ++k)
+                    for (int b = 0; b < F; ++b) W[(size_t)b * K + k] = (*parts)[(size_t)k][(size_t)b];
+                randomise(H, seed + 1);
+                if (!nmfFactor(V, F, T, K, iters, W, H, true, job, .1f, .9f)) return;
+                synthesise(s, W, H, F, T, K, groups, *result, job);
+            },
+            [this, dst, result, sr] { storeBuffer(patch, dst, *result, sr); });
+    }
+    // one sound per group of parts (each part alone when groups is empty),
+    // through soft masks of W H
+    static void synthesise(Stft& s, const std::vector<float>& W, const std::vector<float>& H, int F, int T, int K,
+                           std::vector<std::vector<int>> groups, std::vector<std::vector<float>>& out, Job& job) {
+        if (groups.empty())
+            for (int k = 0; k < K; ++k) groups.push_back({k});
+        std::vector<float> WH((size_t)F * T);
+        for (int b = 0; b < F; ++b)
+            for (int t = 0; t < T; ++t) {
+                float v = 0.f;
+                for (int k = 0; k < K; ++k) v += W[(size_t)b * K + k] * H[(size_t)k * T + t];
+                WH[(size_t)b * T + t] = v + 1e-9f;
+            }
+        for (size_t g = 0; g < groups.size(); ++g) {
+            if (job.cancelled()) return;
+            const auto& grp = groups[g];
+            out.push_back(s.synthesise([&](int t, int b) {
+                float v = 0.f;
+                for (int k : grp) v += W[(size_t)b * K + k] * H[(size_t)k * T + t];
+                return v / WH[(size_t)b * T + t];
+            }));
+            job.progress(.9f + .1f * (float)(g + 1) / (float)groups.size());
+        }
+    }
     int k_, iters_, size_ = 2048;
     unsigned seed_ = 1;
+    std::shared_ptr<std::vector<std::vector<float>>> parts_ = std::make_shared<std::vector<std::vector<float>>>();
+    std::vector<std::vector<int>> groups_;
 };
 
 // ---------------------------------------------------------------- hpss

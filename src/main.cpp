@@ -5,6 +5,7 @@
 //   moritz --import patch.maxpat [out.moritz]   converts a Max patch (to stdout,
 //          or to out.moritz with its abstractions converted next to the original)
 //   moritz --render patch.moritz seconds [out.wav] [bang=<id>] [send=<id>:<message>] ...
+//          (bang=<id>@<seconds> and send=<id>:<message>@<seconds> act later in the render)
 //          [png=<file.png>] [edit] [size=<w>x<h>] [extra=<patch.moritz>]
 //          [midi=<seconds>:<bytes>]   e.g. midi=0.5:144 60 100 (MIDI output is printed)
 //
@@ -64,6 +65,7 @@ int snapshot(moritz::Patch& p, const std::string& path, bool edit, int W, int H)
     fl_open_display();
     Fl_Window win(2000, 2000);
     auto* canvas = new moritz::Canvas(0, 0, 2000, 2000, nullptr, &p);
+    canvas->scrollable = false;
     win.end();
     canvas->setLocked(!edit);
     {                                     // lay the boxes out: sizes depend on the font
@@ -117,6 +119,8 @@ int renderCli(int argc, char** argv) {
     p.ioBufferFrames = blk;
     moritz::jobsSynchronous = true;        // background jobs finish before the next message
     p.dir = moritz::dirOf(path);
+    struct Later { double at; moritz::Box* box; moritz::Message msg; };
+    std::vector<Later> later;
     moritz::setupSearchPaths();
     if (!p.load(src, err)) { std::fprintf(stderr, "error: %s\n", err.c_str()); return 1; }
     if (!err.empty()) std::fprintf(stderr, "warning: %s\n", err.c_str());
@@ -153,7 +157,14 @@ int renderCli(int argc, char** argv) {
         if (a.rfind("size=", 0) == 0) { std::sscanf(a.c_str() + 5, "%dx%d", &shotW, &shotH); continue; }
         bool isBang = a.rfind("bang=", 0) == 0, isSend = a.rfind("send=", 0) == 0;
         if (isBang || isSend) {
-            std::string rest = a.substr(5), id = rest.substr(0, rest.find(':'));
+            std::string rest = a.substr(5);
+            double at = 0;                          // bang=id@4.5: at 4.5 seconds into the render
+            if (size_t k = rest.rfind('@'); k != std::string::npos) {
+                char* end = nullptr;
+                double t = std::strtod(rest.c_str() + k + 1, &end);
+                if (end && *end == '\0' && k + 1 < rest.size()) { at = t; rest.resize(k); }
+            }
+            std::string id = rest.substr(0, rest.find(':'));
             moritz::Message m = isBang ? moritz::Message{moritz::Atom("bang")}
                                      : moritz::parseMessage(rest.substr(rest.find(':') + 1));
             moritz::Box* b = p.find(id);
@@ -169,7 +180,9 @@ int renderCli(int argc, char** argv) {
                 }
             }
             if (b) {
-                if (!m.empty()) b->message(0, m);
+                if (m.empty()) continue;
+                if (at > 0) later.push_back({at, b, m});
+                else b->message(0, m);
             } else {
                 std::fprintf(stderr, "no box '%s'\n", id.c_str());
             }
@@ -180,6 +193,8 @@ int renderCli(int argc, char** argv) {
     long total = (long)(std::atof(argv[3]) * sr);
     std::vector<float> all, buf(blk * ch);
     for (; frame < total; frame += blk) {
+        for (auto& l : later)                     // timed bang= and send=
+            if (l.box && l.at <= (double)frame / sr) { l.box->message(0, l.msg); l.box = nullptr; }
         p.runDue((double)frame / sr);
         int n = (int)std::min<long>(blk, total - frame);
         p.process(nullptr, 0, buf.data(), ch, n);

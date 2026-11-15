@@ -1,0 +1,50 @@
+; specenv-fx.moritz - spectral patch for spectral-envelope.moritz, run by
+; pfft~ once per FFT frame. Both inputs are split by specenv~ into their
+; spectral envelope (the formants, the colour) and their fine structure (the
+; harmonics or the noise, flat). The mode (left control inlet) recombines:
+;   1  the voice as it is
+;   2  the carrier's fine structure with the voice's envelope (the carrier
+;      speaks: cross-synthesis by envelope, the classic "talking orchestra")
+;   3  the voice's fine structure with the carrier's envelope
+; The second control inlet is specenv~'s order (its resolution).
+(patch
+  (obj c0 comment "mode 1: voice; 2: carrier fine x voice envelope; 3: voice fine x carrier envelope" (pos 20 10))
+  (obj v fftin~ 1 (pos 20 45))
+  (obj c fftin~ 2 (pos 260 45))
+  (obj mode inlet (pos 500 45))
+  (obj order inlet (pos 560 45))
+  (obj vp cartopol~ (pos 20 85))
+  (obj cp cartopol~ (pos 260 85))
+  (obj ve specenv~ 60 (pos 20 125))
+  (obj ce specenv~ 60 (pos 260 125))
+  (obj x1 *~ (pos 140 175))
+  (obj x2 *~ (pos 380 175))
+  (obj cx1 comment "carrier fine x voice envelope" (pos 140 200))
+  (obj cx2 comment "voice fine x carrier envelope" (pos 380 200))
+  (obj amp selector~ 3 1 (pos 20 240))
+  (obj ph selector~ 3 1 (pos 380 240))
+  (obj pc poltocar~ (pos 20 285))
+  (obj out fftout~ 1 (pos 20 325))
+  (connect v 0 vp 0)
+  (connect v 1 vp 1)
+  (connect c 0 cp 0)
+  (connect c 1 cp 1)
+  (connect vp 0 ve 0)
+  (connect cp 0 ce 0)
+  (connect order 0 ve 1)
+  (connect order 0 ce 1)
+  (connect ce 1 x1 0)
+  (connect ve 0 x1 1)
+  (connect ve 1 x2 0)
+  (connect ce 0 x2 1)
+  (connect mode 0 amp 0)
+  (connect mode 0 ph 0)
+  (connect vp 0 amp 1)
+  (connect x1 0 amp 2)
+  (connect x2 0 amp 3)
+  (connect vp 1 ph 1)
+  (connect cp 1 ph 2)
+  (connect vp 1 ph 3)
+  (connect amp 0 pc 0)
+  (connect ph 0 pc 1)
+  (connect pc 0 out 0))

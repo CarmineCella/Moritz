@@ -12,6 +12,7 @@
 #include <FL/Fl_Double_Window.H>
 #include <FL/Fl_Group.H>
 #include <FL/Fl_Input.H>
+#include <FL/Fl_Scrollbar.H>
 #include <FL/Fl_Menu_Bar.H>
 #include <FL/Fl_Sys_Menu_Bar.H>
 #include <FL/Fl_Text_Buffer.H>
@@ -62,6 +63,11 @@ public:
     void clearSuggestions();
     void fitEditor();      // size the text field to what is being typed
     bool readOnly = false;   // help patches: always locked
+    // scrolling: the view's top-left corner in patch coordinates
+    int scrollX() const { return sx_; }
+    int scrollY() const { return sy_; }
+    void scrollTo(int sx, int sy);
+    bool scrollable = true;  // false for --render snapshots, which show the whole patch
 
 private:
     struct Hit {
@@ -82,6 +88,14 @@ private:
     static void editCb(Fl_Widget* w, void* data);
 
     MainWindow* doc() const;   // the document (for help patches: the front one)
+    int ox() const { return x() - sx_; }      // screen position of the patch's origin
+    int oy() const { return y() - sy_; }
+    void contentBounds(int& x0, int& y0, int& x1, int& y1) const;
+    void updateScrollbars();
+    static constexpr int kScrollW = 12;
+    int sx_ = 0, sy_ = 0;
+    Fl_Scrollbar* hbar_;
+    Fl_Scrollbar* vbar_;
     MainWindow* win_;          // nullptr in help windows and --render snapshots
     Patch* patch_;
     bool locked_ = false;

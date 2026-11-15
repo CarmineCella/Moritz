@@ -155,6 +155,8 @@ The editor follows Max's conventions:
   objects, and are listed under **Patch > New > Library** and in completion.
   To add your own, put `name.moritz` (and optionally `name.help.moritz`) in
   `~/Documents/Moritz/library`; it is searched first.
+- **Scrolling**: when a patch is larger than its window, scrollbars appear at
+  the right and bottom; the mouse wheel or the trackpad scrolls too.
 - **Several patches**: File > New and File > Open... open each patch in its
   own window. All open patches play at the same time, through the same audio
   output, and share the `send`/`receive` and `buffer~` names, as in Max.
@@ -198,6 +200,7 @@ point (`2.`, `0.5`) makes `+ - * / %`, the comparisons, `pack`, `unpack` and
 
 | Object | Description |
 | --- | --- |
+| `nebula~ [proto1] [proto2]` | Granular synthesis, the author's *nebula*: clouds of windowed grains of two prototypes (`sine`, `triangle`, `square`, `noise` or a `buffer~`), mixed by `morph`. Inlets: on/off, density (grains/s), length (ms), frequency (Hz; for a `buffer~` a speed ratio), morph. Messages: `density d [r]`, `length ms [r]`, `freq f [r]` (the second number is randomness, as a ratio), `gliss g`, `jitter j [r]` (stereo position), `speed s` (through a `buffer~`), `grainlets n` (grains of n periods), `amp a`, `window hann/hamming/blackman`, `poly n`, `proto1 x`, `proto2 x`, `seed n`. Two outlets, left and right |
 | `cycle~ [freq]` | Cosine oscillator (512-point table, interpolated). The right inlet sets the phase |
 | `phasor~ [freq]` | Ramp from 0 to 1, for LFOs and as a position signal |
 | `saw~`, `rect~ [freq duty]`, `tri~ [freq slope]` | Band-limited sawtooth and pulse (PolyBLEP), and a triangle |
@@ -214,6 +217,8 @@ point (`2.`, `0.5`) makes `+ - * / %`, the comparisons, `pack`, `unpack` and
 | `lores~ [cf res]` | Resonant low-pass; `res` goes from 0 to 1 |
 | `svf~ [freq q]` | State-variable filter with low, high, band and notch outlets. `q` goes from 0 to 1 |
 | `biquad~ [a0 a1 a2 b1 b2]` | Raw biquad: `y = a0 x + a1 x1 + a2 x2 - b1 y1 - b2 y2`. The coefficient inlets take numbers (or a list of five in the left inlet), not signals |
+| `filterdesign [type] [freq] [q] [gain]` | The coefficients of a `biquad~` for a filter shape (Robert Bristow-Johnson's cookbook, as Musil's `biquad`): `lowpass`, `highpass`, `bandpass`, `notch`, `peak`, `lowshelf`, `highshelf`, `allpass`. A type, a frequency (left), a Q (middle) or a gain in dB (right) outputs `a0 a1 a2 b1 b2` |
+| `filterplot [width height]` | Draws the frequency response (dB on a log frequency axis) of the coefficients it receives; 10, 15 ... numbers are biquads in series. Dragging in it outputs the frequency and gain at the mouse, to drive a `filterdesign` |
 | `conv~ buffer [channels]` | Convolution with the impulse response in a `buffer~`, with no latency (the first 256 taps directly, the rest by partitioned FFT). Channel c uses the response's channel c, or its last; an unconnected inlet takes the channel before, so a mono source into `conv~ hall 2` gives a stereo reverb. Normalised to unit energy (`normalize 0` to turn off), `gain x`, `set name` |
 | `slide~ [up down]` | Smooths a signal: `y += (x - y) / slide`, with `up` samples while rising and `down` while falling (1 = no smoothing); `reset` jumps to the input |
 
@@ -268,10 +273,30 @@ point (`2.`, `0.5`) makes `+ - * / %`, the comparisons, `pack`, `unpack` and
 | `fftout~ n` | Real and imaginary parts for `pfft~` signal outlet `n` |
 | `cartopol~`, `poltocar~` | Real/imaginary to amplitude/phase, and back |
 | `framedelta~`, `frameaccum~ [wrap]` | Per bin: difference from the previous frame, and running sum (with `1`, kept in -pi..pi). Where `frameaccum~`'s third inlet is not zero, that bin restarts from the value in its second inlet |
+| `specenv~ [order] [iterations]` | The spectral envelope of each frame (Musil's true envelope: cepstral smoothing iterated so it rides on the harmonic peaks): outlets the envelope (the formants) and the fine structure (the amplitudes divided by it). `order` (the resolution; right inlet) is about sr / (2 f0); `iterations` 0 is the plain cepstral smoothing |
 | `pvlock~` | Phase vocoder resynthesis phase with identity phase locking: inlets amplitude, analysed phase, phase difference, reset. Each spectral peak advances by its own frequency and the bins around it keep their analysed offsets from it, so stretched sounds stay clean |
-| `sparkle~ [buffer] [channels] [window] [overlap]` | The phase vocoder of the author's *sparkle*, with phase locking around spectral peaks and formant (spectral envelope) preservation. With a `buffer~` it plays it: the left inlet is the speed (1 as recorded, 0 frozen, negative backwards), `start [ms]` or bang plays, `stop`, `loop 1`. Without one it transforms its input, one window late. Inlets 2 and 3: pitch and formant ratios. `envelope C` keeps the formants (C cepstral coefficients, 30-80 for voices); `threshold x` drops weak bins; `robot 1`, `whisper 1`. The last outlet is the read position, 0 to 1. Window 2048, overlap 8 by default |
+| `sparkle~ [buffer] [channels] [window] [overlap]` | The phase vocoder of the author's *sparkle*, with phase locking around spectral peaks and formant (spectral envelope) preservation. With a `buffer~` it plays it: the left inlet is the speed (1 as recorded, 0 frozen, negative backwards), `start [ms]` or bang plays, `stop`, `loop 1`. Without one it transforms its input, one window late. Inlets 2 and 3: pitch and formant ratios. `envelope C` keeps the formants (C cepstral coefficients, 30-80 for voices); `threshold x` drops weak bins; `robot 1`, `whisper 1`. The last outlet is the read position, 0 to 1. Window 2048, overlap 8 by default Cross-synthesis with a second sound, as in *sparkle*: `cross mode [buffer]`, mode 1 multiplicative (the geometric mean of the two spectra), 2 spectral flattener (the second sound's envelope on the first), 3 morphing; the amount (0 to 1) is inlet 4, and without a `buffer~` the second sound is the signal in inlet 5 |
 | `lrshift~ n` | Shifts a frame by `n` bins, to combine bins with their neighbours |
 | `phasewrap~` | Wraps a phase into -pi..pi |
+
+**Spatial** (ambisonics as in Musil; AmbiX conventions: azimuth in degrees, 0 in front, positive to the left; elevation positive up; a sound field of order N has (N+1)^2 channels, ACN order, SN3D)
+
+| Object | Description |
+| --- | --- |
+| `ambienc~ [order] [azimuth] [elevation]` | Encodes a signal at a direction into a sound field (order 1 by default: W Y Z X). Azimuth and elevation are numbers or signals; moving sources glide. Fields add channel by channel |
+| `ambirot~ [order]` | Turns a sound field about the vertical axis by the yaw in its last inlet (exactly, per order) |
+| `ambidec~ order azimuth ...` | Decodes a sound field to loudspeakers on a horizontal ring, one outlet per azimuth (`ambidec~ 1 45 135 -135 -45` is a square). The exact decoder for an evenly spaced ring of at least 2N+1 speakers, from the horizontal channels, with 2D max-rE weights |
+| `binaural~ [order]` | A sound field on headphones: decoded to 17 virtual speakers spread over the sphere (8 at ear height, 4 above, 4 below, 1 overhead), each heard through measured head-related impulse responses (MIT KEMAR, Gardner and Martin 1994). The decoder uses the SN3D normalisation and 3D max-rE weights; everything folds into one filter pair per channel, so the cost does not depend on the number of sources |
+
+A note on the decoders: Musil's `ambi-decode` and `binaural-decode` sample the
+field at each speaker without the decoder normalisation (a factor 2 per order
+on a ring, 2n+1 on the sphere), which blurs the image: on a ring of eight
+speakers its energy vector is 0.57 at order 1 and 0.66 at order 2, against
+the theoretical 0.71 and 0.87 that `ambidec~` reaches; its ten virtual
+speakers for headphones (none below) also bend directions by up to 16
+degrees, 5-7 degrees with `binaural~`'s 17. The spherical harmonics
+themselves are exact (checked against the closed forms up to order 3, and
+the normalisation up to order 5).
 
 **Analysis**
 
@@ -298,7 +323,7 @@ the last sample rate and buffer size.
 | Object | Description |
 | --- | --- |
 | `moritz~ [patch] [channels]` | Renders another patch offline, faster than real time, into a `buffer~`: `open patch.moritz`, `send name value` (sets its `receive name` before every render), `input buffer` (feeds its `adc~`), `render buffer seconds`. Each render starts the patch afresh; it has its own `send`/`receive` and `buffer~` names. Renders asked for while one runs wait their turn |
-| `nmf [components] [iterations]` | Non-negative matrix factorisation of the magnitude spectrogram (KL updates, as Musil's): `run source dest` writes one part per channel of `dest`, resynthesised with the original phases, so the parts add up to the source (mixed to mono). `components`, `iterations`, `size` (FFT), `seed` |
+| `nmf [components] [iterations]` | Non-negative matrix factorisation of the magnitude spectrogram (KL updates, as Musil's). Unsupervised: `run source dest` writes one part per channel of `dest`, resynthesised with the original phases, so the parts add up to the source (mixed to mono). Supervised (Musil's `nmf-learn-parts` and `nmf-separate-with`): `learn example` learns `components` parts of a source from a recording of it alone (once per source), then `separate mix dest` explains a mix with those parts only and writes one source per channel; `forget` clears them. `components`, `iterations`, `size` (FFT), `seed`. Messages sent while it works wait their turn |
 | `hpss [kernel] [size]` | Harmonic/percussive separation (Musil's): median filters along time and frequency make soft masks; `run source harmonic percussive` writes two `buffer~`s that add up to the source |
 
 **Learning** (examples are messages: `add x1 x2 ...` or `add x1 x2 ... -> y1 y2 ...`; `clear`, `write file`, `read file`, `print`; a list asks the model)
@@ -374,7 +399,7 @@ the last sample rate and buffer size.
 | `message` | Sends its contents when clicked. `$1`..`$9` are replaced by the incoming values, `,` separates messages, and `; name value` sends to `receive name`. As in Max, the box starts a new line after each `;`, so `; cf 1200; q 8` shows as three lines. When editing, Return finishes and Shift+Return adds a line break; line breaks count as spaces |
 | `flonum`, `number` | Number boxes |
 | `button`, `toggle` | Bang, and on/off |
-| `slider [min max]` | Horizontal slider. It outputs integers when both limits are integers |
+| `slider [min max]` | Horizontal slider. As in Max, it outputs integers when both limits are written as integers (`slider 0 127`), and decimals when one has a point (`slider 0. 1.`) |
 | `comment` | A text note |
 | `function [domain] [lo] [hi]` | Breakpoint editor: in locked mode click to add a point, drag it, Shift-click to delete it. bang outputs the curve for `line~` (the first value, then value-time pairs over `domain` ms); a number (ms) outputs the value there. `domain`, `range`, `clear`, `set x y ...`; the points are saved with the patch |
 | `kslider [octaves] [lowest] [mode]` | Piano keyboard (4 octaves from note 36). Outlets: pitch and velocity; the velocity depends on where you click (louder lower down). Mode 0 plays while the mouse is down and sends velocity 0 on release (drag to glide); mode 1 toggles keys, for chords. A pitch in the left inlet lights its key and passes through with the velocity from the right inlet; `set p v` only lights it, `flush` releases every held key, `clear` unlights them all without output |
@@ -385,6 +410,13 @@ the last sample rate and buffer size.
 | --- | --- |
 | `reverb~ [mix] [T60]` | A stereo Freeverb. Inlets: the signal, wet/dry mix (0-1, default 0.3) and decay time T60 in seconds (0.1-100, default 2). Outlets: left and right. Per channel, eight damped combs (`fvcomb~`) in parallel, then four `allpass~` in series; the right channel's delays are 23 samples longer, so the outputs are decorrelated. Each comb's feedback is `g = 10^(-3 d / T60)` for its delay `d` in seconds, so low frequencies fall by 60 dB in T60 seconds, and highs a little faster (damping) |
 | `fvcomb~ ms name` | One Freeverb comb (feedback with a damping low-pass), used by `reverb~`; its T60 arrives on `name-t60` |
+| `impose~ [order]` | The carrier (right inlet) with the spectral envelope of the modulator (left): an orchestra or a synth that speaks with a voice's formants (Musil's `impose-envelope`). Third inlet: the envelope order (60). Built from `specenv~` in `pfft~` (`impose-fx`) |
+| `binpan~ [azimuth] [elevation]` | A mono sound placed around the listener on headphones: `ambienc~ 2` into `binaural~ 2`. Inlets: signal, azimuth, elevation; outlets: left, right |
+| `pitchshift~ [semitones]` | A live pitch shifter keeping the formants: `sparkle~` without a buffer~. Inlets: signal, semitones, formant preservation 1/0 |
+
+As in Musil, where the C++ core gives the primitives and the language
+builds on them, the library holds what is made of other objects: open any
+of them (double-click) to see how it works.
 
 ## Patch files (`.moritz`)
 
@@ -419,7 +451,9 @@ File > Open starts there.
 - `sampler.moritz`: drums in a `buffer~`, with `groove~` at any rate,
   including backwards, and one-shot `play~`.
 - `recorder.moritz`: records from the microphone into a looping buffer.
-- `filters.moritz`: `svf~` swept by a `phasor~` LFO in the signal domain.
+- `filters.moritz`: `svf~` swept by a `phasor~` LFO in the signal domain;
+  then filter design: `filterdesign` → `biquad~` on noise or Beethoven, its
+  response drawn by `filterplot` (drag on it to move the filter).
 - `control.moritz`: `random`, `select`, `route`, `pack`, `expr`, `counter`,
   `gate`, `delay`, `line` and `print`. Open the console to see the output.
 - `reverb.moritz`: a Schroeder reverb (4 × `comb~` → 2 × `allpass~`) on
@@ -454,6 +488,27 @@ File > Open starts there.
 - `stretch.moritz`: `sparkle~` reading a voice (`Vox.wav`) with two
   `function` curves over 15 s, one for the speed (down to frozen) and one for the pitch; with
   `envelope 60` the formants stay put while the pitch moves.
+- `sparkle-cross.moritz`: `sparkle~`'s three cross-syntheses: a voice
+  through drums (multiplicative), Beethoven's 7th with the voice's formants
+  (spectral flattener), and a morph from the voice to a gong.
+- `pitch-shift.moritz`: transposing a voice with `sparkle~`, with and without
+  formant preservation, moving the formants alone, robot and whisper,
+  denoising; the same on the live input.
+- `spectral-envelope.moritz`: `specenv~` in `pfft~` (`specenv-fx.moritz`):
+  the voice's envelope on noise, a saw chord or Beethoven (a whisper, a
+  vocoder, an orchestra that speaks), and the other way round.
+- `nebula.moritz`: `nebula~` presets: sine clouds, glass rain, grainlets, the
+  voice as a cloud, a morph from a sine to a gong.
+- `ambisonics-order2.moritz`: order 1 against order 2: the same moving
+  voice decoded to a ring of eight speakers (two rows of meters, order 2
+  visibly narrower) and on headphones, switching between the orders.
+- `ambisonics.moritz`: two sources (one circling) in a first-order sound
+  field, turned with `ambirot~` and decoded to four speakers.
+- `binaural.moritz`: the same scene on headphones with `binaural~`, the drums
+  also moving up and down.
+- `nmf-supervised.moritz`: source separation by `nmf`: a mix of voice and
+  drums recorded, then separated blindly (`run`) and with the sources learned
+  first (`learn`, `separate`).
 - `condec.moritz`: `condec` offline: a voice convolved with the
   Concertgebouw and recovered by deconvolution, then made to ring through a
   gong, whose sound deconvolution recovers from the result.
@@ -520,10 +575,15 @@ All sources are in `src/`:
   background jobs (`jobs.h`, `jobs.cpp`: a worker thread per job, results
   handed back to the GUI thread). `objects_learn.cpp`: `knn`, `kmeans`,
   `pca`, `zscore` and `linreg`.
-- `objects_sound.cpp`: `sparkle~`, `conv~`, `condec`, `descriptors~` and
-  `function`, adapted from the author's *sound_math* tools (sparkle, pconv,
-  condec, features); `vocoder.h` is sparkle's phase vocoder and
-  `partconv.h` the zero-latency convolver.
+- `objects_sound.cpp`: `sparkle~`, `conv~`, `condec`, `descriptors~`,
+  `function` and `nebula~`, adapted from the author's *sound_math* tools
+  (sparkle, pconv, condec, features, nebula); `vocoder.h` is sparkle's phase
+  vocoder (with its cross-syntheses) and `partconv.h` the zero-latency
+  convolver.
+- `objects_spectral.cpp` (`specenv~`), `objects_filters.cpp`
+  (`filterdesign`, `filterplot`) and `objects_spatial.cpp` (ambisonics and
+  `binaural~`; `hrir_kemar.h` holds the head-related impulse responses), all
+  following Musil's signals library.
 - `audio.cpp`: the miniaudio engine. `midi.h`, `midi.cpp`: MIDI through
   RtMidi; its callbacks queue the messages for the GUI thread.
 - `gui.h`, `theme.h`, `canvas.cpp`, `mainwindow.cpp`: the FLTK editor: the
@@ -562,6 +622,7 @@ inverse FFT.
 
 To run a patch offline for testing, use
 `moritz --render patch.moritz seconds [out.wav] [bang=<id>] [send=<id>:<message>] [png=<file>] [edit] [extra=<patch>] ...`
+(`bang=<id>@<seconds>` and `send=<id>:<message>@<seconds>` act at that time in the render)
 (`<id>` can name a box inside a subpatcher, as `p1/osc`; `midi=<seconds>:<bytes>`,
 for example `midi=0.5:144 60 100`, feeds a MIDI message in, and MIDI output is
 printed). `png=` draws the
@@ -576,6 +637,10 @@ output to stdout, and can write a WAV file.
 
 Moritz is released under the BSD 2-Clause License; see `LICENSE`.
 Created by Carmine-Emanuele Cella (2026).
+
+`binaural~` uses the MIT KEMAR head-related impulse responses (compact set) by
+Bill Gardner and Keith Martin, MIT Media Laboratory (1994), "HRTF Measurements
+of a KEMAR Dummy-Head Microphone", as distributed with Musil.
 
 The drawing of Max and Moritz in `resources/maxundmoritz.png` is Wilhelm
 Busch's own, from *Max und Moritz* (1865); it is in the public domain (scan

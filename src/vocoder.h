@@ -1,8 +1,11 @@
 // Copyright (c) 2011-2026 Carmine-Emanuele Cella. SPDX-License-Identifier: BSD-2-Clause
 // vocoder.h — the phase vocoder of sparkle (sound_math's BlockVocoder),
 // adapted for sparkle~: formant (spectral envelope) preservation through the
-// cepstrum, phase locking around spectral peaks, denoising and the phase
-// effects (robot, whisper).
+// cepstrum, phase locking around spectral peaks, denoising, the phase
+// effects (robot, whisper) and sparkle's three cross-syntheses with a second
+// sound: 1 multiplicative (the geometric mean of the two magnitudes, phases
+// mixed), 2 spectral flattener (the second sound's envelope imposed on the
+// first), 3 morphing (magnitudes interpolated, phases switching at the half).
 //
 // The original measures each bin's frequency from the previous call, which
 // assumes the analysis advances by a steady hop. sparkle~ can freeze, play
@@ -53,11 +56,17 @@ public:
     explicit Vocoder(int n)
         : N(n), NN(2 * n), N2(n / 2), sicvt(2.0 * dsp::kPi / n),
           peaks((size_t)n, 0), psi((size_t)n, 0.f), phaseInc((size_t)n, 0.f), oldSynPhi((size_t)n, 0.f),
-          tmp1((size_t)2 * n, 0.f) {
+          tmp1((size_t)2 * n, 0.f), tmp2((size_t)2 * n, 0.f), tmp3((size_t)2 * n, 0.f) {
         fft.init(n);
     }
 
     int phaseMode = 0;    // 1 = robot (zero phases), 2 = whisper (random phases)
+    // cross-synthesis: crossMode 1-3 (0 off), crossAmount 0..1; otherNow and
+    // otherPrev are the second sound's frames, prepared like frame and prev
+    int crossMode = 0;
+    float crossAmount = 0.f;
+    float* otherNow = nullptr;
+    float* otherPrev = nullptr;
 
     // frame: the windowed analysis frame at the current position (real samples
     // in the even slots, centred); prev: the same, D samples earlier. Both are
@@ -74,6 +83,7 @@ public:
         fft.forward(frame);
         rect2pol(frame);
         float* w = frame;
+        if (crossMode >= 1 && crossMode <= 3 && otherNow && otherPrev) cross(w, prev, C);
 
         // phase increment of every bin: its frequency, from the two frames
         for (int i = 0; i < N2; ++i) {
@@ -137,6 +147,50 @@ public:
     }
 
     void reset() { std::fill(oldSynPhi.begin(), oldSynPhi.end(), 0.f); }
+
+    // sparkle's cross-synthesis, on the polar frames of both sounds (now and D
+    // samples before, so the frequency analysis sees the mixed phases too)
+    void cross(float* w, float* prev, int C) {
+        float* o = otherNow;
+        float* op = otherPrev;
+        fftshift(op);
+        fft.forward(op);
+        rect2pol(op);
+        fftshift(o);
+        fft.forward(o);
+        rect2pol(o);
+        const float A = std::clamp(crossAmount, 0.f, 1.f);
+        if (crossMode == 1) {                         // multiplicative
+            for (int i = 0; i < N; ++i) {
+                w[2 * i] = std::sqrt(w[2 * i] * o[2 * i]);
+                w[2 * i + 1] = (1.f - A) * w[2 * i + 1] + A * o[2 * i + 1];
+                prev[2 * i + 1] = (1.f - A) * prev[2 * i + 1] + A * op[2 * i + 1];
+            }
+        } else if (crossMode == 2) {                  // spectral flattener: o's envelope on w
+            int order = C > 0 ? C : 40;
+            for (int i = 0; i < N; ++i) {
+                tmp3[2 * i] = std::log(w[2 * i] / NN + kEps);
+                tmp3[2 * i + 1] = 0.f;
+            }
+            cepstralEnvelope(order, tmp3.data(), tmp1.data());
+            for (int i = 0; i < N; ++i) {
+                tmp3[2 * i] = std::log(o[2 * i] / NN + kEps);
+                tmp3[2 * i + 1] = 0.f;
+            }
+            cepstralEnvelope(order, tmp3.data(), tmp2.data());
+            for (int i = 0; i < N; ++i)
+                w[2 * i] *= (1.f - A) + A * std::exp(2.f * (tmp2[2 * i] - tmp1[2 * i]));
+        } else {                                      // morphing
+            bool theirs = A >= .5f;
+            for (int i = 0; i < N; ++i) {
+                w[2 * i] += (o[2 * i] - w[2 * i]) * A;
+                if (theirs) {
+                    w[2 * i + 1] = o[2 * i + 1];
+                    prev[2 * i + 1] = op[2 * i + 1];
+                }
+            }
+        }
+    }
 
     static void hann(float* w, int n) {
         for (int i = 0; i < n; ++i) w[i] = (float)(.5 * (1. - std::cos(2.0 * dsp::kPi * i / n)));
@@ -212,7 +266,7 @@ private:
     double sicvt;
     CplxFFT fft;
     std::vector<int> peaks;
-    std::vector<float> psi, phaseInc, oldSynPhi, tmp1;
+    std::vector<float> psi, phaseInc, oldSynPhi, tmp1, tmp2, tmp3;
 };
 
 }  // namespace moritz

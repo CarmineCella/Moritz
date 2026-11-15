@@ -17,7 +17,7 @@ namespace {
 
 // menu order of the groups; classes keep their registration order inside one
 const char* const kGroups[] = {"Oscillators", "Filters", "Signal Math", "Signal Routing", "Delay", "Samples",
-                               "Spectral", "Analysis", "Learning", "I/O", "MIDI", "Timing", "Control Math",
+                               "Spectral", "Spatial", "Analysis", "Learning", "I/O", "MIDI", "Timing", "Control Math",
                                "Routing", "Patching", "Interface"};
 
 int groupRank(const char* g) {
@@ -37,6 +37,9 @@ const ClassTable& classDefs() {
         registerSoundObjects(v);
         registerOfflineObjects(v);
         registerLearnObjects(v);
+        registerSpectralObjects(v);
+        registerFilterObjects(v);
+        registerSpatialObjects(v);
         std::stable_sort(v.begin(), v.end(), [](const ClassDef& a, const ClassDef& b) {
             return groupRank(a.group) < groupRank(b.group);
         });
@@ -124,6 +127,8 @@ std::string helpName(const std::string& cls) {
         group("ctlin", {"ctlin", "bendin", "pgmin"});
         group("noteout", {"noteout", "ctlout"});
         group("conv~", {"conv~", "condec"});
+        group("filterdesign", {"filterdesign", "filterplot"});
+        group("ambienc~", {"ambienc~", "ambirot~", "ambidec~"});
         r["t"] = "trigger";
         r["sel"] = "select";
         r["del"] = "delay";

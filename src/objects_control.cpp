@@ -237,7 +237,10 @@ public:
         lo_ = argf(a, 0, 0.f);
         hi_ = argf(a, 1, 127.f);
         if (hi_ == lo_) hi_ = lo_ + 1.f;
-        int_ = isIntegral(lo_) && isIntegral(hi_);
+        // integers when both limits are written as integers (slider 0 127);
+        // a limit written with a point (slider 0. 1.) gives decimals
+        bool dec = (a.size() > 0 && a[0].isDecimal()) || (a.size() > 1 && a[1].isDecimal());
+        int_ = !dec && isIntegral(lo_) && isIntegral(hi_);
         value_ = lo_;
     }
     void uiSize(int& w, int& h) const override { w = 140; h = 22; }

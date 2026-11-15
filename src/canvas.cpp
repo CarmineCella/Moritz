@@ -118,6 +118,22 @@ Canvas::Canvas(int x, int y, int w, int h, MainWindow* win, Patch* patch)
     editor_->when(FL_WHEN_ENTER_KEY_ALWAYS | FL_WHEN_RELEASE_ALWAYS);
     editor_->callback(editCb, this);
     editor_->hide();
+    hbar_ = new Fl_Scrollbar(x, y + h - kScrollW, w, kScrollW);
+    hbar_->type(FL_HORIZONTAL);
+    vbar_ = new Fl_Scrollbar(x + w - kScrollW, y, kScrollW, h);
+    for (Fl_Scrollbar* b : {hbar_, vbar_}) {
+        b->color(fl_rgb_color(34, 35, 40));
+        b->selection_color(fl_rgb_color(90, 94, 104));
+        b->box(FL_FLAT_BOX);
+        b->slider(FL_FLAT_BOX);
+        b->hide();
+        b->callback([](Fl_Widget* w, void* d) {
+            auto* c = static_cast<Canvas*>(d);
+            auto* sb = static_cast<Fl_Scrollbar*>(w);
+            if (sb->type() == FL_HORIZONTAL) c->scrollTo(sb->value(), c->scrollY());
+            else c->scrollTo(c->scrollX(), sb->value());
+        }, this);
+    }
     end();
 }
 
@@ -146,7 +162,7 @@ void Canvas::portPos(Box* b, bool out, int i, int& px, int& py) const {
 }
 
 void Canvas::drawBox(Box* b) {
-    int X = x() + b->x, Y = y() + b->y, W = b->w, H = b->h;
+    int X = ox() + b->x, Y = oy() + b->y, W = b->w, H = b->h;
     bool flash = b->flashUntil > now();
 
     if (b->kind == BoxKind::Comment) {               // comments: just text
@@ -223,13 +239,13 @@ void Canvas::drawBox(Box* b) {
         int px, py;
         portPos(b, false, k, px, py);
         fl_color(b->ins[k] == Port::Control ? kCtlPort : kSignal);
-        fl_rounded_rectf(x() + px, y() + py, kPortW, kPortH + 1, 1);
+        fl_rounded_rectf(ox() + px, oy() + py, kPortW, kPortH + 1, 1);
     }
     for (int k = 0; k < b->numOuts(); ++k) {
         int px, py;
         portPos(b, true, k, px, py);
         fl_color(b->outs[k] == Port::Control ? kCtlPort : kSignal);
-        fl_rounded_rectf(x() + px, y() + py - kPortH - 1, kPortW, kPortH + 1, 1);
+        fl_rounded_rectf(ox() + px, oy() + py - kPortH - 1, kPortW, kPortH + 1, 1);
     }
 }
 
@@ -392,8 +408,8 @@ void Canvas::drawPortTip() {
 
     int px, py;
     portPos(tipBox_, tipOut_, tipPort_, px, py);
-    px += x();
-    py += y();
+    px += ox();
+    py += oy();
     fl_color(kAccent);                                  // ring around the port
     fl_line_style(FL_SOLID, 2);
     fl_rounded_rect(px - 3, (tipOut_ ? py - kPortH - 4 : py - 3), kPortW + 6, kPortH + 7, 3);
@@ -507,7 +523,8 @@ void Canvas::draw() {
     if (!locked_) {
         fl_color(kGrid);
         for (int gx = 15; gx < w(); gx += 15)
-            for (int gy = 15; gy < h(); gy += 15) fl_point(x() + gx, y() + gy);
+            for (int gy = 15; gy < h(); gy += 15)
+                fl_point(x() + gx - ((sx_ % 15) + 15) % 15, y() + gy - ((sy_ % 15) + 15) % 15);
     }
 
     for (auto& b : p.boxes) layoutBox(b.get());
@@ -517,8 +534,8 @@ void Canvas::draw() {
         int ax, ay, bx, by;
         portPos(c.from, true, c.outlet, ax, ay);
         portPos(c.to, false, c.inlet, bx, by);
-        ax += x() + kPortW / 2; bx += x() + kPortW / 2;
-        ay += y(); by += y();
+        ax += ox() + kPortW / 2; bx += ox() + kPortW / 2;
+        ay += oy(); by += oy();
         bool sig = c.from->outs[c.outlet] != Port::Control;   // signal and tap links
         if (sig) {
             fl_color(c.selected ? kSelect : kSignal);
@@ -549,13 +566,13 @@ void Canvas::draw() {
         portPos(dragBox_, true, dragPort_, ax, ay);
         fl_color(kSelect);
         fl_line_style(FL_SOLID, 2);
-        fl_line(x() + ax + kPortW / 2, y() + ay, x() + curX_, y() + curY_);
+        fl_line(ox() + ax + kPortW / 2, oy() + ay, ox() + curX_, oy() + curY_);
         fl_line_style(0);
     } else if (drag_ == Drag::Rubber) {
         fl_color(kSelect);
         fl_line_style(FL_DOT, 1);
         int rx = std::min(pressX_, curX_), ry = std::min(pressY_, curY_);
-        fl_rect(x() + rx, y() + ry, std::abs(curX_ - pressX_), std::abs(curY_ - pressY_));
+        fl_rect(ox() + rx, oy() + ry, std::abs(curX_ - pressX_), std::abs(curY_ - pressY_));
         fl_line_style(0);
     }
 
@@ -566,7 +583,64 @@ void Canvas::draw() {
     }
     drawSuggestions();
     drawPortTip();
+    updateScrollbars();
+    if (hbar_->visible()) draw_child(*hbar_);
+    if (vbar_->visible()) draw_child(*vbar_);
     fl_pop_clip();
+}
+
+// ---- scrolling: the patch can be larger than the window
+
+void Canvas::contentBounds(int& x0, int& y0, int& x1, int& y1) const {
+    x0 = 0; y0 = 0; x1 = 0; y1 = 0;
+    for (auto& b : patch_->boxes) {
+        x0 = std::min(x0, b->x - 20);
+        y0 = std::min(y0, b->y - 20);
+        x1 = std::max(x1, b->x + b->w + 40);
+        y1 = std::max(y1, b->y + b->h + 40);
+    }
+}
+
+void Canvas::updateScrollbars() {
+    if (!scrollable) { hbar_->hide(); vbar_->hide(); return; }
+    int x0, y0, x1, y1;
+    contentBounds(x0, y0, x1, y1);
+    // the range covers the patch and where the view is now (so it never jumps)
+    x0 = std::min(x0, sx_); y0 = std::min(y0, sy_);
+    x1 = std::max(x1, sx_ + w()); y1 = std::max(y1, sy_ + h());
+    bool needH = x1 - x0 > w(), needV = y1 - y0 > h();
+    const int S = kScrollW;
+    int vw = w() - (needV ? S : 0), vh = h() - (needH ? S : 0);
+    needH = x1 - x0 > vw; needV = y1 - y0 > vh;
+    if (needH) {
+        hbar_->resize(x(), y() + h() - S, w() - (needV ? S : 0), S);
+        hbar_->value(sx_, vw, x0, x1 - x0);
+        hbar_->linesize(30);
+        hbar_->show();
+    } else {
+        hbar_->hide();
+    }
+    if (needV) {
+        vbar_->resize(x() + w() - S, y(), S, h() - (needH ? S : 0));
+        vbar_->value(sy_, vh, y0, y1 - y0);
+        vbar_->linesize(30);
+        vbar_->show();
+    } else {
+        vbar_->hide();
+    }
+}
+
+void Canvas::scrollTo(int sx, int sy) {
+    int x0, y0, x1, y1;
+    contentBounds(x0, y0, x1, y1);
+    // within the patch (and back to the origin), never past it
+    sx = std::clamp(sx, std::min(x0, 0), std::max(x1 - w(), 0));
+    sy = std::clamp(sy, std::min(y0, 0), std::max(y1 - h(), 0));
+    if (sx == sx_ && sy == sy_) return;
+    sx_ = sx;
+    sy_ = sy;
+    if (editing_) editor_->Fl_Widget::position(ox() + editing_->x, oy() + editing_->y);
+    redraw();
 }
 
 Canvas::Hit Canvas::hitTest(int mx, int my) const {
@@ -691,7 +765,7 @@ void Canvas::fitEditor() {
         H = kBoxH + ((int)lines.size() - 1) * lineHeight();
     }
     if (W != editor_->w() || H != editor_->h()) {
-        editor_->resize(x() + b->x, y() + b->y, W, H);
+        editor_->resize(ox() + b->x, oy() + b->y, W, H);
         redraw();
     }
 }
@@ -805,6 +879,14 @@ void Canvas::numberDrag(int dy) {
 }
 
 int Canvas::handle(int e) {
+    // the scrollbars get their own clicks
+    if ((e == FL_PUSH || e == FL_MOVE || e == FL_ENTER) &&
+        ((hbar_->visible() && Fl::event_inside(hbar_)) || (vbar_->visible() && Fl::event_inside(vbar_))))
+        return Fl_Group::handle(e);
+    if (e == FL_MOUSEWHEEL) {                    // wheel and trackpad scrolling
+        scrollTo(sx_ + Fl::event_dx() * 16, sy_ + Fl::event_dy() * 16);
+        return 1;
+    }
     switch (e) {
         case FL_PASTE:
             if (editing_ || readOnly) return 0;
@@ -818,8 +900,8 @@ int Canvas::handle(int e) {
         case FL_UNFOCUS:
             return 1;
         case FL_MOVE:
-            mouseX_ = Fl::event_x() - x();
-            mouseY_ = Fl::event_y() - y();
+            mouseX_ = Fl::event_x() - ox();
+            mouseY_ = Fl::event_y() - oy();
             updatePortTip(mouseX_, mouseY_);
             return 1;
 
@@ -835,7 +917,7 @@ int Canvas::handle(int e) {
             }
             commitEdit();
             Fl::focus(this);
-            int mx = Fl::event_x() - x(), my = Fl::event_y() - y();
+            int mx = Fl::event_x() - ox(), my = Fl::event_y() - oy();
             pressX_ = curX_ = mouseX_ = mx;
             pressY_ = curY_ = mouseY_ = my;
             moved_ = false;
@@ -947,7 +1029,7 @@ int Canvas::handle(int e) {
         }
 
         case FL_DRAG: {
-            int mx = Fl::event_x() - x(), my = Fl::event_y() - y();
+            int mx = Fl::event_x() - ox(), my = Fl::event_y() - oy();
             int dx = mx - curX_, dy = my - curY_;
             curX_ = mouseX_ = mx;
             curY_ = mouseY_ = my;
@@ -969,7 +1051,7 @@ int Canvas::handle(int e) {
         }
 
         case FL_RELEASE: {
-            int mx = Fl::event_x() - x(), my = Fl::event_y() - y();
+            int mx = Fl::event_x() - ox(), my = Fl::event_y() - oy();
             if (drag_ == Drag::UI && dragBox_) {
                 dragBox_->uiMouse(FL_RELEASE, mx - dragBox_->x, my - dragBox_->y);
                 if (win_) {

@@ -1,0 +1,29 @@
+; impose~.moritz - an abstraction: the spectral envelope of one sound
+; imposed on another (Musil's impose-envelope).
+;   impose~ [order]
+; Inlets: the modulator (whose colour: a voice), the carrier (what sounds:
+; an orchestra, a synth, noise), the envelope order (the resolution, 60 by
+; default: about sr / (2 f0) of the modulator). Outlet: the carrier speaking
+; with the modulator's formants. One pfft~ (1024, overlap 4) running
+; impose-fx: specenv~ on both spectra, the carrier's fine structure times
+; the modulator's envelope.
+(patch
+  (obj c0 comment "impose~ #1: the carrier (right) with the spectral envelope of the modulator (left)" (pos 20 10))
+  (obj mod inlet~ (pos 20 45))
+  (obj car inlet~ (pos 120 45))
+  (obj ord inlet (pos 220 45))
+  (obj lb loadbang (pos 320 45))
+  (obj arg message #1 (pos 320 80))
+  (obj nodef sel 0 (pos 320 115))
+  (obj def message 60 (pos 320 150))
+  (obj fx pfft~ impose-fx 1024 4 (pos 20 190))
+  (obj out outlet~ (pos 20 230))
+  (connect mod 0 fx 0)
+  (connect car 0 fx 1)
+  (connect ord 0 fx 2)
+  (connect lb 0 arg 0)
+  (connect arg 0 nodef 0)
+  (connect nodef 0 def 0)
+  (connect nodef 1 fx 2)
+  (connect def 0 fx 2)
+  (connect fx 0 out 0))

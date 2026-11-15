@@ -145,6 +145,36 @@ weeks): `prepend`, `zl`, `pak`, `uzi`, `number~`, `umenu`, `multislider`,
 `delay~`, `edge~`, `>~`, `scale~`, `delta~`, `fft~`, `vexpr`, `incdec`,
 `preset`/`pattrstorage`, `attrui`; the `mc.*` family.
 
+### Status of week 2 (15 November)
+
+Done, not released yet:
+
+- `sparkle~` cross-synthesis, sparkle's three modes (multiplicative,
+  spectral flattener, morphing), with a buffer~ or a live second sound.
+- `nmf` keeps its unsupervised `run` and gains Musil's supervised mode
+  (`learn` each source, `separate` a mix, `forget`); messages queue while a
+  job runs. On a voice + drums mix: 0.98 correlation per source supervised,
+  0.70-0.76 unsupervised.
+- `specenv~` (true envelope, in pfft~), `filterdesign` and `filterplot`
+  (RBJ cookbook biquads), `nebula~` (sound_math's nebula), ambisonics as in
+  Musil (`ambienc~`, `ambirot~`, `ambidec~`) and `binaural~` (17 virtual
+  speakers through MIT KEMAR HRIRs). Testing Musil's equations: the
+  spherical harmonics are exact; its decoders lack the normalisation (2 per
+  order on a ring, 2n+1 on the sphere) and its ten virtual speakers bend
+  directions by up to 16 degrees. Moritz's decoders are corrected (ring
+  energy vector 0.71 / 0.87 at orders 1 / 2, theoretical); Musil's
+  `ambi-decode` and `binaural-decode` should get the same fix.
+- Examples: sparkle-cross, pitch-shift, spectral-envelope, nebula,
+  ambisonics, binaural, nmf-supervised; filters expanded with filter
+  design. Help patches for all new objects.
+- Scrollbars and wheel scrolling when a patch is larger than its window.
+- `slider` typed by its written limits (`slider 0. 1.` gives decimals);
+  `--render` takes timed actions (`bang=id@4.5`).
+
+Not done from the week-2 list: a separate cepstrum object (`specenv~` uses
+the cepstrum inside; denoising and spectral morphing are `sparkle~`'s
+`threshold` and cross mode 3).
+
 After the paper: multitrack/transport/clip-grid views, VST player (CLAP+VST3,
 floating editor; needs the global state refactored per instance), the
 transformer on atom sequences, `concat~`.

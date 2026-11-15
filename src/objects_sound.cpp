@@ -12,6 +12,7 @@
 #include <FL/fl_draw.H>
 
 #include <atomic>
+#include <mutex>
 #include <cstdio>
 
 namespace moritz {
@@ -35,6 +36,12 @@ int nextPow2(long n) {
 // formants; `threshold x` drops weak bins (denoising); `robot 1` and
 // `whisper 1` replace the phases. Outlets: the channels, then the read
 // position, 0 to 1 (buffer mode).
+// Cross-synthesis with a second sound, as in sparkle: `cross mode [buffer]`,
+// mode 1 multiplicative, 2 spectral flattener (the second sound's envelope on
+// the first, with the `envelope` order, 40 if none), 3 morphing, 0 off. The
+// second sound is the buffer~ named (read at the same position, or on its
+// own when the first is live), or else the signal in inlet 5. Inlet 4 is the
+// amount, 0 to 1.
 class SparkleBox : public Box {
 public:
     explicit SparkleBox(const Message& a) {
@@ -65,17 +72,26 @@ public:
             x.out.assign((size_t)2 * n_, 0.f);
             x.ola.assign((size_t)wn_ + hop_, 0.f);
         }
+        for (auto& c : chans_) {
+            c->oNow.assign((size_t)2 * n_, 0.f);
+            c->oPrev.assign((size_t)2 * n_, 0.f);
+        }
         if (live_) ring_.assign((size_t)(wn_ + hop_) * 2, 0.f);
-        std::vector<Port> ins{P::Signal, P::Signal, P::Signal};
+        ring2_.assign((size_t)(wn_ + hop_) * 2, 0.f);
+        std::vector<Port> ins{P::Signal, P::Signal, P::Signal, P::Signal, P::Signal};
         std::vector<Port> outs((size_t)ch_, P::Signal);
         if (!live_) outs.push_back(P::Signal);
         setPorts(ins, outs);
         setScalar(0, live_ ? 0.f : 1.f);   // speed 1
         setScalar(1, 1.f);                  // pitch
         setScalar(2, 1.f);                  // formants
+        setScalar(3, .5f);                  // cross amount
         ready_ = 0;
     }
-    void resolve() override { b_ = live_ ? nullptr : findBuffer(patch, name_); }
+    void resolve() override {
+        b_ = live_ ? nullptr : findBuffer(patch, name_);
+        xb_ = crossName_.empty() ? nullptr : findBuffer(patch, crossName_);
+    }
     void message(int in, const Message& m) override {
         if (in > 0) { if (m[0].isFloat()) setScalar(in, m[0].f); return; }
         if (m[0].isFloat()) { setScalar(0, m[0].f); return; }
@@ -88,9 +104,15 @@ public:
         else if (m[0].is("robot")) phaseMode_.store(argf(m, 1, 1.f) != 0.f ? 1 : 0);
         else if (m[0].is("whisper")) phaseMode_.store(argf(m, 1, 1.f) != 0.f ? 2 : 0);
         else if (m[0].is("set") && m.size() > 1 && !live_) { name_ = m[1].str(); patch->rebuild(); }
+        else if (m[0].is("cross")) {
+            crossMode_.store(std::clamp((int)argf(m, 1, 0.f), 0, 3));
+            crossName_ = m.size() > 2 ? m[2].str() : "";
+            patch->rebuild();
+        }
     }
     void dsp(int n) override {
         const float *spd = sigIn(0, n), *pitch = sigIn(1, n), *form = sigIn(2, n);
+        const float *amount = sigIn(3, n), *other = sigIn(4, n);
         if (float s = startAt_.exchange(-1.f); s >= 0.f && b_) {
             pos_ = s / 1000.0 * b_->buf.sr;
             playing_ = true;
@@ -99,12 +121,11 @@ public:
         }
         if (stop_.exchange(false)) playing_ = false;
         for (int i = 0; i < n; ++i) {
-            if (live_) {                                  // keep the input
-                ring_[(size_t)ringPos_] = spd[i];
-                ringPos_ = (ringPos_ + 1) % (int)ring_.size();
-            }
+            if (live_) ring_[(size_t)ringPos_] = spd[i];        // keep the input(s)
+            ring2_[(size_t)ringPos_] = other[i];
+            ringPos_ = (ringPos_ + 1) % (int)ring2_.size();
             if (ready_ == 0) {
-                frame(pitch[i], form[i], spd[i]);
+                frame(pitch[i], form[i], spd[i], amount[i]);
                 ready_ = hop_;
                 readPos_ = 0;
             }
@@ -122,10 +143,10 @@ public:
 private:
     struct Chan {
         std::unique_ptr<Vocoder> voc;
-        std::vector<float> frame, prev, out, ola;
+        std::vector<float> frame, prev, out, ola, oNow, oPrev;
     };
     // one analysis/synthesis frame: overlap-adds a window into ola
-    void frame(float pitch, float formant, float speed) {
+    void frame(float pitch, float formant, float speed, float amount) {
         const SampleBuffer* sb = b_ ? &b_->buf : nullptr;
         bool active = live_ || (playing_ && sb && sb->frames > wn_);
         if (!active) { sync_ = 0.f; return; }
@@ -134,6 +155,12 @@ private:
         float F = std::clamp(formant, 0.05f, 8.f) * (float)ratio;
         int C = cepstrum_.load(), D = hop_;
         float thr = threshold_.load();
+        int xmode = crossMode_.load();
+        const SampleBuffer* xb = xb_ ? &xb_->buf : nullptr;
+        if (xb && xb->frames <= 0) xb = nullptr;
+        // the second sound's read position: with the first one's when that
+        // is a buffer, else its own, moving on in real time
+        long xstart = !live_ ? (long)std::floor(pos_) : (long)std::floor(xpos_);
         for (int c = 0; c < ch_; ++c) {
             Chan& x = *chans_[(size_t)c];
             std::fill(x.frame.begin(), x.frame.end(), 0.f);
@@ -153,10 +180,33 @@ private:
                 x.prev[2 * (size_t)(k + offset_)] = before * win_[(size_t)k];
             }
             x.voc->phaseMode = phaseMode_.load();
+            x.voc->crossMode = xmode;
+            x.voc->crossAmount = amount;
+            if (xmode) {
+                std::fill(x.oNow.begin(), x.oNow.end(), 0.f);
+                std::fill(x.oPrev.begin(), x.oPrev.end(), 0.f);
+                int L = (int)ring2_.size();
+                for (int k = 0; k < wn_; ++k) {
+                    float now, before;
+                    if (xb) {
+                        auto at = [&](long f) { f = ((f % xb->frames) + xb->frames) % xb->frames; return xb->at(f, c % xb->channels); };
+                        now = at(xstart + k);
+                        before = at(xstart - D + k);
+                    } else {
+                        now = ring2_[(size_t)((ringPos_ - wn_ + k + 2 * L) % L)];
+                        before = ring2_[(size_t)((ringPos_ - wn_ - D + k + 2 * L) % L)];
+                    }
+                    x.oNow[2 * (size_t)(k + offset_)] = now * win_[(size_t)k];
+                    x.oPrev[2 * (size_t)(k + offset_)] = before * win_[(size_t)k];
+                }
+                x.voc->otherNow = x.oNow.data();
+                x.voc->otherPrev = x.oPrev.data();
+            }
             x.voc->process(x.frame.data(), x.prev.data(), x.out.data(), P, F, (float)D, (float)hop_, C, thr);
             for (int k = 0; k < wn_; ++k)
                 x.ola[(size_t)k] += x.out[2 * (size_t)(k + offset_)] * win_[(size_t)k] * norm_;
         }
+        if (xb && live_) xpos_ = std::fmod(xpos_ + hop_ * xb->sr / patch->root()->sampleRate.load(), (double)xb->frames);
         if (live_) return;
         sync_ = (float)std::clamp(pos_ / sb->frames, 0.0, 1.0);
         pos_ += speed * hop_ * ratio;
@@ -176,7 +226,11 @@ private:
     bool live_;
     int ch_, wn_, n_, hop_, offset_;
     float norm_;
-    std::vector<float> win_, ring_;
+    std::vector<float> win_, ring_, ring2_;
+    std::string crossName_;
+    BufferBox* xb_ = nullptr;
+    double xpos_ = 0.0;
+    std::atomic<int> crossMode_{0};
     std::vector<std::unique_ptr<Chan>> chans_;
     BufferBox* b_ = nullptr;
     double pos_ = 0.0;
@@ -617,6 +671,230 @@ private:
     int drag_ = -1;
 };
 
+// ---------------------------------------------------------------- nebula~
+// nebula~ [proto1] [proto2]: sound_math's nebula, advanced granular
+// synthesis. Grains are windowed snippets of two prototypes, each a waveform
+// (sine, triangle, square, noise) or a buffer~, mixed by the morph amount.
+// A grain starts every 1 / density seconds and lasts `length` ms; its
+// frequency is in Hz for a waveform and a speed ratio for a buffer~ (1 = as
+// recorded), and it can glide; it is placed in the stereo field at random.
+// The values after a parameter are randomness, as a ratio of it: `density
+// 40 .5` gives 20 to 60 grains a second.
+//   inlets: 1/0 or start/stop, density, length (ms), frequency, morph 0..1
+//   messages: density d [r], length ms [r], freq f [r], morph m, amp a,
+//   gliss g (each grain glides to f within +-g f), jitter j [r] (pan, 0 right
+//   .. 1 left, randomised by r), speed s (how fast the read position moves
+//   through a buffer~), grainlets n (each grain lasts n periods of its
+//   frequency; 0 = off), window hann|hamming|blackman, poly n, proto1 x,
+//   proto2 x, seed n.
+class NebulaBox : public Box {
+public:
+    explicit NebulaBox(const Message& a) {
+        setPorts({P::Control, P::Control, P::Control, P::Control, P::Control}, {P::Signal, P::Signal});
+        proto_[0].name = a.size() > 0 ? a[0].str() : "sine";
+        proto_[1].name = a.size() > 1 ? a[1].str() : proto_[0].name;
+        for (auto& p : proto_) makeTable(p);
+        makeWindow("hann");
+        grains_.resize(kMaxPoly);
+    }
+    void resolve() override {
+        for (auto& p : proto_) p.buf = p.table.empty() ? findBuffer(patch, p.name) : nullptr;
+    }
+    void message(int in, const Message& m) override {
+        auto num = [&](size_t k, float def) { return argf(m, k, def); };
+        if (in > 0) {
+            if (!m[0].isFloat()) return;
+            if (in == 1) density_.store(std::max(.01f, m[0].f));
+            else if (in == 2) length_.store(std::max(1.f, m[0].f));
+            else if (in == 3) freq_.store(m[0].f);
+            else morph_.store(std::clamp(m[0].f, 0.f, 1.f));
+            return;
+        }
+        const Atom& h = m[0];
+        if (h.isFloat()) on_.store(h.f != 0.f);
+        else if (h.is("start") || h.is("bang")) on_.store(true);
+        else if (h.is("stop")) on_.store(false);
+        else if (h.is("density")) { density_.store(std::max(.01f, num(1, 10))); densityRnd_.store(std::clamp(num(2, 0), 0.f, .99f)); }
+        else if (h.is("length")) { length_.store(std::max(1.f, num(1, 100))); lengthRnd_.store(std::clamp(num(2, 0), 0.f, 1.f)); }
+        else if (h.is("freq")) { freq_.store(num(1, 220)); freqRnd_.store(std::clamp(num(2, 0), 0.f, 1.f)); }
+        else if (h.is("morph")) morph_.store(std::clamp(num(1, 0), 0.f, 1.f));
+        else if (h.is("amp")) amp_.store(std::max(0.f, num(1, .25f)));
+        else if (h.is("gliss")) gliss_.store(std::clamp(num(1, 0), 0.f, 1.f));
+        else if (h.is("jitter")) { jitter_.store(std::clamp(num(1, .5f), 0.f, 1.f)); jitterRnd_.store(std::clamp(num(2, 1), 0.f, 1.f)); }
+        else if (h.is("speed")) speed_.store(num(1, 1));
+        else if (h.is("grainlets")) grainlets_.store(std::max(0.f, num(1, 0)));
+        else if (h.is("poly")) poly_.store(std::clamp((int)num(1, 256), 1, kMaxPoly));
+        else if (h.is("seed")) seed_.store((unsigned)num(1, 1));
+        else if (h.is("window") && m.size() > 1) {
+            std::lock_guard<std::mutex> lk(patch->mutex());
+            makeWindow(m[1].str());
+        } else if ((h.is("proto1") || h.is("proto2")) && m.size() > 1) {
+            std::lock_guard<std::mutex> lk(patch->mutex());
+            Proto& p = proto_[h.is("proto1") ? 0 : 1];
+            p.name = m[1].str();
+            makeTable(p);
+            p.buf = p.table.empty() ? findBuffer(patch, p.name) : nullptr;
+        }
+    }
+    void dsp(int n) override {
+        float *L = sigOut(0), *R = sigOut(1);
+        std::fill(L, L + n, 0.f);
+        std::fill(R, R + n, 0.f);
+        const double sr = std::max(1.0, (double)patch->root()->sampleRate.load());
+        if (unsigned s = seed_.exchange(0)) rng_ = s;
+        for (int i = 0; i < n; ++i) {
+            if (on_.load(std::memory_order_relaxed) && --untilNext_ <= 0) {
+                spawn(sr, i);
+                double d = density_.load(), r = d * densityRnd_.load();
+                double lo = 1.0 / (d + r), hi = 1.0 / std::max(d - r, 1e-3);
+                untilNext_ = std::max(1.0, (lo + rnd() * (hi - lo)) * sr);
+            }
+            // the read position through a buffer~ (for each prototype)
+            for (auto& p : proto_)
+                if (p.buf && p.buf->buf.frames > 0) {
+                    p.readPos += speed_.load(std::memory_order_relaxed) * p.buf->buf.sr / sr;
+                    double len = (double)p.buf->buf.frames;
+                    p.readPos = std::fmod(p.readPos, len);
+                    if (p.readPos < 0) p.readPos += len;
+                }
+        }
+        for (auto& g : grains_) {
+            if (!g.active) continue;
+            for (int i = g.delay; i < n; ++i) {
+                double e = g.envPos;
+                if (e >= kWin) { g.active = false; break; }
+                int ei = (int)e;
+                float w = window_[(size_t)ei] + (float)(e - ei) * (window_[(size_t)ei + 1] - window_[(size_t)ei]);
+                float s = (1.f - g.morph) * read(proto_[0], g.phase[0]) + g.morph * read(proto_[1], g.phase[1]);
+                s *= w * g.amp;
+                L[i] += s * g.left;
+                R[i] += s * g.right;
+                for (int k = 0; k < 2; ++k) g.phase[k] += g.inc[k] * g.glide;
+                g.glide += g.glideStep;
+                g.envPos += g.envStep;
+            }
+            g.delay = 0;
+        }
+    }
+
+private:
+    static constexpr int kTable = 4096, kWin = 4096, kMaxPoly = 1024;
+    struct Proto {
+        std::string name;
+        std::vector<float> table;          // a waveform, or empty for a buffer~
+        BufferBox* buf = nullptr;
+        double readPos = 0;
+    };
+    struct Grain {
+        bool active = false;
+        int delay = 0;
+        double phase[2] = {0, 0}, inc[2] = {0, 0}, envPos = 0, envStep = 0, glide = 1, glideStep = 0;
+        float amp = 0, left = 0, right = 0, morph = 0;
+    };
+    double rnd() {                                   // 0..1, Park-Miller as in the original
+        rng_ = (unsigned)((unsigned long long)rng_ * 16807ULL % 2147483647ULL);
+        return rng_ / 2147483647.0;
+    }
+    void makeTable(Proto& p) {
+        p.table.clear();
+        const std::string& w = p.name;
+        if (w != "sine" && w != "triangle" && w != "square" && w != "noise") return;
+        p.table.assign((size_t)kTable + 1, 0.f);
+        unsigned seed = 12345;
+        for (int i = 0; i < kTable; ++i) {
+            double t = (double)i / kTable, v = 0;
+            if (w == "sine") v = std::sin(2 * dsp::kPi * t);
+            else if (w == "noise") { seed = seed * 1103515245u + 12345u; v = (seed >> 8) / 8388608.0 - 1.0; }
+            else
+                for (int h = 1; h <= 63; h += 2)            // band-limited, odd harmonics
+                    v += w == "square" ? std::sin(2 * dsp::kPi * h * t) / h
+                                       : ((h / 2) % 2 ? -1.0 : 1.0) * std::sin(2 * dsp::kPi * h * t) / (h * h);
+            p.table[(size_t)i] = (float)v;
+        }
+        float peak = 0;
+        for (float v : p.table) peak = std::max(peak, std::fabs(v));
+        for (auto& v : p.table) v /= std::max(peak, 1e-9f);
+        p.table[(size_t)kTable] = p.table[0];
+    }
+    void makeWindow(const std::string& type) {
+        double a0 = .5, a1 = .5, a2 = 0;
+        if (type == "hamming" || type == "hamm") { a0 = .54; a1 = .46; }
+        else if (type == "blackman" || type == "black") { a0 = .42; a1 = .5; a2 = .08; }
+        window_.assign((size_t)kWin + 1, 0.f);
+        for (int i = 0; i <= kWin; ++i) {
+            double t = 2 * dsp::kPi * i / kWin;
+            window_[(size_t)i] = (float)(a0 - a1 * std::cos(t) + a2 * std::cos(2 * t));
+        }
+    }
+    float read(const Proto& p, double ph) const {
+        if (!p.table.empty()) {
+            double x = std::fmod(ph, (double)kTable);
+            if (x < 0) x += kTable;
+            int i = (int)x;
+            return p.table[(size_t)i] + (float)(x - i) * (p.table[(size_t)i + 1] - p.table[(size_t)i]);
+        }
+        if (!p.buf || p.buf->buf.frames <= 0) return 0.f;
+        const SampleBuffer& b = p.buf->buf;
+        double x = std::fmod(ph, (double)b.frames);
+        if (x < 0) x += b.frames;
+        long i = (long)x;
+        float a = b.at(i, 0), c = b.at((i + 1) % b.frames, 0);
+        return a + (float)(x - i) * (c - a);
+    }
+    void spawn(double sr, int at) {
+        int poly = poly_.load();
+        for (int k = 0; k < poly; ++k) {
+            Grain& g = grains_[(size_t)k];
+            if (g.active) continue;
+            double f = freq_.load(), fr = f * freqRnd_.load();
+            f = f - fr + rnd() * 2 * fr;
+            double lenMs = length_.load(), lr = lenMs * lengthRnd_.load();
+            lenMs = lenMs - lr + rnd() * 2 * lr;
+            if (float gl = grainlets_.load(); gl > 0 && std::fabs(f) > 1e-3)
+                lenMs = 1000.0 * gl / std::fabs(f);          // n periods of the frequency
+            double len = std::max(4.0, lenMs * sr / 1000.0);
+            for (int c = 0; c < 2; ++c) {
+                const Proto& p = proto_[c];
+                if (!p.table.empty()) {                          // a waveform: f in Hz
+                    g.inc[c] = f * kTable / sr;
+                    g.phase[c] = 0;
+                } else {                                         // a buffer~: f is a speed ratio
+                    double bsr = p.buf ? p.buf->buf.sr : sr;
+                    g.inc[c] = f * bsr / sr;
+                    g.phase[c] = p.readPos;
+                }
+            }
+            double gl = gliss_.load();
+            double target = 1.0 + (rnd() * 2 - 1) * gl;          // glide to f * target
+            g.glide = 1.0;
+            g.glideStep = (target - 1.0) / len;
+            g.envPos = 0;
+            g.envStep = kWin / len;
+            double j = jitter_.load(), jr = j * jitterRnd_.load();
+            double pan = std::clamp(j - jr + rnd() * 2 * jr, 0.0, 1.0);
+            g.left = (float)std::sqrt(pan);
+            g.right = (float)std::sqrt(1.0 - pan);
+            g.amp = amp_.load();
+            g.morph = morph_.load();
+            g.delay = at;
+            g.active = true;
+            return;
+        }
+    }
+
+    Proto proto_[2];
+    std::vector<float> window_;
+    std::vector<Grain> grains_;
+    double untilNext_ = 0;
+    unsigned rng_ = 1;
+    std::atomic<bool> on_{false};
+    std::atomic<float> density_{10.f}, densityRnd_{0.f}, length_{100.f}, lengthRnd_{0.f}, freq_{220.f},
+        freqRnd_{0.f}, morph_{0.f}, amp_{.25f}, gliss_{0.f}, jitter_{.5f}, jitterRnd_{1.f}, speed_{1.f},
+        grainlets_{0.f};
+    std::atomic<int> poly_{256};
+    std::atomic<unsigned> seed_{0};
+};
+
 }  // namespace
 
 void registerSoundObjects(ClassTable& t) {
@@ -626,6 +904,7 @@ void registerSoundObjects(ClassTable& t) {
         {"condec", "Samples", "convolve / deconvolve buffers: conv|deconv x h out", plain<CondecBox>()},
         {"descriptors~", "Analysis", "low-level descriptors and f0: [size] [hop] [names]", with<DescriptorsBox>()},
         {"function", "Interface", "breakpoint editor: [domain ms] [lo] [hi]", with<FunctionBox>()},
+        {"nebula~", "Oscillators", "granular synthesis (sound_math's nebula): [proto1] [proto2]", with<NebulaBox>()},
     });
 }
 

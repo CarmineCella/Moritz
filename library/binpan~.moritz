@@ -1,0 +1,38 @@
+; binpan~.moritz - an abstraction: a mono sound placed around the listener,
+; for headphones.
+;   binpan~ [azimuth] [elevation]
+; Inlets: the signal, the azimuth in degrees (0 in front, 90 left, -90
+; right, 180 behind), the elevation in degrees (up). Outlets: left, right.
+; An order-2 ambisonic encoder (ambienc~ 2) into binaural~ 2: the cost is
+; the same however many binpan~ sound together, but each has its own
+; binaural~; for many sources, sum their fields and use one binaural~.
+(patch
+  (obj c0 comment "binpan~ #1 #2: a mono sound at a direction, on headphones" (pos 20 10))
+  (obj in inlet~ (pos 20 45))
+  (obj az inlet (pos 150 45))
+  (obj el inlet (pos 250 45))
+  (obj lb loadbang (pos 350 45))
+  (obj a1 message #1 (pos 350 80))
+  (obj a2 message #2 (pos 420 80))
+  (obj enc ambienc~ 2 (pos 20 130))
+  (obj bin binaural~ 2 (pos 20 180))
+  (obj l outlet~ (pos 20 230))
+  (obj r outlet~ (pos 120 230))
+  (connect in 0 enc 0)
+  (connect az 0 enc 1)
+  (connect el 0 enc 2)
+  (connect lb 0 a1 0)
+  (connect lb 0 a2 0)
+  (connect a1 0 enc 1)
+  (connect a2 0 enc 2)
+  (connect enc 0 bin 0)
+  (connect enc 1 bin 1)
+  (connect enc 2 bin 2)
+  (connect enc 3 bin 3)
+  (connect enc 4 bin 4)
+  (connect enc 5 bin 5)
+  (connect enc 6 bin 6)
+  (connect enc 7 bin 7)
+  (connect enc 8 bin 8)
+  (connect bin 0 l 0)
+  (connect bin 1 r 0))
