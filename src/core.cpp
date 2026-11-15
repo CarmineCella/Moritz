@@ -16,7 +16,7 @@
 #include <set>
 #include <sstream>
 
-namespace mlsp {
+namespace moritz {
 
 double now() {
     using namespace std::chrono;
@@ -261,6 +261,10 @@ std::function<void(Patch*)> Patch::onDestroyed;
 Patch::Patch() = default;
 
 Patch::~Patch() {
+    if (!extras.empty()) {                 // before the timers they may hold are gone
+        std::lock_guard<std::mutex> lk(dspMutex);
+        extras.clear();
+    }
     if (onDestroyed) onDestroyed(this);
     if (parent) {
         // an inner patch dies with its owner box, while the root holds the
@@ -284,6 +288,31 @@ void Patch::forEachBox(const std::function<void(Box*)>& fn) {
         fn(b.get());
         for (Patch* c : b->inners()) c->forEachBox(fn);
     }
+    for (auto& e : extras) e->forEachBox(fn);
+}
+
+Patch* Patch::addExtra(std::unique_ptr<Patch> p) {
+    Patch* raw = p.get();
+    raw->parent = this;
+    std::lock_guard<std::mutex> lk(mutex());
+    extras.push_back(std::move(p));
+    return raw;
+}
+
+void Patch::removeExtra(Patch* p) {
+    std::unique_ptr<Patch> gone;
+    {
+        std::lock_guard<std::mutex> lk(mutex());
+        for (auto it = extras.begin(); it != extras.end(); ++it)
+            if (it->get() == p) {
+                gone = std::move(*it);
+                extras.erase(it);
+                break;
+            }
+        recompile();          // nothing may point into it any more
+    }
+    gone.reset();
+    structureChanged();
 }
 
 void Patch::structureChanged() {
@@ -511,6 +540,8 @@ bool Patch::needsInput() const {
         for (Patch* c : b->inners())
             if (c->needsInput()) return true;
     }
+    for (auto& e : extras)
+        if (e->needsInput()) return true;
     return false;
 }
 
@@ -544,11 +575,14 @@ void Patch::compile() {
             indeg[b.get()] = 0;
         }
     }
+    std::map<Box*, std::vector<Box*>> next;     // edges of the signal graph
     for (auto& c : conns) {
         if (c.from->outs[c.outlet] != Port::Signal) continue;   // control and tap links
         c.to->inSrc[c.inlet].push_back(c.from->sigOut(c.outlet));
+        next[c.from].push_back(c.to);
         indeg[c.to]++;
     }
+    addSendReceiveEdges(sig, next, indeg);
     std::vector<Box*> order, ready;
     for (Box* b : sig)
         if (indeg[b] == 0) ready.push_back(b);
@@ -556,9 +590,8 @@ void Patch::compile() {
         Box* b = ready.front();
         ready.erase(ready.begin());
         order.push_back(b);
-        for (auto& c : conns)
-            if (c.from == b && b->outs[c.outlet] == Port::Signal && --indeg[c.to] == 0)
-                ready.push_back(c.to);
+        for (Box* t : next[b])
+            if (--indeg[t] == 0) ready.push_back(t);
     }
     if (order.size() != sig.size()) {
         dspError = "signal feedback loop: audio disabled for this patch";
@@ -573,6 +606,52 @@ void Patch::compile() {
             }
     }
     for (auto& b : boxes) b->resolve();
+    for (auto& e : extras) e->compile();
+}
+
+namespace {
+// send~ and receive~ names inside a box (itself, or anywhere in its inner patches)
+void signalNames(Box* b, std::set<std::string>& sends, std::set<std::string>& recvs) {
+    if (auto s = b->signalSendName(); !s.empty()) sends.insert(s);
+    if (auto r = b->signalReceiveName(); !r.empty()) recvs.insert(r);
+    for (Patch* c : b->inners())
+        for (auto& x : c->boxes) signalNames(x.get(), sends, recvs);
+}
+}  // namespace
+
+// A box holding a send~ runs before a box holding a receive~ of the same
+// name, unless that would close a loop: then the receive~ reads the previous
+// block (a one-block delay, as in Max).
+void Patch::addSendReceiveEdges(const std::vector<Box*>& sig, std::map<Box*, std::vector<Box*>>& next,
+                                std::map<Box*, int>& indeg) {
+    std::vector<std::pair<Box*, std::set<std::string>>> senders, receivers;
+    for (Box* b : sig) {
+        std::set<std::string> s, r;
+        signalNames(b, s, r);
+        if (!s.empty()) senders.push_back({b, s});
+        if (!r.empty()) receivers.push_back({b, r});
+    }
+    auto reachesVia = [&](Box* from, Box* to) {
+        std::vector<Box*> stack{from};
+        std::set<Box*> seen;
+        while (!stack.empty()) {
+            Box* x = stack.back();
+            stack.pop_back();
+            if (x == to) return true;
+            if (!seen.insert(x).second) continue;
+            for (Box* y : next[x]) stack.push_back(y);
+        }
+        return false;
+    };
+    for (auto& [s, sn] : senders)
+        for (auto& [r, rn] : receivers) {
+            if (s == r) continue;
+            bool shared = false;
+            for (auto& n : sn) shared = shared || rn.count(n);
+            if (!shared || reachesVia(r, s)) continue;
+            next[s].push_back(r);
+            indeg[r]++;
+        }
 }
 
 void Patch::rebuild() {
@@ -653,6 +732,7 @@ void Patch::process(const float* in, int inCh, float* out, int outCh, int frames
         int n = std::min(dsp::kBlock, frames - off);
         ioOffset = off;
         for (Box* b : chain_) b->dsp(n);
+        for (auto& e : extras) e->runChain(n);
         ++blockCount;
     }
     for (size_t k = 0, N = (size_t)frames * outCh; k < N; ++k)
@@ -823,4 +903,4 @@ bool Patch::load(const SExpr& form, std::string& err) {
     return true;
 }
 
-}  // namespace mlsp
+}  // namespace moritz

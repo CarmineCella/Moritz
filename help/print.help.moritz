@@ -1,0 +1,18 @@
+; print.help.moritz - help for print
+(patch
+  (obj title comment "print [name]: writes every message it gets to the console, as name: message" (pos 20 12))
+  (obj sub comment "Open the console to see it: Patch > Console (Shift+Cmd+M). Without a name, the lines start with print:" (pos 20 34))
+  (obj m1 message "hello world" (pos 20 70))
+  (obj m2 message "1 2 3" (pos 115 70))
+  (obj b button (pos 175 70))
+  (obj p1 print (pos 20 115))
+  (obj cp1 comment "prints  print: hello world,  print: 1 2 3  or  print: bang" (pos 85 116))
+  (obj num flonum (pos 20 165))
+  (obj cnum comment "drag me" (pos 85 166))
+  (obj p2 print pitch (pos 20 205))
+  (obj cp2 comment "prints  pitch: 60  and so on" (pos 110 206))
+  (obj tip comment "Give each print its own name to tell the lines apart. Errors (a bad expr, a missing file) show up there too." (pos 20 255))
+  (connect m1 0 p1 0)
+  (connect m2 0 p1 0)
+  (connect b 0 p1 0)
+  (connect num 0 p2 0))

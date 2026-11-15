@@ -7,14 +7,17 @@
 #include <cstdio>
 
 #include <algorithm>
+#include <filesystem>
+#include <map>
+#include <set>
 
-namespace mlsp {
+namespace moritz {
 
 namespace {
 
 // menu order of the groups; classes keep their registration order inside one
-const char* const kGroups[] = {"Oscillators", "Filters", "Signal Math", "Delay", "Samples",
-                               "Spectral", "Analysis", "I/O", "Timing", "Control Math",
+const char* const kGroups[] = {"Oscillators", "Filters", "Signal Math", "Signal Routing", "Delay", "Samples",
+                               "Spectral", "Analysis", "I/O", "MIDI", "Timing", "Control Math",
                                "Routing", "Patching", "Interface"};
 
 int groupRank(const char* g) {
@@ -30,6 +33,7 @@ const ClassTable& classDefs() {
         registerSampleObjects(v);
         registerControlObjects(v);
         registerPatcherObjects(v);
+        registerMidiObjects(v);
         std::stable_sort(v.begin(), v.end(), [](const ClassDef& a, const ClassDef& b) {
             return groupRank(a.group) < groupRank(b.group);
         });
@@ -51,21 +55,102 @@ std::vector<std::string>& abstractionPath() {
     return v;
 }
 
-// An abstraction "name" is the file name.mlsp, looked up next to the patch
+std::vector<std::string>& libraryPath() {
+    static std::vector<std::string> v;
+    return v;
+}
+
+std::vector<std::string>& helpPath() {
+    static std::vector<std::string> v;
+    return v;
+}
+
+namespace {
+bool fileExists(const std::string& p) {
+    if (std::FILE* f = std::fopen(p.c_str(), "rb")) { std::fclose(f); return true; }
+    return false;
+}
+bool endsWith(const std::string& s, const std::string& end) {
+    return s.size() >= end.size() && s.compare(s.size() - end.size(), end.size(), end) == 0;
+}
+}  // namespace
+
+std::vector<std::string> libraryNames() {
+    std::set<std::string> names;
+    for (auto& d : libraryPath()) {
+        std::error_code ec;
+        for (auto& e : std::filesystem::directory_iterator(d, ec)) {
+            std::string f = e.path().filename().string();
+            if (f[0] == '.' || endsWith(f, ".help.moritz") || endsWith(f, ".help.mlsp")) continue;
+            if (endsWith(f, ".moritz")) names.insert(f.substr(0, f.size() - 7));
+            else if (endsWith(f, ".mlsp")) names.insert(f.substr(0, f.size() - 5));   // before the rename
+        }
+    }
+    return {names.begin(), names.end()};
+}
+
+// Short names, and objects documented together in one help patch.
+std::string helpName(const std::string& cls) {
+    static const std::map<std::string, std::string> m = [] {
+        std::map<std::string, std::string> r;
+        auto group = [&](const char* file, std::initializer_list<const char*> members) {
+            for (auto c : members) r[c] = file;
+        };
+        group("arith~", {"+~", "-~", "*~", "/~"});
+        group("arith", {"+", "-", "*", "/", "%"});
+        group("compare", {"==", "!=", ">", "<", ">=", "<="});
+        group("convert", {"mtof", "ftom", "dbtoa", "atodb"});
+        group("saw~", {"saw~", "rect~", "tri~"});
+        group("clip~", {"clip~", "abs~", "tanh~"});
+        group("tapin~", {"tapin~", "tapout~"});
+        group("snapshot~", {"snapshot~", "peakamp~"});
+        group("dac~", {"dac~", "adc~"});
+        group("pfft~", {"pfft~", "fftin~", "fftout~"});
+        group("cartopol~", {"cartopol~", "poltocar~"});
+        group("framedelta~", {"framedelta~", "frameaccum~"});
+        group("poly~", {"poly~", "thispoly~"});
+        group("inlet", {"inlet", "inlet~", "outlet", "outlet~", "in", "in~", "out", "out~"});
+        group("send", {"send", "receive", "s", "r"});
+        group("send~", {"send~", "receive~"});
+        group("selector~", {"selector~", "gate~"});
+        group("pack", {"pack", "unpack"});
+        group("int", {"int", "float", "i", "f"});
+        group("number", {"number", "flonum"});
+        group("button", {"button", "toggle"});
+        group("meter~", {"meter~", "scope~"});
+        group("ctlin", {"ctlin", "bendin", "pgmin"});
+        group("noteout", {"noteout", "ctlout"});
+        r["t"] = "trigger";
+        r["sel"] = "select";
+        r["del"] = "delay";
+        return r;
+    }();
+    auto it = m.find(cls);
+    return it == m.end() ? cls : it->second;
+}
+
+std::string findHelp(const std::string& cls) {
+    if (cls.empty() || cls.find('/') != std::string::npos) return "";
+    for (auto* dirs : {&helpPath(), &libraryPath()})
+        for (auto& d : *dirs)
+            for (const char* ext : {".help.moritz", ".help.mlsp"})
+                if (std::string f = d + "/" + helpName(cls) + ext; fileExists(f)) return f;
+    return "";
+}
+
+// An abstraction "name" is the file name.moritz (or name.mlsp, from before
+// the rename to Moritz), looked up next to the patch
 // (and the patches around it), then in abstractionPath().
 std::string findAbstraction(const std::string& name, const Patch* context) {
     if (name.empty() || name.find('/') != std::string::npos) return "";
-    auto exists = [](const std::string& p) {
-        if (std::FILE* f = std::fopen(p.c_str(), "rb")) { std::fclose(f); return true; }
-        return false;
-    };
     std::vector<std::string> dirs;
     for (const Patch* p = context; p; p = p->parent)
         if (!p->dir.empty()) dirs.push_back(p->dir);
+    for (auto& d : libraryPath()) dirs.push_back(d);
     for (auto& d : abstractionPath()) dirs.push_back(d);
     for (auto& d : dirs) {
-        std::string f = d + "/" + name + ".mlsp";
-        if (exists(f)) return f;
+        for (const char* ext : {".moritz", ".mlsp"})
+            if (std::string f = d + "/" + name + ext; fileExists(f)) return f;
     }
     return "";
 }
@@ -103,4 +188,4 @@ const char* describeClass(const std::string& cls) {
     return c ? c->desc : "";
 }
 
-}  // namespace mlsp
+}  // namespace moritz

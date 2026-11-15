@@ -1,0 +1,27 @@
+; pv-rec.moritz - phase vocoder analysis, run by pfft~ in pvoc.moritz.
+; For every frame it stores each bin's amplitude, its phase difference from
+; the previous frame (the bin's true frequency) and its phase, in three
+; buffer~s. count~ numbers the bins frame after frame: frame * 512 + bin.
+(patch
+  (obj c0 comment "analysis: amplitude, phase difference and phase into buffers" (pos 20 10))
+  (obj in fftin~ 1 (pos 20 45))
+  (obj cp cartopol~ (pos 20 90))
+  (obj fd framedelta~ (pos 120 135))
+  (obj pw phasewrap~ (pos 120 175))
+  (obj go inlet (pos 330 45))
+  (obj c1 comment "bang: record 980 frames" (pos 380 46))
+  (obj cnt count~ 0 501760 0 (pos 330 90))
+  (obj pa poke~ pvamp (pos 20 230))
+  (obj pp poke~ pvphase (pos 120 230))
+  (obj pb poke~ pvabs (pos 240 230))
+  (connect in 0 cp 0)
+  (connect in 1 cp 1)
+  (connect cp 0 pa 0)
+  (connect cp 1 fd 0)
+  (connect cp 1 pb 0)
+  (connect fd 0 pw 0)
+  (connect pw 0 pp 0)
+  (connect go 0 cnt 0)
+  (connect cnt 0 pa 1)
+  (connect cnt 0 pp 1)
+  (connect cnt 0 pb 1))

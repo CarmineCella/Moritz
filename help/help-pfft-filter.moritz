@@ -1,0 +1,23 @@
+; help-pfft-filter.moritz - spectral patch for pfft~.help.moritz, run by pfft~
+; once per FFT frame, one bin per sample. Bins below the cutoff pass
+; unchanged; the others are set to 0 (a brick-wall low-pass).
+(patch
+  (obj c0 comment "brick-wall low-pass: keep the bins below the cutoff, silence the rest" (pos 20 10))
+  (obj in fftin~ 1 (pos 20 45))
+  (obj c1 comment "real part, imaginary part, bin number" (pos 90 46))
+  (obj cut inlet (pos 360 45))
+  (obj c2 comment "cutoff (bins)" (pos 400 46))
+  (obj mask expr~ "$v1 < $v2" (pos 240 100))
+  (obj c3 comment "1 below the cutoff, else 0" (pos 355 101))
+  (obj re *~ (pos 20 150))
+  (obj im *~ (pos 120 150))
+  (obj out fftout~ 1 (pos 20 200))
+  (obj c4 comment "real part, imaginary part" (pos 100 201))
+  (connect in 0 re 0)
+  (connect in 1 im 0)
+  (connect in 2 mask 0)
+  (connect cut 0 mask 1)
+  (connect mask 0 re 1)
+  (connect mask 0 im 1)
+  (connect re 0 out 0)
+  (connect im 0 out 1))

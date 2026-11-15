@@ -20,13 +20,16 @@
 #ifdef __APPLE__
 #include <FL/platform.H>
 #include <mach-o/dyld.h>
+#elif defined(__linux__)
+#include <climits>
+#include <unistd.h>
 #endif
 
-#ifndef MINLSP_VERSION
-#define MINLSP_VERSION "dev"
+#ifndef MORITZ_VERSION
+#define MORITZ_VERSION "dev"
 #endif
 
-namespace mlsp {
+namespace moritz {
 
 namespace {
 #ifdef __APPLE__
@@ -36,7 +39,7 @@ constexpr int kMenuH = 25;
 #endif
 constexpr int kStatusH = 22;
 constexpr int kToolH = 34;
-constexpr const char* kExt = "mlsp";
+constexpr const char* kExt = "moritz";
 
 std::string escapeMenu(const std::string& s) {
     std::string r;
@@ -64,17 +67,37 @@ std::string exeDir() {
             return s.substr(0, s.find_last_of('/'));
         }
     }
+#elif defined(__linux__)
+    char buf[PATH_MAX];
+    ssize_t n = readlink("/proc/self/exe", buf, sizeof buf - 1);
+    if (n > 0) {
+        std::string s(buf, (size_t)n);
+        return s.substr(0, s.find_last_of('/'));
+    }
 #endif
     return ".";
 }
 
 }  // namespace
 
-std::string examplesDir() {
+std::string resourceDir(const std::string& name) {
     std::string d = exeDir();
-    for (std::string c : {d + "/../Resources/examples", d + "/examples"})
+    for (std::string c : {d + "/../Resources/" + name, d + "/" + name})
         if (fl_filename_isdir(c.c_str())) return c;
     return "";
+}
+
+void setupSearchPaths() {
+    libraryPath().clear();
+    abstractionPath().clear();
+    helpPath().clear();
+    if (const char* home = std::getenv("HOME")) {
+        std::string user = std::string(home) + "/Documents/Moritz/library";
+        if (fl_filename_isdir(user.c_str())) libraryPath().push_back(user);
+    }
+    if (std::string d = resourceDir("library"); !d.empty()) libraryPath().push_back(d);
+    if (std::string d = resourceDir("examples"); !d.empty()) abstractionPath().push_back(d);
+    if (std::string d = resourceDir("help"); !d.empty()) helpPath().push_back(d);
 }
 
 namespace {
@@ -88,6 +111,11 @@ void centerOnScreen(Fl_Window* w, Fl_Window* ref = nullptr, int dx = 0, int dy =
     w->position(X + std::max(0, (W - w->w()) / 2) + dx, Y + std::max(0, (H - w->h()) / 2) + dy);
 }
 
+void midiTick(void* d) {          // look for MIDI devices plugged in or out
+    static_cast<MainWindow*>(d)->midi.refresh();
+    Fl::repeat_timeout(1.0, midiTick, d);
+}
+
 struct NewItem {
     MainWindow* win;
     std::string cls;
@@ -95,7 +123,7 @@ struct NewItem {
 }  // namespace
 
 MainWindow::MainWindow(int w, int h)
-    : Fl_Double_Window(w, h, "minlsp"), audio(patch) {
+    : Fl_Double_Window(w, h, "Moritz"), audio(patch) {
     menu_ = new Fl_Sys_Menu_Bar(0, 0, w, kMenuH);
     auto* bar = new Fl_Group(0, kMenuH, w, kToolH);
     bar->box(FL_FLAT_BOX);
@@ -131,6 +159,14 @@ MainWindow::MainWindow(int w, int h)
         return std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
     };
     patch.onSchedule = [this] { armTimer(); };
+    // MIDI: RtMidi's thread wakes the GUI thread, which hands the messages to
+    // the patch; noteout & co. send through the engine. Devices are checked
+    // once a second, so plugging one in just works.
+    midi.wake = [this] { Fl::awake([](void* d) { static_cast<MainWindow*>(d)->midi.drain(); }, this); };
+    midi.onMessage = [this](const std::vector<unsigned char>& m) { patch.midiIn(m); };
+    patch.onMidiOut = [this](const std::vector<unsigned char>& m) { midi.send(m); };
+    midi.refresh();
+    Fl::add_timeout(1.0, midiTick, this);
     patch.onStructure = [this] {
         audio.updateInputNeed();
         refreshStatus();
@@ -147,12 +183,14 @@ MainWindow::MainWindow(int w, int h)
     centerOnScreen(this);
     updateTitle();
     setAudio(true);
-    log("minlsp " MINLSP_VERSION " - created by Carmine-Emanuele Cella (2026)");
+    log("Moritz " MORITZ_VERSION " - created by Carmine-Emanuele Cella (2026)");
     log("this console shows print objects, errors, audio and file events");
     setStatus("double-click to create an object · Cmd+E toggles edit mode");
 }
 
 MainWindow::~MainWindow() {
+    Fl::remove_timeout(midiTick, this);
+    midi.wake = nullptr;
     patch.onDsp = nullptr;
     audio.stop();
     Patch::onDestroyed = nullptr;
@@ -186,15 +224,26 @@ void MainWindow::buildMenu() {
                    },
                    items.back().get());
     }
+    for (auto& name : libraryNames()) {                // abstractions in the libraries
+        items.push_back(std::make_unique<NewItem>(NewItem{this, name}));
+        std::string path = "Patch/New/Library/" + escapeMenu(name);
+        menu_->add(path.c_str(), 0,
+                   [](Fl_Widget*, void* d) {
+                       auto it = static_cast<NewItem*>(d);
+                       it->win->activeCanvas()->newBoxAtMouse(it->cls);
+                   },
+                   items.back().get());
+    }
     menu_->add("Patch/Edit Mode", FL_COMMAND + 'e', MW_CB(toggleLock), this, FL_MENU_TOGGLE);
     menu_->add("Patch/Audio On", FL_COMMAND + '/', MW_CB(toggleAudio), this,
                FL_MENU_TOGGLE | FL_MENU_DIVIDER);
-    menu_->add("Patch/Audio Setup...", 0, MW_CB(audioSetup), this, FL_MENU_DIVIDER);
+    menu_->add("Patch/Audio Setup...", 0, MW_CB(audioSetup), this);
+    menu_->add("Patch/MIDI Setup...", 0, MW_CB(midiSetup), this, FL_MENU_DIVIDER);
     menu_->add("Patch/Console", FL_COMMAND + FL_SHIFT + 'm', MW_CB(showConsole), this);
 #ifdef __APPLE__
-    fl_mac_set_about(MW_CB(about), this);          // minlsp > About minlsp
+    fl_mac_set_about(MW_CB(about), this);          // Moritz > About Moritz
 #else
-    menu_->add("Help/About minlsp", 0, MW_CB(about), this);
+    menu_->add("Help/About Moritz", 0, MW_CB(about), this);
 #endif
 #undef MW_CB
 }
@@ -243,7 +292,7 @@ void MainWindow::armTimer() {
 
 void MainWindow::showConsole() {
     if (!console_) {
-        console_ = new Fl_Double_Window(560, 320, "minlsp Console");
+        console_ = new Fl_Double_Window(560, 320, "Moritz Console");
         centerOnScreen(console_, this);
         console_->color(kStatusBg);
         consoleBuf_ = new Fl_Text_Buffer();
@@ -297,7 +346,7 @@ void MainWindow::setStatus(const std::string& s) {
 
 void MainWindow::updateTitle() {
     std::string t = (path_.empty() ? std::string("Untitled") : baseName(path_)) +
-                    (dirty_ ? " — edited" : "") + " — minlsp";
+                    (dirty_ ? " — edited" : "") + " — Moritz";
     copy_label(t.c_str());
 }
 
@@ -346,7 +395,7 @@ void MainWindow::closeFront() {
 }
 
 void MainWindow::about() {
-    Fl_Double_Window dlg(360, 330, "About minlsp");
+    Fl_Double_Window dlg(360, 330, "About Moritz");
     centerOnScreen(&dlg, this);
     dlg.color(kBgLocked);
     Fl_Box icon(116, 18, 128, 128);
@@ -368,8 +417,8 @@ void MainWindow::about() {
         b->labelcolor(c);
         return b;
     };
-    text(152, 30, "minlsp", 24, FL_HELVETICA_BOLD, kText);
-    text(182, 18, ("version " MINLSP_VERSION), 12, FL_HELVETICA, kDim);
+    text(152, 30, "Moritz", 24, FL_HELVETICA_BOLD, kText);
+    text(182, 18, ("version " MORITZ_VERSION), 12, FL_HELVETICA, kDim);
     text(206, 20, "A minimal Max/MSP-style patcher", 13, FL_HELVETICA, kText);
     text(236, 20, "Created by Carmine-Emanuele Cella (2026)", 13, FL_HELVETICA_BOLD, kAccent);
     text(258, 18, "BSD 2-Clause License", 11, FL_HELVETICA, kDim);
@@ -403,7 +452,7 @@ void MainWindow::openPatch() {
     Fl_Native_File_Chooser fc;
     fc.title("Open Patch");
     fc.type(Fl_Native_File_Chooser::BROWSE_FILE);
-    fc.filter("minlsp patch\t*.mlsp\nAll files\t*");
+    fc.filter("Moritz patch\t*.{moritz,mlsp}\nAll files\t*");
     std::string dir = path_.empty() ? examplesDir() : path_.substr(0, path_.find_last_of('/'));
     if (!dir.empty()) fc.directory(dir.c_str());
     if (fc.show() != 0) return;
@@ -477,9 +526,9 @@ bool MainWindow::saveAs() {
     Fl_Native_File_Chooser fc;
     fc.title("Save Patch As");
     fc.type(Fl_Native_File_Chooser::BROWSE_SAVE_FILE);
-    fc.filter("minlsp patch\t*.mlsp");
+    fc.filter("Moritz patch\t*.moritz");
     fc.options(Fl_Native_File_Chooser::SAVEAS_CONFIRM | Fl_Native_File_Chooser::USE_FILTER_EXT);
-    fc.preset_file(path_.empty() ? "Untitled.mlsp" : baseName(path_).c_str());
+    fc.preset_file(path_.empty() ? "Untitled.moritz" : baseName(path_).c_str());
     if (fc.show() != 0) return false;
     std::string p = fc.filename();
     const char* ext = fl_filename_ext(p.c_str());
@@ -563,6 +612,50 @@ void MainWindow::setAudio(bool on) {
         audio.stop();
         setStatus("");
     }
+}
+
+void MainWindow::midiSetup() {
+    midi.refresh();
+    std::vector<std::string> ins = midi.inputPorts(), outs = midi.outputPorts();
+    Fl_Double_Window dlg(440, 170, "MIDI Setup");
+    centerOnScreen(&dlg, this);
+    Fl_Choice inC(130, 15, 290, 25, "Input:");
+    Fl_Choice outC(130, 50, 290, 25, "Output:");
+    Fl_Box note(20, 82, 400, 40,
+                "Other programs see Moritz's output as the MIDI port \"Moritz\" "
+                "(macOS and Linux). Devices plugged in later are found automatically.");
+    note.labelsize(11);
+    note.align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE | FL_ALIGN_WRAP);
+    Fl_Button cancel(240, 130, 85, 28, "Cancel");
+    Fl_Return_Button ok(335, 130, 85, 28, "OK");
+    dlg.end();
+    dlg.set_modal();
+
+    inC.add("All inputs", 0, nullptr);
+    for (auto& n : ins) inC.add(escapeMenu(n).c_str(), 0, nullptr);
+    inC.value(0);
+    for (size_t k = 0; k < ins.size(); ++k)
+        if (ins[k] == midi.input()) inC.value((int)k + 1);
+#ifdef _WIN32
+    outC.add("None", 0, nullptr);
+#else
+    outC.add("Virtual port \"Moritz\"", 0, nullptr);
+#endif
+    for (auto& n : outs) outC.add(escapeMenu(n).c_str(), 0, nullptr);
+    outC.value(0);
+    for (size_t k = 0; k < outs.size(); ++k)
+        if (outs[k] == midi.output()) outC.value((int)k + 1);
+
+    int result = 0;
+    ok.callback([](Fl_Widget* w, void* r) { *(int*)r = 1; w->window()->hide(); }, &result);
+    cancel.callback([](Fl_Widget* w, void*) { w->window()->hide(); });
+    dlg.show();
+    while (dlg.shown()) Fl::wait();
+    if (result != 1) return;
+    midi.setInput(inC.value() > 0 ? ins[(size_t)inC.value() - 1] : "");
+    midi.setOutput(outC.value() > 0 ? outs[(size_t)outC.value() - 1] : "");
+    log(midi.describe());
+    if (!midi.error.empty()) { log("MIDI: " + midi.error); midi.error.clear(); }
 }
 
 void MainWindow::audioSetup() {
@@ -664,6 +757,49 @@ void MainWindow::openSubpatch(Box* b) {
     w->show();
 }
 
+void MainWindow::openHelp(const std::string& cls) {
+    std::string path = findHelp(cls);
+    if (path.empty()) {
+        std::string d = describeClass(cls);
+        print(cls + ": " + (d.empty() ? "no help patch" : d + " (no help patch yet)"));
+        return;
+    }
+    for (auto* w : subwindows_)                         // already open: bring it forward
+        if (w->patch && w->patch->file == path && w->canvas->readOnly) { w->show(); return; }
+    std::string src, err;
+    if (!readFile(path, src)) { print("can't read " + path); return; }
+    auto hp = std::make_unique<Patch>();
+    hp->dir = path.substr(0, path.find_last_of('/'));
+    Patch* p = patch.addExtra(std::move(hp));
+    p->file = path;                       // identifies the window; not an abstraction
+    if (!p->load(src, err)) {
+        print(baseName(path) + ": " + err);
+        patch.removeExtra(p);
+        return;
+    }
+    if (!err.empty()) print(baseName(path) + ": " + err);
+    p->loadbangAll();
+    int W = 420, H = 300;
+    fl_font(kFont, kFontSize);
+    for (auto& x : p->boxes) {
+        int bw = std::max(x->w, (int)fl_width(x->label().c_str()) + 24);
+        W = std::max(W, x->x + bw + 40);
+        H = std::max(H, x->y + x->h + 50);
+    }
+    std::string name = baseName(path);
+    name = name.substr(0, name.find(".help."));
+    auto* w = new PatchWindow(this, p, name + " help", true);
+    w->size(std::min(W, 1400), std::min(H + 22, 900));
+    centerOnScreen(w, this, 40, 40);
+    subwindows_.push_back(w);
+    w->show();
+    log("help: " + path);
+}
+
+void MainWindow::closeHelp(Patch* p) {
+    patch.removeExtra(p);   // its destruction closes and deletes the window
+}
+
 void MainWindow::closeSubpatchWindows(Patch* p) {
     for (auto* w : std::vector<PatchWindow*>(subwindows_))
         if (w->patch == p) {
@@ -702,7 +838,7 @@ void MainWindow::reopenSubpatches(const std::vector<std::string>& paths) {
     }
 }
 
-PatchWindow::PatchWindow(MainWindow* main, Patch* p, const std::string& title)
+PatchWindow::PatchWindow(MainWindow* main, Patch* p, const std::string& title, bool help)
     : Fl_Double_Window(560, 420), patch(p) {
     copy_label(title.c_str());
     canvas = new Canvas(0, 0, 560, 420 - kStatusH, main, p);
@@ -712,15 +848,26 @@ PatchWindow::PatchWindow(MainWindow* main, Patch* p, const std::string& title)
     status->labelcolor(kDim);
     status->labelsize(11);
     status->align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE | FL_ALIGN_CLIP);
-    status->copy_label(p->isAbstraction
+    status->copy_label(help ? "  help · runs with your patch while open · right-click any box for its help"
+                       : p->isAbstraction
                            ? "  abstraction · Cmd+S saves its file · Cmd+E toggles edit mode"
                            : "  subpatcher · saved with the main patch · Cmd+E toggles edit mode");
     end();
     resizable(canvas);
     size_range(300, 200);
     canvas->setLocked(true);
+    canvas->readOnly = help;
     p->onRedraw = [this] { canvas->redraw(); };
     p->onStructure = [this] { canvas->redraw(); };
+    if (help) {
+        callback([](Fl_Widget* w, void* d) {
+            if (Fl::event() == FL_SHORTCUT && Fl::event_key() == FL_Escape) return;
+            auto* pw = static_cast<PatchWindow*>(w);
+            pw->hide();
+            if (pw->patch) static_cast<MainWindow*>(d)->closeHelp(pw->patch);   // stops its sound
+        }, main);
+        return;
+    }
     callback([](Fl_Widget* w, void* d) {
         if (Fl::event() == FL_SHORTCUT && Fl::event_key() == FL_Escape) return;
         auto* pw = static_cast<PatchWindow*>(w);
@@ -782,4 +929,4 @@ void ToolButton::draw() {
     fl_draw(label(), X + H + 4, Y, W - H - 8, H, FL_ALIGN_LEFT | FL_ALIGN_INSIDE);
 }
 
-}  // namespace mlsp
+}  // namespace moritz

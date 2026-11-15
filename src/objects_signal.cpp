@@ -8,7 +8,7 @@
 #include <atomic>
 #include <cstring>
 
-namespace mlsp {
+namespace moritz {
 namespace {
 
 // ---------------------------------------------------------------- cycle~
@@ -49,7 +49,7 @@ public:
                 if (m[k].isFloat()) setScalar(1 + (int)k, m[k].f);
             return;
         }
-        if (in > 0 && m[0].isFloat()) setScalar(in, m[0].f);
+        if (m[0].isFloat()) setScalar(in, m[0].f);
     }
     void dsp(int n) override {
         const float* x = sigIn(0, n);
@@ -171,6 +171,179 @@ public:
 
 private:
     std::vector<int> ch_;
+};
+
+// ---------------------------------------------------------------- slide~
+// slide~ [up down]: smooths a signal, y += (x - y) / slide. The slide (in
+// samples) is `up` while the input is above the output and `down` while it
+// is below; 1 (the default) passes the signal through. "reset" jumps to the
+// input.
+class SlideBox : public Box {
+public:
+    explicit SlideBox(const Message& a) {
+        setPorts({P::Signal, P::Signal, P::Signal}, {P::Signal});
+        setScalar(1, argf(a, 0, 1.f));
+        setScalar(2, argf(a, 1, 1.f));
+    }
+    void message(int in, const Message& m) override {
+        if (m[0].is("reset")) reset_.store(true);
+        else if (m[0].isFloat()) setScalar(in, m[0].f);
+    }
+    void dsp(int n) override {
+        const float *x = sigIn(0, n), *up = sigIn(1, n), *down = sigIn(2, n);
+        float* out = sigOut(0);
+        if (reset_.exchange(false)) y_ = x[0];
+        for (int i = 0; i < n; ++i) {
+            float s = std::max(1.f, x[i] > y_ ? up[i] : down[i]);
+            y_ += (x[i] - y_) / s;
+            if (!std::isfinite(y_)) y_ = 0.f;
+            out[i] = y_;
+        }
+    }
+
+private:
+    float y_ = 0.f;
+    std::atomic<bool> reset_{false};
+};
+
+// ---------------------------------------------------------------- selector~ / gate~
+// Both switch over 5 ms, so changing the choice never clicks (Max switches
+// at once). Each input or output fades between 0 and 1 on its own.
+struct Fades {
+    std::vector<float> g;
+    // moves g[k] one sample towards target; returns the gain to use
+    static float step(float& g, float target, float inc) {
+        if (g < target) g = std::min(target, g + inc);
+        else if (g > target) g = std::max(target, g - inc);
+        return g;
+    }
+};
+
+// selector~ n [initial]: n signal inlets after the left one; the number in
+// the left inlet picks the one to pass (1..n, 0 = none).
+class SelectorBox : public Box {
+public:
+    explicit SelectorBox(const Message& a) {
+        int n = std::clamp((int)argf(a, 0, 1.f), 1, 64);
+        std::vector<Port> in(1, P::Control);
+        in.insert(in.end(), (size_t)n, P::Signal);
+        setPorts(in, {P::Signal});
+        fades_.g.assign((size_t)n, 0.f);
+        sel_ = std::clamp((int)argf(a, 1, 0.f), 0, n);
+        for (int k = 0; k < n; ++k) fades_.g[(size_t)k] = k + 1 == sel_ ? 1.f : 0.f;
+    }
+    void message(int in, const Message& m) override {
+        if (!m[0].isFloat()) return;
+        if (in == 0) sel_.store(std::clamp((int)m[0].f, 0, numIns() - 1));
+        else setScalar(in, m[0].f);
+    }
+    void dsp(int n) override {
+        float* out = sigOut(0);
+        dsp::fill(out, 0.f, n);
+        float inc = (float)(1.0 / (0.005 * patch->root()->sampleRate));
+        int sel = sel_.load(std::memory_order_relaxed);
+        for (int k = 0; k + 1 < numIns(); ++k) {
+            float& g = fades_.g[(size_t)k];
+            float target = k + 1 == sel ? 1.f : 0.f;
+            if (g == 0.f && target == 0.f) continue;
+            const float* x = sigIn(k + 1, n);
+            for (int i = 0; i < n; ++i) out[i] += Fades::step(g, target, inc) * x[i];
+        }
+    }
+
+private:
+    Fades fades_;
+    std::atomic<int> sel_{0};
+};
+
+// gate~ n [initial]: the signal in the right inlet goes to the outlet picked
+// by the number in the left inlet (1..n, 0 = closed).
+class GateSigBox : public Box {
+public:
+    explicit GateSigBox(const Message& a) {
+        int n = std::clamp((int)argf(a, 0, 1.f), 1, 64);
+        setPorts({P::Control, P::Signal}, std::vector<Port>((size_t)n, P::Signal));
+        fades_.g.assign((size_t)n, 0.f);
+        sel_ = std::clamp((int)argf(a, 1, 0.f), 0, n);
+        for (int k = 0; k < n; ++k) fades_.g[(size_t)k] = k + 1 == sel_ ? 1.f : 0.f;
+    }
+    void message(int in, const Message& m) override {
+        if (!m[0].isFloat()) return;
+        if (in == 0) sel_.store(std::clamp((int)m[0].f, 0, numOuts()));
+        else setScalar(1, m[0].f);
+    }
+    void dsp(int n) override {
+        const float* x = sigIn(1, n);
+        float inc = (float)(1.0 / (0.005 * patch->root()->sampleRate));
+        int sel = sel_.load(std::memory_order_relaxed);
+        for (int k = 0; k < numOuts(); ++k) {
+            float* out = sigOut(k);
+            float& g = fades_.g[(size_t)k];
+            float target = k + 1 == sel ? 1.f : 0.f;
+            if (g == 0.f && target == 0.f) { dsp::fill(out, 0.f, n); continue; }
+            for (int i = 0; i < n; ++i) out[i] = Fades::step(g, target, inc) * x[i];
+        }
+    }
+
+private:
+    Fades fades_;
+    std::atomic<int> sel_{0};
+};
+
+// ---------------------------------------------------------------- send~ / receive~
+// send~ name: makes its signal available to every receive~ name, in any
+// subpatcher; receive~ sums all the send~s of its name. "set name" changes
+// the name. The chain runs send~ first, so there is no delay, except around
+// a feedback loop through them (one block, 64 samples).
+class SendSigBox : public Box {
+public:
+    explicit SendSigBox(const Message& a) : name_(argstr(a, 0)) { setPorts({P::Signal}, {}); }
+    std::string signalSendName() const override { return name_; }
+    void resolve() override { buf_.assign((size_t)patch->vectorSize(), 0.f); frames_ = 0; }
+    void message(int, const Message& m) override {
+        if (m[0].is("set") && m.size() > 1) { name_ = m[1].str(); patch->rebuild(); }
+    }
+    void dsp(int n) override {
+        const float* x = sigIn(0, n);
+        int k = std::min(n, (int)buf_.size());
+        std::copy(x, x + k, buf_.begin());
+        frames_ = k;
+    }
+    const float* data() const { return buf_.data(); }
+    int frames() const { return frames_; }
+
+private:
+    std::string name_;
+    std::vector<float> buf_;
+    int frames_ = 0;
+};
+
+class ReceiveSigBox : public Box {
+public:
+    explicit ReceiveSigBox(const Message& a) : name_(argstr(a, 0)) { setPorts({P::Control}, {P::Signal}); }
+    std::string signalReceiveName() const override { return name_; }
+    void resolve() override {
+        sends_.clear();
+        patch->root()->forEachBox([&](Box* b) {
+            if (auto s = dynamic_cast<SendSigBox*>(b))
+                if (s->signalSendName() == name_) sends_.push_back(s);
+        });
+    }
+    void message(int, const Message& m) override {
+        if (m[0].is("set") && m.size() > 1) { name_ = m[1].str(); patch->rebuild(); }
+    }
+    void dsp(int n) override {
+        float* out = sigOut(0);
+        dsp::fill(out, 0.f, n);
+        for (auto* s : sends_) {
+            const float* x = s->data();
+            for (int i = 0, k = std::min(n, s->frames()); i < k; ++i) out[i] += x[i];
+        }
+    }
+
+private:
+    std::string name_;
+    std::vector<SendSigBox*> sends_;
 };
 
 // ---------------------------------------------------------------- dspstatus~
@@ -315,7 +488,7 @@ public:
     }
     void message(int in, const Message& m) override {
         if (m[0].is("clear")) { std::lock_guard<std::mutex> lk(patch->mutex()); f_ = dsp::Biquad(); return; }
-        if (in > 0 && m[0].isFloat()) setScalar(in, m[0].f);
+        if (m[0].isFloat()) setScalar(in, m[0].f);
     }
     void dsp(int n) override {
         const float* x = sigIn(0, n);
@@ -338,7 +511,7 @@ public:
         setScalar(2, argf(a, 1, 0.5f));
     }
     void message(int in, const Message& m) override {
-        if (in > 0 && m[0].isFloat()) setScalar(in, m[0].f);
+        if (m[0].isFloat()) setScalar(in, m[0].f);
     }
     void dsp(int n) override {
         const float* x = sigIn(0, n);
@@ -365,7 +538,7 @@ public:
         if (in == 0 && m.size() >= 5) {
             for (int k = 0; k < 5; ++k)
                 if (m[(size_t)k].isFloat()) setScalar(1 + k, m[(size_t)k].f);
-        } else if (in > 0 && m[0].isFloat()) {
+        } else if (m[0].isFloat()) {
             setScalar(in, m[0].f);
         }
     }
@@ -388,7 +561,7 @@ public:
         setScalar(1, argf(a, 0, -1.f));
         setScalar(2, argf(a, 1, 1.f));
     }
-    void message(int in, const Message& m) override { if (in > 0 && m[0].isFloat()) setScalar(in, m[0].f); }
+    void message(int in, const Message& m) override { if (m[0].isFloat()) setScalar(in, m[0].f); }
     void dsp(int n) override {
         const float *x = sigIn(0, n), *lo = sigIn(1, n), *hi = sigIn(2, n);
         float* y = sigOut(0);
@@ -492,7 +665,7 @@ public:
     }
     void message(int in, const Message& m) override {
         if (m[0].is("clear")) { std::lock_guard<std::mutex> lk(patch->mutex()); xs_.clear(); ys_.clear(); return; }
-        if (in > 0 && m[0].isFloat()) setScalar(in, m[0].f);
+        if (m[0].isFloat()) setScalar(in, m[0].f);
     }
     void dsp(int n) override {
         const float *x = sigIn(0, n), *dm = sigIn(1, n), *ga = sigIn(2, n), *gb = sigIn(3, n),
@@ -529,7 +702,7 @@ public:
     }
     void message(int in, const Message& m) override {
         if (m[0].is("clear")) { std::lock_guard<std::mutex> lk(patch->mutex()); xs_.clear(); ys_.clear(); return; }
-        if (in > 0 && m[0].isFloat()) setScalar(in, m[0].f);
+        if (m[0].isFloat()) setScalar(in, m[0].f);
     }
     void dsp(int n) override {
         const float *x = sigIn(0, n), *dm = sigIn(1, n), *g = sigIn(2, n);
@@ -687,8 +860,13 @@ void registerSignalObjects(ClassTable& t) {
         {"allpass~", "Delay", "allpass filter (max, delay, gain)", with<AllpassBox>()},
         {"adc~", "I/O", "audio input", with<AdcBox>()},
         {"dac~", "I/O", "audio output", with<DacBox>()},
+        {"slide~", "Filters", "smooth a signal: slide up, slide down (samples)", with<SlideBox>()},
+        {"selector~", "Signal Routing", "pass one of n signals: n [initial]", with<SelectorBox>()},
+        {"gate~", "Signal Routing", "send a signal to one of n outlets: n [initial]", with<GateSigBox>()},
+        {"send~", "Signal Routing", "send a signal by name", with<SendSigBox>()},
+        {"receive~", "Signal Routing", "receive signals sent by name", with<ReceiveSigBox>()},
         {"dspstatus~", "I/O", "audio state: on, CPU, sample rate, buffer [ms]", with<DspStatusBox>()},
     });
 }
 
-}  // namespace mlsp
+}  // namespace moritz

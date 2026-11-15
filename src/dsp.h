@@ -1,5 +1,5 @@
 // Copyright (c) 2026 Carmine-Emanuele Cella. SPDX-License-Identifier: BSD-2-Clause
-// dsp.h — signal-processing building blocks for minlsp
+// dsp.h — signal-processing building blocks for Moritz
 //
 // Self-contained: no GUI, no audio-device code. Every unit processes one
 // block of at most kBlock samples. Units are driven from the audio thread;

@@ -1,13 +1,13 @@
 // Copyright (c) 2026 Carmine-Emanuele Cella. SPDX-License-Identifier: BSD-2-Clause
 // audio.cpp — the miniaudio engine driving Patch::process()
 
-#include "minlsp.h"
+#include "moritz.h"
 
 #include <algorithm>
 #include <chrono>
 #include <cstring>
 
-namespace mlsp {
+namespace moritz {
 
 
 AudioEngine::AudioEngine(Patch& p) : patch_(p) {
@@ -121,4 +121,4 @@ void AudioEngine::updateInputNeed() {
     }
 }
 
-}  // namespace mlsp
+}  // namespace moritz

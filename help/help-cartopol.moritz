@@ -1,0 +1,26 @@
+; help-cartopol.moritz - spectral patch for cartopol~.help.moritz, run by pfft~
+; once per FFT frame. Each bin keeps its amplitude; its phase is the
+; original one, the same in every frame (bin x pi), or random.
+(patch
+  (obj c0 comment "keep each bin's amplitude, replace its phase" (pos 20 10))
+  (obj in fftin~ 1 (pos 20 45))
+  (obj mode inlet (pos 420 45))
+  (obj c2 comment "0 original, 1 fixed, 2 random" (pos 465 46))
+  (obj cp cartopol~ (pos 20 90))
+  (obj c1 comment "amplitude, phase (-pi to pi)" (pos 112 91))
+  (obj nz noise~ (pos 320 90))
+  (obj c3 comment "random, -1 to 1" (pos 380 91))
+  (obj c4 comment "mode 1: bin x pi, the same phases every frame (one pulse mid-frame)" (pos 100 206))
+  (obj ph expr~ "$v1 * ($v4 == 0) + $v2 * 3.14159 * ($v4 == 1) + $v3 * 3.14159 * ($v4 == 2)" (pos 20 140))
+  (obj pc poltocar~ (pos 20 205))
+  (obj out fftout~ 1 (pos 20 245))
+  (connect in 0 cp 0)
+  (connect in 1 cp 1)
+  (connect cp 0 pc 0)
+  (connect cp 1 ph 0)
+  (connect nz 0 ph 2)
+  (connect mode 0 ph 3)
+  (connect in 2 ph 1)
+  (connect ph 0 pc 1)
+  (connect pc 0 out 0)
+  (connect pc 1 out 1))

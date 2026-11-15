@@ -6,7 +6,7 @@
 
 #include <map>
 
-namespace mlsp {
+namespace moritz {
 
 namespace {
 
@@ -85,7 +85,7 @@ const std::map<std::string, PortDocs>& docs() {
         {"frameaccum~", {{"value to add each frame", "value to restart from", "reset: where not 0, the bin restarts"},
                          {"running sum per bin"}}},
         {"pvlock~", {{"amplitude (peaks are found here)", "analysed phase", "phase difference (frequency)",
-                      "reset: where not 0, output the analysed phase"},
+                      "reset: not 0 anywhere in a frame restarts the whole frame from the analysed phase"},
                      {"resynthesis phase, locked to the peaks"}}},
         {"lrshift~", {{"signal (in pfft~: one frame)"}, {"shifted by n samples (bins)"}}},
         {"phasewrap~", {{"phase"}, {"phase wrapped to -pi..pi"}}},
@@ -99,6 +99,31 @@ const std::map<std::string, PortDocs>& docs() {
         // I/O
         {"adc~", {{"start / stop: turn audio on or off"}, {"audio input channel"}}},
         {"dac~", {{"signal to this output channel; start / stop turn audio on or off"}, {}}},
+        {"slide~", {{"signal to smooth; reset jumps to it", "slide up (samples, 1 = none)", "slide down (samples, 1 = none)"},
+                    {"smoothed signal"}}},
+        {"selector~", {{"which input to pass: 1..n, 0 = none (5 ms crossfade)", "signal to choose"},
+                       {"the chosen signal"}}},
+        {"gate~", {{"which outlet gets the signal: 1..n, 0 = closed (5 ms crossfade)", "signal to route"},
+                   {"the signal, when this outlet is chosen"}}},
+        {"send~", {{"signal to send to every receive~ of this name; set name changes it"}, {}}},
+        {"receive~", {{"set name: listen to another send~ name"}, {"sum of the send~s of this name"}}},
+        {"sfrecord~", {{"open file.wav, 1 starts, 0 stops; signal to record (channel 1)", "signal to record (next channel)"},
+                       {"recorded time (ms)"}}},
+        {"waveform~", {{"number: cursor (ms); select start end; set buffer~ name"},
+                       {"selection start (ms)", "selection end (ms)"}}},
+        {"spectroscope~", {{"signal to analyse"}, {}}},
+        {"kslider", {{"pitch (or pitch velocity): lights the key and passes through; set p v; flush; clear",
+                      "velocity for pitches sent to the left inlet"},
+                     {"pitch", "velocity (0 = note-off)"}}},
+        {"notein", {{}, {"pitch", "velocity (0 = note-off)", "channel (1-16)"}}},
+        {"ctlin", {{}, {"controller value (0-127)", "controller number, or channel", "channel (1-16)"}}},
+        {"bendin", {{}, {"pitch bend, 0-127 (64 = centre)", "channel (1-16)"}}},
+        {"pgmin", {{}, {"program number, 1-128", "channel (1-16)"}}},
+        {"noteout", {{"pitch: sends the note (pitch velocity works too)", "velocity (0 = note-off)", "channel (1-16)"}, {}}},
+        {"ctlout", {{"value: sends it (0-127)", "controller number", "channel (1-16)"}, {}}},
+        {"makenote", {{"pitch: note-on now, note-off later; stop, clear", "velocity", "duration (ms)"},
+                      {"pitch", "velocity (0 for the note-off)"}}},
+        {"stripnote", {{"pitch: passes when the velocity is above 0", "velocity"}, {"pitch", "velocity"}}},
         {"dspstatus~", {{"bang: report now; a number: also report every ms while audio runs (0 = off)"},
                         {"1 while audio runs, 0 when off", "CPU load (% of the buffer's time)",
                          "sample rate (Hz)", "I/O buffer size (samples)", "signal vector size (samples)"}}},
@@ -196,14 +221,15 @@ std::string portHelp(const Box* b, bool outlet, int i) {
     } else if (c == "groove~" && outlet && i == nOuts - 1) {
         text = "sync: position in the loop, 0 to 1";
     } else if (b->inner() && c != "p" && c != "pfft~" && c != "poly~") {
-        text = std::string(outlet ? "outlet " : "inlet ") + "of the abstraction " + c + ".mlsp";
+        text = std::string(outlet ? "outlet " : "inlet ") + "of the abstraction " + c + ".moritz";
     } else if (c == "p") {
         text = outlet ? "comes from the subpatcher's outlet boxes (left to right)"
                       : "goes to the subpatcher's inlet boxes (left to right)";
     } else if (c == "poly~") {
         if (outlet) text = kind == "signal" ? "sum of all voices" : "from the voices' outlet";
         else text = kind == "signal" ? "signal to every voice"
-                                     : "note ...: to a free voice; target n; mute n 1/0; other messages to all";
+                                     : "note ...: to a free voice; midinote p v: note-offs reach their voice; "
+                                       "target n; mute n 1/0; other messages to the target voice (all when 0)";
     } else if (c == "pfft~") {
         if (outlet) text = kind == "signal" ? "resynthesised from fftout~ " + std::to_string(i + 1)
                                             : "from an outlet inside";
@@ -225,4 +251,4 @@ std::string portHelp(const Box* b, bool outlet, int i) {
     return head() + "\n" + text;
 }
 
-}  // namespace mlsp
+}  // namespace moritz

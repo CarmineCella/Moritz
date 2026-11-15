@@ -1,0 +1,16 @@
+; comment.help.moritz - help for comment
+(patch
+  (obj title comment "comment: a text note in the patch. It has no inlets or outlets and does nothing" (pos 20 12))
+  (obj sub comment "Edit mode: press c with the mouse over the canvas, type the text, press Return. Double-click a comment to change it." (pos 20 34))
+  (obj sub2 comment "A comment is one line. Its text is kept as typed, commas and semicolons too; a new comment left empty is removed." (pos 20 52))
+  (obj n number 5 (pos 20 90))
+  (obj cn comment "drag this number" (pos 90 91))
+  (obj add + 10 (pos 20 130))
+  (obj cadd comment "+ 10 adds ten to it" (pos 90 131))
+  (obj r number 15 (pos 20 170))
+  (obj cr comment "the result: comments like these explain a patch" (pos 90 171))
+  (obj punct comment "A comment can hold any text: 1, 2, 3; $1 stays as it is, and nothing is sent." (pos 20 225))
+  (obj file comment "In a .moritz file it is written (obj id comment followed by the text in double quotes and (pos x y))." (pos 20 255))
+  (obj file2 comment "Lines in the file that start with a semicolon are file notes and are not shown in the patch." (pos 20 275))
+  (connect n 0 add 0)
+  (connect add 0 r 0))

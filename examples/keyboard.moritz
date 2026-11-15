@@ -1,0 +1,28 @@
+; keyboard.moritz - kslider plays poly~ with "midinote pitch velocity": the
+; note-off (velocity 0) goes to the voice that played the note, so each key
+; sustains while held and releases when let go. The lower keyboard is in
+; toggle mode (third argument 1): click keys to hold a chord, flush releases.
+(patch
+  (obj title comment "kslider -> midinote -> poly~: click and hold keys (locked mode)" (pos 20 12))
+  (obj play kslider 4 36 (pos 20 45))
+  (obj c1 comment "play: notes sound while the mouse is down; drag to glide" (pos 20 104))
+  (obj chord kslider 2 48 1 (pos 20 130))
+  (obj c2 comment "toggle: click to hold, click again to release" (pos 340 135))
+  (obj flush message flush (pos 340 160))
+  (obj pk pack 0 0 (pos 20 210))
+  (obj mn message "midinote $1 $2" (pos 20 240))
+  (obj poly poly~ keyvoice 8 (pos 20 280))
+  (obj rv reverb~ 0.25 2 (pos 20 320))
+  (obj out dac~ (pos 20 365))
+  (obj ml meter~ (pos 200 300))
+  (connect play 0 pk 0)
+  (connect play 1 pk 1)
+  (connect chord 0 pk 0)
+  (connect chord 1 pk 1)
+  (connect flush 0 chord 0)
+  (connect pk 0 mn 0)
+  (connect mn 0 poly 0)
+  (connect poly 0 rv 0)
+  (connect rv 0 out 0)
+  (connect rv 1 out 1)
+  (connect poly 0 ml 0))

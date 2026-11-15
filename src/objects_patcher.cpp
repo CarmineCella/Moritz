@@ -2,12 +2,12 @@
 // objects_patcher.cpp — patches inside patches and spectral processing
 //
 //   p name            subpatcher, saved inline in the parent's file
-//   <name>            abstraction: any name.mlsp next to the patch; its
+//   <name>            abstraction: any name.moritz next to the patch; its
 //                     arguments replace #1..#9 inside, #0 is unique per copy
 //   inlet, inlet~     a subpatcher's inlets, ordered left to right
 //   outlet, outlet~   its outlets
 //   poly~ name n      n copies of an abstraction, with voice allocation
-//   pfft~ name N ov   runs abstraction name.mlsp once per FFT frame (size N,
+//   pfft~ name N ov   runs abstraction name.moritz once per FFT frame (size N,
 //                     overlap ov); inside, fftin~ / fftout~ give and take
 //                     the spectrum, one bin per sample
 //   cartopol~ poltocar~ framedelta~ frameaccum~ phasewrap~   spectral tools
@@ -19,7 +19,7 @@
 #include <atomic>
 #include <map>
 
-namespace mlsp {
+namespace moritz {
 namespace {
 
 // ================================================================ inlets and outlets
@@ -202,7 +202,7 @@ public:
         im_.resize((size_t)N_);
         std::string path = findAbstraction(name_, context);
         std::string err;
-        if (path.empty()) child_->print("pfft~: can't find " + name_ + ".mlsp");
+        if (path.empty()) child_->print("pfft~: can't find " + name_ + ".moritz");
         else if (!loadAbstractionInto(*child_, path, tailOf(a, 3), err) || !err.empty())
             child_->print(path + ": " + err);
         syncPorts();
@@ -371,11 +371,14 @@ void PfftBox::syncPorts() {
 
 // ================================================================ poly~
 
-// poly~ name voices [args...]: `voices` copies of the abstraction name.mlsp
+// poly~ name voices [args...]: `voices` copies of the abstraction name.moritz
 // (args become #1.. in each). Ports come from the inlets/outlets inside
 // (in, in~, out, out~ are the same objects); signal outlets of the voices
 // are summed. Messages to a control inlet:
 //   note ...        the rest goes to a free voice (or steals the oldest)
+//   midinote p v    v > 0: "p v" to a free voice (or the one already playing
+//                   p); v = 0: "p 0" to the voice playing p, so note-offs
+//                   reach the voice their note-on went to
 //   target n        later messages go to voice n only (0 = all voices)
 //   mute n 1|0      stop/restart processing voice n (0 = all)
 //   anything else   to the target voice, or to all voices
@@ -387,12 +390,13 @@ public:
         std::unique_ptr<Patch> patch;
         std::atomic<bool> busy{false}, muted{false}, loud{false};
         uint64_t used = 0;              // note order, for stealing the oldest
+        int pitch = -1;                 // held midinote pitch (GUI thread), -1 = none
     };
 
     PolyBox(const Message& a, Patch* context) : name_(argstr(a, 0)) {
         int n = std::clamp((int)argf(a, 1, 1.f), 1, 128);
         std::string path = findAbstraction(name_, context);
-        if (path.empty() && context) context->print("poly~: can't find " + name_ + ".mlsp");
+        if (path.empty() && context) context->print("poly~: can't find " + name_ + ".moritz");
         for (int k = 0; k < n; ++k) {
             auto v = std::make_unique<Voice>();
             v->patch = std::make_unique<Patch>();
@@ -445,9 +449,28 @@ public:
             int v = pick();
             Voice& x = *voices_[(size_t)v];
             x.used = ++clock_;
+            x.pitch = -1;                           // a stolen voice no longer holds its midinote
             x.loud.store(false);
             x.busy.store(true);
             deliver(v, in, tailOf(m));
+        } else if (m[0].is("midinote") && m.size() > 2 && m[1].isFloat() && m[2].isFloat()) {
+            int p = (int)m[1].f;
+            int held = -1;
+            for (int k = 0; k < (int)voices_.size(); ++k)
+                if (voices_[(size_t)k]->pitch == p) held = k;
+            if (m[2].f > 0.f) {                     // note-on: retrigger p's voice, or a free one
+                int v = held >= 0 ? held : pick();
+                Voice& x = *voices_[(size_t)v];
+                for (auto& o : voices_) if (o.get() != &x && o->pitch == p) o->pitch = -1;
+                x.pitch = p;
+                x.used = ++clock_;
+                x.loud.store(false);
+                x.busy.store(true);
+                deliver(v, in, tailOf(m));
+            } else if (held >= 0) {                 // note-off: to the voice playing p
+                voices_[(size_t)held]->pitch = -1;
+                deliver(held, in, tailOf(m));
+            }
         } else if (m[0].is("target")) {
             target_ = std::clamp((int)argf(m, 1, 0.f), 0, (int)voices_.size());
         } else if (m[0].is("mute")) {
@@ -485,16 +508,17 @@ public:
 
 private:
     int pick() {
+        auto playable = [&](int k) { return !voices_[(size_t)k]->muted.load(); };   // muted voices are skipped
         int best = -1;
         for (int k = 0; k < (int)voices_.size(); ++k)       // the free voice idle longest
-            if (!voices_[(size_t)k]->busy.load() &&
+            if (playable(k) && !voices_[(size_t)k]->busy.load() &&
                 (best < 0 || voices_[(size_t)k]->used < voices_[(size_t)best]->used))
                 best = k;
         if (best >= 0) return best;
-        best = 0;                                           // all busy: steal the oldest note
-        for (int k = 1; k < (int)voices_.size(); ++k)
-            if (voices_[(size_t)k]->used < voices_[(size_t)best]->used) best = k;
-        return best;
+        for (int k = 0; k < (int)voices_.size(); ++k)       // all busy: steal the oldest note
+            if (playable(k) && (best < 0 || voices_[(size_t)k]->used < voices_[(size_t)best]->used))
+                best = k;
+        return best >= 0 ? best : 0;                        // every voice muted
     }
     void deliver(int v, int in, const Message& m) {
         if (m.empty()) return;
@@ -774,6 +798,7 @@ public:
     }
     void message(int in, const Message& m) override {
         if (in == 1 && m[0].isFloat()) th_.store(m[0].f);
+        else if (in == 0 && m[0].isFloat()) setScalar(0, m[0].f);
     }
     void dsp(int n) override {
         const float *x = sigIn(0, n), *t = sigIn(1, n);
@@ -922,4 +947,4 @@ void registerPatcherObjects(ClassTable& t) {
     });
 }
 
-}  // namespace mlsp
+}  // namespace moritz

@@ -5,13 +5,14 @@
 #include "gui.h"
 #include "objects.h"
 
+#include <FL/Fl_Menu_Item.H>
 #include <FL/fl_draw.H>
 
 #include <algorithm>
 #include <cmath>
 #include <map>
 
-namespace mlsp {
+namespace moritz {
 
 
 namespace {
@@ -241,7 +242,14 @@ void Canvas::updateSuggestions() {
         std::string t = editor_->value();
         if (!t.empty() && t.find(' ') == std::string::npos) {
             std::vector<std::string> exact, prefix, inner;
-            for (auto& c : allClassNames()) {
+            static const std::vector<std::string> names = [] {   // objects and library
+                auto v = allClassNames();
+                for (auto& l : libraryNames()) v.push_back(l);
+                std::sort(v.begin(), v.end());
+                v.erase(std::unique(v.begin(), v.end()), v.end());
+                return v;
+            }();
+            for (auto& c : names) {
                 if (c == t) exact.push_back(c);
                 else if (c.compare(0, t.size(), t) == 0) prefix.push_back(c);
                 else if (c.find(t) != std::string::npos) inner.push_back(c);
@@ -583,6 +591,7 @@ void Canvas::reset() {
 }
 
 void Canvas::setLocked(bool l) {
+    if (readOnly && !l) return;
     hidePortTip();
     commitEdit();
     locked_ = l;
@@ -590,7 +599,7 @@ void Canvas::setLocked(bool l) {
     typingBox_ = nullptr;
     typed_.clear();
     redraw();
-    win_->refreshStatus();
+    if (win_) win_->refreshStatus();      // none when drawing a --render snapshot
 }
 
 void Canvas::beginEdit(Box* b, bool isNew) {
@@ -674,7 +683,7 @@ void Canvas::commitEdit() {
                 made->loadInner(form[0], warnings);
         }
         Box* nb = p.replaceBox(b, std::move(made));
-        if (nb->kind == BoxKind::Broken) win_->print("unknown object: " + cls + " (no class and no " + cls + ".mlsp next to the patch)");
+        if (nb->kind == BoxKind::Broken) win_->print("unknown object: " + cls + " (no class and no " + cls + ".moritz next to the patch)");
         else if (nb->inner()) nb->loadbang();       // a new abstraction starts like a loaded one
         win_->markDirty();
     }
@@ -771,6 +780,26 @@ int Canvas::handle(int e) {
             moved_ = false;
             Hit h = hitTest(mx, my);
             bool shift = Fl::event_state(FL_SHIFT);
+
+            // right-click (or Ctrl-click) on a box: its menu; Option-click in
+            // locked mode: its help, as in Max
+            bool menuClick = Fl::event_button() == FL_RIGHT_MOUSE ||
+                             (Fl::event_button() == FL_LEFT_MOUSE && Fl::event_state(FL_CTRL));
+            if (h.box && win_ && (menuClick || (locked_ && Fl::event_state(FL_ALT)))) {
+                Box* b = h.box;
+                if (!menuClick) { win_->openHelp(b->cls); return 1; }
+                std::string helpLabel = "Help for " + b->cls;
+                for (size_t k = 0; k < helpLabel.size(); ++k)     // menu labels treat / and & specially
+                    if (helpLabel[k] == '/' || helpLabel[k] == '&') helpLabel.insert(k++, 1, '\\');
+                Fl_Menu_Item items[3] = {};
+                items[0].label(helpLabel.c_str());
+                items[1].label("Open");
+                if (!b->inner()) items[1].deactivate();
+                const Fl_Menu_Item* r = items->popup(Fl::event_x(), Fl::event_y());
+                if (r == &items[0]) win_->openHelp(b->cls);
+                else if (r == &items[1]) win_->openSubpatch(b);
+                return 1;
+            }
 
             if (locked_) {
                 typingBox_ = nullptr;
@@ -955,4 +984,4 @@ int Canvas::handle(int e) {
 }
 
 
-}  // namespace mlsp
+}  // namespace moritz

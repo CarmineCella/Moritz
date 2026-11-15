@@ -2,6 +2,8 @@
 // objects_control.cpp — timing, routing, control math, expr and interface objects
 
 #include "objects.h"
+
+#include <map>
 #include "expr.h"
 
 #include <FL/fl_draw.H>
@@ -9,7 +11,7 @@
 #include <cstdio>
 #include <random>
 
-namespace mlsp {
+namespace moritz {
 namespace {
 
 // ---------------------------------------------------------------- + - * / % == != > < >= <=
@@ -236,13 +238,13 @@ public:
     void uiSize(int& w, int& h) const override { w = 140; h = 22; }
     void message(int, const Message& m) override {
         if (m[0].is("bang")) outletFloat(0, value_);
-        else if (m[0].isFloat()) set(m[0].f, true);
+        else if (m[0].isFloat()) set(m[0].f, true, true);      // a number always goes out, as in Max
         else if (m[0].is("set") && m.size() > 1 && m[1].isFloat()) set(m[1].f, false);
     }
     void uiMouse(int e, int mx, int) override {
         if (e == FL_RELEASE) return;
         double k = std::clamp((mx - 8.0) / (w - 16.0), 0.0, 1.0);
-        set((float)(lo_ + k * (hi_ - lo_)), true);
+        set((float)(lo_ + k * (hi_ - lo_)), true);             // dragging: only changes
     }
     void drawUI(int X, int Y) override {
         double k = std::clamp((value_ - lo_) / (hi_ - lo_), 0.f, 1.f);
@@ -257,16 +259,152 @@ public:
     }
 
 private:
-    void set(float v, bool out) {
+    void set(float v, bool out, bool always = false) {
         v = std::clamp(v, std::min(lo_, hi_), std::max(lo_, hi_));
         if (int_) v = std::round(v);
         bool changed = v != value_;
         value_ = v;
         patch->redraw();
-        if (out && changed) outletFloat(0, value_);
+        if (out && (changed || always)) outletFloat(0, value_);
     }
     float lo_, hi_, value_;
     bool int_;
+};
+
+// ---------------------------------------------------------------- kslider
+// kslider [octaves] [lowest] [mode]: a piano keyboard (4 octaves from MIDI
+// note 36 by default). Outlets: pitch and velocity, velocity first, as in
+// Max. The velocity comes from where the key is clicked: louder lower down.
+// Mode 0 (play): the mouse plays a note and releases it (velocity 0) when let
+// go; dragging glides from key to key. Mode 1 (toggle): a click holds a key,
+// a second click releases it, for chords.
+// Inlets: a pitch (or "pitch velocity") lights the key and passes through,
+// using the velocity last set in the right inlet (100 at first); velocity 0
+// releases it. "set p v" only changes the display; "flush" releases every
+// held key, sending its note-off.
+class KsliderBox : public Box {
+public:
+    explicit KsliderBox(const Message& a) {
+        kind = BoxKind::UI;
+        setPorts({P::Control, P::Control}, {P::Control, P::Control});
+        octaves_ = std::clamp((int)argf(a, 0, 4.f), 1, 8);
+        lo_ = std::clamp((int)argf(a, 1, 36.f), 0, 127 - 12 * octaves_);
+        toggle_ = argf(a, 2, 0.f) != 0.f;
+        whites_ = 0;
+        for (int n = lo_; n <= hi(); ++n) whites_ += !isBlack(n);
+    }
+    void uiSize(int& w, int& h) const override { w = whites_ * kKeyW + 2; h = kH; }
+    void message(int in, const Message& m) override {
+        if (in == 1) { if (m[0].isFloat()) vel_ = std::clamp((int)m[0].f, 0, 127); return; }
+        if (m[0].isFloat()) {
+            int p = std::clamp((int)m[0].f, 0, 127);
+            int v = m.size() > 1 && m[1].isFloat() ? std::clamp((int)m[1].f, 0, 127) : vel_;
+            v > 0 ? noteOn(p, v) : noteOff(p);
+        } else if (m[0].is("set") && m.size() > 1 && m[1].isFloat()) {
+            int p = (int)m[1].f;
+            if (argf(m, 2, (float)vel_) > 0.f) held_[p] = (int)argf(m, 2, (float)vel_);
+            else held_.erase(p);
+            patch->redraw();
+        } else if (m[0].is("flush")) {
+            auto keys = held_;
+            for (auto& [p, v] : keys) noteOff(p);
+            current_ = -1;
+        } else if (m[0].is("clear")) {
+            held_.clear();
+            patch->redraw();
+        }
+    }
+    void uiMouse(int e, int mx, int my) override {
+        int vel = 0, p = keyAt(mx, my, vel);
+        if (e == FL_PUSH) {
+            if (p < 0) return;
+            if (toggle_) { held_.count(p) ? noteOff(p) : noteOn(p, vel); return; }
+            noteOn(p, vel);
+            current_ = p;
+        } else if (e == FL_DRAG && !toggle_) {
+            if (p < 0 || p == current_) return;
+            if (current_ >= 0) noteOff(current_);
+            noteOn(p, vel);
+            current_ = p;
+        } else if (e == FL_RELEASE && !toggle_) {
+            if (current_ >= 0) noteOff(current_);
+            current_ = -1;
+        }
+    }
+    void drawUI(int X, int Y) override {
+        int x0 = X + 1, y0 = Y + 1, kh = h - 2;
+        int wi = 0;
+        for (int n = lo_; n <= hi(); ++n) {                 // white keys
+            if (isBlack(n)) continue;
+            int kx = x0 + wi++ * kKeyW;
+            fl_color(held_.count(n) ? kAccent : fl_rgb_color(228, 229, 233));
+            fl_rectf(kx, y0, kKeyW - 1, kh);
+            if (n % 12 == 0 && !held_.count(n)) {          // C: a mark and the octave
+                fl_color(fl_rgb_color(150, 152, 160));
+                fl_font(kFont, 8);
+                fl_draw(("C" + std::to_string(n / 12 - 1)).c_str(), kx + 1, y0 + kh - 3);
+            }
+        }
+        for (int n = lo_; n <= hi(); ++n) {                 // black keys on top
+            if (!isBlack(n)) continue;
+            int bx, bw, bh;
+            blackRect(n, bx, bw, bh);
+            fl_color(held_.count(n) ? kAccent : fl_rgb_color(34, 35, 40));
+            fl_rectf(x0 + bx, y0, bw, bh);
+        }
+    }
+
+private:
+    static constexpr int kKeyW = 12, kH = 56;
+    static bool isBlack(int n) { int k = n % 12; return k == 1 || k == 3 || k == 6 || k == 8 || k == 10; }
+    int hi() const { return lo_ + 12 * octaves_; }
+    int whiteIndex(int n) const {                           // white keys below n
+        int k = 0;
+        for (int m = lo_; m < n; ++m) k += !isBlack(m);
+        return k;
+    }
+    void blackRect(int n, int& bx, int& bw, int& bh) const {   // relative to the key area
+        bw = 8;
+        bh = (h - 2) * 3 / 5;
+        bx = whiteIndex(n) * kKeyW - bw / 2;
+    }
+    // the key under (mx, my) in box coordinates, and the velocity there
+    int keyAt(int mx, int my, int& vel) const {
+        int x = mx - 1, y = my - 1, kh = h - 2;
+        if (x < 0 || y < 0 || y >= kh || x >= whites_ * kKeyW) return -1;
+        for (int n = lo_; n <= hi(); ++n) {
+            if (!isBlack(n)) continue;
+            int bx, bw, bh;
+            blackRect(n, bx, bw, bh);
+            if (x >= bx && x < bx + bw && y < bh) {
+                vel = std::clamp(20 + 107 * y / std::max(1, bh - 1), 1, 127);
+                return n;
+            }
+        }
+        int wi = x / kKeyW;
+        for (int n = lo_; n <= hi(); ++n)
+            if (!isBlack(n) && wi-- == 0) {
+                vel = std::clamp(20 + 107 * y / std::max(1, kh - 1), 1, 127);
+                return n;
+            }
+        return -1;
+    }
+    void noteOn(int p, int v) {
+        held_[p] = v;
+        patch->redraw();
+        outletFloat(1, (float)v);
+        outletFloat(0, (float)p);
+    }
+    void noteOff(int p) {
+        held_.erase(p);
+        patch->redraw();
+        outletFloat(1, 0.f);
+        outletFloat(0, (float)p);
+    }
+    int octaves_, lo_, whites_ = 0;
+    bool toggle_;
+    int vel_ = 100, current_ = -1;
+    std::map<int, int> held_;   // pitch -> velocity, lit on the keyboard
 };
 
 // ---------------------------------------------------------------- comment
@@ -628,6 +766,7 @@ void registerControlObjects(ClassTable& t) {
         {"toggle", "Interface", "on/off switch", plain<ToggleBox>()},
         {"slider", "Interface", "drag a value: [min max]", with<SliderBox>()},
         {"comment", "Interface", "text note", with<CommentBox>()},
+        {"kslider", "Interface", "keyboard: [octaves] [lowest note] [mode 0 play, 1 toggle]", with<KsliderBox>()},
         // Max's short names
         {"t", "", "trigger (short name)", with<TriggerBox>()},
         {"sel", "", "select (short name)", with<SelectBox>()},
@@ -639,4 +778,4 @@ void registerControlObjects(ClassTable& t) {
     });
 }
 
-}  // namespace mlsp
+}  // namespace moritz

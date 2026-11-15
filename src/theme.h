@@ -4,7 +4,7 @@
 
 #include <FL/Enumerations.H>
 
-namespace mlsp {
+namespace moritz {
 
 constexpr int kPortW = 8, kPortH = 3, kBoxH = 22, kFontSize = 12, kRadius = 6;
 constexpr int kPortInset = 4;            // keeps ports clear of the rounded corners
@@ -34,4 +34,4 @@ const Fl_Color kStatusBg  = fl_rgb_color(22, 23, 26);
 const Fl_Color kEditBg    = fl_rgb_color(78, 84, 98);   // box being typed into
 const Fl_Color kOn        = fl_rgb_color(52, 150, 90);    // toolbar: audio running
 
-}  // namespace mlsp
+}  // namespace moritz

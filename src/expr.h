@@ -17,7 +17,7 @@
 #include <string>
 #include <vector>
 
-namespace mlsp {
+namespace moritz {
 
 class ExprParser {
 public:
@@ -184,4 +184,4 @@ private:
     int maxVar_ = 0;
 };
 
-}  // namespace mlsp
+}  // namespace moritz

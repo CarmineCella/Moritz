@@ -1,9 +1,9 @@
 // Copyright (c) 2026 Carmine-Emanuele Cella. SPDX-License-Identifier: BSD-2-Clause
 // objects.h — internals shared by the object files (objects_*.cpp), the
-// class table and the canvas. Not part of the public model in minlsp.h.
+// class table and the canvas. Not part of the public model in moritz.h.
 #pragma once
 
-#include "minlsp.h"
+#include "moritz.h"
 #include "theme.h"
 
 #include <algorithm>
@@ -14,7 +14,7 @@
 #include <string>
 #include <vector>
 
-namespace mlsp {
+namespace moritz {
 
 double now();   // seconds, steady clock (GUI flashes and animation)
 
@@ -60,6 +60,7 @@ void registerSignalObjects(ClassTable& t);
 void registerControlObjects(ClassTable& t);
 void registerSampleObjects(ClassTable& t);
 void registerPatcherObjects(ClassTable& t);
+void registerMidiObjects(ClassTable& t);
 
 // abstraction lookup, used by makeBox for unknown class names
 std::unique_ptr<Box> makeAbstraction(const std::string& path, const Message& args, Patch* context);
@@ -198,14 +199,14 @@ public:
         name = argstr(a, 0);
         size_t k = 1;
         if (k < a.size() && a[k].isSymbol()) file_ = a[k++].s;
-        float ms = argf(a, k, 0.f);
-        int ch = std::clamp((int)argf(a, k + 1, 1.f), 1, 8);
-        buf.channels = ch;
-        buf.frames = (long)(ms / 1000.0 * 44100.0);
-        buf.data.assign((size_t)buf.frames * ch, 0.f);
+        ms_ = argf(a, k, 0.f);
+        buf.channels = std::clamp((int)argf(a, k + 1, 1.f), 1, 8);
     }
     void attached() override {
-        if (!file_.empty()) read(file_);
+        if (!file_.empty()) { read(file_); return; }
+        buf.sr = patch->root()->sampleRate.load();     // an empty buffer runs at the audio rate
+        buf.frames = (long)(ms_ / 1000.0 * buf.sr);
+        buf.data.assign((size_t)buf.frames * buf.channels, 0.f);
     }
     void message(int, const Message& m) override {
         std::string err;
@@ -236,6 +237,7 @@ private:
         buf = std::move(b);
     }
     std::string file_;
+    float ms_ = 0.f;
 };
 
 BufferBox* findBuffer(Patch* p, const std::string& name);   // searches the whole patch tree
@@ -243,4 +245,4 @@ BufferBox* findBuffer(Patch* p, const std::string& name);   // searches the whol
 // "cycle~ · inlet 1 (signal)\nfrequency in Hz ...": help for a port (ports.cpp)
 std::string portHelp(const Box* b, bool outlet, int index);
 
-}  // namespace mlsp
+}  // namespace moritz

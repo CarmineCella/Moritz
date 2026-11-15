@@ -1,0 +1,13 @@
+; help-lrshift.moritz - spectral patch for lrshift~.help.moritz, run by pfft~
+; once per FFT frame. Its argument (#1) is the shift in bins: both the real
+; and the imaginary part of every bin move #1 bins up (negative: down).
+(patch
+  (obj c0 comment "move every bin by the pfft~'s fourth argument (in bins)" (pos 20 10))
+  (obj in fftin~ 1 (pos 20 45))
+  (obj sr lrshift~ #1 (pos 20 100))
+  (obj si lrshift~ #1 (pos 130 100))
+  (obj out fftout~ 1 (pos 20 155))
+  (connect in 0 sr 0)
+  (connect in 1 si 0)
+  (connect sr 0 out 0)
+  (connect si 0 out 1))

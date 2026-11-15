@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 # Copyright (c) 2026 Carmine-Emanuele Cella. SPDX-License-Identifier: BSD-2-Clause
-"""Draws the minlsp app icon: an oscilloscope screen with a glowing 3:2
+"""Draws the Moritz app icon: an oscilloscope screen with a glowing 3:2
 Lissajous figure over a harmonic spectrum, in the editor's colours.
 
     python3 tools/make_icon.py resources
 
-writes resources/minlsp.png (1024 px), resources/about.png (256 px) and,
-on macOS, resources/minlsp.icns. Needs numpy and Pillow; the results are
-committed, so building minlsp does not need them.
+writes resources/moritz.png (1024 px), resources/about.png (256 px) and,
+on macOS, resources/moritz.icns. Needs numpy and Pillow; the results are
+committed, so building Moritz does not need them.
 """
 import os, subprocess, sys, tempfile
 import numpy as np
@@ -138,18 +138,18 @@ def main(out):
     final = Image.alpha_composite(shadow, img).resize((S, S), Image.Resampling.LANCZOS if hasattr(Image, 'Resampling') else Image.LANCZOS)
 
     os.makedirs(out, exist_ok=True)
-    final.save(os.path.join(out, "minlsp.png"))
+    final.save(os.path.join(out, "moritz.png"))
     final.resize((256, 256), Image.Resampling.LANCZOS if hasattr(Image, 'Resampling') else Image.LANCZOS).save(os.path.join(out, "about.png"))
     if sys.platform == "darwin":
         with tempfile.TemporaryDirectory() as tmp:
-            iconset = os.path.join(tmp, "minlsp.iconset")
+            iconset = os.path.join(tmp, "moritz.iconset")
             os.makedirs(iconset)
             for size in (16, 32, 128, 256, 512):
                 for scale in (1, 2):
                     px_ = size * scale
                     name = f"icon_{size}x{size}{'@2x' if scale == 2 else ''}.png"
                     final.resize((px_, px_), Image.Resampling.LANCZOS if hasattr(Image, 'Resampling') else Image.LANCZOS).save(os.path.join(iconset, name))
-            subprocess.run(["iconutil", "-c", "icns", iconset, "-o", os.path.join(out, "minlsp.icns")], check=True)
+            subprocess.run(["iconutil", "-c", "icns", iconset, "-o", os.path.join(out, "moritz.icns")], check=True)
 
 if __name__ == "__main__":
     main(sys.argv[1] if len(sys.argv) > 1 else "resources")

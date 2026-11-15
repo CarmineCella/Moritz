@@ -2,7 +2,8 @@
 // gui.h — FLTK editor: canvas, main window, subpatcher windows
 #pragma once
 
-#include "minlsp.h"
+#include "midi.h"
+#include "moritz.h"
 
 #include <FL/Fl.H>
 #include <FL/Fl_Box.H>
@@ -14,11 +15,17 @@
 #include <FL/Fl_Text_Buffer.H>
 #include <FL/Fl_Text_Display.H>
 
-namespace mlsp {
+namespace moritz {
 
 class MainWindow;
 
-std::string examplesDir();   // the bundled examples (also searched for abstractions)
+// A folder bundled with the app ("examples", "library", "help"): inside the
+// .app's Resources, or next to the executable when run from the source tree.
+std::string resourceDir(const std::string& name);
+inline std::string examplesDir() { return resourceDir("examples"); }
+// Fills libraryPath(), abstractionPath() and helpPath(): the user's library
+// (~/Documents/Moritz/library) first, then the bundled library and examples.
+void setupSearchPaths();
 
 class Canvas : public Fl_Group {
 public:
@@ -46,6 +53,7 @@ public:
     bool acceptSuggestion(bool commit);
     void clearSuggestions();
     void fitEditor();      // size the text field to what is being typed
+    bool readOnly = false;   // help patches: always locked
 
 private:
     struct Hit {
@@ -102,7 +110,7 @@ private:
 // A window showing a subpatcher, abstraction or pfft~ patch.
 class PatchWindow : public Fl_Double_Window {
 public:
-    PatchWindow(MainWindow* main, Patch* p, const std::string& title);
+    PatchWindow(MainWindow* main, Patch* p, const std::string& title, bool help = false);
     ~PatchWindow() override;
     int handle(int e) override;
     void detach();          // forget the patch (it is being destroyed)
@@ -128,6 +136,7 @@ public:
 
     Patch patch;
     AudioEngine audio;
+    MidiEngine midi;
 
     // File
     void newPatch();
@@ -150,9 +159,12 @@ public:
     void setAudio(bool on);
     void clearConsole();
     void audioSetup();
+    void midiSetup();
 
     // subpatcher windows
     void openSubpatch(Box* b);
+    void openHelp(const std::string& cls);   // the object's help patch, or its description
+    void closeHelp(Patch* p);
     void closeSubpatchWindows(Patch* p);    // p is being destroyed
     void forgetWindow(PatchWindow* w);
     Canvas* activeCanvas();                 // canvas of the frontmost patch window
@@ -190,4 +202,4 @@ private:
     std::vector<std::string> consoleLines_;   // kept until the console opens
 };
 
-}  // namespace mlsp
+}  // namespace moritz
