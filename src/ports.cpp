@@ -151,6 +151,8 @@ const std::map<std::string, PortDocs>& docs() {
                       {"rotated sound field channel"}}},
         {"ambidec~", {{"sound field channel (ACN)"}, {"speaker, in the order of the azimuths"}}},
         {"binaural~", {{"sound field channel (ACN: W Y Z X ...)"}, {"left ear", "right ear"}}},
+        {"hrtf~", {{"the signal to place", "azimuth (degrees, 0 front, 90 left, 180 behind)", "elevation (degrees, -40 to 90)"},
+                   {"left ear", "right ear"}}},
         {"hpss", {{"run source harmonic percussive, kernel n, size n, stop"},
                   {"progress, 0 to 1", "bang: the two buffer~s are ready"}}},
         {"knn", {{"add x... -> y..., a list to predict; k n, weighted 0/1, classify 0/1, normalize 0/1, clear, write/read"},

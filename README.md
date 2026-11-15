@@ -287,6 +287,7 @@ point (`2.`, `0.5`) makes `+ - * / %`, the comparisons, `pack`, `unpack` and
 | `ambirot~ [order]` | Turns a sound field about the vertical axis by the yaw in its last inlet (exactly, per order) |
 | `ambidec~ order azimuth ...` | Decodes a sound field to loudspeakers on a horizontal ring, one outlet per azimuth (`ambidec~ 1 45 135 -135 -45` is a square). The exact decoder for an evenly spaced ring of at least 2N+1 speakers, from the horizontal channels, with 2D max-rE weights |
 | `binaural~ [order]` | A sound field on headphones: decoded to 17 virtual speakers spread over the sphere (8 at ear height, 4 above, 4 below, 1 overhead), each heard through measured head-related impulse responses (MIT KEMAR, Gardner and Martin 1994). The decoder uses the SN3D normalisation and 3D max-rE weights; everything folds into one filter pair per channel, so the cost does not depend on the number of sources |
+| `hrtf~ [azimuth] [elevation]` | A mono sound at a direction on headphones, through the measured head responses themselves: the whole MIT KEMAR set (710 directions, elevation -40 to 90), the four around the direction mixed; a moving direction crossfades within each block. Height is clearer than with `binaural~`, whose blend of responses blurs the outer ear's notches; and its level follows the real head (quieter behind and above), where `binaural~` matches it only in front (up to 8 dB louder overhead) |
 
 A note on the decoders: Musil's `ambi-decode` and `binaural-decode` sample the
 field at each speaker without the decoder normalisation (a factor 2 per order
@@ -506,6 +507,9 @@ File > Open starts there.
   field, turned with `ambirot~` and decoded to four speakers.
 - `binaural.moritz`: the same scene on headphones with `binaural~`, the drums
   also moving up and down.
+- `hrtf.moritz`: `hrtf~`: a voice or noise bursts flying around and above
+  the listener, or placed by hand; switch to an order-2 ambisonic rendering
+  to hear how much clearer height is with the direct responses.
 - `nmf-supervised.moritz`: source separation by `nmf`: a mix of voice and
   drums recorded, then separated blindly (`run`) and with the sources learned
   first (`learn`, `separate`).
@@ -582,7 +586,7 @@ All sources are in `src/`:
   convolver.
 - `objects_spectral.cpp` (`specenv~`), `objects_filters.cpp`
   (`filterdesign`, `filterplot`) and `objects_spatial.cpp` (ambisonics and
-  `binaural~`; `hrir_kemar.h` holds the head-related impulse responses), all
+  `binaural~`, `hrtf~`; `hrtf_kemar.cpp` holds the head-related impulse responses), all
   following Musil's signals library.
 - `audio.cpp`: the miniaudio engine. `midi.h`, `midi.cpp`: MIDI through
   RtMidi; its callbacks queue the messages for the GUI thread.
@@ -638,7 +642,7 @@ output to stdout, and can write a WAV file.
 Moritz is released under the BSD 2-Clause License; see `LICENSE`.
 Created by Carmine-Emanuele Cella (2026).
 
-`binaural~` uses the MIT KEMAR head-related impulse responses (compact set) by
+`hrtf~` and `binaural~` use the MIT KEMAR head-related impulse responses (compact set, all 710 directions, in `src/hrtf_kemar.cpp`) by
 Bill Gardner and Keith Martin, MIT Media Laboratory (1994), "HRTF Measurements
 of a KEMAR Dummy-Head Microphone", as distributed with Musil.
 

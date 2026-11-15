@@ -1,13 +1,18 @@
 // Copyright (c) 2026 Carmine-Emanuele Cella. SPDX-License-Identifier: BSD-2-Clause
 // objects_spatial.cpp — ambisonics as in Musil: ambienc~ (encoder), ambirot~
-// (rotation), ambidec~ (to speakers) and binaural~ (to headphones)
+// (rotation), ambidec~ (to speakers) and binaural~ (to headphones); and
+// hrtf~, a direct binaural panner on the measured head responses
 //
 // Conventions (AmbiX): azimuth in degrees, 0 in front, positive to the LEFT;
 // elevation in degrees, positive up. A B-format signal of order N has
 // (N+1)^2 channels, in ACN order with SN3D normalisation: for order 1, W Y Z X.
 
 #include "objects.h"
-#include "hrir_kemar.h"
+#include "hrtf_kemar.h"
+
+#include <map>
+#include <memory>
+#include <mutex>
 
 #include <algorithm>
 #include <cmath>
@@ -70,6 +75,112 @@ void maxReWeights3D(int order, float* w) {        // 3D, per channel
 }
 
 int orderArg(const Message& a, size_t i, float def) { return std::clamp((int)argf(a, i, def), 0, kMaxOrder); }
+
+// ---- the KEMAR set at a sample rate, shared by every hrtf~ and binaural~
+
+std::vector<float> resampleIr(const float* h, int n, double f, int T) {
+    std::vector<float> out((size_t)T, 0.f);
+    if (std::fabs(f - 1.0) < 1e-6) {
+        for (int t = 0; t < T && t < n; ++t) out[(size_t)t] = h[t];
+        return out;
+    }
+    double fc = std::min(1.0, f);                      // band limit when going down
+    const int half = 16;
+    for (int t = 0; t < T; ++t) {
+        double c = t / f, acc = 0;
+        for (int i = (int)c - half; i <= (int)c + half; ++i) {
+            if (i < 0 || i >= n) continue;
+            double x = (c - i) * fc;
+            double sinc = std::fabs(x) < 1e-9 ? 1.0 : std::sin(dsp::kPi * x) / (dsp::kPi * x);
+            double win = 0.5 + 0.5 * std::cos(dsp::kPi * (c - i) / (half + 1));
+            acc += h[i] * fc * sinc * win;
+        }
+        out[(size_t)t] = (float)acc;
+    }
+    return out;
+}
+
+struct HrirSet {
+    int taps = 0;
+    std::vector<float> left, right;                    // [direction * taps + t]
+    struct Ring { float el; int first, count; };
+    std::vector<Ring> rings;                           // by elevation; each ring by azimuth
+    const float* L(int d) const { return &left[(size_t)d * taps]; }
+    const float* R(int d) const { return &right[(size_t)d * taps]; }
+    int nearest(double az, double el) const {
+        double a = rad(az), e = rad(el), x = std::cos(e) * std::cos(a), y = std::cos(e) * std::sin(a), z = std::sin(e);
+        int best = 0;
+        double bd = -2;
+        for (int d = 0; d < kemar::kDirections; ++d) {
+            double a2 = rad(kemar::kSet[d].az), e2 = rad(kemar::kSet[d].el);
+            double dot = x * std::cos(e2) * std::cos(a2) + y * std::cos(e2) * std::sin(a2) + z * std::sin(e2);
+            if (dot > bd) { bd = dot; best = d; }
+        }
+        return best;
+    }
+    // the measured directions around (az, el) and their weights: two
+    // azimuths on each of the two elevation rings around it
+    int neighbours(double az, double el, int idx[4], float w[4]) const {
+        az = std::remainder(az, 360.0);
+        el = std::clamp(el, (double)rings.front().el, (double)rings.back().el);
+        size_t r = 0;
+        while (r + 1 < rings.size() && rings[r + 1].el <= el) ++r;
+        size_t r2 = std::min(r + 1, rings.size() - 1);
+        double te = r2 == r ? 0.0 : (el - rings[r].el) / (rings[r2].el - rings[r].el);
+        int n = 0;
+        for (int k = 0; k < 2; ++k) {
+            const Ring& ring = rings[k == 0 ? r : r2];
+            double wr = k == 0 ? 1.0 - te : te;
+            if (wr <= 0) continue;
+            if (ring.count == 1) { idx[n] = ring.first; w[n++] = (float)wr; continue; }
+            // the azimuths around az on this ring (sorted, wrapping)
+            int j = 0;
+            while (j < ring.count && kemar::kSet[ring.first + j].az <= az) ++j;
+            int lo = (j - 1 + ring.count) % ring.count, hi = j % ring.count;
+            double a0 = kemar::kSet[ring.first + lo].az, a1 = kemar::kSet[ring.first + hi].az;
+            double span = std::remainder(a1 - a0, 360.0);
+            if (span <= 0) span += 360.0;
+            double ta = std::remainder(az - a0, 360.0);
+            if (ta < 0) ta += 360.0;
+            ta = std::clamp(ta / span, 0.0, 1.0);
+            idx[n] = ring.first + lo; w[n++] = (float)(wr * (1 - ta));
+            idx[n] = ring.first + hi; w[n++] = (float)(wr * ta);
+        }
+        return n;
+    }
+};
+
+// the set resampled to sr, normalised so that the front direction has unit
+// energy at each ear (computed once per rate, kept for the program's life)
+const HrirSet& hrirsAt(double sr) {
+    static std::mutex m;
+    static std::map<long, std::unique_ptr<HrirSet>> cache;
+    std::lock_guard<std::mutex> lk(m);
+    auto& slot = cache[std::lround(sr)];
+    if (slot) return *slot;
+    auto set = std::make_unique<HrirSet>();
+    double f = sr / kemar::kRate;
+    int T = std::max(1, (int)std::ceil(kemar::kTaps * f));
+    set->taps = T;
+    set->left.resize((size_t)kemar::kDirections * T);
+    set->right.resize((size_t)kemar::kDirections * T);
+    for (int d = 0; d < kemar::kDirections; ++d) {
+        auto l = resampleIr(kemar::kSet[d].left, kemar::kTaps, f, T), r = resampleIr(kemar::kSet[d].right, kemar::kTaps, f, T);
+        std::copy(l.begin(), l.end(), set->left.begin() + (size_t)d * T);
+        std::copy(r.begin(), r.end(), set->right.begin() + (size_t)d * T);
+        if (set->rings.empty() || set->rings.back().el != kemar::kSet[d].el)
+            set->rings.push_back({kemar::kSet[d].el, d, 0});
+        ++set->rings.back().count;
+    }
+    int front = set->nearest(0, 0);
+    double e = 0;
+    for (int t = 0; t < T; ++t) e += set->L(front)[t] * set->L(front)[t] + set->R(front)[t] * set->R(front)[t];
+    float g = (float)(1.0 / std::sqrt(std::max(e / 2, 1e-12)));
+    for (auto& v : set->left) v *= g;
+    for (auto& v : set->right) v *= g;
+    slot = std::move(set);
+    return *slot;
+}
 
 // ---------------------------------------------------------------- ambienc~
 // ambienc~ [order] [azimuth] [elevation]: places a mono signal at a
@@ -243,22 +354,28 @@ private:
     void build(double sr) {
         if (sr <= 0) return;
         builtSr_ = sr;
-        double f = sr / kemar::kRate;
-        int T = std::max(1, (int)std::ceil(kemar::kTaps * f));
-        std::vector<std::vector<float>> hl(kemar::kDirections), hr(kemar::kDirections);
-        for (int d = 0; d < kemar::kDirections; ++d) {
-            hl[(size_t)d] = resample(kemar::kSet[d].left, f, T);
-            hr[(size_t)d] = resample(kemar::kSet[d].right, f, T);
+        const HrirSet& set = hrirsAt(sr);
+        const int T = set.taps;
+        // 17 virtual speakers: 8 at ear height, 4 above, 4 below, 1 overhead
+        static const float kSpeakers[][2] = {{0, 0}, {45, 0}, {90, 0}, {135, 0}, {180, 0}, {-135, 0}, {-90, 0},
+                                             {-45, 0}, {45, 40}, {135, 40}, {-135, 40}, {-45, 40}, {0, -30},
+                                             {90, -30}, {180, -30}, {-90, -30}, {0, 90}};
+        const int ns = (int)(sizeof kSpeakers / sizeof kSpeakers[0]);
+        std::vector<std::vector<float>> hl((size_t)ns), hr((size_t)ns);
+        for (int d = 0; d < ns; ++d) {
+            int k = set.nearest(kSpeakers[d][0], kSpeakers[d][1]);
+            hl[(size_t)d].assign(set.L(k), set.L(k) + T);
+            hr[(size_t)d].assign(set.R(k), set.R(k) + T);
         }
         float w[36], g[36];
         maxReWeights3D(order_, w);
         for (int n = 0; n <= order_; ++n)
             for (int k = 0; k < 2 * n + 1; ++k) w[n * n + k] *= (float)(2 * n + 1);   // SN3D -> sampling decoder
         std::vector<float> fl((size_t)nch_ * T, 0.f), fr((size_t)nch_ * T, 0.f);
-        for (int d = 0; d < kemar::kDirections; ++d) {
-            shGains(order_, kemar::kSet[d].az, kemar::kSet[d].el, g);
+        for (int d = 0; d < ns; ++d) {
+            shGains(order_, kSpeakers[d][0], kSpeakers[d][1], g);
             for (int k = 0; k < nch_; ++k) {
-                float c = g[k] * w[k] / kemar::kDirections;
+                float c = g[k] * w[k] / ns;
                 for (int t = 0; t < T; ++t) {
                     fl[(size_t)k * T + t] += c * hl[(size_t)d][(size_t)t];
                     fr[(size_t)k * T + t] += c * hr[(size_t)d][(size_t)t];
@@ -284,32 +401,93 @@ private:
         hist_.assign((size_t)nch_ * 2 * T, 0.f);
         pos_.assign((size_t)nch_, 0);
     }
-    static std::vector<float> resample(const float* h, double f, int T) {
-        std::vector<float> out((size_t)T, 0.f);
-        if (std::fabs(f - 1.0) < 1e-6) {
-            for (int t = 0; t < T && t < kemar::kTaps; ++t) out[(size_t)t] = h[t];
-            return out;
-        }
-        double fc = std::min(1.0, f);                      // band limit when going down
-        const int half = 16;
-        for (int t = 0; t < T; ++t) {
-            double c = t / f, acc = 0;
-            for (int i = (int)c - half; i <= (int)c + half; ++i) {
-                if (i < 0 || i >= kemar::kTaps) continue;
-                double x = (c - i) * fc;
-                double sinc = std::fabs(x) < 1e-9 ? 1.0 : std::sin(dsp::kPi * x) / (dsp::kPi * x);
-                double win = 0.5 + 0.5 * std::cos(dsp::kPi * (c - i) / (half + 1));
-                acc += h[i] * fc * sinc * win;
-            }
-            out[(size_t)t] = (float)acc;
-        }
-        return out;
-    }
-
     int order_, nch_, taps_ = 0;
     double builtSr_ = 0;
     std::vector<float> left_, right_, hist_;
     std::vector<int> pos_;
+};
+
+
+// ---------------------------------------------------------------- hrtf~
+// hrtf~ [azimuth] [elevation]: a mono sound at a direction on headphones,
+// through the measured head-related impulse responses themselves (all 710
+// directions of the MIT KEMAR set): the four measured directions around the
+// one asked for, interpolated. Without ambisonics in between, the spectral
+// cues of the outer ear stay sharp, so elevation (up, down) is clearer than
+// with binaural~. Inlets: the signal, the azimuth (0 front, 90 left, 180
+// behind) and the elevation (-40 to 90) in degrees, numbers or signals.
+// Outlets: left, right. A moving direction crossfades within each block.
+class HrtfBox : public Box {
+public:
+    explicit HrtfBox(const Message& a) {
+        setPorts({P::Signal, P::Signal, P::Signal}, {P::Signal, P::Signal});
+        setScalar(1, argf(a, 0, 0.f));
+        setScalar(2, argf(a, 1, 0.f));
+    }
+    void resolve() override { prepare(patch->root()->sampleRate.load()); }
+    void dsp(int n) override {
+        double sr = patch->root()->sampleRate.load();
+        if (sr > 0 && (!set_ || std::fabs(sr - sr_) > 0.5)) prepare(sr);
+        float *L = sigOut(0), *R = sigOut(1);
+        if (!set_) { std::fill(L, L + n, 0.f); std::fill(R, R + n, 0.f); return; }
+        const float* x = sigIn(0, n);
+        float az = sigIn(1, n)[n - 1], el = sigIn(2, n)[n - 1];
+        bool move = !have_ || std::fabs(az - az_) > 1e-3f || std::fabs(el - el_) > 1e-3f;
+        if (move) {
+            az_ = az;
+            el_ = el;
+            filter(az, el, nl_.data(), nr_.data());
+            if (!have_) { cl_ = nl_; cr_ = nr_; have_ = true; move = false; }
+        }
+        const int T = set_->taps;
+        for (int i = 0; i < n; ++i) {
+            pos_ = (pos_ + T - 1) % T;
+            hist_[(size_t)pos_] = hist_[(size_t)(pos_ + T)] = x[i];
+            const float* hp = &hist_[(size_t)pos_];
+            float l = 0.f, r = 0.f;
+            for (int j = 0; j < T; ++j) { l += cl_[(size_t)j] * hp[j]; r += cr_[(size_t)j] * hp[j]; }
+            if (move) {                                  // fade to the new direction over the block
+                float l2 = 0.f, r2 = 0.f;
+                for (int j = 0; j < T; ++j) { l2 += nl_[(size_t)j] * hp[j]; r2 += nr_[(size_t)j] * hp[j]; }
+                float t = (float)(i + 1) / n;
+                l += (l2 - l) * t;
+                r += (r2 - r) * t;
+            }
+            L[i] = l;
+            R[i] = r;
+        }
+        if (move) { cl_ = nl_; cr_ = nr_; }
+    }
+
+private:
+    void prepare(double sr) {
+        if (sr <= 0) return;
+        set_ = &hrirsAt(sr);
+        sr_ = sr;
+        const size_t T = (size_t)set_->taps;
+        hist_.assign(2 * T, 0.f);
+        pos_ = 0;
+        cl_.assign(T, 0.f); cr_.assign(T, 0.f); nl_.assign(T, 0.f); nr_.assign(T, 0.f);
+        have_ = false;
+    }
+    void filter(double az, double el, float* l, float* r) const {
+        int idx[4];
+        float w[4];
+        int k = set_->neighbours(az, el, idx, w);
+        const int T = set_->taps;
+        std::fill(l, l + T, 0.f);
+        std::fill(r, r + T, 0.f);
+        for (int m = 0; m < k; ++m) {
+            const float *hl = set_->L(idx[m]), *hr = set_->R(idx[m]);
+            for (int t = 0; t < T; ++t) { l[t] += w[m] * hl[t]; r[t] += w[m] * hr[t]; }
+        }
+    }
+    const HrirSet* set_ = nullptr;
+    double sr_ = 0;
+    std::vector<float> hist_, cl_, cr_, nl_, nr_;
+    int pos_ = 0;
+    float az_ = 0.f, el_ = 0.f;
+    bool have_ = false;
 };
 
 }  // namespace
@@ -320,6 +498,7 @@ void registerSpatialObjects(ClassTable& t) {
         {"ambirot~", "Spatial", "turn a sound field: [order], yaw in the last inlet", with<AmbirotBox>()},
         {"ambidec~", "Spatial", "decode to speakers: order azimuth ...", with<AmbidecBox>()},
         {"binaural~", "Spatial", "sound field to headphones (KEMAR): [order]", with<BinauralBox>()},
+        {"hrtf~", "Spatial", "a sound at a direction on headphones (KEMAR): [azimuth] [elevation]", with<HrtfBox>()},
     });
 }
 

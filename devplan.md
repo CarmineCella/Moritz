@@ -167,6 +167,10 @@ Done, not released yet:
 - Examples: sparkle-cross, pitch-shift, spectral-envelope, nebula,
   ambisonics, binaural, nmf-supervised; filters expanded with filter
   design. Help patches for all new objects.
+- `hrtf~` (after v0.6): direct binaural panning with all 710 KEMAR directions,
+  interpolated, crossfaded when moving; exact at measured directions. Its
+  levels follow the real head, while `binaural~` is up to 8 dB louder
+  overhead (low-order ambisonics on headphones).
 - Scrollbars and wheel scrolling when a patch is larger than its window.
 - `slider` typed by its written limits (`slider 0. 1.` gives decimals);
   `--render` takes timed actions (`bang=id@4.5`).
