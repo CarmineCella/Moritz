@@ -40,6 +40,8 @@ const ClassTable& classDefs() {
         registerSpectralObjects(v);
         registerFilterObjects(v);
         registerSpatialObjects(v);
+        registerMirObjects(v);
+        registerPlotObjects(v);
         std::stable_sort(v.begin(), v.end(), [](const ClassDef& a, const ClassDef& b) {
             return groupRank(a.group) < groupRank(b.group);
         });
@@ -120,6 +122,7 @@ std::string helpName(const std::string& cls) {
         group("send~", {"send~", "receive~"});
         group("selector~", {"selector~", "gate~"});
         group("pack", {"pack", "unpack"});
+        group("prepend", {"prepend", "append"});
         group("int", {"int", "float", "i", "f"});
         group("number", {"number", "flonum"});
         group("button", {"button", "toggle"});
@@ -129,6 +132,9 @@ std::string helpName(const std::string& cls) {
         group("conv~", {"conv~", "condec"});
         group("filterdesign", {"filterdesign", "filterplot"});
         group("ambienc~", {"ambienc~", "ambirot~", "ambidec~"});
+        group("spectrogram", {"spectrogram", "melgram", "mfccgram", "chromagram"});
+        group("melbands~", {"melbands~", "mfcc~", "chroma~"});
+        group("similarity", {"similarity", "novelty"});
         r["t"] = "trigger";
         r["sel"] = "select";
         r["del"] = "delay";

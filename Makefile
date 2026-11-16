@@ -31,7 +31,7 @@
 
 APP        := moritz
 BUNDLE     := Moritz.app
-VERSION    := 0.7
+VERSION    := 0.8
 UNAME      := $(shell uname -s)
 # MSYS2 on Windows reports MINGW64_NT-..., UCRT64_NT-..., MSYS_NT-...
 ifneq (,$(findstring _NT,$(UNAME)))
@@ -271,7 +271,7 @@ $(LX_DIR)/$(APP): $(LX_OBJECTS) $(LX_BUILD)/miniaudio.o $(LX_BUILD)/RtMidi.o
 
 linux: $(LX_DIR)/$(APP) $(wildcard examples/*.moritz examples/sounds/* library/* help/* tutorials/*)
 	rm -rf $(LX_DIR)/examples $(LX_DIR)/library $(LX_DIR)/help $(LX_DIR)/tutorials $(LX_DIR)/resources
-	cp -R examples library help tutorials LICENSE README.md $(LX_DIR)/
+	cp -R examples library help tutorials LICENSE README.md OBJECTS.md $(LX_DIR)/
 	mkdir -p $(LX_DIR)/resources && cp resources/about.png resources/maxundmoritz.png $(LX_DIR)/resources/
 	@echo "==> built $(LX_DIR)/$(APP)"
 
@@ -352,7 +352,7 @@ $(WIN_DIR)/$(APP).exe: $(WIN_OBJECTS) $(WIN_BUILD)/miniaudio.o $(WIN_BUILD)/RtMi
 
 windows: $(WIN_DIR)/$(APP).exe $(wildcard examples/*.moritz examples/sounds/* library/* help/* tutorials/*)
 	rm -rf $(WIN_DIR)/examples $(WIN_DIR)/library $(WIN_DIR)/help $(WIN_DIR)/tutorials $(WIN_DIR)/resources
-	cp -R examples library help tutorials LICENSE README.md $(WIN_DIR)/
+	cp -R examples library help tutorials LICENSE README.md OBJECTS.md $(WIN_DIR)/
 	mkdir -p $(WIN_DIR)/resources && cp resources/about.png resources/maxundmoritz.png $(WIN_DIR)/resources/
 	@echo "==> built $(WIN_DIR)/$(APP).exe"
 
@@ -372,7 +372,7 @@ dist: $(BUNDLE)
 	mkdir -p $(BUILD)/dist/$(DIST_NAME)
 	ditto $(BUNDLE) $(BUILD)/dist/$(DIST_NAME)/$(BUNDLE)
 	ditto examples $(BUILD)/dist/$(DIST_NAME)/examples
-	cp LICENSE README.md $(BUILD)/dist/$(DIST_NAME)/
+	cp LICENSE README.md OBJECTS.md $(BUILD)/dist/$(DIST_NAME)/
 	find $(BUILD)/dist -name .DS_Store -delete
 	xattr -cr $(BUILD)/dist
 	codesign --verify --deep --strict $(BUILD)/dist/$(DIST_NAME)/$(BUNDLE)

@@ -469,6 +469,27 @@ private:
 };
 
 // ---------------------------------------------------------------- pack / unpack
+// ---------------------------------------------------------------- prepend, append
+// prepend args...: puts its arguments before every message (prepend set:
+// shows a list in a message box); append args...: after it. The right inlet
+// replaces the arguments.
+class PrependBox : public Box {
+public:
+    PrependBox(const Message& a, bool after) : args_(a), after_(after) { setPorts({P::Control, P::Control}, {P::Control}); }
+    void message(int in, const Message& m) override {
+        if (in == 1) { args_ = m; return; }
+        Message out;
+        const Message& body = (m.size() == 1 && m[0].is("bang")) ? Message{} : m;
+        if (after_) { out = body; out.insert(out.end(), args_.begin(), args_.end()); }
+        else { out = args_; out.insert(out.end(), body.begin(), body.end()); }
+        if (!out.empty()) outlet(0, out);
+    }
+
+private:
+    Message args_;
+    bool after_;
+};
+
 class PackBox : public Box {
 public:
     // As in Max: each argument sets a slot's type and initial value. An
@@ -870,6 +891,8 @@ void registerControlObjects(ClassTable& t) {
         {"trigger", "Routing", "ordered outputs, right to left", with<TriggerBox>()},
         {"pack", "Routing", "combine into a list", with<PackBox>()},
         {"unpack", "Routing", "split a list", with<UnpackBox>()},
+        {"prepend", "Routing", "put words before a message: prepend set", [](const Message& a, Patch*) { return std::make_unique<PrependBox>(a, false); }},
+        {"append", "Routing", "put words after a message", [](const Message& a, Patch*) { return std::make_unique<PrependBox>(a, true); }},
         {"route", "Routing", "dispatch by first word", with<RouteBox>()},
         {"select", "Routing", "bang on matching values", with<SelectBox>()},
         {"gate", "Routing", "open/close/switch a stream", with<GateBox>()},

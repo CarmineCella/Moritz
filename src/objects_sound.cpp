@@ -677,7 +677,11 @@ private:
 // (sine, triangle, square, noise) or a buffer~, mixed by the morph amount.
 // A grain starts every 1 / density seconds and lasts `length` ms; its
 // frequency is in Hz for a waveform and a speed ratio for a buffer~ (1 = as
-// recorded), and it can glide; it is placed in the stereo field at random.
+// recorded: the original's relative pitch, the frequency times the sound's
+// natural frequency), and it can glide; it is placed in the stereo field at
+// random. `pitch1 hz` (or `pitch2`) gives the pitch of a sound prototype:
+// its frequency is then in Hz too (the speed is freq / pitch), so a waveform
+// and a sound can be morphed at the same pitch; `pitch1 0` returns to ratios.
 // The values after a parameter are randomness, as a ratio of it: `density
 // 40 .5` gives 20 to 60 grains a second.
 //   inlets: 1/0 or start/stop, density, length (ms), frequency, morph 0..1
@@ -686,7 +690,7 @@ private:
 //   .. 1 left, randomised by r), speed s (how fast the read position moves
 //   through a buffer~), grainlets n (each grain lasts n periods of its
 //   frequency; 0 = off), window hann|hamming|blackman, poly n, proto1 x,
-//   proto2 x, seed n.
+//   proto2 x, pitch1 hz, pitch2 hz, seed n.
 class NebulaBox : public Box {
 public:
     explicit NebulaBox(const Message& a) {
@@ -728,6 +732,8 @@ public:
         else if (h.is("window") && m.size() > 1) {
             std::lock_guard<std::mutex> lk(patch->mutex());
             makeWindow(m[1].str());
+        } else if ((h.is("pitch1") || h.is("pitch2")) && m.size() > 1) {
+            proto_[h.is("pitch1") ? 0 : 1].pitch.store(std::max(0.f, num(1, 0)));
         } else if ((h.is("proto1") || h.is("proto2")) && m.size() > 1) {
             std::lock_guard<std::mutex> lk(patch->mutex());
             Proto& p = proto_[h.is("proto1") ? 0 : 1];
@@ -784,6 +790,7 @@ private:
         std::vector<float> table;          // a waveform, or empty for a buffer~
         BufferBox* buf = nullptr;
         double readPos = 0;
+        std::atomic<float> pitch{0.f};      // a sound's pitch (Hz); 0: freq is a ratio
     };
     struct Grain {
         bool active = false;
@@ -859,8 +866,9 @@ private:
                     g.inc[c] = f * kTable / sr;
                     g.phase[c] = 0;
                 } else {                                         // a buffer~: f is a speed ratio
-                    double bsr = p.buf ? p.buf->buf.sr : sr;
-                    g.inc[c] = f * bsr / sr;
+                    double bsr = p.buf ? p.buf->buf.sr : sr;    // (or Hz, when its pitch is known)
+                    float pitch = p.pitch.load(std::memory_order_relaxed);
+                    g.inc[c] = (pitch > 0 ? f / pitch : f) * bsr / sr;
                     g.phase[c] = p.readPos;
                 }
             }

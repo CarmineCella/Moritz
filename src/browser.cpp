@@ -23,7 +23,8 @@ namespace moritz {
 namespace {
 
 const char* const kTopics[] = {"First steps", "Synthesis", "Filters and effects", "Samples", "Spectral",
-                               "Space", "Analysis and learning", "MIDI and patching"};
+                               "Space", "Music information retrieval", "Analysis and learning",
+                               "MIDI and patching"};
 
 struct Entry {
     enum Kind { Tutorial, Example, Object, Recent } kind;
