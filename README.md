@@ -34,6 +34,11 @@ and the signal processing, analysis and learning of *Musil*.
 - **Listening machines**: descriptors, onsets, tempo and beats, key,
   chromagrams and MFCCs, the form of a piece, live or on recordings, drawn
   by `plot`.
+- **Atoms and types**: matching pursuit explains a sound as a sum of atoms
+  (windowed cosines, or pieces of other recordings: a voice made of kitchen
+  sounds); sound types turn a recording into sequences of symbols at three
+  levels, from short sounds to sections, and make new music from them with
+  n-grams, Markov models or a factor oracle.
 - **Separation and learning**: non-negative matrix factorisation and
   harmonic/percussive separation, nearest neighbours, k-means, PCA and
   regression, to map gestures to sounds or to let the computer sort sounds by
@@ -63,9 +68,10 @@ click **Open Anyway** in System Settings > Privacy & Security (or run
 
 Moritz opens on the **browser**, the place to start:
 
-- **Tutorials**: nine patches that explain themselves as you play with them:
+- **Tutorials**: ten patches that explain themselves as you play with them:
   a first patch, numbers and messages, sound files, filters, the spectrum,
-  grains, sound in space, separating sounds, listening machines.
+  grains, sound in space, separating sounds, listening machines, atoms and
+  types.
 - **Examples**, by topic: synthesis, samples, spectral processing, space,
   music information retrieval, learning, MIDI. Each one says what it shows
   at the top.
@@ -180,7 +186,9 @@ States Marine Band (2017; public domain as a work of the U.S. government,
 from the band's "Complete Marches of John Philip Sousa", via Wikimedia
 Commons), and the preludes in C minor and D major of Bach's Well-Tempered
 Clavier, Book 1, played by Kimiko Ishizaka (the Open Well-Tempered Clavier,
-CC0, welltemperedclavier.org).
+CC0, welltemperedclavier.org). The kitchen and people sounds in
+`examples/sounds/kitchen` and `examples/sounds/people`, used as dictionaries
+for matching pursuit, are the author's recordings.
 
 ## License and credits
 

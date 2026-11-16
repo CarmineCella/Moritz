@@ -69,6 +69,8 @@ void registerFilterObjects(ClassTable& t);
 void registerSpatialObjects(ClassTable& t);
 void registerMirObjects(ClassTable& t);
 void registerPlotObjects(ClassTable& t);
+void registerMapleObjects(ClassTable& t);
+void registerSoundtypesObjects(ClassTable& t);
 
 // abstraction lookup, used by makeBox for unknown class names
 std::unique_ptr<Box> makeAbstraction(const std::string& path, const Message& args, Patch* context);

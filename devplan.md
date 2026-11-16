@@ -86,7 +86,7 @@ and publishes the builds as a release for every `v*` tag.
 | 1 | Foundations | Windows port, CI on macOS/Linux/Windows rendering every patch, releases built by CI. Several patches open at once. Clipboard as `.moritz` text. Code view. Tutorials. Import from Max. v0.5 |
 | 2 | Signal processing | Cross-synthesis in `sparkle~`. Supervised `nmf`. Filter design, spectral envelope. `nebula~`. Ambisonics and binaural. v0.6 |
 | 3 | Analysis and MIR | Onsets and segmentation. Mel, MFCC, chroma (live and offline). Key, tempo, beat tracking. Self-similarity, novelty. Loudness, register, polyphony curves. Plots and matrix display. v0.8 |
-| 4 | Maple and SoundTypes | Maple with FFT matching, dictionaries (frames, onsets, files, Gabor/gammatone), decomposition, hybridisation. SoundTypes: types, matching, Markov generation. Dataset: Maple dictionaries. |
+| 4 | Maple and SoundTypes | Maple with FFT matching, dictionaries (frames, onsets, files, Gabor/gammatone), decomposition, hybridisation. SoundTypes: types at several levels, matching at any level, generation by n-grams, variable-order Markov and factor oracle. v0.9 |
 | 5 | Recursive score | Score model, roll, rendering, playback, MusicXML, save/load. Database layer and `db-gen`. Dataset: TinySOL. |
 | 6 | Orchestration | Orchidea mimetic orchestration (static, dynamic) into scores; granular and morphological orchestration; playability checks. |
 | 7 | Neural networks | `mlp`, classifier, `autoencoder`/`vae` with a playable latent space, images as data. Dataset: MNIST. |
@@ -177,6 +177,66 @@ Max objects most often missing in imported patches: `prepend`, `zl`, `pak`,
   Forever" (U.S. Marine Band), two Bach preludes (Kimiko Ishizaka).
 - Help patches for every object, five examples (structure, key, beats,
   segments, live) and tutorial 9.
+
+### Step 4: atoms and types (v0.9)
+
+- `atoms`: dictionaries shared by name: Gabor and gammatone (window
+  lengths, highest frequency), or atoms cut from sound files (frames, onsets,
+  whole files) or from a buffer~; saved and read as files.
+- `pursuit`: matching pursuit with FFT matching. Parametric atoms: an STFT
+  per scale with local updates (MPTK's approach), frequencies refined by a
+  parabola, phases by an exact projection on the cosine and sine atoms
+  (resynthesis matches the measured signal-to-residual exactly: 26.5 dB with
+  200 atoms, 52.1 dB with 2000 on the gong). Atoms of sounds: segments of
+  the target (onsets or blocks), candidates preselected by mel spectrum,
+  each slid by FFT cross-correlation. Resynthesis with transposition,
+  stretching and a share of the strongest atoms; `cross` rebuilds a book
+  with the closest atoms of another dictionary. The book is a buffer~ that
+  `plot` draws as an atom map.
+- `soundtypes`: types at up to three levels (frames, gestures, sections),
+  from sounds or from pursuit books; type strips and transition matrices for
+  `plot`; units as text (tokens for the neural models of step 7).
+- `typegen`: classic n-grams, variable-order Markov, factor oracle with
+  continuity and minimum context; at any level; offline or unit by unit
+  (live). The oracle at continuity 1 rebuilds the original (correlation
+  0.99997 on the drums).
+- `typematch`: rematch at any level, at A's timing or at B's lengths.
+- `plot`: `ylog`, continuous colours in scatter plots (atom maps),
+  categorical colours (`colors types`), plain matrices without a time axis.
+- Dictionary sounds in the examples: Kitchen and People (the author's
+  recordings, as FLAC). Help patches for the five objects, six examples
+  (atoms, hybrid, levels, generate, match, types of atoms) and tutorial 10.
+- Not done: the larger Maple dictionaries as release downloads (with a menu
+  to fetch them), a live oracle (`oracle~`, OMax-style), a graph view of the
+  types.
+
+### Departures from Maple and SoundTypes
+
+Changes made while porting, which the original tools could take back:
+
+- **Maple, FFT matching**: atoms were tried at one position per frame (the
+  frame start); now every position (parametric atoms: a grid of a quarter of
+  the scale, as MPTK; sound atoms: every sample, by cross-correlation).
+- **Maple, parametric atoms**: frequencies were a fixed grid (octave
+  divisions); now any frequency (the FFT peak refined by a parabola), with
+  the optimal phase from an exact projection on cosine and sine (Maple used
+  phase slices).
+- **Maple, sound atoms**: a mel-spectrum preselection of candidates makes
+  large dictionaries usable; an atom partly outside its segment is
+  normalised on the part that fits.
+- **Maple, generation**: the probabilistic generation (per-rank chains,
+  weights discarded) is replaced by SoundTypes' generation on atom books.
+- **SoundTypes, levels**: the "levels" were n-gram orders of one sequence;
+  now real levels: gestures cut where the next type is surprising (high
+  -log P), clustered by their content, recursively.
+- **SoundTypes, generation**: besides n-grams, variable-order Markov (with
+  back-off) and the factor oracle (Allauzen, Crochemore and Raffinot;
+  navigated as OMax and the Variable Markov Oracle).
+- **SoundTypes, synthesis**: units are realised with their own sound,
+  joined by crossfades (or rebuilt from atoms), instead of a frame-by-frame
+  phase-vocoder resynthesis from one representative frame per type.
+- **SoundTypes, rematch**: at any level (units, gestures, sections), with
+  the instance closest in duration, at the target's timing or not.
 
 ## Open points
 

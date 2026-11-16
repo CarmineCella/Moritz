@@ -17,7 +17,7 @@ namespace {
 
 // menu order of the groups; classes keep their registration order inside one
 const char* const kGroups[] = {"Oscillators", "Filters", "Signal Math", "Signal Routing", "Delay", "Samples",
-                               "Spectral", "Spatial", "Analysis", "Learning", "I/O", "MIDI", "Timing", "Control Math",
+                               "Spectral", "Spatial", "Analysis", "Atoms and types", "Learning", "I/O", "MIDI", "Timing", "Control Math",
                                "Routing", "Patching", "Interface"};
 
 int groupRank(const char* g) {
@@ -42,6 +42,8 @@ const ClassTable& classDefs() {
         registerSpatialObjects(v);
         registerMirObjects(v);
         registerPlotObjects(v);
+        registerMapleObjects(v);
+        registerSoundtypesObjects(v);
         std::stable_sort(v.begin(), v.end(), [](const ClassDef& a, const ClassDef& b) {
             return groupRank(a.group) < groupRank(b.group);
         });

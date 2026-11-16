@@ -154,6 +154,20 @@ const std::map<std::string, PortDocs>& docs() {
         {"binaural~", {{"sound field channel (ACN: W Y Z X ...)"}, {"left ear", "right ear"}}},
         {"hrtf~", {{"the signal to place", "azimuth (degrees, 0 front, 90 left, 180 behind)", "elevation (degrees, -40 to 90)"},
                    {"left ear", "right ear"}}},
+        // atoms and types
+        {"atoms", {{"gabor [min max] [fmax], gammatone ..., frames folder [ms hop], onsets folder [threshold max], files folder [max], "
+                    "add buffer [mode], get k buffer, clear, write file, read file, info, stop"},
+                   {"progress, 0 to 1", "bang: the dictionary is ready", "number of atoms"}}},
+        {"pursuit", {{"run sound dictionary book [residual], synth book dictionary out, cross book from to out; atoms n, snr dB, "
+                      "components n, candidates n, segments onsets|blocks, block ms, threshold x, ratio r, stretch s, tails 0/1, keep f, stop"},
+                     {"progress, 0 to 1", "bang: done", "atoms found", "signal-to-residual (dB)"}}},
+        {"soundtypes", {{"analyse sound, analyse book dictionary; types k1 k2 k3, levels n, threshold z, smooth n, size n, hop n, seed n; "
+                         "labels buffer, transitions level buffer, play level type, write file, info, stop"},
+                        {"progress, 0 to 1", "bang: done", "units per level, a list", "play: start end (ms)"}}},
+        {"typegen", {{"generate seconds out [labels], next, reset; classic n, markov [order count], oracle [continuity context], "
+                      "level n, model name, seed n, xfade ms, stop"},
+                     {"progress, 0 to 1", "bang: done", "next: the unit's type", "next: start end (ms) in the original"}}},
+        {"typematch", {{"run A B out [level] [labels]; level n, fit 1/0, xfade ms, stop"}, {"progress, 0 to 1", "bang: done"}}},
         // analysis and MIR
         {"spectrogram", {{"run sound matrix; maxfreq Hz, size n, hop n, stop"},
                          {"progress, 0 to 1", "bang: matrix holds the spectrogram (a channel a bin, dB)"}}},

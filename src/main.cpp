@@ -132,6 +132,7 @@ int renderCli(int argc, char** argv) {
     int shotW = 0, shotH = 0;
     for (int k = 4; k < argc; ++k) {
         std::string a = argv[k];
+        if (a.rfind("--", 0) == 0) continue;     // an option (--no-audio...): never an output file
         if (a.rfind("png=", 0) == 0) { png = a.substr(4); continue; }
         if (a.rfind("midi=", 0) == 0) {       // a MIDI message at a time, as if from a device
             std::string rest = a.substr(5);

@@ -31,7 +31,7 @@
 
 APP        := moritz
 BUNDLE     := Moritz.app
-VERSION    := 0.8
+VERSION    := 0.9
 UNAME      := $(shell uname -s)
 # MSYS2 on Windows reports MINGW64_NT-..., UCRT64_NT-..., MSYS_NT-...
 ifneq (,$(findstring _NT,$(UNAME)))

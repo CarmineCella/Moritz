@@ -18,10 +18,12 @@
 // colours of an image), xrange from to | xrange auto (the part shown: seconds
 // on a time axis), rows first last (an image's y axis: what its first and
 // last rows stand for, e.g. rows 30 300 for a tempogram in bpm), normalize 1 (each row of an image coloured over its
-// own range: MFCCs, curves of different units), marks t... (vertical lines; ms on a time axis, also
+// own range: MFCCs, curves of different units), ylog 1 (a logarithmic y axis
+// for curves and scatter plots: frequencies), marks t... (vertical lines; ms on a time axis, also
 // the right inlet), cursor ms, title text, labels a b c (names of the rows
 // of an image or of the bars; "labels chroma": C C# ... B, "labels keys": C Cm
-// Db C#m ... Bm, as keyfind orders them), colors viridis | gray, history n, clear,
+// Db C#m ... Bm, as keyfind orders them), colors viridis | gray | types (an image of categories: each value its own
+// colour, as sound types), history n, clear,
 // open (the window), export file.png [w h].
 // Clicking in locked mode outputs where: x (ms on a time axis, otherwise the
 // index) and y (the row of an image, the value of a curve). Double-click
@@ -66,6 +68,14 @@ Rgb palette(int k) {
                             {148, 103, 189}, {140, 86, 75}, {227, 119, 194}, {127, 127, 127}};
     return c[((k % 8) + 8) % 8];
 }
+// sixteen distinct colours, for categories (sound types)
+Rgb category(int k) {
+    static const Rgb c[] = {{31, 119, 180}, {255, 127, 14}, {44, 160, 44}, {214, 39, 40}, {148, 103, 189},
+                            {140, 86, 75}, {227, 119, 194}, {188, 189, 34}, {23, 190, 207}, {127, 127, 127},
+                            {174, 199, 232}, {255, 187, 120}, {152, 223, 138}, {255, 152, 150}, {197, 176, 213},
+                            {219, 219, 141}};
+    return c[((k % 16) + 16) % 16];
+}
 Rgb brighter(Rgb c) {   // the palette on the dark patch
     return {(unsigned char)std::min(255, c.r + 50), (unsigned char)std::min(255, c.g + 50), (unsigned char)std::min(255, c.b + 50)};
 }
@@ -86,7 +96,7 @@ struct PlotState {
     double xStart = 0, xStep = 1;           // x of column k: xStart + k * xStep
     bool time = false;                      // x in seconds (a buffer~)
     std::string mode = "auto", title, source;
-    bool fixed = false, gray = false, normalize = false, xfixed = false, rowValues = false;
+    bool fixed = false, gray = false, types = false, normalize = false, xfixed = false, rowValues = false, ylog = false;
     double lo = 0, hi = 1, xlo = 0, xhi = 1, rowFirst = 0, rowLast = 1;
     std::vector<double> marks;              // ms on a time axis, x otherwise
     double cursor = -1;
@@ -97,9 +107,12 @@ struct PlotState {
     size_t cols() const { return rows.empty() ? 0 : rows[0].size(); }
     std::string kind() const {
         if (mode != "auto") return mode;
+        if (types) return "image";                       // categories are drawn as bands
         return rows.size() <= 4 ? "line" : "image";
     }
     double xOf(double col) const { return xStart + col * xStep; }
+    // y as drawn: log2 of the value on a logarithmic axis (curves and scatter plots)
+    double yOf(double v) const { return ylog ? std::log2(std::max(v, 1e-6)) : v; }
     // what row r (or a position between rows) stands for on the y axis
     double rowValue(double r) const {
         if (!rowValues || rows.size() < 2) return r;
@@ -138,6 +151,8 @@ struct PlotState {
         if (k == "scatter") {
             stats(r.x0, r.x1, 0);
             stats(r.y0, r.y1, 1);
+            r.y0 = yOf(r.y0); r.y1 = yOf(r.y1);
+            if (r.y1 <= r.y0) r.y1 = r.y0 + 1;
             double dx = (r.x1 - r.x0) * .05, dy = (r.y1 - r.y0) * .05;
             r.x0 -= dx; r.x1 += dx; r.y0 -= dy; r.y1 += dy;
             return r;
@@ -154,6 +169,7 @@ struct PlotState {
         } else {
             r.x0 = xOf(0); r.x1 = xOf(n > 1 ? (double)(n - 1) : 1.0);
         }
+        if (ylog && k != "bars") { lo = yOf(lo); hi = yOf(hi); if (hi <= lo) hi = lo + 1; }
         double m = fixed ? 0 : (hi - lo) * .05;
         r.y0 = lo - m; r.y1 = hi + m;
         return r;
@@ -170,7 +186,7 @@ struct ImageCache {
     int version = -1, w = 0, h = 0;
     Range view;
     double lo = 0, hi = 0;
-    bool gray = false, normalize = false;
+    bool gray = false, types = false, normalize = false;
 };
 
 // Draws the plot into (X, Y, W, H). full: the window's look (light, axes,
@@ -222,7 +238,7 @@ void drawPlot(const PlotState& s, ImageCache& cache, int X, int Y, int W, int H,
     if (!image) drawMarks();
     if (n > 0 && R > 0 && image) {
         bool fresh = cache.version != s.version || cache.w != pw || cache.h != ph || cache.lo != lo || cache.hi != hi ||
-                     cache.gray != s.gray || cache.normalize != s.normalize || cache.view.x0 != v.x0 || cache.view.x1 != v.x1 || cache.view.y0 != v.y0 ||
+                     cache.gray != s.gray || cache.types != s.types || cache.normalize != s.normalize || cache.view.x0 != v.x0 || cache.view.x1 != v.x1 || cache.view.y0 != v.y0 ||
                      cache.view.y1 != v.y1;
         if (fresh) {
             cache.rgb.assign((size_t)pw * ph * 3, 0);
@@ -248,6 +264,15 @@ void drawPlot(const PlotState& s, ImageCache& cache, int X, int Y, int W, int H,
                 }
             for (int j = 0; j < ph; ++j)
                 for (int i = 0; i < pw; ++i) {
+                    if (s.types) {                                   // categories: the cell under the pixel's centre
+                        long r = (long)std::floor(v.y1 - (v.y1 - v.y0) * (j + .5) / ph);
+                        long c = (long)std::floor((v.x0 + (v.x1 - v.x0) * (i + .5) / pw - s.xStart) / s.xStep);
+                        unsigned char* p = &cache.rgb[((size_t)j * pw + i) * 3];
+                        Rgb col = full ? Rgb{250, 250, 250} : Rgb{22, 24, 28};
+                        if (r >= 0 && r < (long)R && c >= 0 && c < (long)n) col = category((int)std::lround(s.rows[(size_t)r][(size_t)c]));
+                        p[0] = col.r; p[1] = col.g; p[2] = col.b;
+                        continue;
+                    }
                     double sum = 0;
                     long cnt = 0;
                     long ra = std::max(0L, r0[(size_t)j]), rb = std::min((long)R, r1[(size_t)j]);
@@ -269,18 +294,40 @@ void drawPlot(const PlotState& s, ImageCache& cache, int X, int Y, int W, int H,
                     p[0] = c.r; p[1] = c.g; p[2] = c.b;
                 }
             cache.version = s.version; cache.w = pw; cache.h = ph; cache.lo = lo; cache.hi = hi;
-            cache.gray = s.gray; cache.normalize = s.normalize; cache.view = v;
+            cache.gray = s.gray; cache.types = s.types; cache.normalize = s.normalize; cache.view = v;
         }
         fl_draw_image(cache.rgb.data(), px, py, pw, ph, 3);
     } else if (n > 0 && R > 0 && k == "scatter") {
-        if (R >= 2)
-            for (size_t c = 0; c < n; ++c) {
-                Rgb col = palette(R > 2 ? (int)s.rows[2][c] : 0);
-                if (!full) col = brighter(col);
+        if (R >= 2) {
+            // row 2 colours the points: classes (small integers) or a value (viridis)
+            bool classes = true;
+            double cmin = 1e300, cmax = -1e300;
+            if (R > 2)
+                for (float v : s.rows[2]) {
+                    if (v != std::floor(v) || v < 0 || v > 15) classes = false;
+                    cmin = std::min(cmin, (double)v);
+                    cmax = std::max(cmax, (double)v);
+                }
+            if (s.fixed && R > 2 && !classes) { cmin = s.lo; cmax = s.hi; }
+            int d = n > 3000 ? 2 : n > 500 ? 4 : 6;
+            // the weakest first, so the strongest stay on top
+            std::vector<size_t> order(n);
+            for (size_t c = 0; c < n; ++c) order[c] = c;
+            if (R > 2 && !classes)
+                std::sort(order.begin(), order.end(), [&](size_t a, size_t b) { return s.rows[2][a] < s.rows[2][b]; });
+            for (size_t c : order) {
+                Rgb col;
+                if (R > 2 && !classes) col = viridis(cmax > cmin ? (s.rows[2][c] - cmin) / (cmax - cmin) : 1.0);
+                else {
+                    col = palette(R > 2 ? (int)s.rows[2][c] : 0);
+                    if (!full) col = brighter(col);
+                }
                 fl_color(col.r, col.g, col.b);
-                int x = (int)sx(s.rows[0][c]), y = (int)sy(s.rows[1][c]);
-                fl_pie(x - 3, y - 3, 6, 6, 0, 360);
+                int x = (int)sx(s.rows[0][c]), y = (int)sy(s.yOf(s.rows[1][c]));
+                if (d <= 2) fl_rectf(x - 1, y - 1, 2, 2);
+                else fl_pie(x - d / 2, y - d / 2, d, d, 0, 360);
             }
+        }
     } else if (n > 0 && R > 0 && k == "bars") {
         double bw = std::max(1.0, std::fabs(sx(s.xOf(1)) - sx(s.xOf(0))) * .8);
         Rgb col = full ? palette(0) : brighter(palette(0));
@@ -303,9 +350,9 @@ void drawPlot(const PlotState& s, ImageCache& cache, int X, int Y, int W, int H,
                 long a = std::max(0L, (long)std::floor((v.x0 - s.xStart) / s.xStep) - 1);
                 long b = std::min((long)n - 1, (long)std::ceil((v.x1 - s.xStart) / s.xStep) + 1);
                 for (long c = a; c < b; ++c)
-                    fl_line((int)sx(s.xOf((double)c)), (int)sy(row[(size_t)c]), (int)sx(s.xOf((double)c + 1)),
-                            (int)sy(row[(size_t)c + 1]));
-                if (a == b && b >= 0) fl_point((int)sx(s.xOf((double)a)), (int)sy(row[(size_t)a]));
+                    fl_line((int)sx(s.xOf((double)c)), (int)sy(s.yOf(row[(size_t)c])), (int)sx(s.xOf((double)c + 1)),
+                            (int)sy(s.yOf(row[(size_t)c + 1])));
+                if (a == b && b >= 0) fl_point((int)sx(s.xOf((double)a)), (int)sy(s.yOf(row[(size_t)a])));
             } else {                                              // min and max under every pixel
                 int prevLo = 0, prevHi = 0;
                 bool have = false;
@@ -317,7 +364,7 @@ void drawPlot(const PlotState& s, ImageCache& cache, int X, int Y, int W, int H,
                     long stride = std::max(1L, (b - a) / 256);
                     double mn = 1e300, mx = -1e300;
                     for (long c = a; c < b; c += stride) { mn = std::min(mn, (double)row[(size_t)c]); mx = std::max(mx, (double)row[(size_t)c]); }
-                    int yl = (int)sy(mn), yh = (int)sy(mx);
+                    int yl = (int)sy(s.yOf(mn)), yh = (int)sy(s.yOf(mx));
                     if (have) {                                   // join with the previous column
                         if (yh > prevLo) yh = prevLo;
                         if (yl < prevHi) yl = prevHi;
@@ -387,20 +434,23 @@ void drawPlot(const PlotState& s, ImageCache& cache, int X, int Y, int W, int H,
                     std::string l = num(t);
                     fl_draw(l.c_str(), px - 6 - (int)fl_width(l.c_str()), (int)sy(t) + 4);
                 }
-            // the colour bar
+            // the colour bar (none for categories)
             int bx = px + pw + 16, bwid = 12;
-            for (int j = 0; j < ph; ++j) {
+            for (int j = 0; j < ph && !s.types; ++j) {
                 double t = 1.0 - (double)j / ph;
                 Rgb c = s.gray ? Rgb{(unsigned char)(t * 255), (unsigned char)(t * 255), (unsigned char)(t * 255)} : viridis(t);
                 fl_color(c.r, c.g, c.b);
                 fl_xyline(bx, py + j, bx + bwid);
             }
             fl_color(text);
-            fl_draw(num(hi).c_str(), bx + bwid + 4, py + 9);
-            fl_draw(num(lo).c_str(), bx + bwid + 4, py + ph);
+            if (!s.types) {
+                fl_draw(num(hi).c_str(), bx + bwid + 4, py + 9);
+                fl_draw(num(lo).c_str(), bx + bwid + 4, py + ph);
+            }
         } else {
-            for (double t = std::ceil(v.y0 / sty) * sty; t <= v.y1; t += sty) {
-                std::string l = num(t);
+            double st = s.ylog ? std::max(1.0, std::round(sty)) : sty;      // octaves on a log axis
+            for (double t = std::ceil(v.y0 / st) * st; t <= v.y1; t += st) {
+                std::string l = num(s.ylog ? std::pow(2.0, t) : t);
                 fl_draw(l.c_str(), px - 6 - (int)fl_width(l.c_str()), (int)sy(t) + 4);
             }
         }
@@ -416,9 +466,11 @@ void drawPlot(const PlotState& s, ImageCache& cache, int X, int Y, int W, int H,
                 fl_draw(l.c_str(), (int)sx(t) + 2, py + ph - 2);
             }
         }
-        if (!image && k != "scatter")
-            for (double t = std::ceil(v.y0 / sty) * sty; t <= v.y1; t += sty)
-                if (sy(t) > py + 18 && sy(t) < py + ph - 12) fl_draw(num(t).c_str(), px + 2, (int)sy(t) - 2);
+        if (!image) {
+            double st = s.ylog ? std::max(1.0, std::round(sty)) : sty;
+            for (double t = std::ceil(v.y0 / st) * st; t <= v.y1; t += st)
+                if (sy(t) > py + 18 && sy(t) < py + ph - 12) fl_draw(num(s.ylog ? std::pow(2.0, t) : t).c_str(), px + 2, (int)sy(t) - 2);
+        }
         if (image && !s.labels.empty() && ph / std::max<size_t>(1, R) >= 8)
             for (size_t r = 0; r < R; ++r) {
                 std::string l = rowLabel(r);
@@ -543,7 +595,7 @@ private:
             r += "   value";
             for (size_t k = 0; k < s.rows.size() && k < 6; ++k) r += " " + num(s.rows[k][(size_t)c]);
         } else {
-            r += "   y " + num(dy);
+            r += "   y " + num(s.ylog ? std::pow(2.0, dy) : dy);
         }
         readout_ = r;
     }
@@ -660,11 +712,15 @@ public:
             else
                 for (size_t k = 1; k < m.size(); ++k) s_->labels.push_back(m[k].str());
             changed();
+        } else if (w == "ylog") {
+            s_->ylog = argf(m, 1, 1.f) != 0.f;
+            changed();
         } else if (w == "normalize") {
             s_->normalize = argf(m, 1, 1.f) != 0.f;
             changed();
         } else if (w == "colors" && m.size() > 1) {
             s_->gray = m[1].is("gray");
+            s_->types = m[1].is("types");
             changed();
         } else if (w == "history" && m.size() > 1) {
             s_->history = std::clamp((int)argf(m, 1, 256.f), 2, 100000);
@@ -701,6 +757,7 @@ public:
             long c = std::lround((x - s_->xStart) / s_->xStep);
             if (c >= 0 && c < (long)s_->cols() && !s_->rows.empty()) y = s_->rows[0][(size_t)c];
         }
+        if (s_->ylog && s_->kind() != "image") y = std::pow(2.0, y);
         outletFloat(1, (float)y);
         outletFloat(0, (float)(s_->time ? x * 1000.0 : x));
     }
@@ -764,9 +821,9 @@ private:
         R.assign((size_t)(c1 - c0), std::vector<float>((size_t)sb.frames));
         for (long f = 0; f < sb.frames; ++f)
             for (int c = c0; c < c1; ++c) R[(size_t)(c - c0)][(size_t)f] = sb.data[(size_t)f * sb.channels + c];
-        s_->time = true;
+        s_->time = sb.sr > 1.5;                         // a rate of 1: a plain matrix (no time axis)
         s_->xStart = 0;
-        s_->xStep = sb.sr > 0 ? 1.0 / sb.sr : 1.0;
+        s_->xStep = s_->time ? 1.0 / sb.sr : 1.0;
         changed();
     }
     void changed() {
