@@ -188,7 +188,11 @@ Commons), and the preludes in C minor and D major of Bach's Well-Tempered
 Clavier, Book 1, played by Kimiko Ishizaka (the Open Well-Tempered Clavier,
 CC0, welltemperedclavier.org). The kitchen and people sounds in
 `examples/sounds/kitchen` and `examples/sounds/people`, used as dictionaries
-for matching pursuit, are the author's recordings.
+for matching pursuit, are the author's recordings. The clarinet notes in
+`examples/sounds/clarinet` (B-flat clarinet, ordinario, every pitch at pp,
+mf and ff, shortened to 1.5 s) come from TinySOL (Cella, Ghisi, Lostanlen,
+Lévy, Fineberg and Maresz, IRCAM, CC BY 4.0). Short excerpts of John Cage
+speaking and of a Beach Boys song are used for the rematch example.
 
 ## License and credits
 

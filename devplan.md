@@ -222,8 +222,10 @@ Changes made while porting, which the original tools could take back:
   the optimal phase from an exact projection on cosine and sine (Maple used
   phase slices).
 - **Maple, sound atoms**: a mel-spectrum preselection of candidates makes
-  large dictionaries usable; an atom partly outside its segment is
-  normalised on the part that fits.
+  large dictionaries usable; an atom starts in its segment but is matched
+  and subtracted whole, over what follows (no unexplained tails spilling
+  into the next segment). With the TinySOL clarinet in 100 ms frames, Vox is
+  rebuilt with an envelope correlation of 0.82 (the original Maple: 0.83).
 - **Maple, generation**: the probabilistic generation (per-rank chains,
   weights discarded) is replaced by SoundTypes' generation on atom books.
 - **SoundTypes, levels**: the "levels" were n-gram orders of one sequence;
@@ -235,8 +237,19 @@ Changes made while porting, which the original tools could take back:
 - **SoundTypes, synthesis**: units are realised with their own sound,
   joined by crossfades (or rebuilt from atoms), instead of a frame-by-frame
   phase-vocoder resynthesis from one representative frame per type.
-- **SoundTypes, rematch**: at any level (units, gestures, sections), with
-  the instance closest in duration, at the target's timing or not.
+- **SoundTypes, segmentation**: level 1 is either runs of frame types or,
+  as in the original, the notes between onsets clustered as wholes; the
+  features can include the pitch classes, so that types follow harmony.
+- **SoundTypes, mixing levels**: a sequence generated at level 2 or 3 can
+  be played with the level below regenerated (an oracle walk inside each
+  unit): the form of one level with the detail of another.
+- **SoundTypes, rematch**: frame by frame as the original (grains of the
+  source overlap-added at the target's frames, each sound's features
+  standardised in its own space), or at any level (units, gestures,
+  sections), with the closest instance of the closest type, at the target's
+  timing or not,
+  and with the target's loudness envelope imposed (contour), so that speech
+  keeps its rhythm when made of music.
 
 ## Open points
 

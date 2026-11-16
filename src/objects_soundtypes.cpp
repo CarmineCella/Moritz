@@ -23,6 +23,12 @@ using ModelPtr = std::shared_ptr<const soundtypes::Model>;
 //                                level) clustered into types
 //   analyse book dictionary      the atoms of a pursuit book instead: the
 //                                units are rebuilt from their atoms
+//   segment frames               level 1: runs of frames of one type (default)
+//   segment onsets [threshold] [gap]   level 1: the notes or strokes between
+//                                onsets (1.5, at least 0.08 s apart),
+//                                clustered as wholes (as in SoundTypes)
+//   pitch 1/0                    add the pitch classes (chroma) to the
+//                                features: types follow harmony too (0)
 //   types k1 [k2 k3]             types per level (12 6 4)
 //   levels n                     1 to 3 (2): level 2 groups the units of
 //                                level 1 into gestures, cut where the next
@@ -58,6 +64,13 @@ public:
         else if (h.is("seed")) opt_.seed = (unsigned)argf(m, 1, 1.f);
         else if (h.is("size")) { int n = 1; while (n < (int)argf(m, 1, 2048.f)) n <<= 1; size_ = std::clamp(n, 256, 16384); }
         else if (h.is("hop")) hop_ = std::clamp((int)argf(m, 1, 512.f), 32, 8192);
+        else if (h.is("segment")) {
+            onsets_ = argstr(m, 1) == "onsets";
+            if (onsets_) {
+                onsetThreshold_ = std::max(.1f, argf(m, 2, 1.5f));
+                onsetGap_ = std::clamp(argf(m, 3, .08f), .01f, 5.f);
+            }
+        } else if (h.is("pitch")) pitch_ = argf(m, 1, 1.f) != 0.f;
         else if (h.is("analyse") && m.size() > 1) analyse(m[1].str(), argstr(m, 2));
         else if (h.is("labels") && m.size() > 1) {
             if (!ready()) return;
@@ -118,12 +131,16 @@ private:
             m->sr = b->buf.sr;
         }
         soundtypes::Options o = opt_;
+        bool onsets = onsets_ && !m->book, pitch = pitch_;
+        double thr = onsetThreshold_, gap = onsetGap_;
+        if (onsets_ && m->book) patch->print("soundtypes " + name + ": a book is cut into frames (onsets need a sound)");
         run(
-            [m, o](Job& job) {
+            [m, o, onsets, pitch, thr, gap](Job& job) {
                 auto tick = [&job](double p) { job.progress((float)p); return !job.cancelled(); };
                 if (m->book) m->frames = soundtypes::bookFeatures(*m->book, m->hop);
                 else m->frames = soundtypes::soundFeatures(m->sound, m->sr, m->size, m->hop,
-                                                           [&](double p) { return tick(.6 * p); });
+                                                           [&](double p) { return tick(.5 * p); }, pitch);
+                if (onsets && !job.cancelled()) m->onsets = soundtypes::soundOnsets(m->sound, m->sr, thr, gap);
                 if (m->frames.empty() || !soundtypes::analyse(*m, o, tick)) m->levels.clear();
             },
             [this, m] {
@@ -137,6 +154,8 @@ private:
     ModelPtr model_;
     soundtypes::Options opt_;
     int size_ = 2048, hop_ = 512;
+    bool onsets_ = false, pitch_ = false;
+    float onsetThreshold_ = 1.5f, onsetGap_ = .08f;
     std::mt19937 rng_{7};
 };
 
@@ -180,6 +199,10 @@ ModelPtr modelOf(Patch* patch, const std::string& who, const std::string& name) 
 //                             jump to a place where the last context (at
 //                             least context units, 1) repeats
 //   level n                   generate units of level n (1)
+//   inner c [context]         levels mixed: the units of level 2 or 3 are
+//                             played with the level below regenerated (an
+//                             oracle walk of continuity c from each one's
+//                             first sub-unit); 1 (default): as they are
 //   generate seconds out [labels]   writes a new sound (and its types, for
 //                             plot) into buffer~s
 //   next                      live: the next unit of an endless sequence:
@@ -208,6 +231,7 @@ public:
             live_.clear();
         } else if (h.is("level")) { level_ = std::clamp((int)argf(m, 1, 1.f), 1, 3) - 1; live_.clear(); }
         else if (h.is("seed")) { go_.seed = (unsigned)argf(m, 1, 1.f); live_.clear(); }
+        else if (h.is("inner")) { inner_ = std::clamp(argf(m, 1, 1.f), 0.f, 1.f); innerContext_ = std::max(0, (int)argf(m, 2, 1.f)); }
         else if (h.is("xfade")) xfade_ = std::clamp(argf(m, 1, 10.f), 0.5f, 500.f);
         else if (h.is("reset")) live_.clear();
         else if (h.is("generate") && m.size() > 2) generate(argf(m, 1, 10.f), m[2].str(), argstr(m, 3));
@@ -221,12 +245,17 @@ private:
         if (!md) return;
         int level = std::min(level_, (int)md->levels.size() - 1);
         soundtypes::GenOptions go = go_;
-        double xf = xfade_;
+        double xf = xfade_, inner = inner_;
+        int ictx = innerContext_;
         auto y = std::make_shared<std::vector<float>>();
         auto strips = std::make_shared<std::vector<std::vector<float>>>();
         run(
-            [md, level, seconds, go, xf, y, strips](Job&) {
+            [md, level, seconds, go, xf, inner, ictx, y, strips](Job&) mutable {
                 std::vector<int> seq = soundtypes::generate(*md, level, std::max(.1, seconds), go);
+                if (level > 0 && inner < 1) {
+                    seq = soundtypes::nest(*md, level, seq, inner, ictx, go.seed);
+                    level = 0;
+                }
                 std::vector<soundtypes::Piece> pieces;
                 for (int u : seq) {
                     soundtypes::Piece p;
@@ -263,7 +292,8 @@ private:
     std::string model_;
     soundtypes::GenOptions go_;
     int level_ = 0;
-    double xfade_ = 10;
+    double xfade_ = 10, inner_ = 1;
+    int innerContext_ = 1;
     std::vector<int> live_;
     ModelPtr liveModel_;
     size_t pos_ = 0;
@@ -271,14 +301,22 @@ private:
 };
 
 // ---------------------------------------------------------------- typematch
-// typematch: SoundTypes' rematch: every unit of sound A replaced by a unit of
-// the closest type of sound B (the instance closest in duration), at any
-// level: units at level 1, gestures at level 2.
+// typematch: SoundTypes' rematch: every frame, unit or gesture of sound A
+// replaced by the closest of sound B (in its closest type).
 //   run A B out [level] [labels]   A and B are soundtypes models; out a buffer~
-//   level n                   the level when run doesn't give one (1)
+//   level n                   0: frame by frame, B's frames as grains
+//                             overlap-added at A's frames (the original
+//                             SoundTypes rematch); 1: unit by unit; 2:
+//                             gesture by gesture (1)
+//   space own / joint         features standardised in each sound's own
+//                             space (default: B's range covers A's) or in
+//                             one space for both (absolute distances)
 //   fit 1/0                   1 (default): at A's times and durations (B's
 //                             sound cut or continued); 0: one after the
 //                             other at B's own durations
+//   contour c                 with fit 1: A's loudness envelope imposed on
+//                             the result by c (0: B's own, 1: A's), so that
+//                             A's rhythm and phrasing come through (0)
 //   xfade ms                  crossfades (10)
 // Outlets: progress, done.
 class TypematchBox : public OfflineBox {
@@ -289,9 +327,11 @@ public:
         if (h.is("stop")) { job_.cancel(); return; }
         if (h.is("fit")) fit_ = argf(m, 1, 1.f) != 0.f;
         else if (h.is("xfade")) xfade_ = std::clamp(argf(m, 1, 10.f), .5f, 500.f);
-        else if (h.is("level")) level_ = std::clamp((int)argf(m, 1, 1.f), 1, 3);
+        else if (h.is("contour")) contour_ = std::clamp(argf(m, 1, 1.f), 0.f, 1.f);
+        else if (h.is("space")) own_ = argstr(m, 1) != "joint";
+        else if (h.is("level")) level_ = std::clamp((int)argf(m, 1, 1.f), 0, 3);
         else if (h.is("run") && m.size() > 3) {
-            bool hasLevel = m.size() > 4 && m[4].isFloat();
+            bool hasLevel = m.size() > 4 && m[4].isFloat();      // level 0: frames
             run3(m[1].str(), m[2].str(), m[3].str(), hasLevel ? (int)m[4].f : level_, argstr(m, hasLevel ? 5 : 4));
         }
     }
@@ -305,15 +345,35 @@ private:
             patch->print("typematch: " + a + " and " + b + " must be analysed the same way (both sounds, or both books)");
             return;
         }
+        if (level <= 0) {                                  // frame by frame
+            double ct = contour_;
+            bool own = own_;
+            auto y = std::make_shared<std::vector<float>>();
+            auto types = std::make_shared<std::vector<int>>();
+            run([A, B, ct, own, y, types](Job&) { *y = soundtypes::matchFrames(*A, *B, ct, own, types.get()); },
+                [this, A, B, y, types, out, labels] {
+                    limitPeak(patch, "typematch", out, *y);
+                    storeBuffer(patch, out, {*y}, B->sr);
+                    if (!labels.empty()) {
+                        std::vector<float> r(types->begin(), types->end());
+                        storeBuffer(patch, labels, {r}, A->sr / A->hop);
+                    }
+                });
+            return;
+        }
         int L = std::clamp(level, 1, (int)std::min(A->levels.size(), B->levels.size())) - 1;
-        bool fit = fit_;
-        double xf = xfade_;
+        bool fit = fit_, own = own_;
+        double xf = xfade_, ct = contour_;
         auto y = std::make_shared<std::vector<float>>();
         auto types = std::make_shared<std::vector<int>>();
         run(
-            [A, B, L, fit, xf, y, types](Job&) {
-                auto pieces = soundtypes::match(*A, *B, L, fit, types.get());
+            [A, B, L, fit, own, xf, ct, y, types](Job&) {
+                auto pieces = soundtypes::match(*A, *B, L, fit, own, types.get());
                 *y = soundtypes::join(*B, pieces, xf);
+                if (fit && ct > 0) {
+                    std::vector<float> a = A->book ? soundtypes::span(*A, 0, A->length()) : A->sound;
+                    soundtypes::contour(*y, a, B->sr, ct);
+                }
             },
             [this, A, B, L, y, types, out, labels] {
                 limitPeak(patch, "typematch", out, *y);
@@ -327,8 +387,8 @@ private:
                 }
             });
     }
-    bool fit_ = true;
-    double xfade_ = 10;
+    bool fit_ = true, own_ = true;
+    double xfade_ = 10, contour_ = 0;
     int level_ = 1;
 };
 

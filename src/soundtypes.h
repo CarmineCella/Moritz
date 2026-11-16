@@ -58,6 +58,7 @@ struct Model {
     std::vector<Vec> frames;                      // frame features (raw)
     std::vector<int> frameType;                   // level-1 type of every frame
     std::vector<Level> levels;
+    std::vector<long> onsets;                     // if any: level-1 units are the spans between them
     long length() const { return book ? book->length : (long)sound.size(); }
 };
 
@@ -143,13 +144,17 @@ inline void kmeans(const std::vector<Vec>& x, int k, unsigned seed, std::vector<
 }
 
 // ------------------------------------------------------------------ analysis
-// frame features of a sound: 13 MFCCs, log centroid, level (dB)
-inline std::vector<Vec> soundFeatures(const std::vector<float>& x, double sr, int n, int hop, const maple::Tick& tick) {
+// frame features of a sound: 13 MFCCs, log centroid, level (dB); with
+// pitch, also the 12 pitch classes (chroma, weighted by 3 so that harmony
+// counts as much as timbre)
+inline std::vector<Vec> soundFeatures(const std::vector<float>& x, double sr, int n, int hop, const maple::Tick& tick,
+                                      bool pitch = false) {
     mir::Mat mag = mir::magSpectrogram(x, n, hop, tick);
     mir::MelBank bank;
     bank.init(sr, n, 40);
+    mir::ChromaMap cmap = mir::chromaMap(sr, n);
     std::vector<Vec> out;
-    mir::Vec mel, c;
+    mir::Vec mel, c, chr;
     for (auto& m : mag) {
         bank.apply(m, mel);
         mir::dct(mel, 13, c);
@@ -158,6 +163,10 @@ inline std::vector<Vec> soundFeatures(const std::vector<float>& x, double sr, in
         Vec f(c.begin(), c.end());
         f.push_back(std::log2(std::max(sw > 0 ? sf / sw : 100.0, 50.0)));
         f.push_back(mir::toDb(e * 2.0 / n));
+        if (pitch) {
+            mir::chroma(m, cmap, chr);
+            for (double v : chr) f.push_back(3 * v);
+        }
         out.push_back(std::move(f));
     }
     return out;
@@ -221,12 +230,56 @@ inline std::vector<int> surpriseCuts(const std::vector<int>& s, int k, double z)
     return cuts;
 }
 
+// the onsets of a sound (samples), at least gap seconds apart
+inline std::vector<long> soundOnsets(const std::vector<float>& x, double sr, double threshold, double gap) {
+    mir::Mat mag = mir::magSpectrogram(x, 1024, 256);
+    mir::Vec flux = mir::fluxOf(mag);
+    std::vector<long> out;
+    for (double t : mir::onsetTimes(x, sr, 1024, 256, flux, threshold, 21, gap)) out.push_back((long)(t * sr));
+    return out;
+}
+
+// level 1 from onsets: the spans between them (notes, strokes), described
+// and clustered as wholes; a first span shorter than 50 ms joins the next
+inline bool onsetLevel(Model& m, const Options& o, Level& l1) {
+    std::vector<long> cuts{0};
+    for (long t : m.onsets) if (t > cuts.back() + (long)(.05 * m.sr) && t < m.length() - (long)(.05 * m.sr)) cuts.push_back(t);
+    cuts.push_back(m.length());
+    if (cuts.size() < 3) return false;
+    long frames = (long)m.frames.size();
+    std::vector<Vec> desc;
+    for (size_t c = 0; c + 1 < cuts.size(); ++c) {
+        Unit u;
+        u.start = cuts[c];
+        u.end = cuts[c + 1];
+        u.first = (int)std::min(frames - 1, u.start / m.hop);
+        u.last = (int)std::clamp(u.end / m.hop - 1, (long)u.first, frames - 1);
+        u.feat = describe(m.frames, u.first, u.last, (u.end - u.start) / m.sr);
+        desc.push_back(u.feat);
+        l1.units.push_back(u);
+    }
+    standardize(desc);
+    std::vector<int> lab;
+    std::vector<Vec> cent;
+    kmeans(desc, std::min(o.k.empty() ? 12 : o.k[0], (int)l1.units.size()), o.seed, lab, cent);
+    l1.k = (int)cent.size();
+    m.frameType.assign((size_t)frames, 0);
+    for (size_t i = 0; i < l1.units.size(); ++i) {
+        l1.units[i].type = lab[i];
+        for (long f = l1.units[i].start / m.hop; f < std::min(frames, (l1.units[i].end + m.hop - 1) / m.hop); ++f) m.frameType[(size_t)f] = lab[i];
+    }
+    return true;
+}
+
 inline bool analyse(Model& m, const Options& o, const maple::Tick& tick) {
     if (m.frames.empty()) return false;
+    Level l1;
+    if (!m.onsets.empty() && onsetLevel(m, o, l1)) {
+        // level 1 made of notes: nothing else to do here
+    } else {
     // level 1: frames into types, then runs
     std::vector<Vec> z = m.frames;
     standardize(z);
-    Level l1;
     std::vector<int> lab;
     kmeans(z, o.k.empty() ? 12 : o.k[0], o.seed, lab, l1.centroid);
     l1.k = (int)l1.centroid.size();
@@ -256,6 +309,7 @@ inline bool analyse(Model& m, const Options& o, const maple::Tick& tick) {
         u.feat = describe(m.frames, u.first, u.last, (u.end - u.start) / m.sr);
         l1.units.push_back(u);
         i = j + 1;
+    }
     }
     // the comparable centroids: mean description of each type's units
     auto centroids = [](Level& L) {
@@ -387,6 +441,26 @@ struct Oracle {
     }
 };
 
+// One step of an oracle walk from state (after unit state-1): the next
+// state, following the original with probability continuity, otherwise
+// jumping after a place where the last `context` symbols repeat.
+inline int oracleStep(const Oracle& orc, int state, double continuity, int context, std::mt19937& rng) {
+    int n = (int)orc.sfx.size() - 1;
+    std::uniform_real_distribution<double> uni(0, 1);
+    if (state < n && (uni(rng) < continuity || state == 0)) return state + 1;
+    // jump: to the suffix link, or to a state linking back to it, if the shared past is long enough
+    std::vector<int> cand;
+    int s = orc.sfx[(size_t)state];
+    if (s >= 0 && orc.lrs[(size_t)state] >= context) cand.push_back(s);
+    for (int j = 1; j <= n; ++j)
+        if (orc.sfx[(size_t)j] == s && j != state && orc.lrs[(size_t)j] >= context) cand.push_back(j);
+    int from = cand.empty() ? std::uniform_int_distribution<int>(0, n - 1)(rng)
+                            : cand[std::uniform_int_distribution<size_t>(0, cand.size() - 1)(rng)];
+    int next = std::min(from + 1, n);
+    if (next == state) next = std::uniform_int_distribution<int>(1, n)(rng);
+    return next;
+}
+
 // Generates a sequence of unit indices of level L (the original's units)
 // until `seconds` of sound; the units are chosen by their types, or (the
 // oracle) by their place in the original.
@@ -396,7 +470,6 @@ inline std::vector<int> generate(const Model& m, int level, double seconds, cons
     size_t n = L.units.size();
     if (!n) return out;
     std::mt19937 rng(o.seed);
-    std::uniform_real_distribution<double> uni(0, 1);
     std::vector<int> sym;
     for (auto& u : L.units) sym.push_back(u.type);
     std::vector<std::vector<int>> instances((size_t)L.k);
@@ -416,20 +489,7 @@ inline std::vector<int> generate(const Model& m, int level, double seconds, cons
         Oracle orc(sym);
         int state = 0;                                  // the oracle's state i stands after unit i-1
         while (have < need && out.size() < 100000) {
-            int next;
-            if (state < (int)n && (uni(rng) < o.continuity || state == 0)) next = state + 1;
-            else {
-                // jump: to the suffix link, or to a state linking back to it, if the shared past is long enough
-                std::vector<int> cand;
-                int s = orc.sfx[(size_t)state];
-                if (s >= 0 && orc.lrs[(size_t)state] >= o.context) cand.push_back(s);
-                for (size_t j = 1; j <= n; ++j)
-                    if (orc.sfx[j] == s && (int)j != state && orc.lrs[j] >= o.context) cand.push_back((int)j);
-                int from = cand.empty() ? std::uniform_int_distribution<int>(0, (int)n - 1)(rng)
-                                        : cand[std::uniform_int_distribution<size_t>(0, cand.size() - 1)(rng)];
-                next = std::min(from + 1, (int)n);
-                if (next == state) next = std::uniform_int_distribution<int>(1, (int)n)(rng);
-            }
+            int next = oracleStep(orc, state, o.continuity, o.context, rng);
             push(next - 1);
             state = next >= (int)n ? 0 : next;          // at the end: start again
         }
@@ -479,6 +539,37 @@ inline std::vector<int> generate(const Model& m, int level, double seconds, cons
         push(realise(type));
     }
     return out;
+}
+
+// Levels mixed: a sequence of units of level L played with the level below
+// regenerated. Every unit keeps its first sub-unit and its number of
+// sub-units, but the walk through them is an oracle walk of the level below
+// (continuity c): the form comes from level L, the detail is new. Repeated
+// down to level 1; returns units of level 1, and with c = 1 the same sound.
+inline std::vector<int> nest(const Model& m, int level, const std::vector<int>& seq, double continuity, int context, unsigned seed) {
+    std::vector<int> cur = seq;
+    std::mt19937 rng(seed * 7919u + 13u);
+    for (int L = level; L > 0; --L) {
+        const Level& up = m.levels[(size_t)L];
+        const Level& below = m.levels[(size_t)L - 1];
+        std::vector<int> sym;
+        for (auto& u : below.units) sym.push_back(u.type);
+        Oracle orc(sym);
+        int n = (int)below.units.size();
+        std::vector<int> down;
+        for (int u : cur) {
+            const Unit& U = up.units[(size_t)u];
+            int count = U.last - U.first + 1, state = U.first + 1;
+            down.push_back(U.first);
+            for (int k = 1; k < count; ++k) {
+                int next = oracleStep(orc, state >= n ? 0 : state, continuity, context, rng);
+                down.push_back(next - 1);
+                state = next;
+            }
+        }
+        cur.swap(down);
+    }
+    return cur;
 }
 
 // ------------------------------------------------------------------ realisation
@@ -542,35 +633,99 @@ inline std::vector<std::vector<float>> generatedStrips(const Model& m, int level
     return rows;
 }
 
+// The amplitude envelope of a target imposed on a sound by an amount c (0:
+// none, 1: all): gain (env target / env sound)^c, envelopes the RMS over
+// 20 ms, the gain at most +20 dB (no noise floor pulled up); the overall
+// level stays the sound's.
+inline void contour(std::vector<float>& y, const std::vector<float>& target, double sr, double c) {
+    if (c <= 0 || y.empty() || target.empty()) return;
+    long w = std::max(16L, (long)(.02 * sr)), hop = w / 2;
+    auto env = [&](const std::vector<float>& x, long frames) {
+        Vec e((size_t)frames, 0.0);
+        for (long f = 0; f < frames; ++f) {
+            double s = 0;
+            long a = f * hop - w / 2, n = 0;
+            for (long t = std::max(0L, a); t < std::min((long)x.size(), a + w); ++t, ++n) s += (double)x[(size_t)t] * x[(size_t)t];
+            e[(size_t)f] = n ? std::sqrt(s / w) : 0.0;
+        }
+        return e;
+    };
+    long frames = (long)y.size() / hop + 2;
+    Vec ey = env(y, frames), et = env(target, frames);
+    double top = 0;
+    for (double v : ey) top = std::max(top, v);
+    Vec g((size_t)frames, 1.0);
+    for (long f = 0; f < frames; ++f)
+        g[(size_t)f] = std::min(10.0, std::pow(et[(size_t)f] / std::max(ey[(size_t)f], 1e-3 * top + 1e-9), c));
+    double before = 0, after = 0;
+    for (size_t t = 0; t < y.size(); ++t) {
+        double p = (double)t / hop;
+        size_t f = (size_t)p;
+        double fr = p - (double)f, gg = f + 1 < g.size() ? g[f] + fr * (g[f + 1] - g[f]) : g.back();
+        before += (double)y[t] * y[t];
+        y[t] = (float)(y[t] * gg);
+        after += (double)y[t] * y[t];
+    }
+    if (after > 0)                                       // the shape of A's loudness, at the level of the sound
+        for (auto& v : y) v = (float)(v * std::sqrt(before / after));
+}
+
 // ------------------------------------------------------------------ matching
 // For each unit of A at a level, the unit of B of the closest type (the
 // type's centroid against A's unit, features standardised over both), the
 // instance of closest duration; at A's times (fit: cut or extended to A's
 // duration) or one after the other at their own lengths.
-inline std::vector<Piece> match(const Model& A, const Model& B, int level, bool fit, std::vector<int>* typesOut = nullptr) {
+inline std::vector<Piece> match(const Model& A, const Model& B, int level, bool fit, bool own = true,
+                                std::vector<int>* typesOut = nullptr) {
     const Level& la = A.levels[(size_t)std::clamp(level, 0, (int)A.levels.size() - 1)];
     const Level& lb = B.levels[(size_t)std::clamp(level, 0, (int)B.levels.size() - 1)];
+    if (la.units.empty() || lb.units.empty() || la.units[0].feat.size() != lb.units[0].feat.size()) return {};
+    // the units of A, the centroids of B's types, the units of B; standardised
+    // in each sound's own space (a sound's brightest maps to the other's
+    // brightest), or in one space for both (absolute distances)
+    std::vector<Vec> ua, ub;
+    for (auto& u : la.units) ua.push_back(u.feat);
+    for (auto& u : lb.units) ub.push_back(u.feat);
     std::vector<Vec> all;
-    for (auto& u : la.units) all.push_back(u.feat);
-    for (auto& c : lb.centroid) all.push_back(c);
-    if (all.empty() || all[0].size() != (lb.centroid.empty() ? 0 : lb.centroid[0].size())) return {};
-    standardize(all);
+    if (own) {
+        standardize(ua);
+        standardize(ub);
+        all = ua;
+    } else {
+        std::vector<Vec> both = ua;
+        both.insert(both.end(), ub.begin(), ub.end());
+        standardize(both);
+        all.assign(both.begin(), both.begin() + (long)ua.size());
+        ub.assign(both.begin() + (long)ua.size(), both.end());
+    }
+    std::vector<Vec> cb((size_t)lb.k);
+    std::vector<int> nb((size_t)lb.k, 0);
+    for (size_t j = 0; j < lb.units.size(); ++j) {
+        Vec& c = cb[(size_t)lb.units[j].type];
+        if (c.empty()) c.assign(ub[j].size(), 0.0);
+        for (size_t d = 0; d < c.size(); ++d) c[d] += ub[j][d];
+        ++nb[(size_t)lb.units[j].type];
+    }
+    for (int t = 0; t < lb.k; ++t) if (nb[(size_t)t]) for (auto& v : cb[(size_t)t]) v /= nb[(size_t)t];
+    all.insert(all.end(), cb.begin(), cb.end());
+    all.insert(all.end(), ub.begin(), ub.end());
+    const size_t unitsB = la.units.size() + (size_t)lb.k;
     std::vector<Piece> out;
     for (size_t i = 0; i < la.units.size(); ++i) {
         int best = 0;
         double bd = 1e300;
         for (int t = 0; t < lb.k; ++t) {
-            if (lb.centroid[(size_t)t].empty()) continue;
+            if (all[la.units.size() + (size_t)t].empty()) continue;
             double d = dist2(all[i], all[la.units.size() + (size_t)t]);
             if (d < bd) { bd = d; best = t; }
         }
         const Unit& ua = la.units[i];
         long want = ua.end - ua.start;
-        int pick = -1;
-        long pd = std::numeric_limits<long>::max();
+        int pick = -1;                                   // the instance of that type closest to A's unit (duration included)
+        double pd = std::numeric_limits<double>::max();
         for (size_t j = 0; j < lb.units.size(); ++j)
             if (lb.units[j].type == best) {
-                long d = std::labs((lb.units[j].end - lb.units[j].start) - want);
+                double d = dist2(all[i], all[unitsB + j]);
                 if (d < pd) { pd = d; pick = (int)j; }
             }
         if (pick < 0) continue;
@@ -586,6 +741,76 @@ inline std::vector<Piece> match(const Model& A, const Model& B, int level, bool 
         out.push_back(p);
     }
     return out;
+}
+
+// Level 0, the rematch of the original SoundTypes: every frame of A (a hop
+// of A's analysis) replaced by a frame of B: the closest type of B, then its
+// closest frame, each sound's features standardised on its own (or in one
+// space). The frame of B is taken as a Hann grain of B's analysis size,
+// centred on it, overlap-added at A's frame, with the gain (eA / eB)^c (the
+// two frames' levels); the sum is divided by the overlapping windows.
+inline std::vector<float> matchFrames(const Model& A, const Model& B, double c, bool own, std::vector<int>* typesOut = nullptr) {
+    if (A.frames.empty() || B.frames.empty() || A.frames[0].size() != B.frames[0].size()) return {};
+    std::vector<Vec> za = A.frames, zb = B.frames;
+    if (own) { standardize(za); standardize(zb); }
+    else {
+        std::vector<Vec> both = za;
+        both.insert(both.end(), zb.begin(), zb.end());
+        standardize(both);
+        za.assign(both.begin(), both.begin() + (long)za.size());
+        zb.assign(both.begin() + (long)za.size(), both.end());
+    }
+    int k = B.levels.empty() ? 1 : B.levels[0].k;
+    std::vector<Vec> cent((size_t)k);
+    std::vector<std::vector<int>> members((size_t)k);
+    for (size_t j = 0; j < zb.size(); ++j) {
+        int t = j < B.frameType.size() ? std::clamp(B.frameType[j], 0, k - 1) : 0;
+        members[(size_t)t].push_back((int)j);
+        Vec& ct = cent[(size_t)t];
+        if (ct.empty()) ct.assign(zb[j].size(), 0.0);
+        for (size_t d = 0; d < ct.size(); ++d) ct[d] += zb[j][d];
+    }
+    for (int t = 0; t < k; ++t) if (!members[(size_t)t].empty()) for (auto& v : cent[(size_t)t]) v /= (double)members[(size_t)t].size();
+    std::vector<float> src = B.book ? span(B, 0, B.length()) : B.sound;
+    long N = B.size, len = A.length() + N;
+    std::vector<double> win((size_t)N);
+    for (long t = 0; t < N; ++t) win[(size_t)t] = .5 - .5 * std::cos(dsp::kTwoPi * (t + .5) / N);
+    std::vector<double> out((size_t)len, 0.0), wsum((size_t)len, 0.0);
+    size_t dbIndex = A.frames[0].size() >= 15 ? 14 : A.frames[0].size() - 1;     // the level (dB) of a sound's frame
+    for (size_t i = 0; i < za.size(); ++i) {
+        int best = 0;
+        double bd = 1e300;
+        for (int t = 0; t < k; ++t) {
+            if (members[(size_t)t].empty()) continue;
+            double d = dist2(za[i], cent[(size_t)t]);
+            if (d < bd) { bd = d; best = t; }
+        }
+        int pick = members[(size_t)best][0];
+        double pd = 1e300;
+        for (int j : members[(size_t)best]) {
+            double d = dist2(za[i], zb[(size_t)j]);
+            if (d < pd) { pd = d; pick = j; }
+        }
+        if (typesOut) typesOut->push_back(best);
+        double g = 1.0;
+        if (c > 0 && !A.book && !B.book) {
+            double ea = std::pow(10.0, A.frames[i][dbIndex] / 20), eb = std::pow(10.0, B.frames[(size_t)pick][dbIndex] / 20);
+            g = std::min(10.0, std::pow(ea / std::max(eb, 1e-5), c));
+        }
+        long at = (long)i * A.hop - N / 2, from = (long)pick * B.hop - N / 2;
+        for (long t = 0; t < N; ++t) {
+            long o = at + t, sidx = from + t;
+            if (o < 0 || o >= len) continue;
+            double v = sidx >= 0 && sidx < (long)src.size() ? src[(size_t)sidx] : 0.0;
+            out[(size_t)o] += g * win[(size_t)t] * v;
+            wsum[(size_t)o] += win[(size_t)t];
+        }
+    }
+    std::vector<float> y((size_t)A.length());
+    double peakW = 0;
+    for (double w : wsum) peakW = std::max(peakW, w);
+    for (size_t t = 0; t < y.size(); ++t) y[t] = (float)(out[t] / std::max(wsum[t], .25 * peakW + 1e-9));
+    return y;
 }
 
 }  // namespace soundtypes

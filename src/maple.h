@@ -370,6 +370,7 @@ inline bool soundPursuit(const Dictionary& d, std::vector<float> x, double sr, c
         }
     MelDescriptor desc(sr);
     residual = x;
+    const long total = (long)x.size();
     dsp::FFT fft;
     std::vector<float> rr, ri, ar, ai;
     for (size_t sg = 0; sg < segs.size(); ++sg) {
@@ -394,12 +395,14 @@ inline bool soundPursuit(const Dictionary& d, std::vector<float> x, double sr, c
             long bestTau = 0;
             for (int ci = 0; ci < keep; ++ci) {
                 const SoundAtom& at = d.atoms[(size_t)sim[(size_t)ci].second];
-                long n = (long)at.x.size(), P = 1;
-                while (P < S + std::min(n, S)) P <<= 1;
+                // the atom starts in the segment but is matched (and later
+                // subtracted) whole, over what follows it too
+                long n = (long)at.x.size(), W = std::min(S + n, total - a), P = 1;
+                while (P < S + n) P <<= 1;
                 rr.assign((size_t)P, 0.f); ri.assign((size_t)P, 0.f);
                 ar.assign((size_t)P, 0.f); ai.assign((size_t)P, 0.f);
-                for (long t = 0; t < S; ++t) rr[(size_t)t] = residual[(size_t)(a + t)];
-                for (long t = 0; t < std::min(n, S); ++t) ar[(size_t)t] = at.x[(size_t)t];
+                for (long t = 0; t < W; ++t) rr[(size_t)t] = residual[(size_t)(a + t)];
+                for (long t = 0; t < n; ++t) ar[(size_t)t] = at.x[(size_t)t];
                 fft.init((int)P);
                 fft.forward(rr.data(), ri.data());
                 fft.forward(ar.data(), ai.data());
@@ -411,7 +414,7 @@ inline bool soundPursuit(const Dictionary& d, std::vector<float> x, double sr, c
                 fft.inverse(rr.data(), ri.data());
                 for (long tau = 0; tau < S; ++tau) {
                     double cor = rr[(size_t)tau] / P;
-                    long m = std::min(n, S - tau);
+                    long m = std::min(n, W - tau);
                     double pe = at.prefix[(size_t)m];
                     if (pe < .05) continue;                  // too little of the atom fits
                     double g = cor * cor / pe;
@@ -420,11 +423,11 @@ inline bool soundPursuit(const Dictionary& d, std::vector<float> x, double sr, c
             }
             if (bestK < 0 || bestG < 1e-12) break;
             const SoundAtom& at = d.atoms[(size_t)bestK];
-            long m = std::min((long)at.x.size(), S - bestTau);
+            long m = std::min((long)at.x.size(), total - (a + bestTau));
             for (long t = 0; t < m; ++t) residual[(size_t)(a + bestTau + t)] -= (float)(bestCoef * at.x[(size_t)t]);
             BookAtom b;
             b.start = (double)(a + bestTau);
-            b.length = (int)at.x.size();
+            b.length = (int)std::min(m, S - bestTau);      // the part inside its segment (tails 0 plays only that)
             b.freq = at.centroid;
             b.amp = bestCoef;
             b.index = bestK;
@@ -453,7 +456,11 @@ inline std::vector<float> synthesize(const Book& book, const Dictionary& d, cons
     size_t use = (size_t)std::ceil(std::clamp(o.keep, 0.0, 1.0) * (double)order.size());
     long len = (long)(book.length * o.stretch) + 1;
     long extra = 0;
-    for (size_t k = 0; k < use; ++k) extra = std::max(extra, (long)(book.atoms[order[k]].length / std::max(.05, o.ratio)));
+    for (size_t k = 0; k < use; ++k) {
+        const BookAtom& b = book.atoms[order[k]];
+        long n = b.index >= 0 && b.index < (int)d.atoms.size() && o.tails ? (long)d.atoms[(size_t)b.index].x.size() : b.length;
+        extra = std::max(extra, (long)(n / std::max(.05, o.ratio)));
+    }
     std::vector<float> out((size_t)(len + extra), 0.f);
     bool gamma = d.kind == "gammatone";
     std::map<int, std::vector<float>> windows;
@@ -471,7 +478,7 @@ inline std::vector<float> synthesize(const Book& book, const Dictionary& d, cons
             }
         } else if (b.index < (int)d.atoms.size()) {             // a sound atom, resampled by ratio
             const auto& x = d.atoms[(size_t)b.index].x;
-            long n = o.tails ? (long)x.size() : std::min((long)x.size(), (long)book.length - (long)b.start);
+            long n = o.tails ? (long)x.size() : std::min((long)x.size(), (long)std::max(1, b.length));
             long m = (long)(n / std::max(.05, o.ratio));
             for (long t = 0; t < m; ++t) {
                 double pos = t * o.ratio;
