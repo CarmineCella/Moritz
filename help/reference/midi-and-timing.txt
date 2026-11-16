@@ -1,0 +1,126 @@
+# MIDI and timing: notes and controllers in and out, clocks, delays, ramps, loadbang
+
+@ metro
+syntax: metro [interval]
+Outputs a bang at a regular interval while it runs; the first bang comes at
+once. Ticks are scheduled at absolute times, so they don't drift. A new
+interval, in the right inlet, is used from the next tick on: the bang already
+scheduled comes first.
+arg interval: the time between bangs in milliseconds, at least 1 (500)
+msg bang: starts it (or restarts it, with a bang now)
+msg start: the same as bang
+msg number: not 0 starts it, 0 stops it
+msg stop: stops it
+see: delay counter line random makenote
+
+@ delay del
+syntax: delay [time]
+Outputs a bang a given time after it gets one. A bang while it waits starts
+the wait again, so only one bang comes out. The right inlet stores the time
+for the next bang.
+arg time: the delay in milliseconds (0)
+msg bang: starts the wait (or starts it again)
+msg number: sets the time and starts the wait
+msg stop: cancels the bang still to come
+see: metro makenote trigger line
+
+@ line
+syntax: line [start] [grain]
+Control-rate ramps: target time goes from the current value to target in time
+milliseconds, outputting a value every grain milliseconds (the first one at
+once). A number alone jumps there, or ramps over the time set in the middle
+inlet, which then goes back to 0, as in Max. The right inlet sets the grain.
+To ramp a signal (an amplitude, a frequency) without steps, use line~.
+arg start: the value it starts from (0)
+arg grain: milliseconds between outputs during a ramp, at least 1 (20)
+msg target time grain: ramps to target in time ms, and sets the grain
+msg target time: ramps to target in time ms
+msg number: jumps there, or ramps over the time set in the middle inlet
+msg set x: stops any ramp and sets the value to x, without output
+msg stop: stops the ramp where it is
+see: line~ metro scale delay
+
+@ loadbang
+syntax: loadbang
+Sends a bang when the patch opens: use it to set starting values. A bang in
+its inlet, or a double-click on it in locked mode, fires it again.
+msg bang: fires it again
+see: metro message send delay
+
+@ notein
+syntax: notein [channel]
+Notes from a MIDI keyboard or controller (the device is chosen in Patch >
+MIDI Setup). Outputs pitch and velocity, a velocity of 0 for a note-off, and,
+without a channel argument, the channel, from right to left: the pitch comes
+last.
+arg channel: 1 to 16 to listen to that channel only; 0 or none for all channels, with an outlet for the channel (0)
+see: noteout stripnote makenote ctlin mtof
+
+@ ctlin
+syntax: ctlin [controller] [channel]
+Control changes from MIDI input. Outputs the value, 0 to 127, then the
+controller number (only without a controller argument) and the channel (only
+without a channel argument), from right to left: the value comes last.
+arg controller: 0 to 127 to listen to that controller only; none, or a number outside, for all (all)
+arg channel: 1 to 16 to listen to that channel only; 0 or none for all (0)
+see: ctlout bendin pgmin notein scale
+
+@ bendin
+syntax: bendin [channel]
+Pitch bend from MIDI input, as 0 to 127 with 64 at the centre (the coarse
+part of the bend, as in Max). Without a channel argument a second outlet gives
+the channel.
+arg channel: 1 to 16 to listen to that channel only; 0 or none for all (0)
+see: ctlin pgmin notein scale
+
+@ pgmin
+syntax: pgmin [channel]
+Program changes from MIDI input, as 1 to 128. Without a channel argument a
+second outlet gives the channel.
+arg channel: 1 to 16 to listen to that channel only; 0 or none for all (0)
+see: ctlin bendin notein
+
+@ noteout
+syntax: noteout [channel]
+Sends MIDI notes to the output chosen in Patch > MIDI Setup (by default the
+virtual port Moritz, which a synth or DAW can listen to). A pitch in the left
+inlet sends a note with the velocity last set in the middle inlet; velocity 0
+is a note-off. The velocity is 0 until it is set, so set it first, or send
+pitch velocity. Values are clipped to 0-127.
+arg channel: the MIDI channel, 1 to 16 (1)
+msg number: sends a note with that pitch and the stored velocity
+msg list pitch velocity: sets the velocity and sends the note
+see: makenote notein ctlout kslider
+
+@ ctlout
+syntax: ctlout [controller] [channel]
+Sends MIDI control changes to the output chosen in Patch > MIDI Setup. A
+number in the left inlet sends that value, clipped to 0-127, to the
+controller and channel set by the arguments or the other inlets.
+arg controller: the controller number, 0 to 127 (7, volume)
+arg channel: the MIDI channel, 1 to 16 (1)
+msg number: sends it as the controller's value
+see: ctlin noteout scale
+
+@ makenote
+syntax: makenote [velocity] [duration]
+Makes a note-on now and its note-off later: a pitch in the left inlet goes out
+at once with the velocity, and again with velocity 0 after the duration. A
+velocity of 0 sends only that, with nothing scheduled. Velocity and duration
+can also be changed in the other inlets.
+arg velocity: the velocity of the note-ons, 0 to 127 (100)
+arg duration: the time to the note-off, in milliseconds (250)
+msg number: outputs the pitch with the velocity, and schedules its note-off
+msg list pitch velocity: sets the velocity, then the same
+msg stop: sends the pending note-offs now
+msg clear: forgets the pending note-offs, without sending them
+see: noteout stripnote poly~ metro delay
+
+@ stripnote
+syntax: stripnote
+Passes note-ons and drops note-offs: a pitch in the left inlet goes out, with
+the velocity last set in the right inlet, only when that velocity is above 0.
+Outputs go right to left: velocity, then pitch.
+msg number: passes the pitch, with the stored velocity, when it is above 0
+msg list pitch velocity: sets the velocity, then the same
+see: notein makenote select kslider

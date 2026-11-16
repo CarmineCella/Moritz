@@ -1,0 +1,240 @@
+# Interface and patching: boxes to click and see, subpatchers, abstractions, poly~
+
+@ message
+syntax: message [contents]
+Sends its contents when clicked (locked) or when anything arrives. In the
+contents, $1..$9 are replaced by the values that arrive ($n with no value
+becomes 0), a comma separates messages sent one after the other, and after a
+semicolon the first word names a receive and the rest is sent there:
+"; freq 440; amp 0.2". On screen a new line starts after each semicolon; when
+editing, Return finishes and Shift+Return adds a line break (a space).
+arg contents: the words, numbers, $1..$9, commas and semicolons to send (empty)
+msg bang: sends the contents ($1..$9 become 0)
+msg anything: sends the contents, with $1..$9 taken from it
+msg set ...: replaces the contents without sending (set alone empties the box)
+see: button receive send prepend trigger
+
+@ flonum
+syntax: flonum [value]
+A number box that keeps decimals. In locked mode, drag up or down to change
+it (left of the point by 1, right of it by 0.01), or click, type a value and
+press Enter. The value is saved with the patch; it is not sent when the patch
+opens.
+arg value: the starting value (0)
+msg number: shows and sends it
+msg bang: sends the value again
+msg set x: shows x without sending it
+see: number slider float message
+
+@ number
+syntax: number [value]
+A number box that keeps whole numbers: what arrives is truncated toward zero
+(3.7 becomes 3, -2.9 becomes -2). In locked mode, drag up or down to change it
+by 1, or click, type a value and press Enter. The value is saved with the
+patch; it is not sent when the patch opens.
+arg value: the starting value (0)
+msg number: shows and sends it, truncated
+msg bang: sends the value again
+msg set x: shows x without sending it
+see: flonum slider int message
+
+@ button
+syntax: button
+Flashes and sends bang when clicked (locked) or when any message arrives.
+msg anything: flashes and sends bang
+see: toggle message metro trigger
+
+@ toggle
+syntax: toggle
+An on/off switch: a click (locked) or a bang flips it and sends 1 or 0. Its
+state is not saved with the patch.
+msg bang: flips it and sends 1 or 0
+msg number: sets it (anything but 0 is on) and sends 1 or 0
+msg set x: sets it without sending
+see: button gate metro slider
+
+@ link
+syntax: link [text] target
+Underlined text; a click (locked) or a bang opens the target with the system:
+a document such as a PDF in its viewer, a folder, or a web page (an address
+with :// or mailto:). A relative path is looked for next to the patch, then
+among the bundled examples and documents, so docs/... works anywhere. If the
+target can't be opened, the console says so.
+arg text: what the box shows (the target)
+arg target: the file, folder or address to open
+msg bang: opens the target
+msg set target: changes the target, without opening it
+see: comment message
+
+@ slider
+syntax: slider [min max]
+A horizontal slider; click or drag it in locked mode. It outputs whole numbers
+when both limits are written as integers (slider 0 127), and decimals when one
+is written with a point (slider 0. 1.). Values are clipped to the range;
+dragging sends only changes. Its value is not saved with the patch.
+arg min: the value at the left end (0)
+arg max: the value at the right end (127)
+msg number: moves it and sends the value (always, even unchanged)
+msg bang: sends the value again
+msg set x: moves it without sending
+see: flonum number scale line
+
+@ comment
+syntax: comment text
+A text note in the patch, with no inlets or outlets. In edit mode press c and
+type, or double-click a comment to change it; the text is kept as typed,
+commas, semicolons and $1 included, and a new comment left empty is removed.
+arg text: the note
+see: message link
+
+@ kslider
+syntax: kslider [octaves] [lowest] [mode]
+A piano keyboard from the lowest note up, octaves times 12 keys plus one.
+Clicking a key (locked) sends its velocity, then its pitch; the velocity
+depends on where the key is clicked, louder lower down. Mode 0 plays while the
+mouse is down, sends velocity 0 on release, and glides from key to key when
+dragged; mode 1 toggles keys on and off, for chords.
+arg octaves: number of octaves, 1 to 8 (4)
+arg lowest: the MIDI note of the lowest key (36), kept so the keyboard ends at or below 127
+arg mode: 0 play, 1 toggle (0)
+msg pitch [velocity]: lights the key and passes the note through, with the velocity from the right inlet (100) when none is given; velocity 0 releases it
+msg set pitch [velocity]: lights the key (velocity 0 unlights it) without output
+msg flush: releases every held key, sending its note-off
+msg clear: unlights every key without output
+see: makenote noteout poly~ mtof stripnote
+
+@ function
+syntax: function [domain] [lo] [hi] [x y ...]
+A breakpoint editor. In locked mode, click to add a point, drag to move it,
+Shift-click to delete it; the first and last points stay at 0 and at the
+domain. bang outputs the curve for line~ (or line) from the right outlet: the
+first value, then a list of value-time pairs. The points are saved with the
+patch, after the range.
+arg domain: the length of the curve, in milliseconds (1000; at least 1)
+arg lo: the bottom of the vertical range (0)
+arg hi: the top of the vertical range (1)
+arg x y ...: the points, time (ms) and value; without them the curve is flat at lo
+msg bang: outputs the curve: the first value, then value-time pairs
+msg number: outputs the value of the curve at that time (ms), from the left outlet
+msg domain ms: changes the length, stretching the points in time
+msg range lo hi: changes the vertical range; points outside it are clipped
+msg clear: resets the curve: two points, flat at lo
+msg set x y ...: replaces the points
+see: line~ line plot
+
+@ plot
+syntax: plot [buffer] [width height] [mode]
+Curves, bars, scatter plots and matrices (heat maps). It shows a buffer~,
+followed as it changes (its channels are rows, its sample rate gives a time
+axis in seconds; a rate of 1 gives a plain matrix), or the data it receives: a
+list is a curve (x y pairs in scatter mode; in image mode a new column of a
+scrolling image), a number scrolls a curve. A click (locked) outputs x (ms on
+a time axis, otherwise the index) and y (the row of an image, the value of a
+curve); double-click, or right-click > Open window, opens a large window where
+the wheel zooms (Shift: vertically), dragging moves, r resets, e exports a PNG
+and the values under the mouse are shown. Right-click > Export PNG... saves an
+image.
+arg buffer: a buffer~ to show (none)
+arg width height: the size of the box in pixels (300 140)
+arg mode: auto, line, bars, scatter or image (auto: curves for up to 4 rows, an image above)
+msg buffer name [channel]: shows that buffer~, or only one channel (from 0)
+msg number: adds a point to a scrolling curve (history points)
+msg list: one curve (or bars), x y pairs in scatter mode, a new column in image mode; also set ... or list ...
+msg mode m: auto, line, bars, scatter (rows 0 and 1 are x and y, row 2 the colour) or image (row 0 at the bottom)
+msg range lo hi: fixes the values shown (y of a curve, colours of an image); range auto (or any other word) returns to automatic
+msg xrange from to: fixes the part shown on the x axis (seconds on a time axis); xrange auto returns to all
+msg rows first last: what the first and last rows of an image stand for on the y axis (rows 30 300 for bpm); rows alone turns it off
+msg normalize 1/0: colours each row of an image over its own range (1)
+msg ylog 1/0: a logarithmic y axis for curves and scatter plots (1)
+msg marks t ...: vertical lines, ms on a time axis; marks alone removes them; also the right inlet
+msg cursor ms: a vertical cursor; a negative value, or none, hides it
+msg title text: a title over the plot and the window
+msg labels a b c ...: names of the rows of an image or of the bars; labels chroma (C C# ... B), labels keys (C Cm Db C#m ... Bm, as keyfind orders them)
+msg colors viridis|gray|types: the colours of an image; types gives each value its own colour, for categories such as sound types
+msg history n: the points of a scrolling curve, the columns of a scrolling image (256)
+msg clear: removes the data, the buffer~, the marks and the cursor
+msg open: opens the window
+msg export file.png [w h]: writes the plot as a PNG, relative to the patch (900 500)
+see: buffer~ waveform~ soundtypes melbands~ filterplot spectroscope~
+
+@ p
+syntax: p [name]
+A subpatcher: a patch inside a box, saved inside the parent's file. Its ports
+are the inlet, inlet~, outlet and outlet~ boxes inside; double-click it in
+locked mode (Cmd+double-click in edit mode) to open it. The name is only a
+label: two p boxes with the same name are separate patches. A patch saved as
+name.moritz and typed as name is an abstraction, found next to the patch, then
+in the libraries, then among the bundled examples; its arguments replace
+#1 to #9 inside it, #0 becomes a number unique to each copy (for local send,
+receive and buffer~ names), and saving from its window writes its file.
+arg name: a label (none)
+msg anything: goes out of the inlet box inside that matches the inlet; a number in a signal inlet becomes a constant signal
+see: inlet outlet inlet~ outlet~ poly~ pfft~
+
+@ inlet in
+syntax: inlet [number]
+An inlet of the p, abstraction or poly~ voice it is in: each one adds a
+control inlet to the box outside, and what arrives there leaves its outlet.
+Ports are numbered left to right by x position; with a number, as Max's poly~
+voices write them (in 1), they are ordered by that number, before the
+unnumbered ones.
+arg number: the port's position, from 1 (by x position)
+see: inlet~ outlet p poly~
+
+@ inlet~ in~
+syntax: inlet~ [number]
+A signal inlet of the p, abstraction or poly~ voice it is in: it outputs the
+signal arriving at that inlet of the box outside. A number sent to the inlet
+outside becomes a constant signal; other messages are ignored. Ports are
+numbered left to right by x position, or by their number (in~ 1), numbered
+ones first.
+arg number: the port's position, from 1 (by x position)
+see: inlet outlet~ p poly~ pfft~
+
+@ outlet out
+syntax: outlet [number]
+An outlet of the p, abstraction or poly~ voice it is in: what arrives leaves
+through that outlet of the box outside. Ports are numbered left to right by x
+position, or by their number (out 2), numbered ones first.
+arg number: the port's position, from 1 (by x position)
+see: outlet~ inlet p poly~
+
+@ outlet~ out~
+syntax: outlet~ [number]
+A signal outlet of the p, abstraction or poly~ voice it is in: its signal
+leaves through that outlet of the box outside; in a poly~ the voices' signals
+are summed. Ports are numbered left to right by x position, or by their
+number (out~ 1), numbered ones first.
+arg number: the port's position, from 1 (by x position)
+see: outlet inlet~ p poly~
+
+@ poly~
+syntax: poly~ name [voices] [args...]
+Copies of the abstraction name.moritz (found as any abstraction: next to the
+patch, in the libraries, among the bundled examples), with voice allocation.
+Its ports are the in, in~, out and out~ boxes of the voice; the voices' signal
+outlets are summed. The args replace #1 to #9 in each voice, and #0 is unique
+to each voice. A voice is busy from its note until the signal into its
+thispoly~ returns to zero; double-click the box (locked) to open the first
+voice.
+arg name: the abstraction, name.moritz (required)
+arg voices: the number of copies, 1 to 128 (1)
+arg args: the abstraction's arguments, #1 to #9 inside each voice
+msg note ...: sends the rest to a free voice (the one idle longest), or steals the oldest note when all are busy
+msg midinote pitch velocity: a velocity above 0 sends "pitch velocity" to the voice already playing that pitch, or to a free one; a velocity of 0 goes to the voice playing that pitch, so note-offs reach their note-on's voice
+msg target n: later messages go to voice n only (0 = all voices)
+msg mute n [1/0]: stops (1, the default) or restarts voice n (0 = all); a muted voice gets no new notes
+msg anything: goes to the target voice, or to every voice; a number in a signal inlet becomes a constant signal
+see: thispoly~ p inlet~ outlet~ kslider makenote
+
+@ thispoly~
+syntax: thispoly~
+Inside a poly~ voice: outputs the voice number, from 1, when the patch opens
+and on bang (0 outside a poly~). Connect the voice's amplitude envelope to its
+inlet: the voice stays busy while that signal is not zero, and becomes free
+when it returns to zero. Without it, a voice taken by a note stays busy, and
+later notes steal the oldest.
+msg bang: outputs the voice number
+msg number: sets the voice busy (not 0) or free (0)
+msg mute [1/0]: mutes (1, the default) or unmutes the voice
+see: poly~ line~ inlet~

@@ -2,6 +2,7 @@
 // objects_control.cpp — timing, routing, control math, expr and interface objects
 
 #include "objects.h"
+#include "zoom.h"
 
 #include <map>
 #include "expr.h"
@@ -185,9 +186,9 @@ public:
     void drawUI(int X, int Y) override {
         bool on = flashUntil > now();
         fl_color(on ? kAccent : kNumFill);
-        fl_pie(X + 5, Y + 5, w - 10, h - 10, 0, 360);
+        zd::pie(X + 5, Y + 5, w - 10, h - 10, 0, 360);
         fl_color(on ? kAccent : kCtlPort);
-        fl_arc(X + 5, Y + 5, w - 10, h - 10, 0, 360);
+        zd::arc(X + 5, Y + 5, w - 10, h - 10, 0, 360);
     }
 
 private:
@@ -196,6 +197,46 @@ private:
         patch->redraw();
         outletBang(0);
     }
+};
+
+// ---------------------------------------------------------------- link
+// link [text] target: underlined text; a click (or a bang) opens the target
+// with the system: a document (a PDF, relative to the patch, or bundled:
+// "docs/..."), a folder, or a web address.
+class LinkBox : public Box {
+public:
+    explicit LinkBox(const Message& a) {
+        kind = BoxKind::UI;
+        setPorts({P::Control}, {});
+        target_ = argstr(a, a.size() > 1 ? 1 : 0);
+        text_ = a.size() > 1 ? argstr(a, 0) : target_;
+    }
+    void uiSize(int& w, int& h) const override {
+        w = std::max(40, (int)(text_.size() * 6.6) + 18);
+        h = 22;
+    }
+    void message(int, const Message& m) override {
+        if (m[0].is("set") && m.size() > 1) { target_ = m[1].str(); return; }
+        open();
+    }
+    void uiMouse(int e, int, int) override { if (e == FL_PUSH) open(); }
+    void drawUI(int X, int Y) override {
+        zd::font(FL_HELVETICA, 12);
+        fl_color(flashUntil > now() ? kText : fl_rgb_color(110, 165, 245));
+        zd::draw(text_.c_str(), X + 9, Y + 15);
+        int tw = (int)zd::width(text_.c_str());
+        zd::xyline(X + 9, Y + 17, X + 9 + std::min(tw, w - 14));
+    }
+
+private:
+    void open() {
+        flashUntil = now() + 0.2;
+        patch->redraw();
+        bool url = target_.find("://") != std::string::npos || target_.rfind("mailto:", 0) == 0;
+        std::string t = url ? target_ : patch->resolvePath(target_);
+        if (!openWithSystem(t)) patch->print("link: can't open " + target_);
+    }
+    std::string text_, target_;
 };
 
 // ---------------------------------------------------------------- toggle
@@ -212,10 +253,10 @@ public:
     void drawUI(int X, int Y) override {
         if (!on_) return;
         fl_color(kAccent);
-        fl_line_style(FL_SOLID | FL_CAP_ROUND, 2);
-        fl_line(X + 7, Y + 7, X + w - 8, Y + h - 8);
-        fl_line(X + w - 8, Y + 7, X + 7, Y + h - 8);
-        fl_line_style(0);
+        zd::line_style(FL_SOLID | FL_CAP_ROUND, 2);
+        zd::line(X + 7, Y + 7, X + w - 8, Y + h - 8);
+        zd::line(X + w - 8, Y + 7, X + 7, Y + h - 8);
+        zd::line_style(0);
     }
 
 private:
@@ -258,12 +299,12 @@ public:
         double k = std::clamp((value_ - lo_) / (hi_ - lo_), 0.f, 1.f);
         int tx = X + 8, tw = w - 16, ty = Y + h / 2;
         fl_color(fl_rgb_color(30, 31, 36));
-        fl_rounded_rectf(tx, ty - 2, tw, 4, 2);
+        zd::rounded_rectf(tx, ty - 2, tw, 4, 2);
         fl_color(kAccent);
-        fl_rounded_rectf(tx, ty - 2, std::max(2, (int)(tw * k)), 4, 2);
+        zd::rounded_rectf(tx, ty - 2, std::max(2, (int)(tw * k)), 4, 2);
         int kx = tx + (int)(tw * k);
         fl_color(kText);
-        fl_pie(kx - 6, ty - 6, 12, 12, 0, 360);
+        zd::pie(kx - 6, ty - 6, 12, 12, 0, 360);
     }
 
 private:
@@ -346,11 +387,11 @@ public:
             if (isBlack(n)) continue;
             int kx = x0 + wi++ * kKeyW;
             fl_color(held_.count(n) ? kAccent : fl_rgb_color(228, 229, 233));
-            fl_rectf(kx, y0, kKeyW - 1, kh);
+            zd::rectf(kx, y0, kKeyW - 1, kh);
             if (n % 12 == 0 && !held_.count(n)) {          // C: a mark and the octave
                 fl_color(fl_rgb_color(150, 152, 160));
-                fl_font(kFont, 8);
-                fl_draw(("C" + std::to_string(n / 12 - 1)).c_str(), kx + 1, y0 + kh - 3);
+                zd::font(kFont, 8);
+                zd::draw(("C" + std::to_string(n / 12 - 1)).c_str(), kx + 1, y0 + kh - 3);
             }
         }
         for (int n = lo_; n <= hi(); ++n) {                 // black keys on top
@@ -358,7 +399,7 @@ public:
             int bx, bw, bh;
             blackRect(n, bx, bw, bh);
             fl_color(held_.count(n) ? kAccent : fl_rgb_color(34, 35, 40));
-            fl_rectf(x0 + bx, y0, bw, bh);
+            zd::rectf(x0 + bx, y0, bw, bh);
         }
     }
 
@@ -906,6 +947,7 @@ void registerControlObjects(ClassTable& t) {
         {"number", "Interface", "integer number box", [](M a, Patch*) { return std::make_unique<NumberBox>(false, a); }},
         {"button", "Interface", "click to bang", plain<ButtonBox>()},
         {"toggle", "Interface", "on/off switch", plain<ToggleBox>()},
+        {"link", "Interface", "click to open a document, a folder or a web page: [text] target", with<LinkBox>()},
         {"slider", "Interface", "drag a value: [min max]", with<SliderBox>()},
         {"comment", "Interface", "text note", with<CommentBox>()},
         {"kslider", "Interface", "keyboard: [octaves] [lowest note] [mode 0 play, 1 toggle]", with<KsliderBox>()},

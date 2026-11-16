@@ -2,6 +2,9 @@
 // gui.h — FLTK editor: canvas, main window, subpatcher windows
 #pragma once
 
+#include <cmath>
+#include <functional>
+
 #include "jobs.h"
 #include "midi.h"
 #include "moritz.h"
@@ -12,6 +15,7 @@
 #include <FL/Fl_Double_Window.H>
 #include <FL/Fl_Group.H>
 #include <FL/Fl_Input.H>
+#include <FL/Fl_Preferences.H>
 #include <FL/Fl_Scrollbar.H>
 #include <FL/Fl_Menu_Bar.H>
 #include <FL/Fl_Sys_Menu_Bar.H>
@@ -68,6 +72,11 @@ public:
     int scrollY() const { return sy_; }
     void scrollTo(int sx, int sy);
     bool scrollable = true;  // false for --render snapshots, which show the whole patch
+    // zoom: the patch drawn larger or smaller (1 = 100%); the view, not the file
+    double zoom() const { return zoom_; }
+    void setZoom(double z);
+    void zoomBy(int steps);  // one step of the zoom ladder up or down; 0: back to 100%
+    std::function<void()> onZoom;
 
 private:
     struct Hit {
@@ -80,6 +89,7 @@ private:
     int inletAt(Box* b, int mx) const;
     void portPos(Box* b, bool out, int i, int& px, int& py) const;
     void layoutBox(Box* b) const;
+    std::string bufferOf(Box* b) const;
     void drawBox(Box* b);
     void beginEdit(Box* b, bool isNew);
     void clearSelection();
@@ -88,8 +98,19 @@ private:
     static void editCb(Fl_Widget* w, void* data);
 
     MainWindow* doc() const;   // the document (for help patches: the front one)
-    int ox() const { return x() - sx_; }      // screen position of the patch's origin
+    // the patch's origin in unzoomed screen units: drawing goes through the
+    // zoom transform (zoom.h) centred on the canvas's corner
+    int ox() const { return x() - sx_; }
     int oy() const { return y() - sy_; }
+    // a mouse position (window coordinates) in patch coordinates
+    int patchX(int ex) const { return (int)std::floor((ex - x()) / zoom_) + sx_; }
+    int patchY(int ey) const { return (int)std::floor((ey - y()) / zoom_) + sy_; }
+    // a patch position in window coordinates
+    int screenX(int px) const { return x() + (int)std::lround((px - sx_) * zoom_); }
+    int screenY(int py) const { return y() + (int)std::lround((py - sy_) * zoom_); }
+    int viewW() const { return (int)std::ceil(w() / zoom_); }   // the view, in patch units
+    int viewH() const { return (int)std::ceil(h() / zoom_); }
+    double zoom_ = 1;
     void contentBounds(int& x0, int& y0, int& x1, int& y1) const;
     void updateScrollbars();
     static constexpr int kScrollW = 12;
@@ -143,6 +164,7 @@ public:
     Patch* patch;
     MainWindow* doc;
     bool help;
+    std::string helpClass;     // help windows: the object they are the help of
 };
 
 // A patch as text, in its own window: a second view on the same patch,
@@ -176,13 +198,32 @@ private:
 // Round toolbar button (audio on/off, edit mode, code view).
 class ToolButton : public Fl_Button {
 public:
-    enum Icon { Power, Pencil, Code };
-    ToolButton(int x, int y, int w, int h, Icon icon, const char* label);
+    enum Icon { Power, Pencil, Code, Minus, Plus, None, Browser, Console, Record };
+    // toggle: keeps its state (audio, edit); otherwise a push button
+    ToolButton(int x, int y, int w, int h, Icon icon, const char* label, bool toggle = true);
     void draw() override;
+    bool alert = false;          // a red dot (the console has errors)
+    bool lit = false;            // drawn on without being a toggle (the record button)
 
 private:
     Icon icon_;
 };
+
+// The toolbar's meters: CPU load of the audio thread and the output's level.
+class ToolMeters : public Fl_Widget {
+public:
+    ToolMeters(int x, int y, int w, int h);
+    ~ToolMeters() override;
+    void draw() override;
+    void update(float cpu, const std::vector<float>& peaks);   // a peak per output channel
+
+private:
+    float cpu_ = 0;
+    std::vector<float> level_, hold_;
+    double clipUntil_ = 0;
+};
+
+Fl_Preferences& appPrefs();      // the user's settings (browser.cpp)
 
 // One per program: the audio and MIDI engines, the console, help windows
 // and the open documents. Every open patch (and help patch) is an extra of
@@ -225,6 +266,19 @@ public:
     void showBanner();                  // Shift+Cmd+J: Max und Moritz
     void showConsole();
     void clearConsole();
+    bool consoleAlert = false;          // an error since the console was last shown
+    // the quick recorder (Extras): what goes to the dac, into a WAV file
+    void toggleRecording();
+    void showRecorder();
+    std::string recordingsFolder();
+    void chooseRecordingsFolder();
+    void refreshTools();                // toolbar meters, record button, recorder window
+    void zoomFront(int steps);          // View > Zoom: +1, -1, 0 (100%)
+    void showMonitor();                 // Extras > Binaural Monitor: speakers on headphones
+    void applyMonitor();                // after a change of its settings, or of the audio
+    void showTester();                  // Extras > Channel Tester: noise on one channel at a time
+    void refreshTester();
+    void scaleInterface(float factor);  // View > Interface: every window larger or smaller
     void print(const std::string& s);   // console, and the front document's status bar
     void log(const std::string& s);     // console only
     void refreshStatus();               // every document
@@ -235,6 +289,7 @@ public:
     void closeText(Patch* p);                // hide its text window, if any
     PatchTextWindow* textWindow(Patch* p);
     void openHelp(const std::string& cls);   // the object's help patch, or its description
+    void showReference(const std::string& cls);   // the object's reference, in its window
     void closeHelp(Patch* p);
     void buildMenu(Fl_Menu_Bar* m);
     Fl_Menu_Bar* menuFor(MainWindow* w);     // the bar showing w's menu state
@@ -248,6 +303,28 @@ private:
     Fl_Text_Display* consoleView_ = nullptr;
     Fl_Text_Buffer* consoleBuf_ = nullptr;
     std::vector<std::string> consoleLines_;   // kept until the console opens
+    Fl_Double_Window* referenceWin_ = nullptr;
+    Fl_Text_Display* referenceView_ = nullptr;
+    Fl_Text_Buffer* referenceBuf_ = nullptr;
+    Fl_Text_Buffer* referenceStyle_ = nullptr;
+    Fl_Double_Window* recorderWin_ = nullptr;
+    Fl_Double_Window* monitorWin_ = nullptr;
+    Fl_Double_Window* testerWin_ = nullptr;
+    Fl_Group* testerGrid_ = nullptr;
+    Fl_Box* testerInfo_ = nullptr;
+    struct MonitorSettings {
+        bool on = false;
+        int layout = 0;          // rings (see showMonitor), 3: custom
+        int speakers = 0;        // 0: the patches' output channels
+        std::string custom;      // "az az az" or "az/el ..."
+    } monitorSet_;
+    int testerSteps_ = 0;        // stepping through the channels (0: off)
+    static void testerTimer(void* data);
+    Fl_Box* recorderTime_ = nullptr;
+    Fl_Box* recorderFile_ = nullptr;
+    ToolButton* recorderBtn_ = nullptr;
+    std::string recordingsDir_;
+    static void toolTimer(void* data);
     friend class PatchWindow;
 };
 
@@ -304,6 +381,11 @@ private:
     ToolButton* audioBtn_;
     ToolButton* editBtn_;
     ToolButton* textBtn_;
+    ToolButton* zoomLabel_;
+    ToolButton* consoleBtn_;
+    ToolButton* recordBtn_;
+    ToolMeters* meters_;
+    void updateZoomLabel();
     std::vector<PatchWindow*> subwindows_;
     std::vector<std::string> openSubpatchPaths() const;
     void reopenSubpatches(const std::vector<std::string>& paths);

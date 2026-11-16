@@ -24,7 +24,7 @@
   (obj spec spectroscope~ 300 100 (pos 450 250))
   (obj lb loadbang (pos 600 140))
   (obj oi message 40 (pos 600 170))
-  (obj note comment "Uses: cross-synthesis by envelope (examples/spectral-envelope.moritz), formant preservation, whitening." (pos 20 400))
+  (obj note comment "Uses: cross-synthesis by envelope (examples/06-spectral/spectral-envelope.moritz), formant preservation, whitening." (pos 20 400))
   (connect pl 0 v 0)
   (connect rate 0 v 0)
   (connect v 0 fx 0)

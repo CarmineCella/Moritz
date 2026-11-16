@@ -23,7 +23,7 @@
   (obj out dac~ (pos 130 335))
   (obj lb loadbang (pos 740 90))
   (obj z message 0 (pos 740 120))
-  (obj see comment "examples/hrtf.moritz: a flying source, and a comparison with ambisonics (binaural~)." (pos 20 380))
+  (obj see comment "examples/07-space/hrtf.moritz: a flying source, and a comparison with ambisonics (binaural~)." (pos 20 380))
   (connect tog 0 met 0)
   (connect met 0 burst 0)
   (connect burst 0 env 0)

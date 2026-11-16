@@ -31,6 +31,7 @@
 // resets, e exports a PNG.
 
 #include "objects.h"
+#include "zoom.h"
 
 #include <FL/Fl.H>
 #include <FL/Fl_Double_Window.H>
@@ -41,6 +42,7 @@
 #include <FL/fl_draw.H>
 
 #include <cstdio>
+#include <map>
 
 void fl_open_display();   // FL/platform.H (not included: it drags in X11's macros on Linux)
 
@@ -200,13 +202,13 @@ void drawPlot(const PlotState& s, ImageCache& cache, int X, int Y, int W, int H,
     int top = full ? (s.title.empty() ? 14 : 32) : 0, bottom = full ? 40 : 0;
     int left = full ? 62 : 0, right = full ? (image ? 70 : 18) : 0;
     fl_color(bg);
-    fl_rectf(X, Y, W, H);
+    zd::rectf(X, Y, W, H);
     int px = X + left, py = Y + top, pw = W - left - right, ph = H - top - bottom;
     if (pw < 8 || ph < 8) return;
     auto sx = [&](double x) { return px + (x - v.x0) / (v.x1 - v.x0) * pw; };
     auto sy = [&](double y) { return py + ph - (y - v.y0) / (v.y1 - v.y0) * ph; };
     if (s.rows.empty() || s.cols() == 0) return;
-    fl_push_clip(px, py, pw, ph);
+    zd::push_clip(px, py, pw, ph);
     double lo, hi;
     s.valueRange(lo, hi);
     if (hi <= lo) hi = lo + 1;
@@ -216,8 +218,8 @@ void drawPlot(const PlotState& s, ImageCache& cache, int X, int Y, int W, int H,
     double stx = niceStep(v.x1 - v.x0, full ? 8 : 4), sty = niceStep(v.y1 - v.y0, full ? 6 : 3);
     fl_color(grid);
     if (!image) {
-        for (double t = std::ceil(v.x0 / stx) * stx; t <= v.x1; t += stx) fl_yxline((int)sx(t), py, py + ph);
-        for (double t = std::ceil(v.y0 / sty) * sty; t <= v.y1; t += sty) fl_xyline(px, (int)sy(t), px + pw);
+        for (double t = std::ceil(v.x0 / stx) * stx; t <= v.x1; t += stx) zd::yxline((int)sx(t), py, py + ph);
+        for (double t = std::ceil(v.y0 / sty) * sty; t <= v.y1; t += sty) zd::xyline(px, (int)sy(t), px + pw);
     }
 
     // marks: behind curves and bars, over images; many are dimmed
@@ -232,7 +234,7 @@ void drawPlot(const PlotState& s, ImageCache& cache, int X, int Y, int W, int H,
         fl_color(mark);
         for (double m : s.marks) {
             double x = s.markX(m);
-            if (x >= v.x0 && x <= v.x1) fl_yxline((int)sx(x), py, py + ph);
+            if (x >= v.x0 && x <= v.x1) zd::yxline((int)sx(x), py, py + ph);
         }
     };
     if (!image) drawMarks();
@@ -296,7 +298,7 @@ void drawPlot(const PlotState& s, ImageCache& cache, int X, int Y, int W, int H,
             cache.version = s.version; cache.w = pw; cache.h = ph; cache.lo = lo; cache.hi = hi;
             cache.gray = s.gray; cache.types = s.types; cache.normalize = s.normalize; cache.view = v;
         }
-        fl_draw_image(cache.rgb.data(), px, py, pw, ph, 3);
+        zd::draw_image(cache.rgb.data(), px, py, pw, ph, 3);
     } else if (n > 0 && R > 0 && k == "scatter") {
         if (R >= 2) {
             // row 2 colours the points: classes (small integers) or a value (viridis)
@@ -324,8 +326,8 @@ void drawPlot(const PlotState& s, ImageCache& cache, int X, int Y, int W, int H,
                 }
                 fl_color(col.r, col.g, col.b);
                 int x = (int)sx(s.rows[0][c]), y = (int)sy(s.yOf(s.rows[1][c]));
-                if (d <= 2) fl_rectf(x - 1, y - 1, 2, 2);
-                else fl_pie(x - d / 2, y - d / 2, d, d, 0, 360);
+                if (d <= 2) zd::rectf(x - 1, y - 1, 2, 2);
+                else zd::pie(x - d / 2, y - d / 2, d, d, 0, 360);
             }
         }
     } else if (n > 0 && R > 0 && k == "bars") {
@@ -336,10 +338,10 @@ void drawPlot(const PlotState& s, ImageCache& cache, int X, int Y, int W, int H,
             double val = s.rows[0][c];
             double base = (v.y0 <= 0 && v.y1 >= 0) ? 0.0 : v.y0;
             int y0 = (int)sy(base), y1 = (int)sy(val), x = (int)(sx(s.xOf((double)c)) - bw / 2);
-            fl_rectf(x, std::min(y0, y1), (int)bw, std::max(1, std::abs(y1 - y0)));
+            zd::rectf(x, std::min(y0, y1), (int)bw, std::max(1, std::abs(y1 - y0)));
         }
     } else if (n > 0 && R > 0) {                                  // lines
-        fl_line_style(FL_SOLID, full ? 2 : 1);
+        zd::line_style(FL_SOLID, full ? 2 : 1);
         for (size_t r = 0; r < R; ++r) {
             Rgb col = palette((int)r);
             if (!full) col = R == 1 ? Rgb{236, 196, 70} : brighter(col);
@@ -350,9 +352,9 @@ void drawPlot(const PlotState& s, ImageCache& cache, int X, int Y, int W, int H,
                 long a = std::max(0L, (long)std::floor((v.x0 - s.xStart) / s.xStep) - 1);
                 long b = std::min((long)n - 1, (long)std::ceil((v.x1 - s.xStart) / s.xStep) + 1);
                 for (long c = a; c < b; ++c)
-                    fl_line((int)sx(s.xOf((double)c)), (int)sy(s.yOf(row[(size_t)c])), (int)sx(s.xOf((double)c + 1)),
+                    zd::line((int)sx(s.xOf((double)c)), (int)sy(s.yOf(row[(size_t)c])), (int)sx(s.xOf((double)c + 1)),
                             (int)sy(s.yOf(row[(size_t)c + 1])));
-                if (a == b && b >= 0) fl_point((int)sx(s.xOf((double)a)), (int)sy(s.yOf(row[(size_t)a])));
+                if (a == b && b >= 0) zd::point((int)sx(s.xOf((double)a)), (int)sy(s.yOf(row[(size_t)a])));
             } else {                                              // min and max under every pixel
                 int prevLo = 0, prevHi = 0;
                 bool have = false;
@@ -369,56 +371,56 @@ void drawPlot(const PlotState& s, ImageCache& cache, int X, int Y, int W, int H,
                         if (yh > prevLo) yh = prevLo;
                         if (yl < prevHi) yl = prevHi;
                     }
-                    fl_yxline(px + i, std::min(yl, yh), std::max(yl, yh));
+                    zd::yxline(px + i, std::min(yl, yh), std::max(yl, yh));
                     prevLo = std::max(yl, yh); prevHi = std::min(yl, yh);
                     have = true;
                 }
             }
         }
-        fl_line_style(0);
+        zd::line_style(0);
     }
 
     if (image) drawMarks();
     if (s.cursor >= 0) {
         double x = s.markX(s.cursor);
         fl_color(full ? FL_BLACK : kAccent);
-        if (x >= v.x0 && x <= v.x1) fl_yxline((int)sx(x), py, py + ph);
+        if (x >= v.x0 && x <= v.x1) zd::yxline((int)sx(x), py, py + ph);
     }
-    fl_pop_clip();
+    zd::pop_clip();
 
     // labels and ticks
-    fl_font(kFont, full ? 11 : 9);
+    zd::font(kFont, full ? 11 : 9);
     fl_color(text);
     auto rowLabel = [&](size_t r) { return r < s.labels.size() ? s.labels[r] : num((double)r); };
     if (full) {
         fl_color(fl_rgb_color(150, 150, 150));
-        fl_rect(px, py, pw, ph);
+        zd::rect(px, py, pw, ph);
         fl_color(text);
         if (!s.title.empty()) {
-            fl_font(FL_HELVETICA_BOLD, 13);
-            fl_draw(s.title.c_str(), px + (pw - (int)fl_width(s.title.c_str())) / 2, Y + 21);
-            fl_font(kFont, 11);
+            zd::font(FL_HELVETICA_BOLD, 13);
+            zd::draw(s.title.c_str(), px + (pw - (int)zd::width(s.title.c_str())) / 2, Y + 21);
+            zd::font(kFont, 11);
         }
         if (k == "bars" && !s.labels.empty()) {
             for (size_t c = 0; c < n && c < s.labels.size(); ++c) {
                 double x = sx(s.xOf((double)c));
                 if (x < px || x > px + pw) continue;
-                fl_draw(s.labels[c].c_str(), (int)x - (int)fl_width(s.labels[c].c_str()) / 2, py + ph + 15);
+                zd::draw(s.labels[c].c_str(), (int)x - (int)zd::width(s.labels[c].c_str()) / 2, py + ph + 15);
             }
         } else {
             for (double t = std::ceil(v.x0 / stx) * stx; t <= v.x1; t += stx) {
                 std::string l = num(t);
-                fl_draw(l.c_str(), (int)sx(t) - (int)fl_width(l.c_str()) / 2, py + ph + 15);
+                zd::draw(l.c_str(), (int)sx(t) - (int)zd::width(l.c_str()) / 2, py + ph + 15);
             }
         }
-        if (s.time) fl_draw("seconds", px + pw / 2 - 20, py + ph + 32);
+        if (s.time) zd::draw("seconds", px + pw / 2 - 20, py + ph + 32);
         if (image) {
             double rowsShown = v.y1 - v.y0, every = std::max(1.0, std::ceil(rowsShown * 14 / ph));
             if (!s.labels.empty() || rowsShown <= 40)
                 for (double r = std::ceil(v.y0); r < v.y1; r += every) {
                     if (r < 0 || r >= (double)R) continue;
                     std::string l = rowLabel((size_t)r);
-                    fl_draw(l.c_str(), px - 6 - (int)fl_width(l.c_str()), (int)sy(r + .5) + 4);
+                    zd::draw(l.c_str(), px - 6 - (int)zd::width(l.c_str()), (int)sy(r + .5) + 4);
                 }
             else if (s.rowValues) {                           // ticks in the rows' own values
                 double a = s.rowValue(std::max(0.0, v.y0)), b = s.rowValue(std::min((double)R - 1, v.y1));
@@ -427,12 +429,12 @@ void drawPlot(const PlotState& s, ImageCache& cache, int X, int Y, int W, int H,
                     for (double t = std::ceil(std::min(a, b) / st) * st; t <= std::max(a, b); t += st) {
                         double r = (t - s.rowFirst) / per + .5;
                         std::string l = num(t);
-                        fl_draw(l.c_str(), px - 6 - (int)fl_width(l.c_str()), (int)sy(r) + 4);
+                        zd::draw(l.c_str(), px - 6 - (int)zd::width(l.c_str()), (int)sy(r) + 4);
                     }
             } else
                 for (double t = std::ceil(v.y0 / sty) * sty; t <= v.y1; t += sty) {
                     std::string l = num(t);
-                    fl_draw(l.c_str(), px - 6 - (int)fl_width(l.c_str()), (int)sy(t) + 4);
+                    zd::draw(l.c_str(), px - 6 - (int)zd::width(l.c_str()), (int)sy(t) + 4);
                 }
             // the colour bar (none for categories)
             int bx = px + pw + 16, bwid = 12;
@@ -440,46 +442,46 @@ void drawPlot(const PlotState& s, ImageCache& cache, int X, int Y, int W, int H,
                 double t = 1.0 - (double)j / ph;
                 Rgb c = s.gray ? Rgb{(unsigned char)(t * 255), (unsigned char)(t * 255), (unsigned char)(t * 255)} : viridis(t);
                 fl_color(c.r, c.g, c.b);
-                fl_xyline(bx, py + j, bx + bwid);
+                zd::xyline(bx, py + j, bx + bwid);
             }
             fl_color(text);
             if (!s.types) {
-                fl_draw(num(hi).c_str(), bx + bwid + 4, py + 9);
-                fl_draw(num(lo).c_str(), bx + bwid + 4, py + ph);
+                zd::draw(num(hi).c_str(), bx + bwid + 4, py + 9);
+                zd::draw(num(lo).c_str(), bx + bwid + 4, py + ph);
             }
         } else {
             double st = s.ylog ? std::max(1.0, std::round(sty)) : sty;      // octaves on a log axis
             for (double t = std::ceil(v.y0 / st) * st; t <= v.y1; t += st) {
                 std::string l = num(s.ylog ? std::pow(2.0, t) : t);
-                fl_draw(l.c_str(), px - 6 - (int)fl_width(l.c_str()), (int)sy(t) + 4);
+                zd::draw(l.c_str(), px - 6 - (int)zd::width(l.c_str()), (int)sy(t) + 4);
             }
         }
     } else {
         // a few values inside the frame
         if (k == "bars" && !s.labels.empty()) {
             for (size_t c = 0; c < n && c < s.labels.size(); ++c)
-                fl_draw(s.labels[c].c_str(), (int)sx(s.xOf((double)c)) - (int)fl_width(s.labels[c].c_str()) / 2, py + ph - 2);
+                zd::draw(s.labels[c].c_str(), (int)sx(s.xOf((double)c)) - (int)zd::width(s.labels[c].c_str()) / 2, py + ph - 2);
         } else if (n > 1) {
             for (double t = std::ceil(v.x0 / stx) * stx; t < v.x1 - stx * .3; t += stx) {
                 if (sx(t) < px + 14) continue;
                 std::string l = num(t) + (s.time ? "s" : "");
-                fl_draw(l.c_str(), (int)sx(t) + 2, py + ph - 2);
+                zd::draw(l.c_str(), (int)sx(t) + 2, py + ph - 2);
             }
         }
         if (!image) {
             double st = s.ylog ? std::max(1.0, std::round(sty)) : sty;
             for (double t = std::ceil(v.y0 / st) * st; t <= v.y1; t += st)
-                if (sy(t) > py + 18 && sy(t) < py + ph - 12) fl_draw(num(s.ylog ? std::pow(2.0, t) : t).c_str(), px + 2, (int)sy(t) - 2);
+                if (sy(t) > py + 18 && sy(t) < py + ph - 12) zd::draw(num(s.ylog ? std::pow(2.0, t) : t).c_str(), px + 2, (int)sy(t) - 2);
         }
         if (image && !s.labels.empty() && ph / std::max<size_t>(1, R) >= 8)
             for (size_t r = 0; r < R; ++r) {
                 std::string l = rowLabel(r);
-                fl_draw(l.c_str(), px + pw - 3 - (int)fl_width(l.c_str()), (int)sy(r + .5) + 4);
+                zd::draw(l.c_str(), px + pw - 3 - (int)zd::width(l.c_str()), (int)sy(r + .5) + 4);
             }
         std::string name = !s.title.empty() ? s.title : s.source;
         if (!name.empty()) {
             fl_color(fl_rgb_color(200, 204, 214));
-            fl_draw(name.c_str(), px + 4, py + 11);
+            zd::draw(name.c_str(), px + 4, py + 11);
         }
     }
 }
@@ -521,11 +523,11 @@ protected:
         Range v = view();
         drawPlot(*s_, cache_, x(), y(), w(), h() - 18, v, true);
         fl_color(fl_rgb_color(240, 240, 240));
-        fl_rectf(x(), y() + h() - 18, w(), 18);
-        fl_font(kFont, 11);
+        zd::rectf(x(), y() + h() - 18, w(), 18);
+        zd::font(kFont, 11);
         fl_color(fl_rgb_color(90, 90, 90));
         std::string info = readout_.empty() ? "wheel: zoom (Shift: vertically) · drag: move · r: reset · e: export PNG" : readout_;
-        fl_draw(info.c_str(), x() + 8, y() + h() - 5);
+        zd::draw(info.c_str(), x() + 8, y() + h() - 5);
     }
     int handle(int e) override {
         switch (e) {
@@ -622,6 +624,50 @@ public:
 private:
     PlotView* view_;
 };
+
+// the channels of a sample buffer as the rows of a plot (time in seconds)
+void loadBuffer(PlotState& st, const SampleBuffer& sb, int channel) {
+    auto& R = st.rows;
+    int c0 = 0, c1 = sb.channels;
+    if (channel >= 0) { c0 = std::min(channel, sb.channels - 1); c1 = c0 + 1; }
+    R.assign((size_t)std::max(0, c1 - c0), std::vector<float>((size_t)std::max(0L, sb.frames)));
+    for (long f = 0; f < sb.frames; ++f)
+        for (int c = c0; c < c1; ++c) R[(size_t)(c - c0)][(size_t)f] = sb.data[(size_t)f * sb.channels + c];
+    st.time = sb.sr > 1.5;                         // a rate of 1: a plain matrix (no time axis)
+    st.xStart = 0;
+    st.xStep = st.time ? 1.0 / sb.sr : 1.0;
+    ++st.version;
+}
+
+// ---------------------------------------------------------------- buffer~ windows
+// One window per buffer~ name, following its contents while it is shown.
+struct BufferView {
+    std::shared_ptr<PlotState> state = std::make_shared<PlotState>();
+    PlotWindow* win = nullptr;
+    Patch* root = nullptr;       // the root patch lives as long as the program (or the render)
+    int seen = -1;
+};
+std::map<std::string, BufferView>& bufferViews() {
+    static std::map<std::string, BufferView> v;
+    return v;
+}
+void refreshBufferView(const std::string& name, BufferView& v) {
+    BufferBox* b = findBuffer(v.root, name);
+    if (!b || b->version == v.seen) return;
+    v.seen = b->version;
+    loadBuffer(*v.state, b->buf, -1);
+    char info[160];
+    double dur = b->buf.sr > 0 ? b->buf.frames / b->buf.sr : 0;
+    std::snprintf(info, sizeof info, "buffer~ %s  ·  %d channel%s, %.2f s, %.0f Hz", name.c_str(), b->buf.channels,
+                  b->buf.channels == 1 ? "" : "s", dur, b->buf.sr);
+    v.win->refresh(info);
+}
+void bufferViewTick(void*) {
+    bool any = false;
+    for (auto& kv : bufferViews())
+        if (kv.second.win && kv.second.win->shown()) { refreshBufferView(kv.first, kv.second); any = true; }
+    if (any) Fl::repeat_timeout(0.25, bufferViewTick);
+}
 
 // ---------------------------------------------------------------- plot
 class PlotBox : public Box {
@@ -745,6 +791,12 @@ public:
             add(tailOf(m));
         }
     }
+    std::vector<std::string> menuItems() override { return {"Open window", "Export PNG..."}; }
+    void menuAction(int k) override {
+        if (k == 0) { open(); return; }
+        std::string f = chooseFile(true, "Export the plot", "PNG\t*.png", "plot.png");
+        if (!f.empty()) message(0, {Atom("export"), Atom(f)});
+    }
     void uiMouse(int e, int mx, int my) override {
         if (e == FL_PUSH && Fl::event_clicks()) { Fl::event_clicks(0); open(); return; }
         if (e != FL_PUSH && e != FL_DRAG) return;
@@ -765,10 +817,10 @@ public:
         reload();
         drawPlot(*s_, cache_, X + 3, Y + 3, w - 6, h - 6, s_->dataRange(), false);
         if (s_->rows.empty()) {
-            fl_font(kFont, 9);
+            zd::font(kFont, 9);
             fl_color(kDim);
             std::string t = !bufName_.empty() ? (b_ ? bufName_ + ": empty" : "no buffer~ " + bufName_) : "plot";
-            fl_draw(t.c_str(), X + 8, Y + h / 2 + 3);
+            zd::draw(t.c_str(), X + 8, Y + h / 2 + 3);
         }
     }
 
@@ -810,20 +862,11 @@ private:
         if (b_ && b_->version != seen_) load();
     }
     void load() {
-        auto& R = s_->rows;
-        R.clear();
+        s_->rows.clear();
         s_->source = bufName_;
         if (!b_) { changed(); return; }
-        const SampleBuffer& sb = b_->buf;
         seen_ = b_->version;
-        int c0 = 0, c1 = sb.channels;
-        if (channel_ >= 0) { c0 = std::min(channel_, sb.channels - 1); c1 = c0 + 1; }
-        R.assign((size_t)(c1 - c0), std::vector<float>((size_t)sb.frames));
-        for (long f = 0; f < sb.frames; ++f)
-            for (int c = c0; c < c1; ++c) R[(size_t)(c - c0)][(size_t)f] = sb.data[(size_t)f * sb.channels + c];
-        s_->time = sb.sr > 1.5;                         // a rate of 1: a plain matrix (no time axis)
-        s_->xStart = 0;
-        s_->xStep = s_->time ? 1.0 / sb.sr : 1.0;
+        loadBuffer(*s_, b_->buf, channel_);
         changed();
     }
     void changed() {
@@ -850,6 +893,21 @@ private:
 };
 
 }  // namespace
+
+void openBufferWindow(Patch* p, const std::string& name) {
+    if (!p || !findBuffer(p, name)) { if (p) p->print("no buffer~ " + name); return; }
+    fl_open_display();
+    BufferView& v = bufferViews()[name];
+    v.root = p->root();
+    if (!v.win) {
+        v.state->title = name;
+        v.win = new PlotWindow(v.state);
+    }
+    v.seen = -1;
+    refreshBufferView(name, v);
+    v.win->show();
+    if (!Fl::has_timeout(bufferViewTick)) Fl::add_timeout(0.25, bufferViewTick);
+}
 
 void registerPlotObjects(ClassTable& t) {
     t.insert(t.end(), {

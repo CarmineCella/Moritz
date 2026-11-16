@@ -5,6 +5,7 @@
 // descriptors and f0) and function (a breakpoint editor)
 
 #include "objects.h"
+#include "zoom.h"
 #include "partconv.h"
 #include "vocoder.h"
 
@@ -620,24 +621,24 @@ public:
     }
     void drawUI(int X, int Y) override {
         fl_color(fl_rgb_color(22, 24, 28));
-        fl_rectf(X + 3, Y + 3, w - 6, h - 6);
+        zd::rectf(X + 3, Y + 3, w - 6, h - 6);
         fl_color(fl_rgb_color(42, 46, 54));
-        for (int k = 1; k < 4; ++k) fl_xyline(X + 3, Y + kPad + k * (h - 2 * kPad) / 4, X + w - 4);
+        for (int k = 1; k < 4; ++k) zd::xyline(X + 3, Y + kPad + k * (h - 2 * kPad) / 4, X + w - 4);
         fl_color(kAccent);
-        fl_line_style(FL_SOLID, 2);
-        fl_begin_line();
-        for (auto& p : pts_) fl_vertex(X + px(p.first), Y + py(p.second));
-        fl_end_line();
-        fl_line_style(0);
+        zd::line_style(FL_SOLID, 2);
+        zd::begin_line();
+        for (auto& p : pts_) zd::vertex(X + px(p.first), Y + py(p.second));
+        zd::end_line();
+        zd::line_style(0);
         for (auto& p : pts_) {
             fl_color(kText);
-            fl_rectf(X + px(p.first) - 3, Y + py(p.second) - 3, 7, 7);
+            zd::rectf(X + px(p.first) - 3, Y + py(p.second) - 3, 7, 7);
         }
-        fl_font(kFont, 9);
+        zd::font(kFont, 9);
         fl_color(kDim);
         char label[64];
         std::snprintf(label, sizeof label, "%g..%g  %g ms", lo_, hi_, domain_);
-        fl_draw(label, X + 6, Y + 13);
+        zd::draw(label, X + 6, Y + 13);
     }
 
 private:

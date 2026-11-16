@@ -26,7 +26,7 @@
   (obj out dac~ (pos 20 375))
   (obj e1 comment "Reset: if any bin of the reset signal is not 0, the whole frame outputs the analysed phase (after a jump, or while live)." (pos 20 415))
   (obj e2 comment "Freeze, then compare: with plain phases each bin of a partial drifts on its own and the voice sounds phasey." (pos 20 433))
-  (obj e3 comment "examples/pvoc.moritz uses pvlock~ to time-stretch a phrase." (pos 20 451))
+  (obj e3 comment "examples/06-spectral/pvoc.moritz uses pvlock~ to time-stretch a phrase." (pos 20 451))
   (connect lb 0 init 0)
   (connect init 0 gr 0)
   (connect rate 0 gr 0)

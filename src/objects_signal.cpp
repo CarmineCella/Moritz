@@ -2,6 +2,7 @@
 // objects_signal.cpp — oscillators, filters, signal math, delays, audio I/O
 
 #include "objects.h"
+#include "zoom.h"
 
 #include <FL/fl_draw.H>
 
@@ -158,6 +159,11 @@ public:
         setPorts(std::vector<Port>(ch_.size(), P::Signal), {});
     }
     void message(int, const Message& m) override { handleDspMessage(patch, m); }
+    int outputChannels() const override {
+        int m = 0;
+        for (int c : ch_) m = std::max(m, c);
+        return m;
+    }
     void dsp(int n) override {
         if (!patch->root()->ioOut) return;
         for (size_t k = 0; k < ch_.size(); ++k) {
@@ -760,22 +766,22 @@ public:
         int tx = X + w / 2, top = Y + 10, len = h - 30;
         double p = posOf(amp_);
         fl_color(fl_rgb_color(30, 31, 36));
-        fl_rounded_rectf(tx - 3, top, 6, len, 3);
+        zd::rounded_rectf(tx - 3, top, 6, len, 3);
         int ky = top + (int)((1.0 - p) * len);
         fl_color(kSignal);
-        fl_rounded_rectf(tx - 3, ky, 6, top + len - ky, 3);
+        zd::rounded_rectf(tx - 3, ky, 6, top + len - ky, 3);
         int uy = top + (int)((1.0 - posOf(1.0)) * len);       // unity mark
         fl_color(kDim);
-        fl_line(X + 4, uy, X + 9, uy);
-        fl_line(X + w - 10, uy, X + w - 5, uy);
+        zd::line(X + 4, uy, X + 9, uy);
+        zd::line(X + w - 10, uy, X + w - 5, uy);
         fl_color(kText);
-        fl_rounded_rectf(X + 6, ky - 4, w - 12, 8, 3);
+        zd::rounded_rectf(X + 6, ky - 4, w - 12, 8, 3);
         char buf[16];
         if (amp_ <= 0.f) std::snprintf(buf, sizeof buf, "-inf");
         else std::snprintf(buf, sizeof buf, "%.1f", 20.0 * std::log10(amp_));
-        fl_font(kFont, 10);
+        zd::font(kFont, 10);
         fl_color(kDim);
-        fl_draw(buf, X, Y + h - 16, w, 14, FL_ALIGN_CENTER);
+        zd::draw(buf, X, Y + h - 16, w, 14, FL_ALIGN_CENTER);
     }
     void dsp(int n) override {
         const float* x = sigIn(0, n);

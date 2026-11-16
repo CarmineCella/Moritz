@@ -35,7 +35,7 @@
   (obj e3 flonum (pos 220 395))
   (obj e4 flonum (pos 320 395))
   (obj ce comment "speakers: front left, back left, back right, front right (ambidec~ 1 45 135 -135 -45)" (pos 20 420))
-  (obj see comment "For sound: examples/ambisonics.moritz (four speakers) and binaural.moritz (headphones)." (pos 20 450))
+  (obj see comment "For sound: examples/07-space/ambisonics.moritz (four speakers) and binaural.moritz (headphones)." (pos 20 450))
   (connect one 0 enc 0)
   (connect az 0 enc 1)
   (connect el 0 enc 2)

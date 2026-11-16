@@ -25,7 +25,7 @@ using ModelPtr = std::shared_ptr<const soundtypes::Model>;
 //                                units are rebuilt from their atoms
 //   segment frames               level 1: runs of frames of one type (default)
 //   segment onsets [threshold] [gap]   level 1: the notes or strokes between
-//                                onsets (1.5, at least 0.08 s apart),
+//                                onsets (1.5, at least 80 ms apart),
 //                                clustered as wholes (as in SoundTypes)
 //   pitch 1/0                    add the pitch classes (chroma) to the
 //                                features: types follow harmony too (0)
@@ -50,6 +50,12 @@ public:
     ModelPtr model() const { return model_; }
     std::string name;
 
+    std::vector<std::string> menuItems() override { return {"Info", "Write the units as text..."}; }
+    void menuAction(int k) override {
+        if (k == 0) { message(0, {Atom("info")}); return; }
+        std::string f = chooseFile(true, "The units of soundtypes " + name, "Text\t*.txt", name + "-units.txt");
+        if (!f.empty()) message(0, {Atom("write"), Atom(f)});
+    }
     void message(int, const Message& m) override {
         const Atom& h = m[0];
         if (h.is("stop")) { job_.cancel(); return; }
@@ -68,7 +74,7 @@ public:
             onsets_ = argstr(m, 1) == "onsets";
             if (onsets_) {
                 onsetThreshold_ = std::max(.1f, argf(m, 2, 1.5f));
-                onsetGap_ = std::clamp(argf(m, 3, .08f), .01f, 5.f);
+                onsetGap_ = std::clamp(argf(m, 3, 80.f), 10.f, 5000.f) / 1000.f;   // ms
             }
         } else if (h.is("pitch")) pitch_ = argf(m, 1, 1.f) != 0.f;
         else if (h.is("analyse") && m.size() > 1) analyse(m[1].str(), argstr(m, 2));

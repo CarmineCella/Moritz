@@ -1,0 +1,303 @@
+# Analysis: probes, meters, live descriptors, and the offline analyses of a buffer~
+
+@ snapshot~
+syntax: snapshot~ [ms]
+Reports the current value of its signal (the last sample of the latest audio
+block) as a number: on bang, and every `ms` milliseconds while audio runs. An
+interval of 0 reports only on bang; the shortest interval is 5 ms.
+arg ms: the report interval, in milliseconds (0: only on bang)
+msg bang: reports the value now
+msg number: sets the report interval (ms); also the right inlet
+msg interval ms: sets the report interval (ms)
+see: peakamp~ meter~ scope~ descriptors~ sig~
+
+@ peakamp~
+syntax: peakamp~ [ms]
+Reports the largest absolute value its signal reached since the last report,
+then starts measuring again: on bang, and every `ms` milliseconds while audio
+runs (5 ms at least). Use atodb to read it in dB.
+arg ms: the report interval, in milliseconds (0: only on bang)
+msg bang: reports the peak now
+msg number: sets the report interval (ms); also the right inlet
+msg interval ms: sets the report interval (ms)
+see: snapshot~ meter~ atodb descriptors~
+
+@ meter~
+syntax: meter~
+A level meter: the peak of its signal drawn as a vertical bar from -60 dB to
+0 dB, green, yellow above -12 dB, red above -3 dB. The bar falls back
+gradually, so short peaks stay visible for a moment.
+see: peakamp~ scope~ spectroscope~ gain~
+
+@ scope~
+syntax: scope~ [samples]
+An oscilloscope: the latest `samples` of its signal, from -1 to 1, triggered
+on a rising zero crossing so that a periodic wave stands still.
+arg samples: how many samples the display spans, 32 to 1024 (512)
+see: meter~ spectroscope~ waveform~ snapshot~ plot
+
+@ spectroscope~
+syntax: spectroscope~ [width height]
+The live spectrum of its signal: a 2048-point FFT with a Hann window,
+frequency on a log scale from 20 Hz to half the sample rate, level from 0 dB
+(a full-scale sine) down to -90 dB, with grid lines at 100 Hz, 1 kHz and
+10 kHz and at -30 and -60 dB. Peaks fall back slowly, so short sounds stay
+visible for a moment.
+arg width: the width of the display, in pixels, 120 to 2000 (300)
+arg height: the height of the display, in pixels, 60 to 1000 (130)
+see: scope~ meter~ spectrogram descriptors~ melbands~
+
+@ descriptors~
+syntax: descriptors~ [size] [hop] [names...]
+Low-level descriptors of its signal, measured over the last `size` samples
+every `hop` samples while audio runs, one outlet each. The names choose the
+outlets and their order; without names there are all eleven, in this order:
+rms (root mean square level), centroid (Hz, the amplitude-weighted mean
+frequency), spread (Hz, the standard deviation around the centroid),
+skewness, kurtosis (3 for a Gaussian shape), flux (how much the spectrum grew
+since the last frame), hfc (high frequency content: the energy weighted by
+bin number), zcr (zero crossings per second), flatness (0 tonal to 1 noisy),
+periodicity (the height of the autocorrelation peak, 0 to 1) and f0 (Hz).
+
+f0 is read from the autocorrelation and is 0 when the frame is not periodic
+enough (periodicity under 0.4). It is found between about 4 sr / size and
+50 sr / size (86 to 1077 Hz with size 2048 at 44.1 kHz): a larger size
+reaches lower notes. The formulas are those of sound_math's features.h.
+arg size: the frame, in samples, a power of 2 from 256 to 8192 (2048)
+arg hop: the step between analyses, in samples, 32 or more (1024)
+arg names: any of rms centroid spread skewness kurtosis flux hfc zcr flatness periodicity f0 (all of them)
+msg bang: analyses the latest frame now
+msg hop n: sets the step between analyses (samples)
+see: melbands~ mfcc~ chroma~ onset~ knn plot
+
+@ spectrogram
+syntax: spectrogram [size] [hop]
+Writes the magnitude spectrogram of a buffer~ into another buffer~, as a
+background job: one channel a bin (size / 2 + 1 of them, or up to `maxfreq`),
+one sample a frame, values in dB (0 dB: a full-scale sine; down to -100). The
+result's sample rate is the number of frames a second, so plot shows its time
+axis. A Hann window of `size` samples, a frame every `hop`; a stereo sound is
+mixed to mono.
+arg size: the window, in samples, a power of 2 from 64 to 65536 (2048)
+arg hop: the step between frames, in samples, 16 or more (512)
+msg run sound matrix: analyses the buffer~ sound and writes the spectrogram into the buffer~ matrix
+msg maxfreq Hz: keeps only the bins up to this frequency (0: all of them)
+msg size n: sets the window (samples)
+msg hop n: sets the step (samples)
+msg stop: cancels the job
+see: melgram chromagram plot similarity spectroscope~ buffer~
+
+@ melgram
+syntax: melgram [bands] [size] [hop]
+Writes the mel spectrogram of a buffer~ into another buffer~, as a background
+job: the energy (dB) in `bands` triangular filters spaced evenly on the mel
+scale, the ear's resolution. One channel a band (lowest first), one sample a
+frame, at the number of frames a second.
+arg bands: the number of mel bands, 2 to 256 (40)
+arg size: the window, in samples, a power of 2 from 64 to 65536 (2048)
+arg hop: the step between frames, in samples, 16 or more (512)
+msg run sound matrix: analyses the buffer~ sound and writes the mel spectrogram into the buffer~ matrix
+msg bands n: sets the number of bands
+msg size n: sets the window (samples)
+msg hop n: sets the step (samples)
+msg stop: cancels the job
+see: mfccgram spectrogram melbands~ similarity plot
+
+@ mfccgram
+syntax: mfccgram [coeffs] [bands] [size] [hop]
+Writes the mel-frequency cepstral coefficients of a buffer~ into another
+buffer~, as a background job: the cosine transform of each mel frame, a
+smooth description of the spectral envelope (the timbre) in a few numbers;
+coefficient 0 is the overall level. One channel a coefficient, one sample a
+frame. There are never more coefficients than bands.
+arg coeffs: the number of coefficients, 1 to 128 (13)
+arg bands: the number of mel bands they are computed from, 2 to 256 (40)
+arg size: the window, in samples, a power of 2 from 64 to 65536 (2048)
+arg hop: the step between frames, in samples, 16 or more (512)
+msg run sound matrix: analyses the buffer~ sound and writes the MFCCs into the buffer~ matrix
+msg coeffs n: sets the number of coefficients
+msg bands n: sets the number of mel bands
+msg size n: sets the window (samples)
+msg hop n: sets the step (samples)
+msg stop: cancels the job
+see: melgram mfcc~ similarity soundtypes plot
+
+@ chromagram
+syntax: chromagram [size] [hop]
+Writes the chromagram of a buffer~ into another buffer~, as a background job:
+12 channels, C C# D ... B, how much of each pitch class sounds, every frame
+scaled to a maximum of 1 (silence stays 0). The pitch classes are read from
+the spectral peaks (as HPCP), each given to its nearest note from C2 to B6;
+a peak that is probably the 3rd, 5th, 6th or 7th partial of a lower one
+counts a tenth. A large window resolves the low notes.
+arg size: the window, in samples, a power of 2 from 256 to 65536 (4096)
+arg hop: the step between frames, in samples, 16 or more (1024)
+msg run sound matrix: analyses the buffer~ sound and writes the chromagram into the buffer~ matrix
+msg size n: sets the window (samples)
+msg hop n: sets the step (samples)
+msg stop: cancels the job
+see: chroma~ keyfind similarity plot spectrogram
+
+@ onsets
+syntax: onsets [threshold] [size] [hop]
+Finds where the notes and hits of a buffer~ begin, as a background job: the
+peaks of the spectral flux (how much the spectrum grows from frame to frame)
+above `threshold` times its moving median, at least `gap` ms apart, each
+placed at the sample where the energy jumps. The times (ms) come out as a
+list.
+
+The onsets cut the sound into segments, the first from the beginning and the
+last to the end: after a run, the number of segments comes out, and `segment
+k` outputs the start and end of one of them, ready for play~.
+arg threshold: how far above the median a peak must be, as a factor (2)
+arg size: the window, in samples, a power of 2 from 64 to 65536 (1024)
+arg hop: the step between frames, in samples, 16 or more (256)
+msg run sound [curve]: finds the onsets of the buffer~ sound; the flux goes to the buffer~ curve if one is named
+msg segment k: outputs the start and end (ms) of segment k, counting from 0 (k wraps around)
+msg threshold x: sets the threshold factor (2)
+msg width n: the frames of the moving median, made odd (21)
+msg gap ms: the shortest time between two onsets (50)
+msg size n: sets the window (samples)
+msg hop n: sets the step (samples)
+msg stop: cancels the job
+see: onset~ beats novelty play~ atoms soundtypes
+
+@ beats
+syntax: beats [size] [hop]
+Estimates the tempo of a buffer~ and tracks its beats, as a background job
+(Ellis 2007): the onset strength (spectral flux), its autocorrelation read
+from 30 to 300 bpm and weighted by a prior on the tempo listeners tap, then
+dynamic programming for beats that are both strong and regular. The tempo
+(bpm) and the beat times (ms, a list) come out.
+arg size: the window, in samples, a power of 2 from 64 to 65536 (1024)
+arg hop: the step between frames, in samples, 16 or more (256)
+msg run sound [curve]: finds the tempo and the beats of the buffer~ sound; the onset strength goes to the buffer~ curve if one is named
+msg tempogram sound matrix: writes the tempogram: 4 frames a second, one channel a bpm from 30 (channel 0) to 300, how periodic the onsets are at that tempo (1: perfectly)
+msg clicks buffer: after a run, writes a click track into a buffer~: as long as the sound, a short 1 kHz click on every beat
+msg prior bpm octaves: the centre of the tempo prior, 30 to 300 bpm (100), and its width in octaves (0.6)
+msg tightness x: how strongly the beats keep to the tempo (100)
+msg size n: sets the window (samples)
+msg hop n: sets the step (samples)
+msg stop: cancels the job
+see: onsets onset~ keyfind metro plot
+
+@ keyfind
+syntax: keyfind [size] [hop]
+Estimates the key of a buffer~, as a background job: the chromagram averaged
+over the sound (a pitch-class distribution) correlated with the
+Krumhansl-Kessler profile of every major and minor key (Krumhansl 1990). The
+key ("A minor"), its correlation (-1 to 1), the distribution (12 values, C
+first, a maximum of 1) and the correlations with all 24 keys (C major, C
+minor, C# major ... B minor) come out.
+arg size: the window, in samples, a power of 2 from 256 to 65536 (4096)
+arg hop: the step between frames, in samples, 16 or more (1024)
+msg run sound [from to]: the key of the buffer~ sound, or of the part between from and to (ms)
+msg size n: sets the window (samples)
+msg hop n: sets the step (samples)
+msg stop: cancels the job
+see: chromagram chroma~ beats
+
+@ similarity
+syntax: similarity [frames]
+Writes the self-similarity matrix of a feature matrix (a chromagram, an MFCC
+matrix...) into a buffer~, as a background job: the cosine similarity of
+every frame with every other, 1 where two moments sound alike (Foote 1999).
+The structure of a piece becomes a picture: sections are squares on the
+diagonal, repeats are stripes beside it. Frames are averaged in groups so
+that the matrix has at most `frames` of them.
+arg frames: the most frames the matrix has, 16 to 4000 (1000)
+msg run features matrix: writes the self-similarity of the buffer~ features into the buffer~ matrix
+msg frames n: sets the most frames (1000)
+msg standardize 0/1: 1 takes each feature's mean off and scales it to unit variance first, so that MFCC coefficient 0 does not dominate (0)
+msg stop: cancels the job
+see: novelty chromagram mfccgram plot
+
+@ novelty
+syntax: novelty [width] [threshold]
+Finds the section boundaries of a piece from its self-similarity matrix, as a
+background job (Foote 2000): a checkerboard kernel of `width` frames slides
+along the diagonal, high where what comes before is unlike what comes after.
+The curve goes to a buffer~; the boundaries (ms) are its peaks above
+`threshold` times its moving median, at least `gap` ms apart, and come out as
+a list. They cut the piece into sections: after a run the number of sections
+comes out, and `section k` outputs the start and end of one of them.
+arg width: the width of the kernel, in frames of the matrix, 2 to 512 (32)
+arg threshold: how far above the median a peak must be, as a factor (1.5)
+msg run similarity curve: reads the square matrix in the buffer~ similarity and writes the novelty curve into the buffer~ curve
+msg section k: outputs the start and end (ms) of section k, counting from 0 (k wraps around)
+msg width n: sets the kernel width (frames)
+msg threshold x: sets the threshold factor
+msg gap ms: the shortest time between two boundaries (2000)
+msg stop: cancels the job
+see: similarity onsets plot soundtypes
+
+@ curves
+syntax: curves [size] [hop]
+Curves of a buffer~ over time, written to another buffer~ as a background
+job, one value every `hop` samples. Frame by frame the curves are jumpy:
+`smooth` passes them through a moving median.
+arg size: the window, in samples, a power of 2 from 64 to 65536 (2048)
+arg hop: the step between frames, in samples, 16 or more (512)
+msg loudness sound curve: the level in dB, roughly as the ear weighs it (below 150 Hz and above 8 kHz taken out; 0 dB a full-scale sine)
+msg register sound curves: 3 channels: the spectral centroid in MIDI pitch, the spread around it in octaves, the lowest strong partial in MIDI pitch
+msg polyphony sound curve: how many voices seem to sound, from the strong spectral peaks, about three a voice (a rough estimate, 0 in silence)
+msg smooth n: the frames of the moving median, made odd (1: no smoothing)
+msg size n: sets the window (samples)
+msg hop n: sets the step (samples)
+msg stop: cancels the job
+see: descriptors~ spectrogram plot soundtypes
+
+@ melbands~
+syntax: melbands~ [bands] [size] [hop]
+The live mel spectrum of its signal: a list of `bands` values in dB, measured
+over the last `size` samples every `hop` samples while audio runs. The live
+version of melgram; into a plot in image mode, the lists scroll by as a
+picture.
+arg bands: the number of mel bands, 2 to 256 (40)
+arg size: the window, in samples, a power of 2 from 64 to 32768 (2048)
+arg hop: the step between analyses, in samples, 16 or more (512)
+msg bang: analyses the latest window now
+msg hop n: sets the step (samples)
+see: mfcc~ chroma~ melgram descriptors~ plot
+
+@ mfcc~
+syntax: mfcc~ [coeffs] [bands] [size] [hop]
+The live MFCCs of its signal: a list of `coeffs` cepstral coefficients of its
+mel spectrum, every `hop` samples while audio runs; coefficient 0 is the
+level. The live version of mfccgram, and a compact description of timbre for
+knn or kmeans.
+arg coeffs: the number of coefficients, 1 to the number of bands (13)
+arg bands: the number of mel bands, 2 to 256 (40)
+arg size: the window, in samples, a power of 2 from 64 to 32768 (2048)
+arg hop: the step between analyses, in samples, 16 or more (512)
+msg bang: analyses the latest window now
+msg hop n: sets the step (samples)
+see: melbands~ mfccgram descriptors~ knn kmeans
+
+@ chroma~
+syntax: chroma~ [size] [hop]
+The live pitch classes of its signal: a list of 12 values, C first, scaled to
+a maximum of 1 (all 0 in silence), every `hop` samples while audio runs. The
+live version of chromagram.
+arg size: the window, in samples, a power of 2 from 256 to 32768 (4096)
+arg hop: the step between analyses, in samples, 16 or more (1024)
+msg bang: analyses the latest window now
+msg hop n: sets the step (samples)
+see: chromagram keyfind melbands~ plot
+
+@ onset~
+syntax: onset~ [threshold] [size] [hop]
+A bang when a note or a hit begins in its signal: the spectral flux peaks
+above `threshold` times its median over the last 21 frames, at least `gap` ms
+after the previous onset, while the level is above `gate` dB. The right
+outlet gives the flux every frame. With the default size and hop the bang
+comes about 6 ms after the attack enters the window.
+arg threshold: how far above the median a peak must be, as a factor (2)
+arg size: the window, in samples, a power of 2 from 64 to 32768 (1024)
+arg hop: the step between analyses, in samples, 16 or more (256)
+msg bang: analyses the latest window now
+msg threshold x: sets the threshold factor (2)
+msg gap ms: the shortest time between two onsets (50)
+msg gate dB: the level under which nothing counts (-50)
+msg hop n: sets the step (samples)
+see: onsets descriptors~ beats peakamp~

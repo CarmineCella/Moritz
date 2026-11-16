@@ -1,0 +1,18 @@
+; link.help.moritz - help for link
+(patch
+  (obj title comment "link [text] target: click to open a document, a folder or a web page" (pos 20 12))
+  (obj sub comment "In locked mode a click (or a bang) opens the target with the system: a PDF in its viewer, a folder, a page in the browser." (pos 20 34))
+  (obj sub2 comment "A relative path is looked for next to the patch, then among the bundled examples and documents: docs/... works anywhere." (pos 20 52))
+  (obj l1 link "Sound decomposition strategies for creative hybridizations (PDF)" docs/hybridization/hybridizations.pdf (pos 20 90))
+  (obj c1 comment "a document in the docs folder" (pos 480 92))
+  (obj l2 link "The example sounds" sounds (pos 20 125))
+  (obj c2 comment "a folder" (pos 480 127))
+  (obj l3 link "Moritz on GitHub" https://github.com/CarmineCella/Moritz (pos 20 160))
+  (obj c3 comment "a web page" (pos 480 162))
+  (obj b button (pos 20 205))
+  (obj m message "set https://github.com/CarmineCella/Moritz/releases" (pos 60 205))
+  (obj l4 link "the releases" https://github.com/CarmineCella/Moritz (pos 20 240))
+  (obj c4 comment "a bang opens it too; set changes the target" (pos 480 242))
+  (obj c5 comment "Help > Documents lists the PDFs in the docs folder." (pos 20 285))
+  (connect b 0 l4 0)
+  (connect m 0 l4 0))

@@ -128,7 +128,7 @@ const std::map<std::string, PortDocs>& docs() {
                     {"bang when the result is in the out buffer~"}}},
         {"function", {{"bang: the curve for line~; a number (ms): the value there; domain, range, clear, set"},
                       {"value at the time received", "the curve for line~: first value, then value-time pairs"}}},
-        {"moritz~", {{"open patch, send name value, input buffer, render buffer seconds, clear, stop"},
+        {"moritz", {{"open patch, send name value, input buffer, render buffer seconds, clear, stop"},
                      {"progress, 0 to 1", "bang: the buffer~ is ready"}}},
         {"nmf", {{"run source dest (unsupervised); learn example, separate mix dest, forget (supervised); "
                   "components k, iterations n, size n, seed n, stop"},
@@ -161,13 +161,13 @@ const std::map<std::string, PortDocs>& docs() {
         {"pursuit", {{"run sound dictionary book [residual], synth book dictionary out, cross book from to out; atoms n, snr dB, "
                       "components n, candidates n, segments onsets|blocks, block ms, threshold x, ratio r, stretch s, tails 0/1, keep f, stop"},
                      {"progress, 0 to 1", "bang: done", "atoms found", "signal-to-residual (dB)"}}},
-        {"soundtypes", {{"analyse sound, analyse book dictionary; types k1 k2 k3, levels n, threshold z, smooth n, size n, hop n, seed n; "
+        {"soundtypes", {{"analyse sound, analyse book dictionary; segment frames | onsets [threshold gap], pitch 1/0, types k1 k2 k3, levels n, threshold z, smooth n, size n, hop n, seed n; "
                          "labels buffer, transitions level buffer, play level type, write file, info, stop"},
                         {"progress, 0 to 1", "bang: done", "units per level, a list", "play: start end (ms)"}}},
         {"typegen", {{"generate seconds out [labels], next, reset; classic n, markov [order count], oracle [continuity context], "
-                      "level n, model name, seed n, xfade ms, stop"},
+                      "level n, inner c [context], model name, seed n, xfade ms, stop"},
                      {"progress, 0 to 1", "bang: done", "next: the unit's type", "next: start end (ms) in the original"}}},
-        {"typematch", {{"run A B out [level] [labels]; level n, fit 1/0, xfade ms, stop"}, {"progress, 0 to 1", "bang: done"}}},
+        {"typematch", {{"run A B out [level] [labels]; level 0-3, fit 1/0, contour c, space own/joint, xfade ms, stop"}, {"progress, 0 to 1", "bang: done"}}},
         // analysis and MIR
         {"spectrogram", {{"run sound matrix; maxfreq Hz, size n, hop n, stop"},
                          {"progress, 0 to 1", "bang: matrix holds the spectrogram (a channel a bin, dB)"}}},
@@ -196,7 +196,7 @@ const std::map<std::string, PortDocs>& docs() {
         {"mfcc~", {{"signal to analyse; bang analyses now; hop n"}, {"MFCCs, a list every hop"}}},
         {"chroma~", {{"signal to analyse; bang analyses now; hop n"}, {"12 pitch classes (C first, max 1), a list every hop"}}},
         {"onset~", {{"signal to analyse; threshold x, gap ms, gate dB, hop n"}, {"bang: an onset", "spectral flux, every hop"}}},
-        {"plot", {{"buffer name [channel], a list, a number; mode m, range lo hi, xrange from to, rows first last, normalize 0/1, marks, cursor ms, title, "
+        {"plot", {{"buffer name [channel], a list, a number; mode m, range lo hi, xrange from to, rows first last, normalize 0/1, ylog 1/0, marks, cursor ms, title, "
                    "labels, colors, history n, clear, open, export file.png",
                    "marks: times (ms on a time axis) drawn as vertical lines"},
                   {"x clicked (ms on a time axis)", "y clicked: the row of an image, the value of a curve"}}},
@@ -268,6 +268,7 @@ const std::map<std::string, PortDocs>& docs() {
         {"number", {{"number: show and output; set x: show only"}, {"the number"}}},
         {"button", {{"anything: flash and bang"}, {"bang"}}},
         {"toggle", {{"number: 1/0 and output; bang: flip"}, {"1 or 0"}}},
+        {"link", {{"bang: open the target; set target: change it"}, {}}},
         {"slider", {{"number: set and output; set x: set only"}, {"value"}}},
     };
     return d;

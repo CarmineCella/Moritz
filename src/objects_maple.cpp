@@ -128,6 +128,12 @@ public:
     DictPtr dict() const { return dict_; }
     std::string name;
 
+    std::vector<std::string> menuItems() override { return {"Info", "Save the dictionary..."}; }
+    void menuAction(int k) override {
+        if (k == 0) { message(0, {Atom("info")}); return; }
+        std::string f = chooseFile(true, "Save atoms " + name, "Moritz atoms\t*.atoms", name + ".atoms");
+        if (!f.empty()) message(0, {Atom("write"), Atom(f)});
+    }
     void message(int, const Message& m) override {
         const Atom& h = m[0];
         if (h.is("stop")) { job_.cancel(); return; }

@@ -25,6 +25,8 @@
 
 #pragma once
 
+#include "recorder.h"
+
 #include <atomic>
 #include <functional>
 #include <map>
@@ -129,6 +131,7 @@ public:
     virtual std::string text() const;                     // text shown in the box
     virtual Message saveArgs() const { return args; }     // args written to file
     virtual bool wantsInput() const { return false; }     // uses audio input (adc~)
+    virtual int outputChannels() const { return 0; }      // the highest output channel it writes (dac~)
     virtual void attached() {}         // box joined a patch (GUI thread): load files, start timers
     virtual void resolve() {}          // during compile, DSP lock held: look up buffers/taps
     virtual void audioChanged() {}     // audio started, stopped or reopened (GUI thread)
@@ -151,6 +154,9 @@ public:
     virtual void uiSize(int& w, int& h) const {}
     virtual void drawUI(int X, int Y) {}
     virtual void uiMouse(int event, int mx, int my) {}   // FL_PUSH/DRAG/RELEASE, box coords
+    // right-click: extra items of this box's menu, and what each does
+    virtual std::vector<std::string> menuItems() { return {}; }
+    virtual void menuAction(int item) {}
     virtual bool animated() const { return false; }      // redraw continuously (meter~, scope~)
 
     bool isSignal() const;
@@ -203,6 +209,18 @@ std::unique_ptr<Box> makeBox(const std::string& cls, const Message& args,
 // completion.
 std::vector<std::string>& libraryPath();
 std::vector<std::string>& abstractionPath();
+// Folders where a relative file that is not next to the patch is looked for
+// (the bundled examples and their sounds): "sounds/Vox.wav" works anywhere.
+std::vector<std::string>& soundPath();
+// The head-related impulse responses of a direction, at a sample rate (objects_spatial.cpp)
+void hrirFor(double sr, double az, double el, std::vector<float>& left, std::vector<float>& right);
+// Opens a file, a folder or a URL with the system (a PDF in its viewer)
+bool openWithSystem(const std::string& pathOrUrl);
+// A file dialog (the GUI): "" when cancelled. filter as FLTK's ("Audio\t*.wav")
+std::string chooseFile(bool save, const std::string& title, const std::string& filter = "",
+                       const std::string& preset = "");
+// The window of a buffer~ (its waveform, zoom, pan), following its contents
+void openBufferWindow(Patch* p, const std::string& name);
 std::vector<std::string> libraryNames();        // abstractions in the libraries, sorted
 // Help patches: "<name>.help.moritz" in helpPath() or next to a library
 // abstraction. Related objects share one (+~ -~ *~ /~ -> arith~). Returns ""
@@ -331,13 +349,14 @@ public:
     void process(const float* in, int inCh, float* out, int outCh, int frames);
     std::atomic<double> sampleRate{44100.0};
     bool needsInput() const;
+    int maxOutputChannel() const;         // the highest dac~ channel in it, its inner patches and extras
     std::string dspError;   // non-empty when the signal graph has a loop
     std::atomic<bool> dspRunning{false};
     uint64_t blockCount = 0;  // audio thread: 64-sample blocks processed
     // set by the audio engine on the root, for dspstate~
     std::atomic<int> ioBufferFrames{0};   // device buffer (I/O vector) size; kept while off
     std::atomic<float> cpuLoad{0.f};      // share of each buffer's time spent computing, smoothed
-    int renderDepth = 0;                  // moritz~: how deep this patch is rendered inside others
+    int renderDepth = 0;                  // moritz: how deep this patch is rendered inside others
     void audioChanged() { forEachBox([](Box* b) { b->audioChanged(); }); }
 
     // ---- MIDI (GUI thread): input goes to every box; output to the root's hook
@@ -384,6 +403,8 @@ struct AudioSettings {
     int input = -1;           // index into AudioEngine::inputs, -1 = default, -2 = none
     int sampleRate = 0;       // 0 = device default
     int bufferFrames = 256;
+    int outChannels = 0;      // channels opened on the devices: 0 = all they have
+    int inChannels = 0;
 };
 
 class AudioEngine {
@@ -403,6 +424,30 @@ public:
 
     AudioSettings settings;
     std::vector<AudioDevice> outputs, inputs;
+    Recorder recorder;                       // the quick recorder: what goes to the dac
+    // the output's peaks since the interface last read them (takePeak)
+    static constexpr int kMeterChannels = 64;
+    static constexpr int kMaxBus = 64;    // the patch's output channels, at most
+    float takePeak(int channel) {
+        return channel >= 0 && channel < kMeterChannels ? peak_[channel].exchange(0.f, std::memory_order_relaxed) : 0.f;
+    }
+    // the patch's output channels: the device's, or more when a dac~ uses
+    // more (those are metered and recorded, not heard)
+    int channels() const { return running_ ? bus_.load() : 2; }
+    int deviceOutputs() const { return running_ ? (int)device_.playback.channels : 0; }
+    int deviceInputs() const { return running_ && duplex_ ? (int)device_.capture.channels : 0; }
+    // after the patches change: the bus follows the highest dac~ channel; a
+    // console note when it is wider than the device
+    void updateBus();
+    // The binaural monitor: the patch's output channels as speakers around
+    // the listener (azimuth, elevation in degrees per channel, azimuth
+    // positive to the left), rendered for headphones on the device's
+    // channels 1-2. Empty: off.
+    void setMonitor(const std::vector<std::pair<float, float>>& speakers);
+    bool monitoring() const { return monitor_.load() != nullptr; }
+    // The channel tester: bursts of noise on one output channel (from 0; -1: off)
+    std::atomic<int> testChannel{-1};
+    std::atomic<float> testLevel{0.2f};
 
 private:
     static void callback(ma_device* d, void* out, const void* in, ma_uint32 frames);
@@ -412,6 +457,24 @@ private:
     ma_context context_;
     ma_device device_;
     bool contextOk_ = false, running_ = false, duplex_ = false;
+    std::atomic<float> peak_[kMeterChannels] = {};
+    std::atomic<int> bus_{2};
+    std::vector<float> scratch_;              // the bus, when wider than the device
+    static constexpr int kScratchFrames = 8192;
+    int notedBus_ = 0;
+    struct Monitor {
+        int channels = 0, taps = 0, pos = 0;
+        std::vector<float> hl, hr;     // [channel * taps + t]
+        std::vector<float> hist;       // [channel * 2 taps + i]: each sample written twice
+    };
+    std::atomic<Monitor*> monitor_{nullptr};
+    std::vector<std::unique_ptr<Monitor>> monitors_;   // kept: the audio thread may still use an old one
+    uint32_t noise_ = 22222u;
+    float pink_[3] = {0.f, 0.f, 0.f};
+    long testClock_ = 0;
+    int lastTest_ = -1;
+    void renderMonitor(Monitor& m, const float* bus, int busCh, float* out, int outCh, int frames);
+    void addTest(float* bus, int busCh, int frames, double sr);
 };
 
 }  // namespace moritz

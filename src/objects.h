@@ -243,6 +243,18 @@ public:
             patch->rebuild();
         }
     }
+    std::vector<std::string> menuItems() override { return {"Load file...", "Save as WAV...", "Clear"}; }
+    void menuAction(int k) override {
+        if (k == 0) {
+            std::string f = chooseFile(false, "Load into buffer~ " + name, "Audio\t*.{wav,aif,aiff,flac,mp3}");
+            if (!f.empty()) read(f);
+        } else if (k == 1) {
+            std::string f = chooseFile(true, "Save buffer~ " + name, "WAV\t*.wav", name + ".wav");
+            if (!f.empty()) message(0, {Atom("write"), Atom(f)});
+        } else if (k == 2) {
+            message(0, {Atom("clear")});
+        }
+    }
     std::string name;
     SampleBuffer buf;        // touched by the audio thread only under the DSP lock
     int version = 0;         // changes with the contents (read, size, clear): conv~ reloads

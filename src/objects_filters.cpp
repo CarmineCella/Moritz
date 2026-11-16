@@ -7,6 +7,7 @@
 // y = a0 x + a1 x[n-1] + a2 x[n-2] - b1 y[n-1] - b2 y[n-2].
 
 #include "objects.h"
+#include "zoom.h"
 
 #include <FL/Fl.H>
 #include <FL/fl_draw.H>
@@ -143,27 +144,27 @@ public:
     void drawUI(int X, int Y) override {
         int x0 = X + 3, y0 = Y + 3, W = w - 6, H = h - 6;
         fl_color(fl_rgb_color(20, 22, 26));
-        fl_rectf(x0, y0, W, H);
+        zd::rectf(x0, y0, W, H);
         double sr = sampleRate(patch), nyq = sr / 2;
         auto xOf = [&](double f) { return x0 + (int)(std::log(f / 20.0) / std::log(nyq / 20.0) * (W - 1)); };
         auto yOf = [&](double db) { return y0 + (int)(std::clamp((kTop - db) / (kTop - kBottom), 0.0, 1.0) * (H - 1)); };
-        fl_font(FL_HELVETICA, 9);
+        zd::font(FL_HELVETICA, 9);
         for (double f : {100.0, 1000.0, 10000.0}) {
             if (f >= nyq) continue;
             fl_color(fl_rgb_color(42, 46, 54));
-            fl_yxline(xOf(f), y0, y0 + H - 1);
+            zd::yxline(xOf(f), y0, y0 + H - 1);
             fl_color(fl_rgb_color(90, 94, 104));
-            fl_draw(f >= 1000 ? (std::to_string((int)(f / 1000)) + "k").c_str() : "100", xOf(f) + 2, y0 + H - 3);
+            zd::draw(f >= 1000 ? (std::to_string((int)(f / 1000)) + "k").c_str() : "100", xOf(f) + 2, y0 + H - 3);
         }
         for (double db : {12.0, 0.0, -12.0, -24.0, -36.0}) {
             fl_color(db == 0 ? fl_rgb_color(70, 76, 88) : fl_rgb_color(42, 46, 54));
-            fl_xyline(x0, yOf(db), x0 + W - 1);
+            zd::xyline(x0, yOf(db), x0 + W - 1);
             fl_color(fl_rgb_color(90, 94, 104));
-            fl_draw((std::to_string((int)db) + " dB").c_str(), x0 + 2, yOf(db) - 2);
+            zd::draw((std::to_string((int)db) + " dB").c_str(), x0 + 2, yOf(db) - 2);
         }
         // |H(e^jw)| of the cascade
         fl_color(kAccent);
-        fl_line_style(FL_SOLID, 2);
+        zd::line_style(FL_SOLID, 2);
         int px = -1, py = 0;
         for (int i = 0; i < W; i += 2) {
             double f = 20.0 * std::pow(nyq / 20.0, (double)i / (W - 1));
@@ -176,11 +177,11 @@ public:
                 mag *= std::abs(num) / std::max(std::abs(den), 1e-12);
             }
             int y = yOf(20 * std::log10(std::max(mag, 1e-9)));
-            if (px >= 0) fl_line(px, py, x0 + i, y);
+            if (px >= 0) zd::line(px, py, x0 + i, y);
             px = x0 + i;
             py = y;
         }
-        fl_line_style(0);
+        zd::line_style(0);
     }
     Message saveArgs() const override { return {Atom((float)w_), Atom((float)h_)}; }
 

@@ -1,0 +1,39 @@
+; bounce-source.moritz - the generative patch bounce.moritz renders with
+; moritz: FM bells (fmvoice) on a pentatonic scale. Its parameters come
+; from receives that moritz sets with "send": seed (the random sequence),
+; pitch (the lowest MIDI note) and speed (ms between notes). Two fmvoices
+; with different timbres play every note. It plays as soon as it is loaded.
+; topic: hidden
+(patch
+  (obj c0 comment "rendered by bounce.moritz: receive seed, pitch, speed" (pos 20 10))
+  (obj rseed receive seed (pos 20 40))
+  (obj rp receive pitch (pos 120 40))
+  (obj rs receive speed (pos 220 40))
+  (obj base f 60 (pos 120 75))
+  (obj lb loadbang (pos 320 40))
+  (obj on message 1 (pos 320 75))
+  (obj met metro 250 (pos 220 110))
+  (obj rnd random 10 (pos 220 145))
+  (obj deg expr "$f2 + 12 * int($i1 / 5) + 2 * ($i1 % 5) + ($i1 % 5 >= 3)" (pos 220 180))
+  (obj sd message "seed $1" (pos 20 110))
+  (obj v1 fmvoice 1.4 6 1800 (pos 220 230))
+  (obj v2 fmvoice 3.5 3 1200 (pos 400 230))
+  (obj mix +~ (pos 220 280))
+  (obj lev *~ 0.35 (pos 220 315))
+  (obj out dac~ (pos 220 355))
+  (connect rseed 0 sd 0)
+  (connect sd 0 rnd 0)
+  (connect rp 0 base 0)
+  (connect rs 0 met 1)
+  (connect lb 0 on 0)
+  (connect on 0 met 0)
+  (connect met 0 rnd 0)
+  (connect base 0 deg 1)
+  (connect rnd 0 deg 0)
+  (connect deg 0 v1 0)
+  (connect deg 0 v2 0)
+  (connect v1 0 mix 0)
+  (connect v2 0 mix 1)
+  (connect mix 0 lev 0)
+  (connect lev 0 out 0)
+  (connect lev 0 out 1))

@@ -5,6 +5,7 @@
 #include "objects.h"
 
 #include <algorithm>
+#include <sys/stat.h>
 #include <cctype>
 #include <chrono>
 #include <cmath>
@@ -583,6 +584,16 @@ bool Patch::needsInput() const {
     return false;
 }
 
+int Patch::maxOutputChannel() const {
+    int m = 0;
+    for (auto& b : boxes) {
+        m = std::max(m, b->outputChannels());
+        for (Patch* c : b->inners()) m = std::max(m, c->maxOutputChannel());
+    }
+    for (auto& e : extras) m = std::max(m, e->maxOutputChannel());
+    return m;
+}
+
 // Orders signal boxes so every box runs after the boxes feeding it, and
 // points each signal inlet at the output buffers connected to it.
 void Patch::compile() {
@@ -706,12 +717,23 @@ void Patch::print(const std::string& s) {
     else std::fprintf(stderr, "%s\n", s.c_str());
 }
 
+namespace {
+bool pathExists(const std::string& p) {      // a file or a folder
+    struct stat st;
+    return ::stat(p.c_str(), &st) == 0;
+}
+}  // namespace
+
 std::string Patch::resolvePath(const std::string& p) const {
     if (p.empty() || isAbsolutePath(p)) return p;
     if (p.rfind("~/", 0) == 0) return homeDir() + p.substr(1);
+    std::string here = p;
     for (const Patch* q = this; q; q = q->parent)
-        if (!q->dir.empty()) return q->dir + "/" + p;
-    return p;
+        if (!q->dir.empty()) { here = q->dir + "/" + p; break; }
+    if (!pathExists(here))                       // not next to the patch: the bundled sounds
+        for (auto& d : soundPath())
+            if (std::string f = d + "/" + p; pathExists(f)) return f;
+    return here;
 }
 
 // ---- scheduler: a small timer queue, run by the GUI (or by --render)

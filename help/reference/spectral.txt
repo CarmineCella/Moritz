@@ -1,0 +1,158 @@
+# Spectral: pfft~ and the objects that work inside it, phase vocoder, separation
+
+@ pfft~
+syntax: pfft~ name [size] [overlap] [args...]
+Runs the abstraction name.moritz once per FFT frame. Each signal inlet is
+analysed with a Hann window every size/overlap samples; inside, fftin~ gives
+the spectrum and every signal vector is one whole frame (one bin per sample,
+bins 0 to size/2 - 1); what reaches fftout~ is resynthesised by overlap-add.
+The signal ports come from the fftin~ and fftout~ objects inside, then
+inlet and outlet add control ports. Latency is one frame (size samples).
+Double-click it (locked) to open the inner patch.
+arg name: the abstraction to load, name.moritz (required)
+arg size: the FFT size in samples, rounded up to a power of two, 128 to 16384 (512)
+arg overlap: frames per window, 1 to size (4)
+arg args: passed to the abstraction as #1, #2...
+msg anything: to a control inlet, goes to the matching inlet box inside
+see: fftin~ fftout~ cartopol~ poltocar~ framedelta~ specenv~
+
+@ fftin~
+syntax: fftin~ [n]
+Inside a pfft~ patch: the spectrum of the pfft~'s signal inlet n, as real
+part, imaginary part and bin number (0 to size/2 - 1), one frame per vector.
+arg n: the pfft~ signal inlet, from 1 (1)
+see: pfft~ fftout~ cartopol~
+
+@ fftout~
+syntax: fftout~ [n]
+Inside a pfft~ patch: the real and imaginary parts written here are
+resynthesised to the pfft~'s signal outlet n. Several fftout~ with the same
+n add up.
+arg n: the pfft~ signal outlet, from 1 (1)
+see: pfft~ fftin~ poltocar~
+
+@ cartopol~
+syntax: cartopol~
+Converts real and imaginary parts to amplitude and phase (-pi to pi), sample
+by sample.
+see: poltocar~ fftin~ pfft~ framedelta~
+
+@ poltocar~
+syntax: poltocar~
+Converts amplitude and phase to real and imaginary parts, sample by sample.
+see: cartopol~ fftout~ pfft~ frameaccum~
+
+@ framedelta~
+syntax: framedelta~
+The difference of each bin from the same bin of the previous frame: from a
+phase, its frequency. Inside pfft~ it keeps one value per bin; elsewhere it
+is the difference from the previous sample.
+see: frameaccum~ cartopol~ phasewrap~ pvlock~ pfft~
+
+@ frameaccum~
+syntax: frameaccum~ [wrap]
+The running sum of each bin over the frames: from a frequency, a phase.
+Where the third inlet is not 0, that bin restarts from the value in the
+second inlet instead (for example the analysed phase, after a jump in the
+sound). Inside pfft~ it keeps one sum per bin; elsewhere a single one.
+arg wrap: 1 keeps the sum in -pi..pi, for phase accumulation (0)
+see: framedelta~ phasewrap~ pvlock~ poltocar~ pfft~
+
+@ pvlock~
+syntax: pvlock~
+The resynthesis phase of a phase vocoder, with identity phase locking
+(Laroche and Dolson). Each frame it finds the amplitude peaks: a peak
+advances its previous output phase by its phase difference, and the bins
+around it keep their analysed offset from it, so the bins of one partial
+stay in step and stretched sounds stay clean. A reset anywhere in a frame
+outputs the analysed phase for the whole frame. It needs whole frames: use
+it inside pfft~.
+see: frameaccum~ framedelta~ cartopol~ sparkle~ pfft~
+
+@ lrshift~
+syntax: lrshift~ [n]
+Shifts each signal vector by n samples, filling with 0. Inside pfft~ every
+bin moves n bins up (negative: down), so bins can be combined with their
+neighbours or the spectrum shifted. Outside pfft~ it shifts each 64-sample
+vector. n is set by the argument only.
+arg n: the shift in samples (bins); positive to the right, up (0)
+see: pfft~ framedelta~ cartopol~
+
+@ phasewrap~
+syntax: phasewrap~
+Wraps a phase into -pi..pi.
+see: framedelta~ frameaccum~ cartopol~ pvlock~
+
+@ sparkle~
+syntax: sparkle~ [buffer] [channels] [window] [overlap]
+The phase vocoder of the author's sparkle, with phase locking and formant
+(spectral envelope) preservation. With a buffer~ name it plays the buffer:
+the left inlet is the speed. Without one it transforms the signal in its
+left inlet, one window late. Pitch and formant ratios (inlets 2 and 3,
+0.05 to 8) are read once per frame. Cross-synthesis mixes in a second sound:
+a buffer~ (read at the same position, or on its own when the first sound is
+live), or else the signal in inlet 5; inlet 4 is the amount (0.5).
+arg buffer: the buffer~ to play; without it the object transforms its input
+arg channels: with a buffer~, the number of channels, 1 to 8 (1)
+arg window: the window in samples, 64 to 16384 (2048); the FFT is twice the next power of two
+arg overlap: windows per hop, 2 to 32 (8)
+msg number: the speed (1 as recorded, 0.25 four times slower, 0 frozen, negative backwards)
+msg bang: plays the buffer~ from the start
+msg start [ms]: plays from that position (0)
+msg stop: stops
+msg loop [1/0]: loops the buffer~ (1 when no argument; off at first)
+msg envelope C: keeps the spectral envelope with C cepstral coefficients, so transposed voices keep their formants (30-80 for voices; 0 off, the default)
+msg threshold x: drops the bins whose amplitude is at or below x, to remove noise (0 = off)
+msg robot [1/0]: robot voice: all phases set to zero (1 when no argument)
+msg whisper [1/0]: whisper: random phases (1 when no argument)
+msg cross mode [buffer]: cross-synthesis with the buffer~ or inlet 5: 1 multiplicative, 2 spectral flattener (the second sound's envelope on the first, with the envelope order, 40 if none), 3 morph, 0 off
+msg set name: with a buffer~, plays another one
+see: groove~ pvlock~ specenv~ buffer~ pitchshift~ pfft~
+
+@ specenv~
+syntax: specenv~ [order] [iterations]
+Inside pfft~, the spectral envelope of the amplitudes in its left inlet,
+frame by frame (Musil's true envelope: a cepstral smoothing of the log
+spectrum, iterated so it rides on the harmonic peaks instead of averaging
+peaks and valleys). The second outlet is the fine structure: the amplitudes
+divided by the envelope, the harmonics or noise with the formants taken out.
+arg order: cepstral coefficients kept, the resolution; about sr / (2 f0) follows a voice's formants without rippling at its harmonics; a number in the right inlet changes it (40)
+arg iterations: 0 to 100; 0 is the plain cepstral smoothing (12)
+msg iterations n: sets the iterations, 0 to 100
+see: pfft~ cartopol~ sparkle~ impose~
+
+@ nmf
+syntax: nmf [components] [iterations]
+Separates a buffer~ into parts that repeat (notes, sources) by non-negative
+matrix factorisation of its magnitude spectrogram, V ~ W H, with Musil's KL
+updates: W holds a spectrum per part, H when and how loud it sounds. Each
+part is resynthesised with the original phases through a soft mask, so the
+parts add up to the sound (mixed to mono). It works as a background job;
+messages sent while it works wait their turn, in order.
+arg components: the number of parts, 1 to 32 (3)
+arg iterations: 1 to 10000 (100)
+msg run source dest: unsupervised: writes one part per channel of the buffer~ dest
+msg learn example: supervised: learns `components` parts from a recording of one source alone; send it once per source
+msg separate mix dest: explains the mix with the learned parts only and writes one source per channel of dest, in the order they were learned
+msg forget: clears what was learned
+msg components k: the number of parts, 1 to 32
+msg iterations n: 1 to 10000
+msg size n: the FFT size, rounded to a power of two, 256 to 16384 (2048; hop size/4); a new size forgets what was learned
+msg seed n: the seed of the random start (1)
+msg stop: cancels the job and the messages waiting
+see: hpss buffer~ moritz atoms
+
+@ hpss
+syntax: hpss [kernel] [size]
+Harmonic/percussive separation of a buffer~ (Musil's), as a background job.
+The magnitude spectrogram is median-filtered along time (sustained,
+harmonic sounds) and along frequency (attacks, percussive sounds); soft
+masks from the two weight the original spectra. The two results add up to
+the source; each channel is separated on its own.
+arg kernel: the median filter length in frames and bins, odd, 3 to 101 (17); longer separates more
+arg size: the FFT size, rounded up to a power of two, 256 to 16384 (2048; hop size/4)
+msg run source harmonic percussive: writes the two parts into the buffer~s harmonic and percussive
+msg kernel n: the filter length, 3 to 101 (made odd)
+msg size n: the FFT size, 256 to 16384
+msg stop: cancels the job
+see: nmf buffer~ onset~ moritz

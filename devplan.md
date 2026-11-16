@@ -251,6 +251,29 @@ Changes made while porting, which the original tools could take back:
   and with the target's loudness envelope imposed (contour), so that speech
   keeps its rhythm when made of music.
 
+### Usability (before step 5)
+
+Improvements to what exists, not new features: patch zoom (Cmd+/-, toolbar);
+a toolbar with Browser, Console (red dot after an error), the quick recorder
+and the CPU and output meters; Extras > Quick Recorder (what goes to the dac,
+24-bit WAV); View > Interface size; examples in category folders (the folder
+is the browser's category), relative files found among the bundled sounds
+from anywhere; a `docs/` folder of PDFs shipped in the packages, Help >
+Documents, and `link` boxes that open documents, folders and web pages; a
+reference for every object (help/reference/, shown in the Reference window,
+the help windows and the Browser, and generating OBJECTS.md); right-click
+actions (load, save, clear a `buffer~`, export a `plot`, files of `sfplay~`
+and `sfrecord~`, atoms and soundtypes info) and double-click on any object
+naming a `buffer~` to see its waveform. Multichannel audio: devices open with
+all their channels, the patches' output can be wider than the device (metered,
+recorded, rendered), a binaural monitor renders the channels as speakers on
+headphones, and a channel tester sends noise to one channel at a time.
+
+Next, to discuss: a sound editor growing from the `buffer~` window (selection,
+edits, process the selection with any object or patch, spectral editing), a
+timeline of tracks with patches as inserts, and the recursive score of step 5
+as the common time model.
+
 ## Open points
 
 - A separate cepstrum object (the cepstrum is inside `specenv~`).

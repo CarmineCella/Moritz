@@ -3,10 +3,14 @@
 // setup, console) and the windows of subpatchers.
 
 #include "gui.h"
+#include "reference.h"
 #include "maximport.h"
 #include "objects.h"
 
 #include <FL/Fl_Choice.H>
+#include <FL/Fl_Input.H>
+#include <FL/Fl_Value_Slider.H>
+#include <FL/Fl_Check_Button.H>
 #include <FL/Fl_Text_Editor.H>
 #include <FL/Fl_PNG_Image.H>
 #include <FL/Fl_Native_File_Chooser.H>
@@ -16,6 +20,10 @@
 #include <FL/filename.H>
 
 #include <chrono>
+#include <functional>
+#include <cstring>
+#include <cstdlib>
+#include <ctime>
 #include <cmath>
 #include <fstream>
 
@@ -109,8 +117,57 @@ void setupSearchPaths() {
         if (fl_filename_isdir(user.c_str())) libraryPath().push_back(user);
     }
     if (std::string d = resourceDir("library"); !d.empty()) libraryPath().push_back(d);
-    if (std::string d = resourceDir("examples"); !d.empty()) abstractionPath().push_back(d);
+    soundPath().clear();
+    if (std::string d = resourceDir("examples"); !d.empty()) {
+        // the examples are in category folders: each is searched for abstractions
+        abstractionPath().push_back(d);
+        dirent** list = nullptr;
+        int n = fl_filename_list(d.c_str(), &list, fl_casealphasort);
+        for (int k = 0; k < n; ++k) {
+            std::string f = list[k]->d_name;
+            if (!f.empty() && f.back() == '/') f.pop_back();
+            if (f.empty() || f[0] == '.' || f == "sounds") continue;
+            if (std::string sub = d + "/" + f; fl_filename_isdir(sub.c_str())) abstractionPath().push_back(sub);
+        }
+        fl_filename_free_list(&list, n);
+        soundPath().push_back(d);
+        soundPath().push_back(d + "/sounds");
+    }
+    if (std::string d = resourceDir("docs"); !d.empty()) {          // "docs/...": the bundled documents
+        std::string root = d.substr(0, d.find_last_of('/'));
+        soundPath().push_back(root);
+    }
     if (std::string d = resourceDir("help"); !d.empty()) helpPath().push_back(d);
+}
+
+std::string chooseFile(bool save, const std::string& title, const std::string& filter, const std::string& preset) {
+    Fl_Native_File_Chooser fc;
+    fc.title(title.c_str());
+    fc.type(save ? Fl_Native_File_Chooser::BROWSE_SAVE_FILE : Fl_Native_File_Chooser::BROWSE_FILE);
+    if (!filter.empty()) fc.filter(filter.c_str());
+    if (!preset.empty()) fc.preset_file(preset.c_str());
+    if (save) fc.options(Fl_Native_File_Chooser::SAVEAS_CONFIRM);
+    if (fc.show() != 0 || !fc.filename()) return "";
+    return portablePath(fc.filename());
+}
+
+bool openWithSystem(const std::string& target) {
+    std::string uri = target;
+    if (target.find("://") == std::string::npos && target.rfind("mailto:", 0) != 0) {
+        if (std::FILE* f = std::fopen(target.c_str(), "rb")) std::fclose(f);
+        else if (!fl_filename_isdir(target.c_str())) return false;
+        // a file URI: forward slashes, and the characters a URI can't hold escaped
+        std::string p = target;
+        for (auto& c : p) if (c == '\\') c = '/';
+        std::string enc;
+        for (unsigned char c : p) {
+            if (std::isalnum(c) || std::strchr("/-_.~:", c)) enc += (char)c;
+            else { char b[4]; std::snprintf(b, sizeof b, "%%%02X", c); enc += b; }
+        }
+        uri = std::string("file://") + (enc.empty() || enc[0] != '/' ? "/" : "") + enc;
+    }
+    char err[512] = "";
+    return fl_open_uri(uri.c_str(), err, sizeof err) != 0;
 }
 
 namespace {
@@ -183,6 +240,8 @@ App& App::get() {
 }
 
 void App::init() {
+    Fl::keyboard_screen_scaling(0);      // Cmd +/- zoom the patch (View menu), not the whole interface
+    Fl::add_timeout(1.0 / 15, toolTimer);
     Patch::onDestroyed = [this](Patch* p) {
         for (auto* d : docs) d->closeSubpatchWindows(p);
         closeText(p);
@@ -205,7 +264,14 @@ void App::init() {
         return std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
     };
     host.onSchedule = [this] { armTimer(); };
-    host.onStructure = [this] { audio.updateInputNeed(); };
+    host.onStructure = [this] {
+        int before = audio.channels();
+        audio.updateInputNeed();
+        if (audio.channels() != before) {            // the patches' channels changed
+            if (monitorSet_.on && monitorSet_.speakers == 0) applyMonitor();
+            refreshTester();
+        }
+    };
     // MIDI: RtMidi's thread wakes the GUI thread, which hands the messages to
     // the patches; noteout & co. send through the engine. Devices are checked
     // once a second, so plugging one in just works.
@@ -302,6 +368,18 @@ void App::buildMenu(Fl_Menu_Bar* m) {
     m->add("Patch/Audio Setup...", 0, APP_CB(audioSetup), nullptr);
     m->add("Patch/MIDI Setup...", 0, APP_CB(midiSetup), nullptr, FL_MENU_DIVIDER);
     m->add("Patch/Console", FL_COMMAND + FL_SHIFT + 'm', APP_CB(showConsole), nullptr);
+    m->add("View/Zoom In", FL_COMMAND + '=', [](Fl_Widget*, void*) { App::get().zoomFront(1); }, nullptr);
+    m->add("View/Zoom Out", FL_COMMAND + '-', [](Fl_Widget*, void*) { App::get().zoomFront(-1); }, nullptr);
+    m->add("View/Actual Size", FL_COMMAND + '0', [](Fl_Widget*, void*) { App::get().zoomFront(0); }, nullptr,
+           FL_MENU_DIVIDER);
+    m->add("View/Interface Larger", 0, [](Fl_Widget*, void*) { App::get().scaleInterface(1.1f); }, nullptr);
+    m->add("View/Interface Smaller", 0, [](Fl_Widget*, void*) { App::get().scaleInterface(1 / 1.1f); }, nullptr);
+    m->add("View/Interface Normal Size", 0, [](Fl_Widget*, void*) { App::get().scaleInterface(0); }, nullptr);
+    m->add("Extras/Quick Recorder...", FL_COMMAND + FL_SHIFT + 'r', APP_CB(showRecorder), nullptr);
+    m->add("Extras/Start or Stop Recording", FL_COMMAND + FL_ALT + 'r', APP_CB(toggleRecording), nullptr,
+           FL_MENU_DIVIDER);
+    m->add("Extras/Binaural Monitor...", 0, APP_CB(showMonitor), nullptr);
+    m->add("Extras/Channel Tester...", 0, APP_CB(showTester), nullptr);
     // Help > Tutorials: the numbered patches in the tutorials folder
     static std::vector<std::string> tutorials;
     if (tutorials.empty())
@@ -315,6 +393,35 @@ void App::buildMenu(Fl_Menu_Bar* m) {
             fl_filename_free_list(&list, n);
         }
     m->add("Help/Browser...", FL_COMMAND + FL_SHIFT + 'b', APP_CB(showBrowser), nullptr, FL_MENU_DIVIDER);
+    // Help > Documents: the PDFs in the docs folder (and its folders)
+    static std::vector<std::string> documents;
+    if (documents.empty())
+        if (std::string dir = resourceDir("docs"); !dir.empty()) {
+            std::function<void(const std::string&, int)> scan = [&](const std::string& d, int depth) {
+                dirent** list = nullptr;
+                int n = fl_filename_list(d.c_str(), &list, fl_casealphasort);
+                for (int k = 0; k < n; ++k) {
+                    std::string f = list[k]->d_name;
+                    if (!f.empty() && f.back() == '/') f.pop_back();
+                    if (f.empty() || f[0] == '.') continue;
+                    std::string full = d + "/" + f;
+                    if (fl_filename_isdir(full.c_str())) { if (depth < 2) scan(full, depth + 1); }
+                    else if (f.size() > 4 && (f.compare(f.size() - 4, 4, ".pdf") == 0 || f.compare(f.size() - 4, 4, ".PDF") == 0))
+                        documents.push_back(full);
+                }
+                fl_filename_free_list(&list, n);
+            };
+            scan(dir, 0);
+        }
+    for (auto& path : documents) {
+        std::string name = baseName(path);
+        name = name.substr(0, name.size() - 4);
+        for (auto& c : name) if (c == '-' || c == '_') c = ' ';
+        if (!name.empty()) name[0] = (char)std::toupper((unsigned char)name[0]);
+        m->add(("Help/Documents/" + escapeMenu(name)).c_str(), 0,
+               [](Fl_Widget*, void* d) { openWithSystem(*static_cast<std::string*>(d)); }, &path);
+    }
+    if (documents.empty()) m->add("Help/Documents", 0, nullptr, nullptr, FL_MENU_INACTIVE);
     for (auto& path : tutorials) {
         std::string name = baseName(path);
         name = name.substr(0, name.size() - 7);             // "01-first-patch" -> "01 first patch"
@@ -482,6 +589,54 @@ void App::armTimer() {
         Fl::add_timeout(std::max(0.0, next - host.time()), schedulerTimer);
 }
 
+void App::showReference(const std::string& cls) {
+    if (!referenceWin_) {
+        referenceWin_ = new Fl_Double_Window(620, 560, "Reference");
+        centerOnScreen(referenceWin_, frontDoc(), 60, 30);
+        referenceWin_->color(kStatusBg);
+        referenceBuf_ = new Fl_Text_Buffer();
+        referenceStyle_ = new Fl_Text_Buffer();
+        referenceView_ = new Fl_Text_Display(0, 0, 620, 560);
+        referenceView_->buffer(referenceBuf_);
+        referenceView_->box(FL_FLAT_BOX);
+        referenceView_->color(fl_rgb_color(24, 25, 28));
+        referenceView_->textcolor(kText);
+        referenceView_->textfont(FL_HELVETICA);
+        referenceView_->textsize(13);
+        referenceView_->wrap_mode(Fl_Text_Display::WRAP_AT_BOUNDS, 0);
+        static Fl_Text_Display::Style_Table_Entry styles[] = {
+            {fl_rgb_color(226, 228, 234), FL_HELVETICA, 13, 0, 0},               // A text
+            {fl_rgb_color(150, 190, 255), FL_HELVETICA_BOLD, 15, 0, 0},          // B the syntax
+            {fl_rgb_color(150, 155, 165), FL_HELVETICA_BOLD, 11, 0, 0},          // C headings
+            {fl_rgb_color(235, 200, 120), FL_COURIER_BOLD, 13, 0, 0},            // D a message or argument
+        };
+        referenceView_->highlight_data(referenceStyle_, styles, 4, 'A', nullptr, nullptr);
+        referenceWin_->resizable(referenceView_);
+        referenceWin_->end();
+    }
+    std::string text = referenceText(cls);
+    referenceBuf_->text(text.c_str());
+    // styles: the first line, the headings (capitals), the names in the tables
+    std::string st(text.size(), 'A');
+    size_t pos = 0;
+    bool first = true;
+    while (pos < text.size()) {
+        size_t nl = text.find('\n', pos);
+        if (nl == std::string::npos) nl = text.size();
+        std::string line = text.substr(pos, nl - pos);
+        char c = 'A';
+        if (first && !line.empty()) { c = 'B'; first = false; }
+        else if (!line.empty() && line.find_first_not_of("ABCDEFGHIJKLMNOPQRSTUVWXYZ ") == std::string::npos) c = 'C';
+        else if (line.rfind("  ", 0) == 0 && line.rfind("      ", 0) != 0) c = 'D';
+        std::fill(st.begin() + (long)pos, st.begin() + (long)nl, c);
+        pos = nl + 1;
+    }
+    referenceStyle_->text(st.c_str());
+    referenceWin_->copy_label((cls + " reference").c_str());
+    referenceView_->scroll(0, 0);
+    referenceWin_->show();
+}
+
 void App::showConsole() {
     if (!console_) {
         console_ = new Fl_Double_Window(560, 320, "Moritz Console");
@@ -509,6 +664,375 @@ void App::showConsole() {
     }
     console_->show();
     consoleView_->scroll(consoleBuf_->count_lines(0, consoleBuf_->length()), 0);
+    consoleAlert = false;
+    refreshTools();
+}
+
+// ---- tools: zoom, interface size, quick recorder, the toolbar's meters
+
+void App::zoomFront(int steps) {
+    if (Canvas* c = activeCanvas()) c->zoomBy(steps);
+}
+
+void App::scaleInterface(float factor) {
+    for (int n = 0; n < Fl::screen_count(); ++n) {
+        float s = factor == 0 ? 1.f : std::clamp(Fl::screen_scale(n) * factor, 0.5f, 3.f);
+        Fl::screen_scale(n, s);
+    }
+}
+
+std::string App::recordingsFolder() {
+    if (recordingsDir_.empty()) {
+        char buf[4096] = "";
+        appPrefs().get("recordings_folder", buf, "", sizeof buf);
+        recordingsDir_ = buf;
+    }
+    if (recordingsDir_.empty()) {
+        const char* home = std::getenv("HOME");
+#ifdef _WIN32
+        if (!home) home = std::getenv("USERPROFILE");
+#endif
+        std::string base = home ? home : ".";
+        std::string music = base + "/Music";
+        recordingsDir_ = (fl_filename_isdir(music.c_str()) ? music : base) + "/Moritz Recordings";
+    }
+    return recordingsDir_;
+}
+
+void App::chooseRecordingsFolder() {
+    Fl_Native_File_Chooser fc;
+    fc.title("Folder for recordings");
+    fc.type(Fl_Native_File_Chooser::BROWSE_DIRECTORY);
+    fc.directory(recordingsFolder().c_str());
+    if (fc.show() != 0) return;
+    recordingsDir_ = fc.filename();
+    appPrefs().set("recordings_folder", recordingsDir_.c_str());
+    appPrefs().flush();
+    refreshTools();
+}
+
+void App::toggleRecording() {
+    Recorder& r = audio.recorder;
+    if (r.recording()) {
+        r.stop();
+        print("recorded " + r.path());
+        refreshTools();
+        return;
+    }
+    if (!audio.running()) setAudio(true);
+    if (!audio.running()) { print("quick recorder: the audio is off"); refreshTools(); return; }
+    std::string dir = recordingsFolder();
+    fl_make_path(dir.c_str());
+    std::time_t t = std::time(nullptr);
+    char stamp[64];
+    std::strftime(stamp, sizeof stamp, "%Y-%m-%d %H-%M-%S", std::localtime(&t));
+    std::string path = dir + "/Moritz " + stamp + ".wav";
+    if (!r.start(path, audio.channels(), audio.sampleRate())) print("quick recorder: can't write " + path);
+    refreshTools();
+}
+
+void App::showRecorder() {
+    if (!recorderWin_) {
+        recorderWin_ = new Fl_Double_Window(420, 132, "Quick Recorder");
+        centerOnScreen(recorderWin_, frontDoc());
+        recorderWin_->color(kStatusBg);
+        recorderBtn_ = new ToolButton(14, 14, 110, 30, ToolButton::Record, "Record", false);
+        recorderBtn_->callback([](Fl_Widget*, void*) { App::get().toggleRecording(); });
+        recorderTime_ = new Fl_Box(134, 14, 120, 30, "0:00.0");
+        recorderTime_->labelfont(FL_COURIER_BOLD);
+        recorderTime_->labelsize(18);
+        recorderTime_->labelcolor(kText);
+        recorderTime_->align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE);
+        auto* hint = new Fl_Box(14, 50, 392, 20, "Records what goes to the dac (24-bit WAV, the audio's sample rate).");
+        hint->labelsize(11);
+        hint->labelcolor(kDim);
+        hint->align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE);
+        recorderFile_ = new Fl_Box(14, 70, 392, 20);
+        recorderFile_->labelsize(11);
+        recorderFile_->labelcolor(kText);
+        recorderFile_->align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE | FL_ALIGN_CLIP);
+        auto* choose = new Fl_Button(14, 98, 120, 22, "Choose folder...");
+        choose->labelsize(11);
+        choose->callback([](Fl_Widget*, void*) { App::get().chooseRecordingsFolder(); });
+        auto* open = new Fl_Button(142, 98, 120, 22, "Open folder");
+        open->labelsize(11);
+        open->callback([](Fl_Widget*, void*) {
+            std::string dir = App::get().recordingsFolder();
+            fl_make_path(dir.c_str());
+            openWithSystem(dir);
+        });
+        recorderWin_->end();
+    }
+    refreshTools();
+    recorderWin_->show();
+}
+
+void App::refreshTools() {
+    const Recorder& r = audio.recorder;
+    bool rec = r.recording();
+    char t[32];
+    double sec = rec ? r.seconds() : 0;
+    std::snprintf(t, sizeof t, "%d:%02d.%d", (int)sec / 60, (int)sec % 60, (int)(sec * 10) % 10);
+    for (auto* d : docs) {
+        d->recordBtn_->lit = rec;
+        d->recordBtn_->copy_label(rec ? t : "Record");
+        d->recordBtn_->redraw();
+        if (d->consoleBtn_->alert != consoleAlert) {
+            d->consoleBtn_->alert = consoleAlert;
+            d->consoleBtn_->redraw();
+        }
+    }
+    if (recorderWin_) {
+        recorderBtn_->lit = rec;
+        recorderBtn_->copy_label(rec ? "Stop" : "Record");
+        recorderBtn_->redraw();
+        recorderTime_->copy_label(t);
+        std::string f = rec ? "→ " + baseName(r.path()) : "into " + recordingsFolder();
+        if (rec && r.overflowed()) f += "   (the disk was too slow: some audio was lost)";
+        recorderFile_->copy_label(f.c_str());
+        recorderWin_->redraw();
+    }
+}
+
+// ---- the binaural monitor
+
+namespace {
+// the speakers of a ring of n: 0, 1, 2 the layouts of the choice
+std::vector<std::pair<float, float>> ringLayout(int layout, int n) {
+    std::vector<std::pair<float, float>> v;
+    for (int k = 0; k < n; ++k) {
+        double a = layout == 0 ? 180.0 / n + 360.0 * k / n          // 1 front-left, counterclockwise (as ambidec~)
+                 : layout == 1 ? 180.0 / n - 360.0 * k / n          // 1 front-left, clockwise
+                               : 360.0 * k / n;                     // 1 front, counterclockwise
+        v.push_back({(float)std::remainder(a, 360.0), 0.f});
+    }
+    return v;
+}
+std::string layoutText(const std::vector<std::pair<float, float>>& v) {
+    std::string t;
+    char b[32];
+    for (auto& s : v) {
+        if (s.second != 0) std::snprintf(b, sizeof b, "%g/%g", s.first, s.second);
+        else std::snprintf(b, sizeof b, "%g", s.first);
+        t += (t.empty() ? "" : " ") + std::string(b);
+    }
+    return t;
+}
+std::vector<std::pair<float, float>> parseLayout(const std::string& t) {
+    std::vector<std::pair<float, float>> v;
+    size_t k = 0;
+    while (k < t.size()) {
+        while (k < t.size() && (t[k] == ' ' || t[k] == ',' || t[k] == '\t')) ++k;
+        size_t e = k;
+        while (e < t.size() && t[e] != ' ' && t[e] != ',' && t[e] != '\t') ++e;
+        if (e > k) {
+            std::string w = t.substr(k, e - k);
+            size_t sl = w.find('/');
+            float az = (float)std::atof(w.substr(0, sl).c_str()), el = sl == std::string::npos ? 0.f : (float)std::atof(w.substr(sl + 1).c_str());
+            v.push_back({az, el});
+        }
+        k = e;
+    }
+    return v;
+}
+struct MonitorUi {
+    Fl_Check_Button* on;
+    Fl_Choice* layout;
+    Fl_Choice* count;
+    Fl_Input* dirs;
+    Fl_Box* info;
+};
+MonitorUi gMon;
+}  // namespace
+
+void App::applyMonitor() {
+    MonitorSettings& m = monitorSet_;
+    int n = m.speakers > 0 ? m.speakers : std::max(2, audio.channels());
+    std::vector<std::pair<float, float>> sp = m.layout == 3 ? parseLayout(m.custom) : ringLayout(m.layout, n);
+    if (!m.on || sp.empty() || !audio.running()) audio.setMonitor({});
+    else audio.setMonitor(sp);
+    if (monitorWin_) {
+        if (m.layout != 3) gMon.dirs->value(layoutText(sp).c_str());
+        std::string i = !m.on ? "Off: the device plays the channels it has."
+                       : !audio.running() ? "On when the audio is on."
+                                          : std::to_string(sp.size()) + " speakers rendered to the device's channels 1 and 2 (headphones). "
+                                            "The quick recorder still records the speaker channels.";
+        gMon.info->copy_label(i.c_str());
+        monitorWin_->redraw();
+    }
+}
+
+void App::showMonitor() {
+    if (!monitorWin_) {
+        monitorWin_ = new Fl_Double_Window(480, 240, "Binaural Monitor");
+        centerOnScreen(monitorWin_, frontDoc());
+        monitorWin_->color(kStatusBg);
+        gMon.on = new Fl_Check_Button(14, 12, 440, 24, "Listen to the speakers on headphones (binaural)");
+        gMon.on->labelcolor(kText);
+        gMon.layout = new Fl_Choice(110, 46, 356, 24, "Speakers:");
+        gMon.layout->add("Ring: 1 front-left, counterclockwise (as ambidec~)");
+        gMon.layout->add("Ring: 1 front-left, clockwise");
+        gMon.layout->add("Ring: 1 front, counterclockwise");
+        gMon.layout->add("Custom directions");
+        gMon.count = new Fl_Choice(110, 78, 90, 24, "How many:");
+        gMon.count->add("Patches");
+        for (int c : {2, 4, 5, 6, 8, 10, 12, 16, 24, 32}) gMon.count->add(std::to_string(c).c_str());
+        gMon.dirs = new Fl_Input(110, 110, 356, 24, "Directions:");
+        gMon.dirs->tooltip("One per channel, in degrees: the azimuth (positive to the left, 0 in front), "
+                           "or azimuth/elevation (90/30). Edit them to make a custom layout.");
+        auto* hint = new Fl_Box(14, 140, 452, 34,
+                                "Each channel is placed as a speaker around you with the MIT KEMAR head responses; "
+                                "channels 1 and 2 of the device carry the mix.");
+        hint->labelsize(11);
+        hint->labelcolor(kDim);
+        hint->align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE | FL_ALIGN_WRAP);
+        gMon.info = new Fl_Box(14, 180, 452, 46);
+        gMon.info->labelsize(11);
+        gMon.info->labelcolor(kText);
+        gMon.info->align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE | FL_ALIGN_WRAP);
+        for (Fl_Widget* w : {(Fl_Widget*)gMon.layout, (Fl_Widget*)gMon.count, (Fl_Widget*)gMon.dirs}) w->labelcolor(kText);
+        auto changed = [](Fl_Widget* w, void*) {
+            App& app = App::get();
+            MonitorSettings& m = app.monitorSet_;
+            m.on = gMon.on->value();
+            if (w == gMon.dirs) { m.layout = 3; m.custom = gMon.dirs->value(); gMon.layout->value(3); }
+            else {
+                m.layout = gMon.layout->value();
+                if (m.layout == 3) m.custom = gMon.dirs->value();
+                const int counts[] = {0, 2, 4, 5, 6, 8, 10, 12, 16, 24, 32};
+                m.speakers = counts[std::clamp(gMon.count->value(), 0, 10)];
+            }
+            if (m.on && !app.audio.running()) app.setAudio(true);
+            app.applyMonitor();
+        };
+        gMon.on->callback(changed);
+        gMon.layout->callback(changed);
+        gMon.count->callback(changed);
+        gMon.dirs->callback(changed);
+        gMon.dirs->when(FL_WHEN_ENTER_KEY | FL_WHEN_RELEASE);
+        monitorWin_->end();
+        gMon.layout->value(0);
+        gMon.count->value(0);
+    }
+    gMon.on->value(monitorSet_.on);
+    applyMonitor();
+    monitorWin_->show();
+}
+
+// ---- the channel tester
+
+void App::refreshTester() {
+    if (!testerWin_) return;
+    int n = std::clamp(audio.running() ? audio.channels() : 2, 1, AudioEngine::kMaxBus);
+    int cur = audio.testChannel.load();
+    if (testerGrid_->children() != n) {
+        testerGrid_->clear();
+        testerGrid_->begin();
+        int cols = 8, bw = 52, bh = 30;
+        for (int c = 0; c < n; ++c) {
+            auto* b = new ToolButton(testerGrid_->x() + (c % cols) * (bw + 6), testerGrid_->y() + (c / cols) * (bh + 6), bw, bh,
+                                     ToolButton::None, std::to_string(c + 1).c_str(), false);
+            b->callback([](Fl_Widget* w, void* d) {
+                App& app = App::get();
+                int ch = (int)(intptr_t)d;
+                app.testerSteps_ = 0;
+                if (!app.audio.running()) app.setAudio(true);
+                app.audio.testChannel = app.audio.testChannel.load() == ch ? -1 : ch;
+                app.refreshTester();
+                (void)w;
+            }, (void*)(intptr_t)c);
+        }
+        testerGrid_->end();
+        int rows = (n + 7) / 8;
+        testerWin_->size(testerWin_->w(), 130 + rows * 36);
+    }
+    for (int c = 0; c < testerGrid_->children(); ++c) {
+        auto* b = static_cast<ToolButton*>(testerGrid_->child(c));
+        b->lit = c == cur;
+        b->redraw();
+    }
+    std::string i;
+    int dev = audio.deviceOutputs();
+    if (!audio.running()) i = "The audio is off: click a channel to turn it on.";
+    else if (cur < 0) i = "Click a channel: bursts of noise come out of its speaker. Click it again to stop.";
+    else if (audio.monitoring()) i = "Channel " + std::to_string(cur + 1) + ": heard through the binaural monitor, where its speaker is.";
+    else if (cur >= dev) i = "Channel " + std::to_string(cur + 1) + ": the device has " + std::to_string(dev) + " outputs, so it is not heard (the meter shows it).";
+    else i = "Channel " + std::to_string(cur + 1) + " of " + std::to_string(dev) + ": the speaker it comes from is number " + std::to_string(cur + 1) + ".";
+    testerInfo_->copy_label(i.c_str());
+    testerWin_->redraw();
+}
+
+void App::testerTimer(void*) {
+    App& app = App::get();
+    if (!app.testerWin_ || !app.testerWin_->shown() || app.testerSteps_ == 0) return;
+    int n = std::max(1, app.audio.channels());
+    app.audio.testChannel = (app.audio.testChannel.load() + 1) % n;
+    app.refreshTester();
+    Fl::repeat_timeout(1.5, testerTimer);
+}
+
+void App::showTester() {
+    if (!testerWin_) {
+        testerWin_ = new Fl_Double_Window(470, 166, "Channel Tester");
+        centerOnScreen(testerWin_, frontDoc());
+        testerWin_->color(kStatusBg);
+        auto* step = new Fl_Button(14, 12, 130, 26, "Step through all");
+        step->labelsize(12);
+        step->callback([](Fl_Widget*, void*) {
+            App& app = App::get();
+            if (!app.audio.running()) app.setAudio(true);
+            app.testerSteps_ = 1;
+            app.audio.testChannel = 0;
+            app.refreshTester();
+            Fl::remove_timeout(testerTimer);
+            Fl::add_timeout(1.5, testerTimer);
+        });
+        auto* stop = new Fl_Button(150, 12, 70, 26, "Stop");
+        stop->labelsize(12);
+        stop->callback([](Fl_Widget*, void*) {
+            App& app = App::get();
+            app.testerSteps_ = 0;
+            app.audio.testChannel = -1;
+            app.refreshTester();
+        });
+        auto* level = new Fl_Value_Slider(290, 12, 166, 26, "Level (dB)");
+        level->type(FL_HOR_NICE_SLIDER);
+        level->labelsize(11);
+        level->labelcolor(kText);
+        level->align(FL_ALIGN_LEFT);
+        level->range(-40, 0);
+        level->step(1);
+        level->value(-14);
+        level->callback([](Fl_Widget* w, void*) {
+            App::get().audio.testLevel = (float)std::pow(10.0, static_cast<Fl_Value_Slider*>(w)->value() / 20.0);
+        });
+        testerInfo_ = new Fl_Box(14, 44, 442, 36);
+        testerInfo_->labelsize(11);
+        testerInfo_->labelcolor(kText);
+        testerInfo_->align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE | FL_ALIGN_WRAP);
+        testerGrid_ = new Fl_Group(14, 88, 442, 40);
+        testerGrid_->end();
+        testerWin_->end();
+        testerWin_->callback([](Fl_Widget* w, void*) {           // closing it stops the noise
+            App& app = App::get();
+            app.testerSteps_ = 0;
+            app.audio.testChannel = -1;
+            w->hide();
+        });
+        audio.testLevel = (float)std::pow(10.0, -14 / 20.0);
+    }
+    refreshTester();
+    testerWin_->show();
+}
+
+void App::toolTimer(void*) {
+    App& app = App::get();
+    float cpu = app.audio.running() ? app.host.cpuLoad.load(std::memory_order_relaxed) : 0.f;
+    std::vector<float> peaks((size_t)std::clamp(app.audio.channels(), 1, AudioEngine::kMeterChannels));
+    for (size_t c = 0; c < peaks.size(); ++c) peaks[c] = app.audio.takePeak((int)c);
+    for (auto* d : app.docs) d->meters_->update(cpu, peaks);
+    if (app.audio.recorder.recording()) app.refreshTools();
+    Fl::repeat_timeout(1.0 / 15, toolTimer);
 }
 
 void App::clearConsole() {
@@ -522,6 +1046,13 @@ void App::print(const std::string& s) {
 }
 
 void App::log(const std::string& s) {
+    std::string low = s;
+    for (auto& c : low) c = (char)std::tolower((unsigned char)c);
+    if (!consoleAlert && (low.find("error") != std::string::npos || low.find("can't") != std::string::npos ||
+                          low.find("unknown") != std::string::npos || low.find("fail") != std::string::npos)) {
+        consoleAlert = true;
+        refreshTools();
+    }
     consoleLines_.push_back(s);
     if (consoleLines_.size() > 2000) consoleLines_.erase(consoleLines_.begin());
     if (consoleBuf_) {
@@ -537,12 +1068,18 @@ void App::setAudio(bool on) {
         if (!audio.start(err)) { print("audio: " + err); refreshStatus(); return; }
         log("audio on: " + audio.deviceName() + ", " + std::to_string(audio.sampleRate()) +
             " Hz, " + std::to_string(audio.bufferFrames()) + "-sample buffer, " +
-            (audio.hasInput() ? "input and output" : "output only"));
+            std::to_string(audio.deviceOutputs()) + " outputs" +
+            (audio.hasInput() ? ", " + std::to_string(audio.deviceInputs()) + " inputs" : ""));
+        applyMonitor();                               // the head responses at this rate, these channels
+        refreshTester();
         if (!err.empty()) log("audio: " + err);
         for (auto* d : docs) d->setStatus(err);     // the status bar already says "audio on"
     } else {
         if (audio.running()) log("audio off");
         audio.stop();
+        audio.testChannel = -1;
+        testerSteps_ = 0;
+        refreshTester();
         for (auto* d : docs) d->setStatus("");
     }
 }
@@ -628,6 +1165,7 @@ void App::openHelp(const std::string& cls) {
     std::string name = baseName(path);
     name = name.substr(0, name.find(".help."));
     auto* w = new PatchWindow(nullptr, p, name + " help", true);
+    w->helpClass = cls;
     w->size(W, H);
     centerOnScreen(w, frontDoc(), 40, 40);
     helpWindows_.push_back(w);
@@ -666,11 +1204,32 @@ MainWindow::MainWindow(int w, int h)
         if (auto* tw = app.textWindow(&mw->patch); tw && tw->shown()) { tw->do_callback(); app.refreshStatus(); }
         else app.showText(mw, &mw->patch, mw->label() ? mw->label() : "patch", false);
     }, this);
-    auto* spacer = new Fl_Box(308, kMenuH, w - 308, kToolH);
+    const int by = kMenuH + 5, bh = kToolH - 10;
+    auto* zoomOut = new ToolButton(316, by, 28, bh, ToolButton::Minus, "", false);
+    zoomOut->tooltip("Zoom out (Cmd+-)");
+    zoomOut->callback([](Fl_Widget*, void* d) { static_cast<MainWindow*>(d)->canvas->zoomBy(-1); }, this);
+    zoomLabel_ = new ToolButton(346, by, 54, bh, ToolButton::None, "100%", false);
+    zoomLabel_->tooltip("The patch's zoom; click for 100% (Cmd+0)");
+    zoomLabel_->callback([](Fl_Widget*, void* d) { static_cast<MainWindow*>(d)->canvas->zoomBy(0); }, this);
+    auto* zoomIn = new ToolButton(402, by, 28, bh, ToolButton::Plus, "", false);
+    zoomIn->tooltip("Zoom in (Cmd++)");
+    zoomIn->callback([](Fl_Widget*, void* d) { static_cast<MainWindow*>(d)->canvas->zoomBy(1); }, this);
+    auto* browser = new ToolButton(442, by, 98, bh, ToolButton::Browser, "Browser", false);
+    browser->tooltip("Tutorials, examples, objects and recent files (Shift+Cmd+B)");
+    browser->callback([](Fl_Widget*, void*) { App::get().showBrowser(); });
+    consoleBtn_ = new ToolButton(546, by, 100, bh, ToolButton::Console, "Console", false);
+    consoleBtn_->tooltip("Messages, errors and print (Shift+Cmd+M); a red dot: an error since you last looked");
+    consoleBtn_->callback([](Fl_Widget*, void*) { App::get().showConsole(); });
+    recordBtn_ = new ToolButton(652, by, 96, bh, ToolButton::Record, "Record", false);
+    recordBtn_->tooltip("Quick recorder: what goes to the dac, into a WAV file (Extras > Quick Recorder)");
+    recordBtn_->callback([](Fl_Widget*, void*) { App::get().toggleRecording(); });
+    auto* spacer = new Fl_Box(756, kMenuH, w - 756 - 200, kToolH);
     spacer->box(FL_NO_BOX);
+    meters_ = new ToolMeters(w - 196, by, 188, bh);
     bar->resizable(spacer);
     bar->end();
     canvas = new Canvas(0, kMenuH + kToolH, w, h - kMenuH - kToolH - kStatusH, this, &patch);
+    canvas->onZoom = [this] { updateZoomLabel(); };
     statusBar_ = new Fl_Box(0, h - kStatusH, w, kStatusH);
     statusBar_->box(FL_FLAT_BOX);
     statusBar_->color(kStatusBg);
@@ -706,12 +1265,22 @@ MainWindow::~MainWindow() {
     for (auto* w : subwindows_) w->detach();
 }
 
+void MainWindow::updateZoomLabel() {
+    char buf[16];
+    std::snprintf(buf, sizeof buf, "%d%%", (int)std::lround(canvas->zoom() * 100));
+    zoomLabel_->copy_label(buf);
+    zoomLabel_->redraw();
+}
+
 void MainWindow::refreshStatus() {
     App& app = App::get();
     std::string s = canvas->locked() ? "LOCKED" : "EDIT";
     if (app.audio.running())
-        s += "   ·   audio " + std::to_string(app.audio.sampleRate()) + " Hz" +
-             (app.audio.hasInput() ? " in/out" : " out");
+        s += "   ·   audio " + std::to_string(app.audio.sampleRate()) + " Hz, " +
+             std::to_string(app.audio.deviceOutputs()) + " out" +
+             (app.audio.hasInput() ? ", " + std::to_string(app.audio.deviceInputs()) + " in" : "") +
+             (app.audio.channels() > app.audio.deviceOutputs()
+                  ? " (patches: " + std::to_string(app.audio.channels()) + " out)" : "");
     else
         s += "   ·   audio off";
     if (!patch.dspError.empty()) s += "   ·   " + patch.dspError;
@@ -1012,16 +1581,32 @@ PatchWindow::PatchWindow(MainWindow* d, Patch* p, const std::string& title, bool
     : Fl_Double_Window(560, 420), patch(p), doc(d), help(isHelp) {
     copy_label(title.c_str());
     canvas = new Canvas(0, 0, 560, 420 - kStatusH, d, p);
+    auto* bar = new Fl_Group(0, 420 - kStatusH, 560, kStatusH);   // the status line (and Reference)
     auto* status = new Fl_Box(0, 420 - kStatusH, 560, kStatusH);
     status->box(FL_FLAT_BOX);
     status->color(kStatusBg);
     status->labelcolor(kDim);
     status->labelsize(11);
     status->align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE | FL_ALIGN_CLIP);
+    if (help) {                                       // the reference, next to the example
+        auto* ref = new Fl_Button(560 - 96, 420 - kStatusH + 2, 92, kStatusH - 4, "Reference");
+        ref->labelsize(11);
+        ref->box(FL_FLAT_BOX);
+        ref->color(kBoxFill);
+        ref->labelcolor(kText);
+        ref->tooltip("Every argument, message, inlet and outlet of the object");
+        ref->callback([](Fl_Widget* b, void*) {
+            auto* pw = static_cast<PatchWindow*>(b->window());
+            App::get().showReference(pw->helpClass);
+        });
+        status->size(560 - 100, kStatusH);
+    }
     status->copy_label(help ? "  help · runs with your patches while open · right-click any box for its help"
                        : p->isAbstraction
                            ? "  abstraction · Cmd+S saves its file · Cmd+E toggles edit mode"
                            : "  subpatcher · saved with the main patch · Cmd+E toggles edit mode");
+    bar->resizable(status);
+    bar->end();
     end();
     resizable(canvas);
     size_range(300, 200);
@@ -1211,18 +1796,21 @@ void App::midiSetup() {
 
 void App::audioSetup() {
     audio.refreshDevices();
-    Fl_Double_Window dlg(440, 230, "Audio Setup");
+    Fl_Double_Window dlg(440, 300, "Audio Setup");
     centerOnScreen(&dlg, frontDoc());
     Fl_Choice outC(130, 15, 290, 25, "Output device:");
     Fl_Choice inC(130, 50, 290, 25, "Input device:");
     Fl_Choice srC(130, 85, 120, 25, "Sample rate:");
     Fl_Choice bufC(130, 120, 120, 25, "Buffer size:");
-    Fl_Box note(20, 150, 400, 30,
-                "Input opens only when the patch contains adc~.");
+    Fl_Choice ochC(130, 155, 120, 25, "Output channels:");
+    Fl_Choice ichC(130, 190, 120, 25, "Input channels:");
+    Fl_Box note(20, 218, 400, 34,
+                "All: every channel of the device (dac~ 1 ... n, adc~ 1 ... n). Input opens only "
+                "when a patch contains adc~.");
     note.labelsize(11);
     note.align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE | FL_ALIGN_WRAP);
-    Fl_Button cancel(240, 190, 85, 28, "Cancel");
-    Fl_Return_Button ok(335, 190, 85, 28, "OK");
+    Fl_Button cancel(240, 262, 85, 28, "Cancel");
+    Fl_Return_Button ok(335, 262, 85, 28, "OK");
     dlg.end();
     dlg.set_modal();
 
@@ -1247,6 +1835,18 @@ void App::audioSetup() {
     for (int k = 0; k < 6; ++k)
         if (bufs[k] == audio.settings.bufferFrames) bufC.value(k);
 
+    const int counts[] = {0, 1, 2, 4, 6, 8, 12, 16, 24, 32, 64};
+    for (int c : counts) {
+        ochC.add(c ? std::to_string(c).c_str() : "All", 0, nullptr);
+        ichC.add(c ? std::to_string(c).c_str() : "All", 0, nullptr);
+    }
+    ochC.value(0);
+    ichC.value(0);
+    for (int k = 0; k < 11; ++k) {
+        if (counts[k] == audio.settings.outChannels) ochC.value(k);
+        if (counts[k] == audio.settings.inChannels) ichC.value(k);
+    }
+
     int result = 0;
     ok.callback([](Fl_Widget* w, void* r) { *(int*)r = 1; w->window()->hide(); }, &result);
     cancel.callback([](Fl_Widget* w, void*) { w->window()->hide(); });
@@ -1258,23 +1858,26 @@ void App::audioSetup() {
     audio.settings.input = inC.value() - 2;
     audio.settings.sampleRate = rates[srC.value()];
     audio.settings.bufferFrames = bufs[bufC.value()];
+    audio.settings.outChannels = counts[ochC.value()];
+    audio.settings.inChannels = counts[ichC.value()];
     setAudio(true);
 }
 
 // ---- toolbar buttons
 
-ToolButton::ToolButton(int x, int y, int w, int h, Icon icon, const char* label)
+ToolButton::ToolButton(int x, int y, int w, int h, Icon icon, const char* label, bool toggle)
     : Fl_Button(x, y, w, h), icon_(icon) {
-    type(FL_TOGGLE_BUTTON);
+    type(toggle ? FL_TOGGLE_BUTTON : FL_NORMAL_BUTTON);
     copy_label(label);
     box(FL_NO_BOX);
     visible_focus(0);
 }
 
 void ToolButton::draw() {
-    bool on = value();
+    bool on = value() || lit;
     int X = x(), Y = y(), W = w(), H = h();
-    Fl_Color fill = on ? (icon_ == Power ? kOn : fl_rgb_color(52, 92, 160)) : kBoxFill;
+    Fl_Color fill = on ? (icon_ == Power ? kOn : icon_ == Record ? fl_rgb_color(170, 40, 40) : fl_rgb_color(52, 92, 160))
+                       : kBoxFill;
     fl_color(fill);
     fl_rounded_rectf(X, Y, W, H, H / 2);
     fl_color(on ? fl_color_average(fill, FL_WHITE, 0.6f) : kBorder);
@@ -1289,15 +1892,114 @@ void ToolButton::draw() {
     } else if (icon_ == Pencil) {
         fl_line(cx - r, cy + r, cx + r, cy - r);           // a pencil stroke
         fl_line(cx - r, cy + r, cx - r + 3, cy + r);
-    } else {                                               // </>
+    } else if (icon_ == Code) {                            // </>
         int h = r - 1;
         fl_line(cx - 2, cy - h, cx - r - 1, cy, cx - 2, cy + h);
         fl_line(cx + 2, cy - h, cx + r + 1, cy, cx + 2, cy + h);
+    } else if (icon_ == Minus || icon_ == Plus) {          // centred in a small round button
+        int mx = X + W / 2, my = Y + H / 2, a = 5;
+        fl_line(mx - a, my, mx + a, my);
+        if (icon_ == Plus) fl_line(mx, my - a, mx, my + a);
+    } else if (icon_ == Browser) {                         // a grid of four squares
+        int q = r - 1;
+        fl_line_style(FL_SOLID, 1);
+        fl_rect(cx - q - 1, cy - q - 1, q, q);
+        fl_rect(cx + 1, cy - q - 1, q, q);
+        fl_rect(cx - q - 1, cy + 1, q, q);
+        fl_rect(cx + 1, cy + 1, q, q);
+    } else if (icon_ == Console) {                         // >_
+        fl_line(cx - r, cy - r + 1, cx - 1, cy, cx - r, cy + r - 1);
+        fl_line(cx + 1, cy + r - 1, cx + r + 1, cy + r - 1);
+    } else if (icon_ == Record) {
+        fl_color(on ? FL_WHITE : fl_rgb_color(220, 70, 70));
+        fl_pie(cx - r + 1, cy - r + 1, 2 * r - 2, 2 * r - 2, 0, 360);
     }
     fl_line_style(0);
+    if (alert) {                                           // a red dot at the top right
+        fl_color(fl_rgb_color(235, 70, 70));
+        fl_pie(X + W - 12, Y + 2, 8, 8, 0, 360);
+    }
     fl_font(FL_HELVETICA_BOLD, 12);
     fl_color(on ? FL_WHITE : kText);
-    fl_draw(label(), X + H + 4, Y, W - H - 8, H, FL_ALIGN_LEFT | FL_ALIGN_INSIDE);
+    if (icon_ == None) fl_draw(label(), X, Y, W, H, FL_ALIGN_CENTER | FL_ALIGN_INSIDE);
+    else if (icon_ != Minus && icon_ != Plus) fl_draw(label(), X + H + 4, Y, W - H - 8, H, FL_ALIGN_LEFT | FL_ALIGN_INSIDE);
+}
+
+// ---- toolbar meters: CPU load and output level
+
+ToolMeters::ToolMeters(int x, int y, int w, int h) : Fl_Widget(x, y, w, h) {
+    tooltip("CPU: the share of each audio buffer spent computing the patches (red above 80%).\n"
+            "Level: the peaks of every output channel; the light stays red for 2 s after a clip.");
+}
+
+ToolMeters::~ToolMeters() = default;
+
+void ToolMeters::update(float cpu, const std::vector<float>& peaks) {
+    cpu_ = cpu;
+    if (level_.size() != peaks.size()) { level_.assign(peaks.size(), 0.f); hold_.assign(peaks.size(), 0.f); }
+    for (size_t c = 0; c < peaks.size(); ++c) {
+        level_[c] = std::max(peaks[c], level_[c] * 0.82f);          // a falling bar
+        hold_[c] = std::max(peaks[c], hold_[c] * 0.97f);
+        if (peaks[c] >= 0.999f)
+            clipUntil_ = std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count() + 2;
+    }
+    redraw();
+}
+
+void ToolMeters::draw() {
+    int X = x(), Y = y(), W = w(), H = h();
+    fl_color(kStatusBg);
+    fl_rectf(X, Y, W, H);
+    fl_font(FL_HELVETICA, 11);
+    // CPU
+    fl_color(kDim);
+    fl_draw("CPU", X, Y, 28, H, FL_ALIGN_LEFT | FL_ALIGN_INSIDE);
+    int bx = X + 30, bw = 46, bh = 8, byy = Y + (H - bh) / 2;
+    fl_color(kBoxFill);
+    fl_rectf(bx, byy, bw, bh);
+    float c = std::clamp(cpu_, 0.f, 1.f);
+    fl_color(c > 0.8f ? fl_rgb_color(225, 70, 70) : c > 0.5f ? fl_rgb_color(225, 180, 60) : kAccent);
+    fl_rectf(bx, byy, (int)(bw * c), bh);
+    char buf[16];
+    std::snprintf(buf, sizeof buf, "%d%%", (int)std::lround(cpu_ * 100));
+    fl_color(kText);
+    fl_draw(buf, bx + bw + 4, Y, 34, H, FL_ALIGN_LEFT | FL_ALIGN_INSIDE);
+    // levels, dB from -60 to 0: up to two channels as thin rows, more as columns
+    int lx = X + 118, lw = W - 118 - 12;
+    double now = std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    auto frac = [](float a) { double db = a > 1e-6f ? 20 * std::log10(a) : -120; return std::clamp((db + 60) / 60, 0.0, 1.0); };
+    auto colour = [](double f) { return f > 0.9 ? fl_rgb_color(225, 180, 60) : fl_rgb_color(90, 190, 120); };
+    int n = (int)level_.size();
+    if (n <= 2) {
+        for (int ch = 0; ch < 2; ++ch) {
+            int ly = Y + H / 2 - 5 + ch * 6;
+            fl_color(kBoxFill);
+            fl_rectf(lx, ly, lw, 4);
+            float lv = ch < n ? level_[(size_t)ch] : (n == 1 ? level_[0] : 0.f);
+            float hv = ch < n ? hold_[(size_t)ch] : (n == 1 ? hold_[0] : 0.f);
+            double f = frac(lv);
+            fl_color(colour(f));
+            fl_rectf(lx, ly, (int)(lw * f), 4);
+            fl_color(kText);
+            if (int hp = (int)(lw * frac(hv)); hp > 0) fl_yxline(lx + hp - 1, ly, ly + 3);
+        }
+    } else {
+        int top = Y + 2, hh = H - 4, gap = n > 16 ? 1 : 2;
+        int cw = std::max(1, (lw - gap * (n - 1)) / n);
+        for (int ch = 0; ch < n; ++ch) {
+            int cx = lx + ch * (cw + gap);
+            fl_color(kBoxFill);
+            fl_rectf(cx, top, cw, hh);
+            double f = frac(level_[(size_t)ch]);
+            int bhh = (int)(hh * f);
+            fl_color(colour(f));
+            fl_rectf(cx, top + hh - bhh, cw, bhh);
+            fl_color(kText);
+            if (int hp = (int)(hh * frac(hold_[(size_t)ch])); hp > 0) fl_xyline(cx, top + hh - hp, cx + cw - 1);
+        }
+    }
+    fl_color(now < clipUntil_ ? fl_rgb_color(235, 60, 60) : kBoxFill);
+    fl_pie(X + W - 9, Y + H / 2 - 4, 8, 8, 0, 360);
 }
 
 }  // namespace moritz

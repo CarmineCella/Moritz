@@ -3,6 +3,7 @@
 // completion, and running interface objects in locked mode.
 
 #include "gui.h"
+#include "zoom.h"
 #include "objects.h"
 
 #include <FL/Fl_Menu_Item.H>
@@ -46,8 +47,8 @@ std::vector<std::string> messageLines(const std::string& text) {
 }
 
 int lineHeight() {
-    fl_font(kFont, kFontSize);
-    return fl_height();
+    zd::font(kFont, kFontSize);
+    return zd::height();
 }
 
 std::vector<std::string> splitLines(const std::string& t) {
@@ -60,9 +61,9 @@ std::vector<std::string> splitLines(const std::string& t) {
 }
 
 int widestLine(const std::vector<std::string>& lines) {
-    fl_font(kFont, kFontSize);
+    zd::font(kFont, kFontSize);
     int w = 0;
-    for (auto& l : lines) w = std::max(w, (int)fl_width(l.c_str()));
+    for (auto& l : lines) w = std::max(w, (int)zd::width(l.c_str()));
     return w;
 }
 
@@ -138,9 +139,9 @@ Canvas::Canvas(int x, int y, int w, int h, MainWindow* win, Patch* patch)
 }
 
 void Canvas::layoutBox(Box* b) const {
-    fl_font(kFont, kFontSize);
+    zd::font(kFont, kFontSize);
     std::string t = b->label();
-    int tw = (int)fl_width(t.c_str());
+    int tw = (int)zd::width(t.c_str());
     int ports = std::max(b->numIns(), b->numOuts());
     b->h = kBoxH;
     if (b->kind == BoxKind::UI) b->uiSize(b->w, b->h);
@@ -161,6 +162,13 @@ void Canvas::portPos(Box* b, bool out, int i, int& px, int& py) const {
     py = out ? b->y + b->h : b->y;
 }
 
+// the buffer~ a box shows or plays: its first argument, when a buffer~ has that name
+std::string Canvas::bufferOf(Box* b) const {
+    if (b->kind == BoxKind::Comment || b->kind == BoxKind::Message || b->args.empty() || !b->args[0].isSymbol()) return "";
+    if (b->cls == "buffer~") return b->args[0].s;
+    return findBuffer(patch_, b->args[0].s) ? b->args[0].s : "";
+}
+
 void Canvas::drawBox(Box* b) {
     int X = ox() + b->x, Y = oy() + b->y, W = b->w, H = b->h;
     bool flash = b->flashUntil > now();
@@ -168,14 +176,14 @@ void Canvas::drawBox(Box* b) {
     if (b->kind == BoxKind::Comment) {               // comments: just text
         if (b->selected || !locked_) {
             fl_color(b->selected ? kSelect : kGrid);
-            fl_line_style(FL_DOT, 1);
-            fl_rounded_rect(X, Y, W, H, 4);
-            fl_line_style(0);
+            zd::line_style(FL_DOT, 1);
+            zd::rounded_rect(X, Y, W, H, 4);
+            zd::line_style(0);
         }
         if (editing_ != b) {
-            fl_font(kFont, kFontSize);
+            zd::font(kFont, kFontSize);
             fl_color(kDim);
-            fl_draw(b->label().c_str(), X + 6, Y + H / 2 + fl_height() / 2 - fl_descent());
+            zd::draw(b->label().c_str(), X + 6, Y + H / 2 + zd::height() / 2 - zd::descent());
         }
         return;
     }
@@ -187,51 +195,51 @@ void Canvas::drawBox(Box* b) {
     else if (b->kind == BoxKind::Number || b->kind == BoxKind::UI) fill = kNumFill;
     else if (b->kind == BoxKind::Broken) fill = kBroken;
     fl_color(fill);
-    fl_rounded_rectf(X, Y, W, H, r);
+    zd::rounded_rectf(X, Y, W, H, r);
 
     if (b->kind == BoxKind::UI) {
-        fl_push_clip(X, Y, W, H);
+        zd::push_clip(X, Y, W, H);
         b->drawUI(X, Y);
-        fl_pop_clip();
+        zd::pop_clip();
     }
 
     // border
     if (b->selected) {
         fl_color(kSelect);
-        fl_line_style(FL_SOLID, 2);
+        zd::line_style(FL_SOLID, 2);
     } else if (b->kind == BoxKind::Broken) {
         fl_color(fl_rgb_color(230, 80, 80));
-        fl_line_style(FL_DASH, 1);
+        zd::line_style(FL_DASH, 1);
     } else {
         fl_color(b->isSignal() ? fl_color_average(kSignal, kBorder, 0.25f) : kBorder);
-        fl_line_style(FL_SOLID, 1);
+        zd::line_style(FL_SOLID, 1);
     }
-    fl_rounded_rect(X, Y, W, H, r);
-    fl_line_style(0);
+    zd::rounded_rect(X, Y, W, H, r);
+    zd::line_style(0);
 
     // text
     if (editing_ != b && b->kind != BoxKind::UI) {
-        fl_font(kFont, kFontSize);
+        zd::font(kFont, kFontSize);
         int tx = X + (b->kind == BoxKind::Message ? 10 : 8);
         std::string t = b->label();
         if (b->kind == BoxKind::Number) {
             fl_color(kAccent);
-            fl_polygon(X + 6, Y + 7, X + 11, Y + H / 2, X + 6, Y + H - 7);
+            zd::polygon(X + 6, Y + 7, X + 11, Y + H / 2, X + 6, Y + H - 7);
             tx = X + 16;
             if (typingBox_ == b && !typed_.empty()) t = typed_ + "_";
         }
         fl_color(kText);
-        fl_push_clip(X + 2, Y + 1, W - 4, H - 2);
+        zd::push_clip(X + 2, Y + 1, W - 4, H - 2);
         if (b->kind == BoxKind::Message) {
-            int base = Y + kBoxH / 2 + fl_height() / 2 - fl_descent(), lh = fl_height();
+            int base = Y + kBoxH / 2 + zd::height() / 2 - zd::descent(), lh = zd::height();
             for (auto& line : messageLines(t)) {
-                fl_draw(line.c_str(), tx, base);
+                zd::draw(line.c_str(), tx, base);
                 base += lh;
             }
         } else {
-            fl_draw(t.c_str(), tx, Y + H / 2 + fl_height() / 2 - fl_descent());
+            zd::draw(t.c_str(), tx, Y + H / 2 + zd::height() / 2 - zd::descent());
         }
-        fl_pop_clip();
+        zd::pop_clip();
     }
 
     // ports: small tabs on the top (inlets) and bottom (outlets) edges
@@ -239,13 +247,13 @@ void Canvas::drawBox(Box* b) {
         int px, py;
         portPos(b, false, k, px, py);
         fl_color(b->ins[k] == Port::Control ? kCtlPort : kSignal);
-        fl_rounded_rectf(ox() + px, oy() + py, kPortW, kPortH + 1, 1);
+        zd::rounded_rectf(ox() + px, oy() + py, kPortW, kPortH + 1, 1);
     }
     for (int k = 0; k < b->numOuts(); ++k) {
         int px, py;
         portPos(b, true, k, px, py);
         fl_color(b->outs[k] == Port::Control ? kCtlPort : kSignal);
-        fl_rounded_rectf(ox() + px, oy() + py - kPortH - 1, kPortW, kPortH + 1, 1);
+        zd::rounded_rectf(ox() + px, oy() + py - kPortH - 1, kPortW, kPortH + 1, 1);
     }
 }
 
@@ -307,11 +315,11 @@ bool Canvas::acceptSuggestion(bool commit) {
 
 void Canvas::drawSuggestions() {
     if (!editing_ || sugg_.empty() || !editor_->visible()) return;
-    fl_font(kFont, kFontSize);
+    zd::font(kFont, kFontSize);
     int nameW = 0;
-    for (auto& s : sugg_) nameW = std::max(nameW, (int)fl_width(s.c_str()));
+    for (auto& s : sugg_) nameW = std::max(nameW, (int)zd::width(s.c_str()));
     int descW = 0;
-    for (auto& s : sugg_) descW = std::max(descW, (int)fl_width(describeClass(s)));
+    for (auto& s : sugg_) descW = std::max(descW, (int)zd::width(describeClass(s)));
     suggW_ = std::max(editor_->w(), nameW + descW + 40);
     int H = (int)sugg_.size() * kSuggRowH + 6;
     suggX_ = editor_->x();
@@ -319,22 +327,22 @@ void Canvas::drawSuggestions() {
     if (suggY_ + H > y() + h()) suggY_ = editor_->y() - H - 3;   // flip above near the bottom
 
     fl_color(fl_rgb_color(10, 10, 12));                              // soft shadow
-    fl_rounded_rectf(suggX_ + 2, suggY_ + 3, suggW_, H, 6);
+    zd::rounded_rectf(suggX_ + 2, suggY_ + 3, suggW_, H, 6);
     fl_color(kPopup);
-    fl_rounded_rectf(suggX_, suggY_, suggW_, H, 6);
+    zd::rounded_rectf(suggX_, suggY_, suggW_, H, 6);
     fl_color(kBorder);
-    fl_rounded_rect(suggX_, suggY_, suggW_, H, 6);
+    zd::rounded_rect(suggX_, suggY_, suggW_, H, 6);
     for (int k = 0; k < (int)sugg_.size(); ++k) {
         int ry = suggY_ + 3 + k * kSuggRowH;
         if (k == suggSel_) {
             fl_color(fl_rgb_color(52, 92, 160));
-            fl_rounded_rectf(suggX_ + 3, ry, suggW_ - 6, kSuggRowH, 4);
+            zd::rounded_rectf(suggX_ + 3, ry, suggW_ - 6, kSuggRowH, 4);
         }
-        int base = ry + kSuggRowH / 2 + fl_height() / 2 - fl_descent();
+        int base = ry + kSuggRowH / 2 + zd::height() / 2 - zd::descent();
         fl_color(kText);
-        fl_draw(sugg_[k].c_str(), suggX_ + 10, base);
+        zd::draw(sugg_[k].c_str(), suggX_ + 10, base);
         fl_color(k == suggSel_ ? fl_rgb_color(200, 215, 240) : kDim);
-        fl_draw(describeClass(sugg_[k]), suggX_ + 26 + nameW, base);
+        zd::draw(describeClass(sugg_[k]), suggX_ + 26 + nameW, base);
     }
 }
 
@@ -411,32 +419,32 @@ void Canvas::drawPortTip() {
     px += ox();
     py += oy();
     fl_color(kAccent);                                  // ring around the port
-    fl_line_style(FL_SOLID, 2);
-    fl_rounded_rect(px - 3, (tipOut_ ? py - kPortH - 4 : py - 3), kPortW + 6, kPortH + 7, 3);
-    fl_line_style(0);
+    zd::line_style(FL_SOLID, 2);
+    zd::rounded_rect(px - 3, (tipOut_ ? py - kPortH - 4 : py - 3), kPortW + 6, kPortH + 7, 3);
+    zd::line_style(0);
 
-    fl_font(FL_HELVETICA_BOLD, 11);
-    int tw = (int)fl_width(title.c_str());
-    fl_font(kFont, 12);
-    int bw = (int)fl_width(body.c_str());
+    zd::font(FL_HELVETICA_BOLD, 11);
+    int tw = (int)zd::width(title.c_str());
+    zd::font(kFont, 12);
+    int bw = (int)zd::width(body.c_str());
     int W = std::max(tw, bw) + 20, H = body.empty() ? 24 : 42;
     int X = std::clamp(px - 12, x() + 4, x() + w() - W - 4);
     int Y = tipOut_ ? py + 8 : py - H - 8;
     if (Y < y() + 4) Y = py + 12;
     if (Y + H > y() + h() - 4) Y = py - H - 12;
     fl_color(fl_rgb_color(10, 10, 12));
-    fl_rounded_rectf(X + 2, Y + 3, W, H, 6);
+    zd::rounded_rectf(X + 2, Y + 3, W, H, 6);
     fl_color(kPopup);
-    fl_rounded_rectf(X, Y, W, H, 6);
+    zd::rounded_rectf(X, Y, W, H, 6);
     fl_color(kBorder);
-    fl_rounded_rect(X, Y, W, H, 6);
-    fl_font(FL_HELVETICA_BOLD, 11);
+    zd::rounded_rect(X, Y, W, H, 6);
+    zd::font(FL_HELVETICA_BOLD, 11);
     fl_color(tipBox_->outs.empty() && tipOut_ ? kDim : kAccent);
-    fl_draw(title.c_str(), X + 10, Y + 16);
+    zd::draw(title.c_str(), X + 10, Y + 16);
     if (!body.empty()) {
-        fl_font(kFont, 12);
+        zd::font(kFont, 12);
         fl_color(kText);
-        fl_draw(body.c_str(), X + 10, Y + 34);
+        zd::draw(body.c_str(), X + 10, Y + 34);
     }
 }
 
@@ -517,14 +525,17 @@ void Canvas::pasteText(const std::string& text) {
 
 void Canvas::draw() {
     Patch& p = *patch_;
-    fl_push_clip(x(), y(), w(), h());
+    zd::push_clip(x(), y(), w(), h());
     fl_color(locked_ ? kBgLocked : kBgEdit);
-    fl_rectf(x(), y(), w(), h());
-    if (!locked_) {
+    zd::rectf(x(), y(), w(), h());
+    {
+    zd::Scope zoomed(x(), y(), zoom_);           // the patch, zoomed around the canvas's corner
+    if (!locked_ && zoom_ >= 0.5) {
         fl_color(kGrid);
-        for (int gx = 15; gx < w(); gx += 15)
-            for (int gy = 15; gy < h(); gy += 15)
-                fl_point(x() + gx - ((sx_ % 15) + 15) % 15, y() + gy - ((sy_ % 15) + 15) % 15);
+        int g0x = (int)std::floor(sx_ / 15.0) * 15, g0y = (int)std::floor(sy_ / 15.0) * 15;
+        for (int gx = g0x; gx < sx_ + viewW(); gx += 15)
+            for (int gy = g0y; gy < sy_ + viewH(); gy += 15)
+                zd::point(ox() + gx, oy() + gy);
     }
 
     for (auto& b : p.boxes) layoutBox(b.get());
@@ -539,17 +550,17 @@ void Canvas::draw() {
         bool sig = c.from->outs[c.outlet] != Port::Control;   // signal and tap links
         if (sig) {
             fl_color(c.selected ? kSelect : kSignal);
-            fl_line_style(FL_SOLID | FL_CAP_ROUND, 3);
-            fl_line(ax, ay, bx, by);
+            zd::line_style(FL_SOLID | FL_CAP_ROUND, 3);
+            zd::line(ax, ay, bx, by);
             fl_color(c.selected ? fl_rgb_color(30, 70, 140) : kSignalDim);
-            fl_line_style(FL_DASH, 1);
-            fl_line(ax, ay, bx, by);
+            zd::line_style(FL_DASH, 1);
+            zd::line(ax, ay, bx, by);
         } else {
             fl_color(c.selected ? kSelect : kCable);
-            fl_line_style(FL_SOLID | FL_CAP_ROUND, c.selected ? 2 : 1);
-            fl_line(ax, ay, bx, by);
+            zd::line_style(FL_SOLID | FL_CAP_ROUND, c.selected ? 2 : 1);
+            zd::line(ax, ay, bx, by);
         }
-        fl_line_style(0);
+        zd::line_style(0);
     }
 
     bool flashing = false, animating = false;
@@ -565,28 +576,29 @@ void Canvas::draw() {
         int ax, ay;
         portPos(dragBox_, true, dragPort_, ax, ay);
         fl_color(kSelect);
-        fl_line_style(FL_SOLID, 2);
-        fl_line(ox() + ax + kPortW / 2, oy() + ay, ox() + curX_, oy() + curY_);
-        fl_line_style(0);
+        zd::line_style(FL_SOLID, 2);
+        zd::line(ox() + ax + kPortW / 2, oy() + ay, ox() + curX_, oy() + curY_);
+        zd::line_style(0);
     } else if (drag_ == Drag::Rubber) {
         fl_color(kSelect);
-        fl_line_style(FL_DOT, 1);
+        zd::line_style(FL_DOT, 1);
         int rx = std::min(pressX_, curX_), ry = std::min(pressY_, curY_);
-        fl_rect(ox() + rx, oy() + ry, std::abs(curX_ - pressX_), std::abs(curY_ - pressY_));
-        fl_line_style(0);
+        zd::rect(ox() + rx, oy() + ry, std::abs(curX_ - pressX_), std::abs(curY_ - pressY_));
+        zd::line_style(0);
     }
 
+    drawPortTip();
+    }
     if (editor_->visible()) {
         draw_child(*editor_);
         fl_color(kAccent);                       // outline: the box being typed into
-        fl_rounded_rect(editor_->x() - 1, editor_->y() - 1, editor_->w() + 2, editor_->h() + 2, 3);
+        zd::rounded_rect(editor_->x() - 1, editor_->y() - 1, editor_->w() + 2, editor_->h() + 2, 3);
     }
     drawSuggestions();
-    drawPortTip();
     updateScrollbars();
     if (hbar_->visible()) draw_child(*hbar_);
     if (vbar_->visible()) draw_child(*vbar_);
-    fl_pop_clip();
+    zd::pop_clip();
 }
 
 // ---- scrolling: the patch can be larger than the window
@@ -607,10 +619,10 @@ void Canvas::updateScrollbars() {
     contentBounds(x0, y0, x1, y1);
     // the range covers the patch and where the view is now (so it never jumps)
     x0 = std::min(x0, sx_); y0 = std::min(y0, sy_);
-    x1 = std::max(x1, sx_ + w()); y1 = std::max(y1, sy_ + h());
-    bool needH = x1 - x0 > w(), needV = y1 - y0 > h();
+    x1 = std::max(x1, sx_ + viewW()); y1 = std::max(y1, sy_ + viewH());
+    bool needH = x1 - x0 > viewW(), needV = y1 - y0 > viewH();
     const int S = kScrollW;
-    int vw = w() - (needV ? S : 0), vh = h() - (needH ? S : 0);
+    int vw = (int)((w() - (needV ? S : 0)) / zoom_), vh = (int)((h() - (needH ? S : 0)) / zoom_);
     needH = x1 - x0 > vw; needV = y1 - y0 > vh;
     if (needH) {
         hbar_->resize(x(), y() + h() - S, w() - (needV ? S : 0), S);
@@ -634,13 +646,43 @@ void Canvas::scrollTo(int sx, int sy) {
     int x0, y0, x1, y1;
     contentBounds(x0, y0, x1, y1);
     // within the patch (and back to the origin), never past it
-    sx = std::clamp(sx, std::min(x0, 0), std::max(x1 - w(), 0));
-    sy = std::clamp(sy, std::min(y0, 0), std::max(y1 - h(), 0));
+    sx = std::clamp(sx, std::min(x0, 0), std::max(x1 - viewW(), 0));
+    sy = std::clamp(sy, std::min(y0, 0), std::max(y1 - viewH(), 0));
     if (sx == sx_ && sy == sy_) return;
     sx_ = sx;
     sy_ = sy;
-    if (editing_) editor_->Fl_Widget::position(ox() + editing_->x, oy() + editing_->y);
+    if (editing_) editor_->Fl_Widget::position(screenX(editing_->x), screenY(editing_->y));
     redraw();
+}
+
+// the zoom ladder, as in Max
+static const double kZooms[] = {0.25, 0.33, 0.5, 0.67, 0.75, 0.8, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0};
+
+void Canvas::setZoom(double z) {
+    z = std::clamp(z, kZooms[0], kZooms[std::size(kZooms) - 1]);
+    if (std::fabs(z - zoom_) < 1e-6) return;
+    commitEdit();
+    // keep the patch point at the centre of the view where it is
+    double cx = sx_ + w() / (2 * zoom_), cy = sy_ + h() / (2 * zoom_);
+    zoom_ = z;
+    sx_ = 0;
+    sy_ = 0;
+    scrollTo((int)std::lround(cx - w() / (2 * zoom_)), (int)std::lround(cy - h() / (2 * zoom_)));
+    redraw();
+    if (onZoom) onZoom();
+}
+
+void Canvas::zoomBy(int steps) {
+    if (steps == 0) { setZoom(1.0); return; }
+    size_t n = std::size(kZooms), k = 0;
+    if (steps > 0) {
+        while (k < n && kZooms[k] <= zoom_ + 1e-6) ++k;
+        setZoom(kZooms[std::min(k, n - 1)]);
+    } else {
+        k = n;
+        while (k > 0 && kZooms[k - 1] >= zoom_ - 1e-6) --k;
+        setZoom(kZooms[k > 0 ? k - 1 : 0]);
+    }
 }
 
 Canvas::Hit Canvas::hitTest(int mx, int my) const {
@@ -764,8 +806,10 @@ void Canvas::fitEditor() {
         W = std::max(W, widestLine(lines) + 24);
         H = kBoxH + ((int)lines.size() - 1) * lineHeight();
     }
-    if (W != editor_->w() || H != editor_->h()) {
-        editor_->resize(ox() + b->x, oy() + b->y, W, H);
+    int ex = screenX(b->x), ey = screenY(b->y), ew = (int)std::lround(W * zoom_), eh = (int)std::lround(H * zoom_);
+    if (ex != editor_->x() || ey != editor_->y() || ew != editor_->w() || eh != editor_->h()) {
+        editor_->textsize(std::max(6, (int)std::lround(kFontSize * zoom_)));
+        editor_->resize(ex, ey, ew, eh);
         redraw();
     }
 }
@@ -900,8 +944,8 @@ int Canvas::handle(int e) {
         case FL_UNFOCUS:
             return 1;
         case FL_MOVE:
-            mouseX_ = Fl::event_x() - ox();
-            mouseY_ = Fl::event_y() - oy();
+            mouseX_ = patchX(Fl::event_x());
+            mouseY_ = patchY(Fl::event_y());
             updatePortTip(mouseX_, mouseY_);
             return 1;
 
@@ -917,7 +961,7 @@ int Canvas::handle(int e) {
             }
             commitEdit();
             Fl::focus(this);
-            int mx = Fl::event_x() - ox(), my = Fl::event_y() - oy();
+            int mx = patchX(Fl::event_x()), my = patchY(Fl::event_y());
             pressX_ = curX_ = mouseX_ = mx;
             pressY_ = curY_ = mouseY_ = my;
             moved_ = false;
@@ -934,13 +978,36 @@ int Canvas::handle(int e) {
                 std::string helpLabel = "Help for " + b->cls;
                 for (size_t k = 0; k < helpLabel.size(); ++k)     // menu labels treat / and & specially
                     if (helpLabel[k] == '/' || helpLabel[k] == '&') helpLabel.insert(k++, 1, '\\');
-                Fl_Menu_Item items[3] = {};
-                items[0].label(helpLabel.c_str());
-                items[1].label("Open");
-                if (!b->inner()) items[1].deactivate();
-                const Fl_Menu_Item* r = items->popup(Fl::event_x(), Fl::event_y());
-                if (r == &items[0]) App::get().openHelp(b->cls);
-                else if (r == &items[1]) { if (auto* d = doc()) d->openSubpatch(b); }
+                // Help, Open (a subpatcher), Show buffer~ (when the first
+                // argument names one), then the box's own items
+                std::vector<std::string> own = b->menuItems();
+                std::string buf = bufferOf(b);
+                std::string showLabel = "Show buffer~ " + buf;
+                for (size_t k = 0; k < showLabel.size(); ++k)
+                    if (showLabel[k] == '/' || showLabel[k] == '&') showLabel.insert(k++, 1, '\\');
+                std::vector<Fl_Menu_Item> items(5 + own.size());
+                for (auto& it : items) it = Fl_Menu_Item{};
+                size_t n = 0;
+                items[n++].label(helpLabel.c_str());
+                size_t refAt = n;
+                items[n++].label("Reference");
+                items[n].label("Open");
+                if (!b->inner()) items[n].deactivate();
+                size_t openAt = n++, showAt = items.size();
+                if (!buf.empty()) { showAt = n; items[n++].label(showLabel.c_str()); }
+                size_t ownAt = n;
+                if (!own.empty()) items[n - 1].flags |= FL_MENU_DIVIDER;
+                for (auto& o : own) items[n++].label(o.c_str());
+                items.resize(n + 1);
+                const Fl_Menu_Item* r = items.data()->popup(Fl::event_x(), Fl::event_y());
+                if (!r) return 1;
+                size_t pick = (size_t)(r - items.data());
+                if (pick == 0) App::get().openHelp(b->cls);
+                else if (pick == refAt) App::get().showReference(b->cls);
+                else if (pick == openAt) { if (auto* d = doc()) d->openSubpatch(b); }
+                else if (pick == showAt) openBufferWindow(patch_, buf);
+                else if (pick >= ownAt && pick < ownAt + own.size()) b->menuAction((int)(pick - ownAt));
+                redraw();
                 return 1;
             }
 
@@ -959,10 +1026,14 @@ int Canvas::handle(int e) {
                     if (nb->isFloat()) {
                         std::string t = nb->text();
                         size_t dot = t.find('.');
-                        fl_font(kFont, kFontSize);
-                        int dotX = nb->x + 16 + (int)fl_width(t.substr(0, dot).c_str());
+                        zd::font(kFont, kFontSize);
+                        int dotX = nb->x + 16 + (int)zd::width(t.substr(0, dot).c_str());
                         if (dot != std::string::npos && mx > dotX) dragStep_ = 0.01;
                     }
+                } else if (h.box && Fl::event_clicks() && h.box->cls != "plot" && !bufferOf(h.box).empty()) {
+                    Fl::event_clicks(0);                            // double-click: the buffer's waveform
+                    openBufferWindow(patch_, bufferOf(h.box));
+                    return 1;
                 } else if (h.box && h.box->kind == BoxKind::UI) {
                     drag_ = Drag::UI;
                     dragBox_ = h.box;
@@ -1029,7 +1100,7 @@ int Canvas::handle(int e) {
         }
 
         case FL_DRAG: {
-            int mx = Fl::event_x() - ox(), my = Fl::event_y() - oy();
+            int mx = patchX(Fl::event_x()), my = patchY(Fl::event_y());
             int dx = mx - curX_, dy = my - curY_;
             curX_ = mouseX_ = mx;
             curY_ = mouseY_ = my;
@@ -1051,7 +1122,7 @@ int Canvas::handle(int e) {
         }
 
         case FL_RELEASE: {
-            int mx = Fl::event_x() - ox(), my = Fl::event_y() - oy();
+            int mx = patchX(Fl::event_x()), my = patchY(Fl::event_y());
             if (drag_ == Drag::UI && dragBox_) {
                 dragBox_->uiMouse(FL_RELEASE, mx - dragBox_->x, my - dragBox_->y);
                 if (win_) {

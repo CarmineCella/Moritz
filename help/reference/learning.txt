@@ -1,0 +1,89 @@
+# Learning: models trained on lists of numbers, after Musil's scientific library
+
+@ knn
+syntax: knn [k]
+k nearest neighbours: learns from examples (add x1 x2 ... -> y1 y2 ...), then
+answers a list with the outputs of the k examples nearest to it. Regression:
+the mean of their outputs, or with `weighted 1` a mean weighted by inverse
+distance, which glides smoothly between the examples (as Wekinator).
+Classification, with `classify 1` or when the outputs are words: the most
+frequent output among them. Inputs are compared after standardisation, so
+values in different units weigh alike. The index of the nearest example also
+comes out.
+arg k: the number of neighbours, 1 to 1000 (3)
+msg list: predicts the outputs for this input
+msg add x1 x2 ... -> y1 y2 ...: adds an example; the outputs may be numbers or words
+msg k n: sets the number of neighbours
+msg weighted 0/1: 1 weights the neighbours by inverse distance (0)
+msg classify 0/1: 1 outputs the most frequent output instead of the mean (0)
+msg normalize 0/1: 0 compares raw values instead of standardised ones (1)
+msg clear: forgets the examples
+msg write file: saves the examples as text, one a line (as add, without the word add)
+msg read file: replaces the examples with those of a file
+msg print: prints the number of examples in the Console
+see: kmeans linreg zscore pca mfcc~ descriptors~
+
+@ kmeans
+syntax: kmeans
+Groups the points added into k clusters: `train k` starts with k-means++ and
+runs Lloyd's iterations, ten times from different starts, and keeps the
+tightest clustering; it prints the cluster sizes. A list then gives the index
+of its cluster (0 to k-1) and that cluster's centroid. Points are
+standardised first; adding or clearing points undoes the training.
+msg list: the cluster of this point and its centroid
+msg add x1 x2 ...: adds a point
+msg train [k] [iterations]: clusters the points into k (2), with at most this many iterations (100)
+msg centroid i: outputs the centroid of cluster i
+msg seed n: the seed of the random starts (1)
+msg normalize 0/1: 0 clusters raw values instead of standardised ones (1)
+msg clear: forgets the points
+msg write file: saves the points as text, one a line
+msg read file: replaces the points with those of a file
+msg print: prints the number of points and of clusters in the Console
+see: knn pca zscore soundtypes
+
+@ pca
+syntax: pca
+Principal component analysis: `train` finds the directions of largest
+variance of the points added (standardised first) and outputs the share of
+the variance each carries. A list then gives its coordinates along them: a
+way to see many descriptors on two axes. At least two points are needed.
+msg list: the coordinates of this point on the components
+msg add x1 x2 ...: adds a point
+msg train [dims]: finds the first dims components (2)
+msg explained: outputs the share of the variance of each component
+msg normalize 0/1: 0 uses raw values instead of standardised ones (1)
+msg clear: forgets the points
+msg write file: saves the points as text, one a line
+msg read file: replaces the points with those of a file
+msg print: prints the number of points in the Console
+see: zscore kmeans knn plot descriptors~
+
+@ zscore
+syntax: zscore
+Standardises lists: `train` measures the mean and standard deviation of each
+value over the points added; a list then comes out as (x - mean) / sd, so
+values of different units (Hz, dB, 0 to 1) become comparable.
+msg list: standardises this list
+msg add x1 x2 ...: adds a point
+msg train: measures the means and standard deviations
+msg clear: forgets the points
+msg write file: saves the points as text, one a line
+msg read file: replaces the points with those of a file
+msg print: prints the number of points in the Console
+see: pca kmeans knn scale
+
+@ linreg
+syntax: linreg
+Linear regression: `train` fits y = b0 + b1 x1 + b2 x2 ... to the examples
+added by least squares, one set of weights for each output; a list then
+gives the predicted outputs.
+msg list: predicts the outputs for this input
+msg add x1 x2 ... -> y1 y2 ...: adds an example
+msg train: fits the weights
+msg weights: outputs the weights, intercept first, output after output
+msg clear: forgets the examples
+msg write file: saves the examples as text, one a line
+msg read file: replaces the examples with those of a file
+msg print: prints the number of examples in the Console
+see: knn zscore pca expr

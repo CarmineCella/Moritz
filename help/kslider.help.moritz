@@ -25,7 +25,7 @@
   (obj pk pack 0 0 (pos 20 290))
   (obj mn message "midinote $1 $2" (pos 20 322))
   (obj poly poly~ keyvoice 8 (pos 20 354))
-  (obj cpoly comment "each note sounds until its note-off (examples/keyvoice.moritz)" (pos 160 355))
+  (obj cpoly comment "each note sounds until its note-off (examples/11-midi-and-patching/keyvoice.moritz)" (pos 160 355))
   (obj on message "0.15 50" (pos 110 386))
   (obj off message "0 50" (pos 180 386))
   (obj cv comment "volume on / off" (pos 240 387))

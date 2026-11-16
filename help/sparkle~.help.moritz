@@ -46,7 +46,7 @@
   (obj x0 message "cross 0" (pos 620 575))
   (obj xa flonum 0.5 (pos 20 610))
   (obj cxa comment "amount, 0 to 1 (mode 1: whose phases; 2: how much envelope; 3: from one sound to the other)" (pos 85 611))
-  (obj xs comment "Without a buffer, the second sound is the signal in inlet 5. See examples/sparkle-cross.moritz and pitch-shift.moritz." (pos 20 640))
+  (obj xs comment "Without a buffer, the second sound is the signal in inlet 5. See examples/06-spectral/sparkle-cross.moritz and pitch-shift.moritz." (pos 20 640))
   (connect go 0 spk 0)
   (connect st 0 spk 0)
   (connect s1 0 spk 0)

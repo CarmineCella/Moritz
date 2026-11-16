@@ -157,6 +157,9 @@ $(BUILD)/RtMidi.o: $(RTMIDI_HDR)
 	@mkdir -p $(BUILD)
 	$(CXX) -std=c++17 -O2 $(ARCHFLAGS) -D__MACOSX_CORE__ -w -c $(RTMIDI_SRC) -o $@
 
+# the PDFs of docs/ (their LaTeX sources stay in the repository), keeping their folders
+copy_docs = for f in $$(find docs -name '*.pdf'); do mkdir -p "$(1)/$$(dirname $$f)"; cp "$$f" "$(1)/$$f"; done
+
 SOURCES    := $(wildcard src/*.cpp)
 OBJECTS    := $(patsubst src/%.cpp,$(BUILD)/%.o,$(SOURCES))
 HEADERS    := $(wildcard src/*.h)
@@ -200,12 +203,13 @@ define INFO_PLIST
 endef
 export INFO_PLIST
 
-$(BUNDLE): $(APP) $(wildcard examples/*.moritz examples/sounds/* library/* help/* tutorials/* resources/*) LICENSE
+$(BUNDLE): $(APP) $(wildcard examples/*/*.moritz examples/sounds/* library/* help/* tutorials/* resources/* docs/*/*.pdf) LICENSE
 	@echo "==> creating $(BUNDLE)"
 	rm -rf $(BUNDLE)
 	mkdir -p $(BUNDLE)/Contents/MacOS $(BUNDLE)/Contents/Resources
 	cp $(APP) $(BUNDLE)/Contents/MacOS/$(APP)
 	cp -R examples library help tutorials $(BUNDLE)/Contents/Resources/ 2>/dev/null || true
+	$(call copy_docs,$(BUNDLE)/Contents/Resources)
 	cp resources/moritz.icns resources/about.png resources/maxundmoritz.png LICENSE $(BUNDLE)/Contents/Resources/
 	echo "$$INFO_PLIST" > $(BUNDLE)/Contents/Info.plist
 	printf 'APPL????' > $(BUNDLE)/Contents/PkgInfo
@@ -269,9 +273,11 @@ $(LX_DIR)/$(APP): $(LX_OBJECTS) $(LX_BUILD)/miniaudio.o $(LX_BUILD)/RtMidi.o
 	$(LX_CXX) $^ $$($(LX_FLTK)/bin/fltk-config --use-images --ldstaticflags) \
 	  -static-libstdc++ -static-libgcc -lasound -lpthread -ldl -lm -o $@
 
-linux: $(LX_DIR)/$(APP) $(wildcard examples/*.moritz examples/sounds/* library/* help/* tutorials/*)
+linux: $(LX_DIR)/$(APP) $(wildcard examples/*/*.moritz examples/sounds/* library/* help/* tutorials/* docs/*/*.pdf)
 	rm -rf $(LX_DIR)/examples $(LX_DIR)/library $(LX_DIR)/help $(LX_DIR)/tutorials $(LX_DIR)/resources
+	rm -rf $(LX_DIR)/docs
 	cp -R examples library help tutorials LICENSE README.md OBJECTS.md $(LX_DIR)/
+	$(call copy_docs,$(LX_DIR))
 	mkdir -p $(LX_DIR)/resources && cp resources/about.png resources/maxundmoritz.png $(LX_DIR)/resources/
 	@echo "==> built $(LX_DIR)/$(APP)"
 
@@ -350,9 +356,11 @@ $(WIN_DIR)/$(APP).exe: $(WIN_OBJECTS) $(WIN_BUILD)/miniaudio.o $(WIN_BUILD)/RtMi
 	  $(WIN_FLTK)/lib/libfltk_z.a $(WIN_FLTK_LIB) -lwinmm -lole32 -luuid -lcomctl32 -lcomdlg32 \
 	  -lgdi32 -lgdiplus -lwinspool -lws2_32 -lshell32 -ladvapi32 -limm32 -loleaut32 -o $@
 
-windows: $(WIN_DIR)/$(APP).exe $(wildcard examples/*.moritz examples/sounds/* library/* help/* tutorials/*)
+windows: $(WIN_DIR)/$(APP).exe $(wildcard examples/*/*.moritz examples/sounds/* library/* help/* tutorials/* docs/*/*.pdf)
 	rm -rf $(WIN_DIR)/examples $(WIN_DIR)/library $(WIN_DIR)/help $(WIN_DIR)/tutorials $(WIN_DIR)/resources
+	rm -rf $(WIN_DIR)/docs
 	cp -R examples library help tutorials LICENSE README.md OBJECTS.md $(WIN_DIR)/
+	$(call copy_docs,$(WIN_DIR))
 	mkdir -p $(WIN_DIR)/resources && cp resources/about.png resources/maxundmoritz.png $(WIN_DIR)/resources/
 	@echo "==> built $(WIN_DIR)/$(APP).exe"
 
@@ -372,6 +380,7 @@ dist: $(BUNDLE)
 	mkdir -p $(BUILD)/dist/$(DIST_NAME)
 	ditto $(BUNDLE) $(BUILD)/dist/$(DIST_NAME)/$(BUNDLE)
 	ditto examples $(BUILD)/dist/$(DIST_NAME)/examples
+	$(call copy_docs,$(BUILD)/dist/$(DIST_NAME))
 	cp LICENSE README.md OBJECTS.md $(BUILD)/dist/$(DIST_NAME)/
 	find $(BUILD)/dist -name .DS_Store -delete
 	xattr -cr $(BUILD)/dist

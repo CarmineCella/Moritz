@@ -2,6 +2,7 @@
 // objects_samples.cpp — buffer~, play~, groove~, record~, sfplay~ and analysis
 
 #include "objects.h"
+#include "zoom.h"
 
 #include <FL/fl_draw.H>
 
@@ -237,6 +238,11 @@ public:
         int ch = std::clamp((int)argf(a, 0, 1.f), 1, 8);
         setPorts({P::Control}, std::vector<Port>((size_t)ch, P::Signal));
     }
+    std::vector<std::string> menuItems() override { return {"Open file..."}; }
+    void menuAction(int) override {
+        std::string f = chooseFile(false, "Open a sound for sfplay~", "Audio\t*.{wav,aif,aiff,flac,mp3}");
+        if (!f.empty()) message(0, {Atom("open"), Atom(f)});
+    }
     void message(int, const Message& m) override {
         if (m[0].is("open") && m.size() > 1) {
             SampleBuffer b;
@@ -355,11 +361,11 @@ public:
         double norm = std::clamp((db + 60.0) / 60.0, 0.0, 1.0);
         int H = h - 8, bh = (int)(H * norm);
         fl_color(fl_rgb_color(26, 27, 31));
-        fl_rectf(X + 4, Y + 4, w - 8, H);
+        zd::rectf(X + 4, Y + 4, w - 8, H);
         Fl_Color c = db > -3 ? fl_rgb_color(235, 80, 70)
                    : db > -12 ? fl_rgb_color(235, 200, 70) : fl_rgb_color(90, 200, 120);
         fl_color(c);
-        fl_rectf(X + 4, Y + 4 + H - bh, w - 8, bh);
+        zd::rectf(X + 4, Y + 4 + H - bh, w - 8, bh);
     }
 
 private:
@@ -387,9 +393,9 @@ public:
     }
     void drawUI(int X, int Y) override {
         fl_color(fl_rgb_color(20, 24, 22));
-        fl_rectf(X + 3, Y + 3, w - 6, h - 6);
+        zd::rectf(X + 3, Y + 3, w - 6, h - 6);
         fl_color(fl_rgb_color(45, 60, 52));
-        fl_xyline(X + 3, Y + h / 2, X + w - 4);
+        zd::xyline(X + 3, Y + h / 2, X + w - 4);
         size_t end = w_.load(std::memory_order_acquire);
         size_t N = (size_t)window_;
         size_t start = end > 2 * N ? end - 2 * N : 0;
@@ -398,13 +404,13 @@ public:
         for (size_t i = start + 1; i + N <= end && i < start + N; ++i)
             if (s(i - 1) < 0.f && s(i) >= 0.f) { trig = i; break; }
         fl_color(kSignal);
-        fl_push_clip(X + 3, Y + 3, w - 6, h - 6);
-        fl_begin_line();
+        zd::push_clip(X + 3, Y + 3, w - 6, h - 6);
+        zd::begin_line();
         double sx = (double)(w - 8) / (double)(N - 1), sy = (h - 10) / 2.0;
         for (size_t i = 0; i < N; ++i)
-            fl_vertex(X + 4 + i * sx, Y + h / 2.0 - std::clamp(s(trig + i), -1.f, 1.f) * sy);
-        fl_end_line();
-        fl_pop_clip();
+            zd::vertex(X + 4 + i * sx, Y + h / 2.0 - std::clamp(s(trig + i), -1.f, 1.f) * sy);
+        zd::end_line();
+        zd::pop_clip();
     }
 
 private:
@@ -430,6 +436,11 @@ public:
         setPorts(std::vector<Port>((size_t)ch_, P::Signal), {P::Control});
     }
     ~SfrecordBox() override { stop(false, false); }
+    std::vector<std::string> menuItems() override { return {"Choose file..."}; }
+    void menuAction(int) override {
+        std::string f = chooseFile(true, "sfrecord~ writes to", "WAV\t*.wav", "recording.wav");
+        if (!f.empty()) message(0, {Atom("open"), Atom(f)});
+    }
     void message(int in, const Message& m) override {
         if (in > 0) { if (m[0].isFloat()) setScalar(in, m[0].f); return; }
         if (m[0].is("open") && m.size() > 1) path_ = patch->resolvePath(m[1].str());
@@ -560,12 +571,12 @@ public:
     void drawUI(int X, int Y) override {
         int x0 = X + 3, y0 = Y + 3, W = w - 6, H = h - 6;
         fl_color(fl_rgb_color(22, 24, 28));
-        fl_rectf(x0, y0, W, H);
+        zd::rectf(x0, y0, W, H);
         const SampleBuffer* sb = b_ ? &b_->buf : nullptr;
-        fl_font(kFont, 9);
+        zd::font(kFont, 9);
         if (!sb || sb->frames <= 0) {
             fl_color(kDim);
-            fl_draw((sb ? name_ + ": empty" : "no buffer~ " + name_).c_str(), x0 + 6, y0 + H / 2 + 3);
+            zd::draw((sb ? name_ + ": empty" : "no buffer~ " + name_).c_str(), x0 + 6, y0 + H / 2 + 3);
             return;
         }
         double dur = sb->frames / sb->sr * 1000.0;
@@ -573,7 +584,7 @@ public:
             int a = x0 + (int)(std::clamp(s0_ / dur, 0.0, 1.0) * W);
             int b = x0 + (int)(std::clamp(s1_ / dur, 0.0, 1.0) * W);
             fl_color(fl_rgb_color(40, 58, 88));
-            fl_rectf(a, y0, std::max(1, b - a), H);
+            zd::rectf(a, y0, std::max(1, b - a), H);
         }
         int ch = sb->channels, laneH = H / ch;
         fl_color(kSignal);
@@ -592,17 +603,17 @@ public:
                 }
                 if (hi < lo) continue;
                 int ya = mid - (int)(std::clamp(hi, -1.f, 1.f) * half), yb = mid - (int)(std::clamp(lo, -1.f, 1.f) * half);
-                fl_yxline(x0 + px, ya, std::max(ya, yb));
+                zd::yxline(x0 + px, ya, std::max(ya, yb));
             }
         }
         if (cursor_ >= 0.f && cursor_ <= dur) {
             fl_color(kAccent);
-            fl_yxline(x0 + (int)(cursor_ / dur * W), y0, y0 + H - 1);
+            zd::yxline(x0 + (int)(cursor_ / dur * W), y0, y0 + H - 1);
         }
         fl_color(kDim);
         char label[96];
         std::snprintf(label, sizeof label, "%s  %.0f ms", name_.c_str(), dur);
-        fl_draw(label, x0 + 4, y0 + 10);
+        zd::draw(label, x0 + 4, y0 + 10);
     }
 
 private:
@@ -648,18 +659,18 @@ public:
     void drawUI(int X, int Y) override {
         int x0 = X + 3, y0 = Y + 3, W = w - 6, H = h - 6;
         fl_color(fl_rgb_color(20, 22, 26));
-        fl_rectf(x0, y0, W, H);
+        zd::rectf(x0, y0, W, H);
         double sr = patch->root()->sampleRate.load(), nyq = sr / 2;
         auto xOf = [&](double f) { return x0 + (int)(std::log(f / 20.0) / std::log(nyq / 20.0) * W); };
         auto yOf = [&](double db) { return y0 + (int)(std::clamp(-db / 90.0, 0.0, 1.0) * (H - 1)); };
         for (double f : {100.0, 1000.0, 10000.0}) {         // grid
             if (f >= nyq) continue;
             fl_color(fl_rgb_color(42, 46, 54));
-            fl_yxline(xOf(f), y0, y0 + H - 1);
+            zd::yxline(xOf(f), y0, y0 + H - 1);
         }
         for (double db : {-30.0, -60.0}) {
             fl_color(fl_rgb_color(42, 46, 54));
-            fl_xyline(x0, yOf(db), x0 + W - 1);
+            zd::xyline(x0, yOf(db), x0 + W - 1);
         }
         // spectrum of the latest kN samples
         size_t end = wpos_.load(std::memory_order_acquire);
@@ -679,17 +690,17 @@ public:
             disp_[(size_t)px] = std::max(db, disp_[(size_t)px] - 1.5f);
         }
         fl_color(fl_color_average(kSignal, fl_rgb_color(20, 22, 26), 0.35f));
-        for (int px = 0; px < W; ++px) fl_yxline(x0 + px, yOf(disp_[(size_t)px]), y0 + H - 1);
+        for (int px = 0; px < W; ++px) zd::yxline(x0 + px, yOf(disp_[(size_t)px]), y0 + H - 1);
         fl_color(kSignal);
-        fl_begin_line();
-        for (int px = 0; px < W; ++px) fl_vertex(x0 + px, yOf(disp_[(size_t)px]));
-        fl_end_line();
-        fl_font(kFont, 9);                                  // labels on top
+        zd::begin_line();
+        for (int px = 0; px < W; ++px) zd::vertex(x0 + px, yOf(disp_[(size_t)px]));
+        zd::end_line();
+        zd::font(kFont, 9);                                  // labels on top
         fl_color(kText);
         for (double f : {100.0, 1000.0, 10000.0})
-            if (f < nyq) fl_draw(f >= 1000 ? (std::to_string((int)(f / 1000)) + "k").c_str() : "100", xOf(f) + 2, y0 + 10);
-        fl_draw("-30", x0 + 2, yOf(-30) - 2);
-        fl_draw("-60", x0 + 2, yOf(-60) - 2);
+            if (f < nyq) zd::draw(f >= 1000 ? (std::to_string((int)(f / 1000)) + "k").c_str() : "100", xOf(f) + 2, y0 + 10);
+        zd::draw("-30", x0 + 2, yOf(-30) - 2);
+        zd::draw("-60", x0 + 2, yOf(-60) - 2);
     }
 
 private:

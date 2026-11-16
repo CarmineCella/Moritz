@@ -492,6 +492,22 @@ private:
 
 }  // namespace
 
+// The head-related impulse responses of a direction (the measured ones
+// around it, weighted), at a sample rate: for the binaural monitor.
+void hrirFor(double sr, double az, double el, std::vector<float>& left, std::vector<float>& right) {
+    const HrirSet& set = hrirsAt(sr);
+    int idx[4];
+    float w[4];
+    int n = set.neighbours(az, el, idx, w);
+    left.assign((size_t)set.taps, 0.f);
+    right.assign((size_t)set.taps, 0.f);
+    for (int k = 0; k < n; ++k)
+        for (int t = 0; t < set.taps; ++t) {
+            left[(size_t)t] += w[k] * set.L(idx[k])[t];
+            right[(size_t)t] += w[k] * set.R(idx[k])[t];
+        }
+}
+
 void registerSpatialObjects(ClassTable& t) {
     t.insert(t.end(), {
         {"ambienc~", "Spatial", "ambisonic encoder: [order] [azimuth] [elevation]", with<AmbiencBox>()},

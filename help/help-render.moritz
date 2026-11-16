@@ -1,9 +1,9 @@
-; help-render.moritz - the patch moritz~.help.moritz renders: plucked
+; help-render.moritz - the patch moritz.help.moritz renders: plucked
 ; resonators on a pentatonic scale, faster or slower. receive pitch (the
-; lowest MIDI note) and receive speed (ms between notes) are set by moritz~
+; lowest MIDI note) and receive speed (ms between notes) are set by moritz
 ; with "send pitch 60" and "send speed 120" before it renders.
 (patch
-  (obj c0 comment "rendered by moritz~: receive pitch (MIDI), receive speed (ms)" (pos 20 10))
+  (obj c0 comment "rendered by moritz: receive pitch (MIDI), receive speed (ms)" (pos 20 10))
   (obj rp receive pitch (pos 20 40))
   (obj rs receive speed (pos 200 40))
   (obj base f 48 (pos 20 75))

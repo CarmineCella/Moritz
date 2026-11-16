@@ -1,0 +1,169 @@
+# Samples: buffers, players, recorders, sound files
+
+@ buffer~
+syntax: buffer~ name [file] [ms] [channels]
+Named sample memory. Every object that names it (play~, groove~, record~,
+index~, poke~, waveform~, conv~, sparkle~, pursuit, soundtypes...) reads or
+writes the same samples; names are shared by all open patches, as in Max. A
+file given as argument is read when the patch opens; otherwise the buffer is
+empty, or `ms` long at the audio's sample rate. Double-click it (locked) to see
+its waveform; right-click it to load, save or clear it.
+arg name: the name the other objects use (required)
+arg file: a sound file read when the patch opens: WAV, AIFF, FLAC or MP3, relative to the patch (or among the bundled sounds)
+arg ms: the length of an empty buffer, in milliseconds (0)
+arg channels: the channels of an empty buffer, 1 to 8 (1)
+msg read file: reads a sound file; the buffer takes its length, channels and sample rate
+msg write file: writes the buffer as a WAV file
+msg size ms: changes the length, keeping what fits and filling with silence
+msg clear: sets every sample to 0
+see: play~ groove~ record~ waveform~ index~ poke~
+
+@ play~
+syntax: play~ name [channels]
+Plays a buffer~ once, at its own sample rate, interpolating between samples.
+`start` or bang plays it from the beginning, or from `from` to `to` (ms).
+With a signal connected to its inlet it plays nothing by itself: it reads the
+buffer at that position in ms, for example from line~. Double-click it
+(locked) to see the buffer~.
+arg name: the buffer~ to play (required)
+arg channels: the number of outlets, 1 to 8 (1); a mono buffer plays on all of them
+msg start [from [to]]: plays from `from` (ms, 0) to `to` (ms; the end when missing or 0)
+msg bang: plays the whole buffer
+msg stop: stops
+msg set name: plays another buffer~
+see: buffer~ groove~ index~ line~ waveform~ sfplay~
+
+@ groove~
+syntax: groove~ name [channels]
+Variable-speed playback of a buffer~: the signal in the left inlet is the
+rate (1 as recorded, 0.5 an octave down, negative backwards). Without looping
+it stops at either end; with `loop 1` it cycles between the loop start and
+end (inlets 2 and 3, ms). The last outlet is a sync ramp, 0 to 1 through the
+loop. Double-click it (locked) to see the buffer~.
+arg name: the buffer~ to play (required)
+arg channels: the number of audio outlets, 1 to 8 (1)
+msg number: jumps to that position (ms); in inlets 2 and 3, the loop start and end (ms; an end of 0, or not after the start, is the end of the buffer)
+msg loop 1/0: turns looping on or off (off)
+msg startloop: jumps to the loop start
+msg set name: plays another buffer~
+see: play~ buffer~ sig~ record~ sparkle~
+
+@ record~
+syntax: record~ name [channels]
+Records its signal inlets into a buffer~, from its beginning; the buffer
+keeps its length, so give it one (buffer~ name file, or buffer~ name ms).
+Recording stops at the end unless `loop 1` makes it wrap around. A buffer
+with more channels than inlets takes the inlets again in turn. Double-click
+it (locked) to see the buffer~.
+arg name: the buffer~ to record into (required)
+arg channels: the number of signal inlets, 1 to 8 (1)
+msg 1 / 0: 1 starts recording from the beginning, 0 stops (left inlet)
+msg loop 1/0: wraps to the beginning at the end instead of stopping (off)
+msg set name: records into another buffer~
+see: buffer~ play~ groove~ waveform~ sfrecord~ poke~
+
+@ sfplay~
+syntax: sfplay~ [channels]
+Plays a sound file without a buffer~: `open` reads the whole file into the
+object's own memory, then 1 plays it from the start (from the end when the
+speed is negative). Right-click it and choose Open file... to pick the file.
+arg channels: the number of outlets, 1 to 8 (1); a mono file plays on all of them
+msg open file: reads a WAV, AIFF, FLAC or MP3 file, relative to the patch
+msg 1 / 0: 1 plays from the start, 0 stops
+msg bang: plays from the start
+msg loop 1/0: loops the file (off)
+msg speed x: the playback speed (1); negative plays backwards
+see: play~ buffer~ sfrecord~ groove~
+
+@ sfrecord~
+syntax: sfrecord~ [channels]
+Records its signal inlets to a 24-bit WAV file at the audio's sample rate.
+`open` names the file, 1 starts and 0 stops; the file is complete once it
+stops. Audio must be on: it records once audio starts. The outlet reports
+the recorded time in ms, every 250 ms and when it stops. A writer thread
+saves the file, so recording never holds up the audio. Right-click it and
+choose Choose file... to pick the file.
+arg channels: the number of signal inlets (and channels of the file), 1 to 8 (1)
+msg open file.wav: the file to write, relative to the patch (it is overwritten)
+msg 1 / 0: 1 starts recording, 0 stops and closes the file
+msg start: starts recording
+msg stop: stops and closes the file
+see: sfplay~ record~ buffer~ dac~
+
+@ waveform~
+syntax: waveform~ name [width] [height]
+Shows a buffer~, one lane per channel, with its name and length; it follows
+the buffer while record~ writes into it. In locked mode, drag across it to
+select a region: the outlets give its start and end in ms.
+arg name: the buffer~ to show (required)
+arg width: the width in pixels, 80 to 2000 (320)
+arg height: the height in pixels, 40 to 1000 (110)
+msg number: draws a cursor at that time (ms)
+msg select start end: sets the selection (ms) and outputs it
+msg set name: shows another buffer~
+see: buffer~ play~ record~ plot
+
+@ count~
+syntax: count~ [min] [max] [loop]
+A sample counter: its output goes up by one every sample. bang starts it
+from `min`, a number from that value; `stop` stops it and the output holds
+where it stopped (`min` before the first start). At `max` it wraps to `min`,
+or stops there when `loop` is 0. Inside pfft~ a start falls on a frame
+boundary, so the count stays aligned to the bins.
+arg min: the start value (0)
+arg max: the value where it wraps or stops; 0, or not above min, counts on forever (0)
+arg loop: 1 wraps at max, 0 stops there (1)
+msg bang: counts from min
+msg number: counts from that value
+msg stop: stops counting
+see: index~ poke~ phasor~ line~ sah~
+
+@ index~
+syntax: index~ name [channel]
+Reads one channel of a buffer~ at the sample index in its inlet (a signal,
+or a number), without interpolation; indices outside the buffer read 0.
+Double-click it (locked) to see the buffer~.
+arg name: the buffer~ to read (required)
+arg channel: the channel to read, from 1 (1)
+msg set name: reads another buffer~
+see: poke~ count~ buffer~ play~
+
+@ poke~
+syntax: poke~ name [channel]
+Writes the signal in its left inlet into one channel of a buffer~, at the
+sample index in its right inlet (signals or numbers); indices outside the
+buffer are ignored. Double-click it (locked) to see the buffer~.
+arg name: the buffer~ to write (required)
+arg channel: the channel to write, from 1, at most the buffer's channels (1)
+msg set name: writes into another buffer~
+see: index~ count~ record~ buffer~
+
+@ condec
+syntax: condec
+Convolution and deconvolution of whole buffer~s, computed at once when asked
+(the author's condec). The result replaces the contents of the out buffer~,
+at the sample rate of the first; channels pair up, and the buffer with fewer
+channels repeats its last. Deconvolution divides the spectrum of y by that of
+h where h is above a threshold, so a recording can be "un-reverberated" by its
+impulse response. The outlet bangs when the result is in.
+msg conv x h out [scale] [mix]: writes x convolved with h into out (length x + h - 1), times scale (1), plus x times mix (0)
+msg deconv y h out [threshold] [scale]: writes y deconvolved by h into out (the length of y): bins where h is below threshold (0.001) times its peak are set to 0; times scale (1)
+see: conv~ buffer~ reverb~ moritz
+
+@ moritz
+syntax: moritz [patch] [channels]
+Renders another patch offline, faster than real time, into a buffer~, as a
+background job. Each render starts the patch afresh at the audio's sample
+rate (loaded, the stored sends applied, loadbang) and records its dac~. The
+rendered patch has its own send/receive and buffer~ names; its printed output
+appears when the render ends. Renders asked for while one runs wait their
+turn, with the sends and input of the moment they were asked for.
+arg patch: the patch file to render, relative to this patch
+arg channels: the dac~ channels recorded into the buffer~, 1 to 16 (2)
+msg open patch.moritz: chooses the patch to render
+msg send name value...: sends the value to the patch's receive name before every render (kept until clear)
+msg input buffer: feeds the buffer~ to the patch's adc~
+msg render buffer seconds: renders that many seconds into the buffer~, which takes their length and channels
+msg clear: forgets the sends and the input
+msg stop: cancels the render and the ones waiting
+see: buffer~ poly~ play~ condec

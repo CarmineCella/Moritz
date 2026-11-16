@@ -8,6 +8,7 @@
 // the examples folder with no list to maintain.
 
 #include "gui.h"
+#include "reference.h"
 
 #include <FL/Fl_Check_Button.H>
 #include <FL/Fl_Preferences.H>
@@ -22,9 +23,43 @@ namespace moritz {
 
 namespace {
 
-const char* const kTopics[] = {"First steps", "Synthesis", "Filters and effects", "Samples", "Spectral",
-                               "Space", "Music information retrieval", "Analysis and learning",
-                               "MIDI and patching"};
+// a category folder's title: "09-analysis-and-mir" -> "Analysis and MIR"
+std::string folderTitle(std::string f) {
+    size_t k = 0;
+    while (k < f.size() && (std::isdigit((unsigned char)f[k]) || f[k] == '-' || f[k] == '_' || f[k] == ' ')) ++k;
+    f = f.substr(k);
+    std::string out, word;
+    auto flush = [&] {
+        if (word.empty()) return;
+        std::string w = word;
+        if (w == "mir" || w == "midi" || w == "fft" || w == "dsp") for (auto& c : w) c = (char)std::toupper((unsigned char)c);
+        if (out.empty()) w[0] = (char)std::toupper((unsigned char)w[0]);
+        out += (out.empty() ? "" : " ") + w;
+        word.clear();
+    };
+    for (char c : f) {
+        if (c == '-' || c == '_' || c == ' ') flush();
+        else word += c;
+    }
+    flush();
+    return out;
+}
+
+// the category folders of the examples, in order (not sounds)
+std::vector<std::string> exampleFolders(const std::string& dir) {
+    std::vector<std::string> out;
+    if (dir.empty()) return out;
+    dirent** list = nullptr;
+    int n = fl_filename_list(dir.c_str(), &list, fl_casealphasort);
+    for (int k = 0; k < n; ++k) {
+        std::string f = list[k]->d_name;
+        if (!f.empty() && f.back() == '/') f.pop_back();
+        if (f.empty() || f[0] == '.' || f == "sounds") continue;
+        if (std::string sub = dir + "/" + f; fl_filename_isdir(sub.c_str())) out.push_back(f);
+    }
+    fl_filename_free_list(&list, n);
+    return out;
+}
 
 struct Entry {
     enum Kind { Tutorial, Example, Object, Recent } kind;
@@ -164,13 +199,26 @@ private:
             for (auto& c : e.name) if (c == '-') c = ' ';
             entries_.push_back(e);
         }
-        for (auto& p : patchFiles(resourceDir("examples"))) {
-            Entry e{Entry::Example, displayName(p), p, "", ""};
-            readHeader(p, e.text, e.topic);
-            if (e.topic == "hidden") continue;
-            if (e.topic.empty()) e.topic = "More examples";
-            entries_.push_back(e);
+        // the examples: a folder a category; a "; topic: hidden" header hides a
+        // patch (the voices and parts other examples use)
+        topics_.clear();
+        std::string exdir = resourceDir("examples");
+        auto addExamples = [&](const std::string& dir, const std::string& topic) {
+            for (auto& p : patchFiles(dir)) {
+                Entry e{Entry::Example, displayName(p), p, "", ""};
+                std::string hidden;
+                readHeader(p, e.text, hidden);
+                if (hidden == "hidden") continue;
+                e.topic = topic;
+                entries_.push_back(e);
+            }
+        };
+        for (auto& f : exampleFolders(exdir)) {
+            topics_.push_back(folderTitle(f));
+            addExamples(exdir + "/" + f, topics_.back());
         }
+        topics_.push_back("More examples");
+        addExamples(exdir, topics_.back());
         for (auto& c : classInfos())
             if (!c.group.empty()) entries_.push_back({Entry::Object, c.name, c.name, c.group, c.desc});
         for (auto& n : libraryNames()) {
@@ -199,13 +247,9 @@ private:
         // start here: the tutorials, in order
         for (auto& e : entries_)
             if (e.kind == Entry::Tutorial && match(e)) { if (!s) s = section("Start here: tutorials"); add(s, e); }
-        // examples by topic, in the topics' order, then any other topic
-        std::vector<std::string> topics(std::begin(kTopics), std::end(kTopics));
-        for (auto& e : entries_)
-            if (e.kind == Entry::Example && std::find(topics.begin(), topics.end(), e.topic) == topics.end())
-                topics.push_back(e.topic);
+        // examples by category, in the folders' order
         Fl_Tree_Item* ex = nullptr;
-        for (auto& t : topics) {
+        for (auto& t : topics_) {
             Fl_Tree_Item* ti = nullptr;
             for (auto& e : entries_)
                 if (e.kind == Entry::Example && e.topic == t && match(e)) {
@@ -253,10 +297,13 @@ private:
     void picked() {
         const Entry* e = selected();
         if (!e) { open_->deactivate(); return; }
-        std::string head = e->kind == Entry::Object ? e->name + "  (" + e->topic + ")" : e->name;
-        std::string body = e->text.empty() ? "(no description)" : e->text;
-        if (e->kind == Entry::Object) body += "\n\nOpen shows its help patch: a working example to play with.";
-        text_->text((head + "\n\n" + body).c_str());
+        if (e->kind == Entry::Object) {                   // the object's reference
+            std::string ref = referenceText(e->name);
+            text_->text((e->topic + "\n\n" + ref + "\nOpen help shows a working example to play with.").c_str());
+        } else {
+            std::string body = e->text.empty() ? "(no description)" : e->text;
+            text_->text((e->name + "\n\n" + body).c_str());
+        }
         open_->label(e->kind == Entry::Object ? "Open help" : "Open");
         open_->activate();
         if (Fl::event_clicks() > 0 && tree_->callback_reason() != FL_TREE_REASON_DESELECTED) {
@@ -286,6 +333,7 @@ private:
     Fl_Button* open_;
     Fl_Check_Button* startup_;
     std::vector<Entry> entries_;
+    std::vector<std::string> topics_;     // example categories, in order
     std::vector<Fl_Tree_Item*> items_;
 };
 
@@ -297,6 +345,8 @@ Fl_Preferences& prefs() {
 }
 
 }  // namespace
+
+Fl_Preferences& appPrefs() { return prefs(); }
 
 void App::showBrowser() {
     if (!gBrowser) gBrowser = new BrowserWindow();

@@ -72,14 +72,21 @@ Moritz opens on the **browser**, the place to start:
   a first patch, numbers and messages, sound files, filters, the spectrum,
   grains, sound in space, separating sounds, listening machines, atoms and
   types.
-- **Examples**, by topic: synthesis, samples, spectral processing, space,
-  music information retrieval, learning, MIDI. Each one says what it shows
-  at the top.
-- **Objects**: every object, opening its help patch, a small working example
-  with notes.
+- **Examples**, by category (the folders of `examples/`): first steps,
+  synthesis, generative music, filters and effects, samples, spectral
+  processing, space, atoms and types, analysis and MIR, learning, MIDI. Each
+  one says what it shows at the top.
+- **Objects**: every object with its reference (arguments, messages, inlets,
+  outlets), opening its help patch, a small working example with notes.
 
 Turn audio on with the **Audio** button in the toolbar (Cmd+/), and use the
-search box to find anything.
+search box to find anything. The toolbar also zooms the patch (Cmd+ and Cmd-,
+Cmd+0 for 100%), opens the browser and the console, records what you hear
+(the quick recorder) and shows the CPU load and the output level.
+
+Help > Documents opens the PDFs in `docs/`, such as "Sound decomposition
+strategies for creative hybridizations", on the methods of the atoms and
+types objects.
 
 ## Patching
 
@@ -98,8 +105,16 @@ Moritz follows Max's conventions:
 - **Editing**: select by clicking or dragging a rectangle; Option-drag copies;
   Cmd+X, Cmd+C, Cmd+V and Cmd+D cut, copy, paste and duplicate, also between
   patches; Cmd+Z undoes.
-- **Help**: right-click any box and choose Help (or Option-click it in locked
-  mode).
+- **Help and reference**: right-click any box and choose Help (or
+  Option-click it in locked mode) for a working example, or Reference for
+  every argument, message, inlet and outlet. Help windows have a Reference
+  button too.
+- **Right-click** also offers what a box can do: load or save a `buffer~`,
+  open a `plot`'s window or export it, choose the file of `sfplay~` and
+  `sfrecord~`. Double-clicking an object that names a `buffer~` (locked)
+  shows its waveform, as in Max.
+- **Zoom**: Cmd+ and Cmd- (or the toolbar) zoom the patch; View > Interface
+  makes the whole interface larger or smaller.
 - **Code view**: Cmd+T shows the patch as text beside the drawing. Edit
   either and the other follows.
 - **Subpatchers and abstractions**: `p name` holds a patch inside a box; any
@@ -108,7 +123,22 @@ Moritz follows Max's conventions:
 - **Several patches** play at once and share their `send`/`receive` and
   `buffer~` names, as in Max.
 - **Console** (Shift+Cmd+M): what `print` prints, errors, audio and file
-  events.
+  events. Its toolbar button shows a red dot after an error.
+- **Quick recorder** (Extras, or the toolbar's Record button): records what
+  goes to the speakers into a 24-bit WAV file in Music/Moritz Recordings.
+- **Links**: a `link` box opens a document, a folder or a web page with a
+  click.
+- **Multichannel**: the sound card opens with all its channels, so
+  `dac~ 1 2 3 4 5 6 7 8` plays on eight speakers and ambisonic decoders
+  reach every speaker (Audio Setup can limit the channels). A patch can also
+  use more channels than the card has: they are metered and recorded by the
+  quick recorder, and rendered offline, just not heard.
+- **Binaural monitor** (Extras): listen to a multichannel or ambisonic
+  piece on headphones. Every output channel becomes a speaker around you
+  (a ring, or the directions you type), rendered with the MIT KEMAR head
+  responses on channels 1 and 2.
+- **Channel tester** (Extras): bursts of noise on one channel at a time, or
+  stepping through all of them, to find which speaker is which.
 - **Audio and MIDI**: Patch > Audio Setup picks the devices; Moritz listens
   to every MIDI input and, on macOS and Linux, offers a virtual output port
   called "Moritz" (on Windows, Patch > MIDI Setup picks an output device).

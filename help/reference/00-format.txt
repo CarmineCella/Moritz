@@ -1,0 +1,14 @@
+# The reference of the objects: one entry per object (or per family of
+# objects), read by Moritz (the Reference window, the Browser) and turned into
+# OBJECTS.md by `moritz --reference-md`. The inlets and outlets are not
+# written here: they come from the code (ports.cpp) and are added when shown.
+#
+#   @ name [other names]          the names it answers to (aliases too: @ trigger t)
+#   syntax: name args...          [ ] around optional arguments
+#   a paragraph of description    (several lines join; an empty line starts a new paragraph)
+#   arg name: what it is          one per argument, in order, with its default
+#   msg word args: what it does   one per message the object understands
+#   see: other objects            related objects
+#
+# Lines starting with "# " (a hash and a space) are comments. Files are read in alphabetical order;
+# this one holds no entries.

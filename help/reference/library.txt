@@ -1,0 +1,67 @@
+# Library: abstractions in library/, made of other objects (double-click one to open it)
+
+@ reverb~
+syntax: reverb~ [mix] [T60]
+A stereo Freeverb. Inlets: the signal, the wet/dry mix (0 dry to 1 wet, a
+20 ms ramp) and the decay time T60 in seconds (0.1 to 100). Outlets: left
+and right. Per channel, eight damped combs (fvcomb~) in parallel, then four
+allpass~ (gain 0.5) in series; the right channel's delays are 23 samples
+longer (at 44.1 kHz), so the two outputs are decorrelated. Each comb's
+feedback is g = 10^(-3 d / T60) for its delay d in seconds, so the tail falls
+by 60 dB in T60 seconds, the highs a little faster (damping).
+arg mix: the wet/dry mix, 0 to 1 (0 or none: 0.3)
+arg T60: the decay time, in seconds, 0.1 to 100 (0 or none: 2)
+see: fvcomb~ allpass~ comb~ tapin~ conv~
+
+@ fvcomb~
+syntax: fvcomb~ ms name
+One Freeverb comb filter, used by reverb~: a feedback comb with a one-pole
+low-pass in the loop (damping), as in Jezar's Freeverb. One signal inlet, one
+signal outlet. Its decay time T60 (seconds) arrives on the receive name
+`name-t60`; the feedback g = 10^(-3 d / T60) for its delay d, ramped over
+50 ms, so every comb dies away in the same time.
+arg ms: the delay, in milliseconds (100 at most)
+arg name: the prefix of the receive that sets the decay: name-t60
+see: reverb~ comb~ tapin~ tapout~ biquad~
+
+@ impose~
+syntax: impose~ [order]
+The spectral envelope of one sound imposed on another (Musil's
+impose-envelope): the carrier speaking with the modulator's formants, an
+orchestra or a synth that speaks with a voice. Inlets: the modulator (whose
+colour is taken), the carrier (what sounds), the envelope order. One signal
+outlet. Built from specenv~ in a pfft~ of 1024 points, overlap 4
+(impose-fx): the carrier's fine structure times the modulator's envelope.
+arg order: the envelope order, its resolution: about sr / (2 f0) of the modulator (0 or none: 60)
+see: specenv~ pfft~ sparkle~ pitchshift~ impose-fx
+
+@ impose-fx
+syntax: impose-fx
+The spectral patch of impose~, run by its pfft~ once a frame: the carrier's
+amplitudes divided by their envelope (its fine structure) times the
+modulator's envelope, with the carrier's phases. fftin~ 1 is the modulator,
+fftin~ 2 the carrier, and the control inlet the envelope order of both
+specenv~. Internal: use impose~.
+see: impose~ pfft~ specenv~ cartopol~
+
+@ binpan~
+syntax: binpan~ [azimuth] [elevation]
+A mono sound placed around the listener, for headphones. Inlets: the signal,
+the azimuth in degrees (0 in front, 90 left, -90 right, 180 behind), the
+elevation in degrees (up). Outlets: left and right. An order-2 ambisonic
+encoder (ambienc~ 2) into binaural~ 2: each binpan~ has its own binaural~, so
+for many sources sum their ambisonic fields and decode them with a single
+binaural~.
+arg azimuth: the starting azimuth, in degrees (0)
+arg elevation: the starting elevation, in degrees (0)
+see: ambienc~ binaural~ hrtf~ ambirot~
+
+@ pitchshift~
+syntax: pitchshift~ [semitones]
+A live pitch shifter. Inlets: the signal, the transposition in semitones
+(decimals allowed), formant preservation 1/0 (on at the start: a voice keeps
+its timbre; 0: the formants move with the pitch). One signal outlet, a window
+(2048 samples) late. It is sparkle~ without a buffer~, its pitch ratio
+2^(semitones / 12), with envelope 60 for the formants.
+arg semitones: the starting transposition, in semitones (0)
+see: sparkle~ impose~ specenv~ pfft~

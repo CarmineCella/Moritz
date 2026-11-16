@@ -1,0 +1,62 @@
+# Spatial: ambisonics (AmbiX: ACN order, SN3D) and binaural sound
+#
+# Azimuth in degrees, 0 in front, positive to the left; elevation in degrees,
+# positive up. A sound field of order N has (N+1)^2 channels: W Y Z X at order 1.
+
+@ ambienc~
+syntax: ambienc~ [order] [azimuth] [elevation]
+Encodes a mono signal at a direction as an ambisonic sound field of
+(order+1)^2 channels (AmbiX: ACN order, SN3D; at order 1, W Y Z X). Azimuth
+and elevation are numbers or signals; moving sources glide, the gains are
+interpolated over each block. Fields add channel by channel, so several
+sources can be summed before decoding.
+arg order: the ambisonic order, 1 to 5 (1)
+arg azimuth: degrees, 0 in front, 90 to the left (0)
+arg elevation: degrees, positive up (0)
+see: ambirot~ ambidec~ binaural~ hrtf~ binpan~
+
+@ ambirot~
+syntax: ambirot~ [order] [yaw]
+Turns a sound field about the vertical axis by the yaw in its last inlet,
+exactly: within each order the pair of channels m, -m rotates by m times the
+yaw. To follow a listener's head, rotate by minus the head's yaw.
+arg order: the ambisonic order, 1 to 5 (1)
+arg yaw: the rotation in degrees, positive to the left (0)
+msg number: in the last inlet, the yaw (degrees)
+see: ambienc~ ambidec~ binaural~
+
+@ ambidec~
+syntax: ambidec~ order azimuth ...
+Decodes a sound field to loudspeakers on a horizontal ring, one outlet per
+azimuth, in the order given (ambidec~ 1 45 135 -135 -45 is a square: front
+left, back left, back right, front right). It uses the horizontal channels
+only: for an evenly spaced ring of at least 2N+1 speakers this is the exact
+(mode-matching) decoder, with 2D max-rE weights.
+arg order: the ambisonic order, 1 to 5 (1)
+arg azimuth: the speakers' azimuths in degrees, one per outlet (45 135 -135 -45 when none is given)
+see: ambienc~ ambirot~ binaural~ dac~
+
+@ binaural~
+syntax: binaural~ [order]
+Plays a sound field on headphones. The field is decoded to 17 virtual
+speakers over the sphere (8 at ear height, 4 above, 4 below, 1 overhead),
+each heard through the measured head-related impulse responses of its
+direction (MIT KEMAR), with SN3D normalisation and 3D max-rE weights. All of
+it folds into one filter pair per channel, so the cost does not depend on
+the number of sources. A source in front plays at the level of the front
+head response.
+arg order: the ambisonic order, 1 to 5 (1)
+see: ambienc~ ambirot~ hrtf~ binpan~
+
+@ hrtf~
+syntax: hrtf~ [azimuth] [elevation]
+Places a mono sound at a direction on headphones through the measured
+head-related impulse responses themselves (all 710 directions of the MIT
+KEMAR set): the four measured directions around the one asked for,
+interpolated. Without ambisonics in between, the cues of the outer ear stay
+sharp, so height is clearer than with binaural~, and the level follows the
+real head (quieter behind and above). Azimuth and elevation are numbers or
+signals; a moving direction crossfades within each block.
+arg azimuth: degrees, 0 in front, 90 to the left, 180 behind (0)
+arg elevation: degrees, -40 to 90 (0)
+see: binaural~ ambienc~ binpan~

@@ -1,0 +1,292 @@
+# Control: math, expressions, counting, routing, storing and sending messages
+
+@ + - * / %
+syntax: + [operand]
+Arithmetic on numbers: add, subtract, multiply, divide, remainder. The left
+inlet is hot: a number sets the left operand and outputs the result; the right
+inlet only stores the right operand. As in Max, the argument sets the type: an
+integer argument, or none, truncates both operands (7 / 2 is 3, 7.5 / 2 is 3);
+an argument with a point (2. or 0.5) works in decimals (7 / 2. is 3.5).
+
+Dividing by 0, or a remainder by 0, gives 0. % keeps the sign of the left
+operand: -7 % 3 is -1.
+arg operand: the right operand, and the type: integer, or decimal when written with a point (0)
+msg number: sets the left operand and outputs the result
+msg list a b: sets both operands and outputs the result
+msg bang: outputs the result again
+see: expr scale == trigger
+
+@ == != > < >= <=
+syntax: == [operand]
+Comparisons: equal, not equal, greater, less, greater or equal, less or equal.
+The output is 1 when the comparison holds, 0 when it does not. The left inlet
+is hot, the right one stores the number to compare with. Typed like the
+arithmetic: an integer argument, or none, truncates the input (0.5 > 0 is 0);
+write > 0. to compare decimals.
+arg operand: the number to compare with, and the type: integer, or decimal when written with a point (0)
+msg number: compares it and outputs 1 or 0
+msg list a b: sets both numbers and outputs the result
+msg bang: outputs the result again
+see: + if select expr gate
+
+@ mtof
+syntax: mtof
+Converts a MIDI note number to a frequency in Hz, with A 440 Hz at note 69
+and twelve equal steps per octave. Fractional notes are kept: 60.5 is a
+quarter tone above middle C.
+msg number: converts it and outputs the frequency
+msg bang: outputs the last result again
+see: ftom dbtoa notein expr
+
+@ ftom
+syntax: ftom
+Converts a frequency in Hz to a MIDI note number (440 Hz is 69). The result
+is not rounded: 450 Hz gives 69.39. A frequency of 0 or less gives 0.
+msg number: converts it and outputs the note
+msg bang: outputs the last result again
+see: mtof atodb expr
+
+@ dbtoa
+syntax: dbtoa
+Converts decibels to a linear amplitude: 0 dB is 1, -6 dB about 0.5, -20 dB
+0.1.
+msg number: converts it and outputs the amplitude
+msg bang: outputs the last result again
+see: atodb mtof scale
+
+@ atodb
+syntax: atodb
+Converts a linear amplitude to decibels: 1 is 0 dB, 0.5 about -6 dB. An
+amplitude of 0 or less gives -999.
+msg number: converts it and outputs the decibels
+msg bang: outputs the last result again
+see: dbtoa ftom scale
+
+@ scale
+syntax: scale [in-low] [in-high] [out-low] [out-high] [exp]
+Maps a number from one range to another. Values outside the input range are
+not clipped; reversed ranges invert the map. With an exponent of 1 the map is
+a straight line; above 1 it starts slowly and speeds up, below 1 the reverse
+(the curve is mirrored for values below the input low). As in Max, exactly
+four integer arguments make the output integers (truncated); any other case
+outputs decimals. The inlets after the first change the five parameters.
+arg in-low: the low end of the input range (0)
+arg in-high: the high end of the input range (127)
+arg out-low: the output for in-low (0)
+arg out-high: the output for in-high (1)
+arg exp: the curve exponent (1, a straight line)
+msg number: maps it and outputs the result
+msg bang: outputs the last result again
+see: expr + mtof dbtoa line
+
+@ expr
+syntax: expr expression
+Evaluates a C-like expression of its inputs: $f1..$f9 are decimals, $i1..$i9
+the same inputs truncated to integers ($v1..$v9, for expr~, read like $f).
+There is one inlet per variable, up to the highest number used; the left one
+is hot, the others only store. A syntax error is printed to the console when
+the box is made, and the box then outputs nothing. A result that is not a
+finite number gives 0.
+
+As in Max, values are typed: $i, integer constants (12) and the results of
+comparisons are integers; $f and constants with a point or an exponent (12.,
+1e3) are decimals. A division between two integers is an integer one: 7 / 2
+is 3, while 7. / 2 or $f1 / 2 is 3.5.
+
+Operators: + - * / % (dividing by 0 gives 0), the comparisons == != < > <=
+>= (1 or 0), && || ! (logic), unary minus, and ( ) for grouping. Functions
+of one argument: sin cos tan asin acos atan sinh cosh tanh exp log log10
+sqrt abs fabs floor ceil int round. Of two: pow(x, y), atan2(y, x),
+min(a, b), max(a, b), fmod(a, b), random(lo, hi) (a decimal from lo to hi).
+The constant pi.
+arg expression: the expression, written on the box (required)
+msg number: sets $f1 / $i1 and outputs the result
+msg list a b ...: sets $f1, $f2 ... in order and outputs the result
+msg bang: outputs the result again
+see: expr~ if + scale trigger
+
+@ if
+syntax: if condition then message [else message]
+Chooses a message by a condition, as in Max. The condition is an expr
+expression over $i1..$i9 and $f1..$f9; when it is not 0 the message after
+then goes out, otherwise the one after else (if any). The messages are written
+like message boxes and use the same variables, plus $s1 for a word arriving at
+the left inlet. There is one inlet per variable, up to the highest number used
+(in the condition or the messages); the left one is hot.
+
+out2 at the start of a message sends it from a second outlet (which exists
+only when out2 is used); send name at the start sends it to every receive
+name instead of an outlet. Errors, such as a missing then, are printed to the
+console.
+arg condition: an expression, as in expr (required)
+arg then message: the message sent when the condition holds (required)
+arg else message: the message sent otherwise (none)
+msg number: sets $i1 / $f1 and evaluates
+msg list a b ...: sets the variables in order and evaluates
+msg word: sets $s1 and evaluates
+msg bang: evaluates again
+msg set a b ...: stores the variables in order, without evaluating
+see: expr == select route gate send
+
+@ random
+syntax: random [range]
+Outputs a random integer from 0 to range-1 on each bang. The generator starts
+from a different seed every time; seed makes the sequence repeatable. A range
+below 1 is taken as 1.
+arg range: how many different integers it outputs (2)
+msg bang: outputs a new random integer
+msg seed x: restarts the generator from seed x, so the same sequence follows
+see: counter expr scale metro
+
+@ counter
+syntax: counter [max] | counter min max
+Counts. Each bang outputs the count, then steps it up by one; after max
+(included) it goes back to min: counter 3 counts 0 1 2 3 0 1 ... With no
+arguments it keeps counting up. Arguments given in the wrong order are
+swapped. The right inlet sets the next value, like set.
+arg min: the first value, and the value after max (0)
+arg max: the last value before it wraps (no limit without arguments)
+msg bang: outputs the count, then steps it
+msg number: the same as bang; the number itself is ignored
+msg set n: n is the next value output
+msg reset: goes back to min, without output
+see: metro random select + int
+
+@ trigger t
+syntax: trigger [types...]
+Sends its input out of every outlet, from right to left, converting it for
+each outlet: use it to order events, and to fill cold inlets before hot ones.
+One outlet per argument: b a bang, f the first number (0 for a word), i that
+number truncated, l or a the whole message, s the first word. Any other
+argument (a number or a word) is sent as it is, a constant. With no arguments
+it is trigger b b.
+arg types: one per outlet: b, f, i, l, a, s or a constant (b b)
+msg anything: sent out of the outlets, right to left, converted
+see: pack unpack int delay route
+
+@ pack
+syntax: pack [items...]
+Builds a list from separate values: one inlet per item. The left inlet is hot:
+a number sets the first item and outputs the list; the others only store. Each
+argument gives a slot its first value and its type, as in Max: an integer (0)
+or i is an integer and truncates what it gets, a decimal (0.) or f keeps it,
+s or any other word holds words (a word is also its first value). A word sent
+to a number slot stores 0. With no arguments it is pack 0 0.
+arg items: one per slot: its first value and type (0 0)
+msg number: sets the first item and outputs the list
+msg list a b ...: sets the items from the first and outputs the list
+msg bang: outputs the list again
+msg set a b ...: sets the items from the first, without output
+see: unpack prepend trigger route
+
+@ unpack
+syntax: unpack [items...]
+Splits a list: one outlet per argument, sending the items out from right to
+left. The arguments type the outlets as in pack: an integer (0) or i
+truncates, a decimal (0.) or f passes decimals, s or another word passes words;
+a word arriving at a number outlet gives 0. Extra items are dropped. With no
+arguments it is unpack 0 0.
+arg items: one per outlet: its type (0 0)
+msg list a b ...: sends each item out of its outlet, right to left
+see: pack route trigger
+
+@ prepend
+syntax: prepend [words...]
+Puts its words before every message it gets and outputs the result. prepend
+set turns a list into set ..., which shows it in a message box without
+sending it. A bang alone outputs the words alone. The right inlet replaces the
+words with the message it gets.
+arg words: the words put in front (none)
+msg anything: output with the words before it
+msg bang: outputs the words alone
+see: append route message pack
+
+@ append
+syntax: append [words...]
+Puts its words after every message it gets and outputs the result. A bang
+alone outputs the words alone. The right inlet replaces the words with the
+message it gets.
+arg words: the words put after (none)
+msg anything: output with the words after it
+msg bang: outputs the words alone
+see: prepend route message pack
+
+@ route
+syntax: route [keys...]
+Dispatches messages by their first word: a message whose first word (or
+number) equals a key goes out of that key's outlet without it, as a bang when
+nothing is left. Anything else goes out of the last outlet, unchanged. Keys
+can be words or numbers: route 1 2 sends 2 64 out of its second outlet as 64.
+With no arguments it is route 0.
+arg keys: one per outlet, words or numbers (0)
+msg anything: dispatched by its first word
+see: select gate unpack prepend if
+
+@ select sel
+syntax: select [values...]
+Bangs the outlet whose argument equals the input; anything else goes out of
+the last outlet unchanged. Only the first word of a message is compared, and a
+number never equals a word. With a single argument there is a right inlet,
+which changes the value to match. With no arguments it is select 0.
+arg values: one per outlet, words or numbers (0)
+msg anything: a bang from the matching outlet, or passed out of the last one
+see: route == gate counter
+
+@ gate
+syntax: gate [outlets] [open]
+Passes messages to one of its outlets, or to none. The left inlet chooses
+the outlet, from 1, and 0 closes the gate (numbers outside are clipped); the
+right inlet takes the data. Mind the order: the choice is on the left, the
+data on the right. gate 1 with a toggle is an on/off switch.
+arg outlets: how many outlets, 1 to 64 (1)
+arg open: the outlet open at first, 0 for closed (0)
+msg number: in the left inlet, chooses the open outlet (0 closes)
+msg anything: in the right inlet, sent out of the open outlet
+see: route select selector~ if
+
+@ int i
+syntax: int [value]
+Stores an integer and outputs it again on bang. Numbers are truncated toward
+0: 3.7 becomes 3, and -3.7 becomes -3. The right inlet stores without
+output.
+arg value: the first value (0)
+msg number: stores it and outputs it
+msg bang: outputs the stored value
+msg set x: stores x without output
+see: float trigger pack counter
+
+@ float f
+syntax: float [value]
+Stores a decimal number and outputs it again on bang. The right inlet stores
+without output.
+arg value: the first value (0)
+msg number: stores it and outputs it
+msg bang: outputs the stored value
+msg set x: stores x without output
+see: int trigger pack flonum
+
+@ send s
+syntax: send name
+Sends every message it gets to all the receive objects with the same name,
+without cables. Names are shared by all open patches and their subpatchers,
+as in Max, so choose names that won't clash. A message box sends too: ; name
+message. The name dsp is reserved: 1 or start turns audio on, 0 or stop off.
+Without a name it sends nothing.
+arg name: the name the receive objects listen to (required)
+msg anything: sent to every receive name
+see: receive send~ message print
+
+@ receive r
+syntax: receive name
+Outputs every message sent to its name, by send objects or by message boxes
+(; name message), from any open patch.
+arg name: the name it listens to (required)
+see: send receive~ message loadbang
+
+@ print
+syntax: print [name]
+Writes every message it gets to the console (Patch > Console), as name:
+message. Give each print its own name to tell the lines apart.
+arg name: the label at the start of each line (print)
+msg anything: printed to the console
+see: send message trigger

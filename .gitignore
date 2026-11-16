@@ -3,3 +3,17 @@ build/
 moritz
 Moritz.app/
 .DS_Store
+tmp_work/
+Moritz.zip
+# LaTeX byproducts (docs/ keeps the .tex and the .pdf)
+*.aux
+*.log
+*.out
+*.toc
+*.fls
+*.fdb_latexmk
+*.synctex.gz
+*.bbl
+*.blg
+*.nav
+*.snm

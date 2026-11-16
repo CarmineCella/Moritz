@@ -1,0 +1,142 @@
+# Atoms and types: matching pursuit (after Maple) and sound types (after SoundTypes)
+
+@ atoms
+syntax: atoms name
+A dictionary for pursuit, shared by name: pursuit and soundtypes find it by
+its name. It holds parametric atoms (gabor, gammatone:
+windowed cosines at every scale, position and frequency) or atoms of sound
+cut from recordings, each of unit energy. It starts empty; building one from
+files runs as a background job, and the number of atoms comes out when it is
+ready (for gabor and gammatone, the number of scales).
+
+The folder messages read every WAV, AIFF, FLAC and MP3 file of a folder (not
+its subfolders), mixed to mono at 44.1 kHz, and replace the dictionary; `add`
+appends to a dictionary of sounds. Right-click the box for Info and Save the
+dictionary...
+arg name: the name pursuit, soundtypes and the others use (required)
+msg gabor [min max] [fmax]: Gaussian-windowed cosines, window lengths from min to max samples (powers of 2, from 32 to 65536; 256 and 8192), frequencies from 40 Hz up to fmax (16000), at the audio's sample rate
+msg gammatone [min max] [fmax]: the same with a gammatone envelope (sharp attack, slow decay): good for attacks
+msg frames folder [ms] [hop]: every sound file of a folder cut into Hann-windowed frames of ms milliseconds (100), one every hop ms (the same as ms)
+msg onsets folder [threshold] [max]: the files cut at their onsets (threshold 2), each piece max ms long at most (1000); pieces under 20 ms are skipped
+msg files folder [max]: every file whole, max ms at most (2000)
+msg add buffer [frames ms hop | onsets threshold max | whole]: adds atoms cut from a buffer~ (whole by default, 2000 ms at most), at the dictionary's sample rate
+msg get k buffer: writes atom k (from 0) of a dictionary of sounds into a buffer~, to listen to it
+msg clear: empties the dictionary
+msg write file: saves the dictionary (a .atoms file)
+msg read file: loads a dictionary saved with write
+msg info: prints its kind and size in the Console
+msg stop: cancels the job
+see: pursuit soundtypes buffer~ onsets
+
+@ pursuit
+syntax: pursuit
+Matching pursuit, as a background job: a buffer~ explained as a sum of atoms
+of a dictionary (an atoms object), the strongest first, then rebuilt,
+transformed or hybridised. With gabor and gammatone atoms it is an STFT per
+scale with local updates (every position on a grid of a quarter of the scale,
+the frequency refined by a parabola, the phase by an exact projection); it
+stops after `atoms` atoms or when the residual is `snr` dB under the sound.
+With atoms of sound the target is cut into segments (at its onsets, or in
+blocks), and each is explained by `components` atoms, each slid to its best
+place by FFT cross-correlation among the `candidates` closest in mel
+spectrum.
+
+The decomposition (the book) is a buffer~ of 8 channels, one frame an atom,
+at the sound's sample rate: time (s, the atom's centre), frequency (Hz),
+level (dB), dictionary atom (-1 for parametric atoms), length (samples),
+amplitude, phase, start (samples). plot in scatter mode draws it as an atom
+map. After a run the number of atoms and the signal-to-residual ratio (dB)
+come out. A result that would clip is scaled down, with a message in the
+Console.
+msg run sound dictionary book [residual]: decomposes the buffer~ sound (mixed to mono) with the atoms dictionary into the buffer~ book; what is left goes to the buffer~ residual if named
+msg synth book dictionary out: rebuilds a sound from a book into the buffer~ out, with ratio, stretch, tails and keep
+msg cross book from to out: rebuilds a book made with dictionary from using the closest atoms (in mel spectrum) of dictionary to: both must be dictionaries of sounds
+msg atoms n: parametric atoms: the most atoms to find (2000)
+msg snr dB: parametric atoms: stops when the residual is this far under the sound (30)
+msg components n: sound atoms: atoms a segment, 1 to 64 (4)
+msg candidates n: sound atoms: the atoms tried by cross-correlation in each segment (16)
+msg segments onsets | blocks: sound atoms: cut the target at its onsets (default) or into blocks
+msg block ms: the length of the blocks, and the longest segment (100)
+msg threshold x: the onset threshold for segments onsets (2)
+msg ratio r: synthesis: transposition, 0.05 to 20 (1)
+msg stretch s: synthesis: time stretch, 0.05 to 50 (1)
+msg tails 1/0: synthesis: 1, sound atoms ring whole; 0, they stop where they matched (1)
+msg keep f: synthesis: the share of the atoms used, strongest first, 0 to 1 (1)
+msg stop: cancels the job
+see: atoms soundtypes typematch plot buffer~ nmf
+
+@ soundtypes
+syntax: soundtypes name
+A sound analysed into types, after SoundTypes (ICMC 2013), as a background
+job, and shared by name with typegen and typematch. Level 1: the frames of
+the sound (13 MFCCs, centroid and level; with `pitch 1` also the 12 pitch
+classes) or the atoms of a pursuit book are clustered into `types` types
+(k-means++) and smoothed; runs of one type are the units. With `segment
+onsets` the units are instead the notes or strokes between onsets, described
+and clustered as wholes. Levels 2 and 3 group the units of the level below
+into gestures, cut where the next type is surprising, then cluster them.
+
+After an analysis the number of units of each level comes out as a list.
+Right-click the box for Info and Write the units as text...
+arg name: the name typegen and typematch use (required)
+msg analyse sound: analyses a buffer~ (mixed to mono)
+msg analyse book dictionary: analyses the atoms of a pursuit book instead (a book is always cut into frames); its units are rebuilt from their atoms
+msg segment frames: level 1 from runs of frames of one type (default)
+msg segment onsets [threshold] [gap]: level 1 from the spans between onsets (threshold 1.5; onsets at least gap ms apart, 80)
+msg pitch 1/0: adds the pitch classes (chroma) to the frame features, so that types follow harmony too (0)
+msg types k1 [k2 k3]: the number of types at each level, 2 to 64 (12 6 4)
+msg levels n: the number of levels, 1 to 3 (2)
+msg threshold z: how surprising a type must be to end a gesture: its surprise above the mean plus z standard deviations (1)
+msg smooth n: level-1 labels take the majority over n frames, made odd (5)
+msg size n: the analysis window, a power of 2 from 256 to 16384 samples (2048)
+msg hop n: the step between frames, 32 to 8192 samples (512)
+msg seed n: the seed of the clustering (1)
+msg labels buffer: writes the type of every frame into a buffer~, one channel a level: plot it with colors types
+msg transitions level buffer: writes the probabilities of passing from type to type at a level into a buffer~ (a matrix)
+msg play level type: outputs the start and end (ms) of a unit of that type, chosen at random
+msg write file: writes the units as text, one a line: level start end type (seconds)
+msg info: prints the units and types of each level in the Console
+msg stop: cancels the job
+see: typegen typematch pursuit atoms plot kmeans
+
+@ typegen
+syntax: typegen [model]
+New sequences of the types of a soundtypes model, at one of its levels: the
+classic n-grams of SoundTypes, a variable-order Markov model, or a factor
+oracle that follows the original and jumps where the recent past repeats
+(the default: continuity 0.8, context 1). `generate` realises the units with
+their own sound (or their atoms), joined by short crossfades, as a background
+job; `next` walks an endless sequence live, one unit at a time, to drive
+play~ or groove~ on the original.
+arg model: the name of a soundtypes object
+msg generate seconds out [labels]: writes a new sound of about this length into the buffer~ out, and its types into the buffer~ labels if named (for plot)
+msg next: the next unit of an endless sequence: its start and end (ms) in the original, then its type
+msg reset: starts the live sequence again
+msg classic n: SoundTypes' n-grams: a context of n-1 types (2); a dead end starts again elsewhere
+msg markov [order] [count]: variable order: the longest context, up to order units (3), seen at least count times (2)
+msg oracle [continuity] [context]: factor oracle: follows the original with probability continuity, 0 to 1 (0.8), otherwise jumps to where the last context units (1) repeat
+msg level n: generates units of level n, 1 to 3 (1)
+msg inner c [context]: levels mixed: units of level 2 or 3 are played with the level below regenerated, an oracle walk of continuity c (0 to 1) and context (1) from each one's first sub-unit; 1 (default) plays them as they are
+msg model name: uses another soundtypes object
+msg seed n: the seed of the random choices (1)
+msg xfade ms: the crossfade between units, 0.5 to 500 ms (10)
+msg stop: cancels the job
+see: soundtypes typematch play~ groove~ plot
+
+@ typematch
+syntax: typematch
+SoundTypes' rematch, as a background job: every frame, unit or gesture of
+sound A replaced by the closest one of sound B (duration included) in its
+closest type. A and B are soundtypes models analysed the same way (both
+sounds, or both books). At level 0, B's frames are taken as Hann grains of
+its analysis size and overlap-added at A's frames (the original rematch); at
+level 1 unit by unit; at level 2 gesture by gesture. A result that would clip
+is scaled down.
+msg run A B out [level] [labels]: rebuilds A with the material of B into the buffer~ out; the types of B over A's time go to the buffer~ labels if named
+msg level n: 0, frame by frame; 1, unit by unit; 2 or 3, by the units of that level (gestures) (1)
+msg space own | joint: features standardised in each sound's own space, so that B's range covers A's (default), or in one space for both (absolute distances)
+msg fit 1/0: 1, at A's times and durations (B's units cut or continued); 0, one after the other at B's own durations (1); not used at level 0
+msg contour c: A's loudness imposed on the result by c, 0 (B's own) to 1 (A's), so that A's rhythm and phrasing come through (0; the message alone sets 1); above level 0, only with fit 1
+msg xfade ms: the crossfade between units, 0.5 to 500 ms (10)
+msg stop: cancels the job
+see: soundtypes typegen pursuit atoms

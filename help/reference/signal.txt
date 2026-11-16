@@ -1,0 +1,405 @@
+# Signal: Oscillators, Filters, Signal Math, Signal Routing, Delay, I/O
+
+# ---------------------------------------------------------------- Oscillators
+
+@ cycle~
+syntax: cycle~ [freq] [phase]
+Cosine oscillator, read from a 512-point table with linear interpolation, as
+in Max. The left inlet takes the frequency as a signal or a float; a float in
+the right inlet restarts the cycle at that phase.
+arg freq: the frequency in Hz (0)
+arg phase: the starting phase, 0-1 (0)
+see: phasor~ saw~ rect~ tri~ sig~
+
+@ phasor~
+syntax: phasor~ [freq]
+A ramp from 0 to 1, repeating at the frequency in the left inlet (signal or
+float). It is not band-limited: use it as an LFO, a position signal or an
+index, not as an audible sawtooth (see saw~). A float in the right inlet
+restarts the ramp at that phase (0-1).
+arg freq: the frequency in Hz (0)
+see: cycle~ saw~ line~ index~
+
+@ saw~
+syntax: saw~ [freq]
+Band-limited sawtooth (PolyBLEP), from -1 to 1. The frequency is a signal or
+a float.
+arg freq: the frequency in Hz (0)
+see: rect~ tri~ phasor~ cycle~
+
+@ rect~
+syntax: rect~ [freq] [duty]
+Band-limited pulse (PolyBLEP), from -1 to 1. The right inlet sets the duty
+cycle, the fraction of the period spent at 1 (clamped to 0.01-0.99); both
+inlets take signals or floats.
+arg freq: the frequency in Hz (0)
+arg duty: the duty cycle, 0-1 (0.5)
+see: saw~ tri~ cycle~
+
+@ tri~
+syntax: tri~ [freq] [slope]
+Triangle wave from -1 to 1. The slope is where in the period the wave turns
+from rising to falling (clamped to 0.01-0.99): 0.5 is symmetric, values near
+0 or 1 make a sawtooth. Both inlets take signals or floats.
+arg freq: the frequency in Hz (0)
+arg slope: the turning point, 0-1 (0.5)
+see: saw~ rect~ cycle~
+
+@ noise~
+syntax: noise~
+White noise between -1 and 1. Each noise~ has its own seed, so two of them
+are uncorrelated.
+see: cycle~ reson~ svf~ nebula~
+
+@ click~
+syntax: click~ [shape...]
+Plays an impulse each time it gets a bang: by default a single sample of 1,
+or the shape given as arguments or as a list of numbers (optionally after
+`set`). An empty list returns to the single sample.
+arg shape: the samples of the impulse (1)
+msg bang: plays the impulse
+msg set values...: sets the impulse shape (a list of numbers alone does the same)
+see: line~ comb~ reson~ sig~
+
+@ sig~
+syntax: sig~ [value]
+Turns a number into a constant signal. A signal in its inlet passes through
+unchanged.
+arg value: the starting value (0)
+see: line~ snapshot~ +~
+
+@ line~
+syntax: line~ [value]
+Signal ramps. A list of target-time pairs makes segments: `1 10 0 300` goes
+to 1 in 10 ms, then to 0 in 300 ms (up to 64 segments). A float alone jumps
+to that value, or ramps to it over the time last sent to the right inlet,
+which is used once and then reset to 0. A new message drops the segments
+still pending and starts from the current value.
+arg value: the starting value (0)
+msg value [ms]: jumps or ramps to the value
+msg target ms target ms ...: a sequence of ramps
+msg stop: freezes the ramp where it is
+see: line function sig~ gain~
+
+@ nebula~
+syntax: nebula~ [proto1] [proto2]
+Granular synthesis (sound_math's nebula): clouds of windowed grains read from
+two prototypes, each a waveform (`sine`, `triangle`, `square`, `noise`) or the
+name of a buffer~, mixed by `morph`. A grain starts every 1/density seconds,
+lasts `length` ms and is placed at random in the stereo field; the outlets
+are left and right.
+
+For a waveform the frequency is in Hz; for a buffer~ it is a speed ratio
+(1 = as recorded), unless `pitch1` or `pitch2` gives the sound's pitch, so
+that a waveform and a sound can be morphed at the same pitch. The second
+number after density, length, freq and jitter is randomness, as a ratio of
+the value: `density 40 .5` gives 20 to 60 grains a second. The inlets after
+the left one take density, length, frequency and morph as floats.
+arg proto1: the first prototype: sine, triangle, square, noise or a buffer~ name (sine)
+arg proto2: the second prototype (as proto1)
+msg 1/0: starts or stops the cloud (also start, bang, stop)
+msg density d [r]: grains per second (10), and its randomness 0-0.99 (0)
+msg length ms [r]: grain duration in ms (100), and its randomness 0-1 (0)
+msg freq f [r]: grain frequency, Hz or ratio (220), and its randomness 0-1 (0)
+msg morph m: the mix of the prototypes, 0 = proto1, 1 = proto2 (0)
+msg amp a: the amplitude of each grain (0.25)
+msg gliss g: each grain glides to its frequency times 1 +- g, at random, 0-1 (0)
+msg jitter j [r]: stereo position, 0 = right, 1 = left (0.5), and its randomness 0-1 (1)
+msg speed s: how fast the read position moves through a buffer~ (1)
+msg grainlets n: each grain lasts n periods of its frequency, replacing length; 0 = off (0)
+msg window type: the grain window: hann, hamming or blackman (hann)
+msg poly n: the most grains at once, 1-1024 (256)
+msg proto1 name: changes the first prototype (proto2 the second)
+msg pitch1 hz: the pitch of a buffer~ prototype, so its frequency is in Hz; 0 returns to ratios (pitch2 for the second)
+msg seed n: restarts the random generator with this seed
+see: buffer~ groove~ sparkle~ noise~ cycle~
+
+# ---------------------------------------------------------------- Filters
+
+@ reson~
+syntax: reson~ [gain] [cf] [Q]
+Two-pole resonant bandpass with the structure of Max's reson~, scaled so that
+its gain at the centre frequency is exactly `gain`. The parameter inlets take
+signals or floats but are read once per 64-sample block; a list `gain cf Q`
+in the left inlet sets all three.
+arg gain: the peak gain (1)
+arg cf: the centre frequency in Hz (1000)
+arg Q: the centre frequency over the bandwidth: higher is narrower (10)
+msg gain cf Q: sets the three parameters
+msg clear: empties the filter's memory
+see: lores~ svf~ biquad~ filterdesign noise~
+
+@ lores~
+syntax: lores~ [cf] [res]
+Resonant low-pass (an RBJ cookbook biquad whose Q rises from 0.7 to about 25
+with the resonance). The cutoff and resonance inlets take signals or floats,
+read once per block.
+arg cf: the cutoff frequency in Hz (1000)
+arg res: the resonance, 0-1 (0)
+msg clear: empties the filter's memory
+see: svf~ reson~ biquad~ filterdesign
+
+@ svf~
+syntax: svf~ [freq] [q]
+State-variable filter (topology-preserving) with four outlets: low-pass,
+high-pass, band-pass and notch. The frequency and Q inlets take signals or
+floats, read once per block.
+arg freq: the cutoff or centre frequency in Hz (1000)
+arg q: the resonance, 0-1 (0.5)
+see: lores~ reson~ biquad~ filterdesign
+
+@ biquad~
+syntax: biquad~ [a0] [a1] [a2] [b1] [b2]
+Two-pole two-zero filter in Max's convention:
+`y = a0 x + a1 x[n-1] + a2 x[n-2] - b1 y[n-1] - b2 y[n-2]`. The coefficient
+inlets take floats, not signals; a list of five in the left inlet sets them
+all, as filterdesign outputs it. The defaults pass the signal unchanged.
+arg a0: the gain of the input (1)
+arg a1: the gain of the input one sample before (0)
+arg a2: the gain of the input two samples before (0)
+arg b1: the gain of the output one sample before, subtracted (0)
+arg b2: the gain of the output two samples before, subtracted (0)
+msg a0 a1 a2 b1 b2: sets the five coefficients
+see: filterdesign filterplot lores~ svf~
+
+@ filterdesign
+syntax: filterdesign [type] [freq] [q] [gain]
+Computes the coefficients of a biquad~ for a filter type, from Robert
+Bristow-Johnson's Audio EQ Cookbook (as Musil's biquad): lowpass, highpass,
+bandpass, notch (or bandstop), peak, lowshelf, highshelf, allpass. A type, a
+frequency (left inlet), a Q (middle) or a gain in dB (right; used by peak and
+the shelves) outputs the list `a0 a1 a2 b1 b2`, for biquad~ and filterplot.
+The coefficients follow the current sample rate (44100 while audio is off).
+arg type: the filter type (lowpass)
+arg freq: the frequency in Hz (1000)
+arg q: the Q (0.707)
+arg gain: the gain in dB, for peak and the shelves (0)
+msg type: sets the type and outputs
+msg freq [q] [gain]: sets the frequency (and Q and gain) and outputs
+msg bang: outputs the coefficients again
+see: biquad~ filterplot lores~ svf~
+
+@ filterplot
+syntax: filterplot [width] [height]
+Draws the frequency response, in dB from +24 to -48 on a logarithmic
+frequency axis, of the biquad~ coefficients it receives. A list of 10, 15 ...
+numbers is a cascade of biquads in series. Dragging in it (locked) outputs
+`frequency gain` (Hz, dB) at the mouse, to drive a filterdesign.
+arg width: the width in pixels, 120-2000 (300)
+arg height: the height in pixels, 60-1000 (140)
+msg a0 a1 a2 b1 b2 ...: the coefficients to draw
+see: filterdesign biquad~ svf~
+
+@ slide~
+syntax: slide~ [up] [down]
+Smooths a signal: `y += (x - y) / slide`, where the slide is `up` samples
+while the input is above the output and `down` while it is below; 1 passes
+the signal through. Useful for envelope followers and portamento. The slide
+inlets take signals or floats.
+arg up: the slide while rising, in samples (1)
+arg down: the slide while falling, in samples (1)
+msg reset: jumps to the input
+see: line~ lores~ abs~ sah~
+
+@ conv~
+syntax: conv~ buffer [channels]
+Convolves each inlet with the impulse response in a buffer~, with no
+latency: the first 256 taps directly, the rest by partitioned FFT. Channel c
+uses the response's channel c, or its last one; an inlet with nothing
+connected takes the channel before, so one source into `conv~ hall 2` gives a
+stereo reverb. The response is normalised to unit energy unless `normalize
+0`. It is reloaded when the buffer~ changes.
+arg buffer: the buffer~ holding the impulse response (required)
+arg channels: the number of inlets and outlets, 1-8 (1)
+msg set name: uses another buffer~
+msg gain x: scales the response (1)
+msg normalize 0/1: normalises the response to unit energy, or not (1)
+see: buffer~ condec reverb~
+
+# ---------------------------------------------------------------- Signal Math
+
+@ +~ -~ *~ /~
+syntax: +~ [value]
+Add, subtract, multiply or divide two signals, sample by sample. A float in
+either inlet is used as a constant while no signal is connected there; the
+argument sets the right one. Division by 0 gives 0.
+arg value: the right operand (0)
+see: expr~ gain~ sig~ clip~
+
+@ gain~
+syntax: gain~ [ramp] [amplitude]
+A fader that scales the signal in its left inlet. It runs in dB from silence
+to +6 dB (amplitude 0 to 2) and shows its level in dB below; every change
+ramps linearly over `ramp` ms, so moving it never clicks. A float in the left
+inlet sets the amplitude (1 = unity), the right inlet the ramp time. The
+right outlet reports the amplitude when the fader is moved. The ramp and the
+amplitude are saved with the patch.
+arg ramp: the ramp time in ms (20)
+arg amplitude: the starting amplitude, 0-2 (1)
+msg amplitude: sets the amplitude, without output
+msg bang: outputs the amplitude
+see: *~ line~ meter~ dac~
+
+@ clip~
+syntax: clip~ [min] [max]
+Limits a signal to the range min..max. The limits are signals or floats.
+arg min: the lower limit (-1)
+arg max: the upper limit (1)
+see: tanh~ abs~ expr~
+
+@ abs~
+syntax: abs~
+The absolute value of a signal (full-wave rectification).
+see: clip~ slide~ tanh~
+
+@ tanh~
+syntax: tanh~
+Soft saturation: the hyperbolic tangent of a signal, which stays within -1
+and 1. Scale the input up to drive it harder.
+see: clip~ abs~ expr~
+
+@ expr~
+syntax: expr~ expression
+An expr evaluated for every sample. `$v1` to `$v9` read the inlets, which
+take signals or floats (a float is held while nothing is connected); the
+highest one used sets the number of inlets. `$f` and `$i` read them too,
+`$i` truncated. Operators: `+ - * / %`, comparisons, `&& || !`, `pi`;
+functions: sin cos tan asin acos atan sinh cosh tanh exp log log10 sqrt abs
+floor ceil int round, pow atan2 min max fmod random(lo, hi). A result that
+is not a finite number gives 0; errors are printed in the console.
+arg expression: the expression, e.g. `$v1 * (1 - $v3) + $v2 * $v3`
+see: expr +~ *~ clip~
+
+@ sah~
+syntax: sah~ [threshold]
+Sample and hold: each time the right signal rises above the threshold, the
+current value of the left signal is held at the outlet until the next rise.
+A float in the right inlet sets the threshold; in the left inlet, a constant
+input.
+arg threshold: the level the trigger must cross upwards (0)
+see: phasor~ noise~ snapshot~ slide~
+
+# ---------------------------------------------------------------- Signal Routing
+
+@ selector~
+syntax: selector~ n [initial]
+Passes one of `n` signal inlets to the outlet; a number in the left inlet
+picks it, 1 to `n`, or 0 for none. Unlike Max's, it crossfades over 5 ms,
+so switching never clicks.
+arg n: the number of signal inlets, 1-64 (1)
+arg initial: the inlet passed at first, 0 = none (0)
+msg n: picks the inlet (left inlet)
+see: gate~ gate *~ send~
+
+@ gate~
+syntax: gate~ n [initial]
+Sends the signal in its right inlet to one of `n` outlets, picked by a number
+in the left inlet (1 to `n`, 0 = closed); the others output silence. It
+crossfades over 5 ms, so switching never clicks.
+arg n: the number of outlets, 1-64 (1)
+arg initial: the outlet open at first, 0 = closed (0)
+msg n: picks the outlet (left inlet)
+see: selector~ gate send~
+
+@ send~
+syntax: send~ name
+Makes its signal available to every receive~ of the same name, in any
+subpatcher of the patch. The chain runs send~ before its receive~s, so there
+is no delay, except around a feedback loop through them (one 64-sample
+block).
+arg name: the name (required)
+msg set name: changes the name
+see: receive~ send tapin~ dac~
+
+@ receive~
+syntax: receive~ name
+Outputs the sum of the signals of every send~ with its name.
+arg name: the name (required)
+msg set name: listens to another name
+see: send~ receive adc~
+
+# ---------------------------------------------------------------- Delay
+
+@ tapin~
+syntax: tapin~ [max]
+Writes its input into a delay line, read by the tapout~ connected to its
+outlet. The memory is sized for 96 kHz, so at lower rates delays a little
+beyond `max` still work. Since the link does not order the two,
+tapout~ -> ... -> tapin~ feedback is allowed.
+arg max: the longest delay in ms, 1-60000 (1000)
+msg clear: empties the delay line
+see: tapout~ comb~ allpass~ send~
+
+@ tapout~
+syntax: tapout~ [ms...]
+Reads the delay line of the tapin~ connected to its left inlet, one tap per
+argument, each with its own inlet (signal or float) and outlet. Delays are
+in ms, interpolated, and limited by the tapin~'s length; inside a feedback
+loop the shortest delay is one block (64 samples).
+arg ms: the delay of each tap in ms (one tap, 0)
+see: tapin~ comb~ allpass~
+
+@ comb~
+syntax: comb~ [max] [delay] [a] [b] [c]
+Comb filter: `y = a x + b x[n-D] + c y[n-D]`, where D is the delay. The
+delay and the three gains are signals or floats; the memory is sized for
+96 kHz, as with tapin~.
+arg max: the longest delay in ms, 1-10000 (50)
+arg delay: the delay in ms (half of max)
+arg a: the gain of the input (1)
+arg b: the gain of the delayed input (0)
+arg c: the feedback gain (0.5)
+msg clear: empties the delay lines
+see: allpass~ tapin~ reverb~ reson~
+
+@ allpass~
+syntax: allpass~ [max] [delay] [gain]
+Allpass filter: `y = -g x + x[n-D] + g y[n-D]`; it changes the phase but not
+the spectrum of a steady sound, and is a building block of reverbs. The
+delay and gain are signals or floats.
+arg max: the longest delay in ms, 1-10000 (50)
+arg delay: the delay in ms (half of max)
+arg gain: the gain g (0.7)
+msg clear: empties the delay lines
+see: comb~ tapin~ reverb~ fvcomb~
+
+# ---------------------------------------------------------------- I/O
+
+@ adc~
+syntax: adc~ [ch...]
+Audio input: one outlet per channel given, numbered from 1. The input device
+is opened with all its channels (Patch > Audio Setup can limit them), so
+adc~ 1 2 3 4 5 6 7 8 reads an eight-channel interface; a channel the device
+does not have outputs silence. The input opens only when a patch contains
+adc~.
+arg ch: the input channels (1 2)
+msg start: turns audio on (also startwindow)
+msg stop: turns audio off
+see: dac~ dspstate~ meter~ record~
+
+@ dac~
+syntax: dac~ [ch...]
+Audio output: one inlet per channel given, numbered from 1. Several dac~s
+add up on the same channel. The output device is opened with all its
+channels (Patch > Audio Setup can limit them), so dac~ 1 2 3 4 5 6 7 8 plays
+on eight speakers. Channels beyond the device's are not heard, but the
+toolbar's meter shows them and the quick recorder writes them, and --render
+and moritz render them: an eight-channel piece can be made on a stereo
+card. A console note says when this happens.
+arg ch: the output channels (1 2)
+msg start: turns audio on (also startwindow)
+msg stop: turns audio off
+see: adc~ gain~ dspstate~ meter~
+
+@ dspstate~
+syntax: dspstate~ [ms]
+Reports the audio state on bang, whenever audio starts, stops or is
+reopened, and every `ms` while audio runs. Its outlets, left to right, are as
+in Max: 1/0 for audio on or off, the sample rate, the signal vector size (64,
+or the frame's bin count inside pfft~) and the I/O buffer size; a fifth gives
+the CPU load in %. While audio is off it reports the last sample rate and
+buffer size.
+arg ms: the reporting interval in ms (at least 20), 0 = only on bang and on changes (0)
+msg bang: reports now
+msg ms: sets the interval (also interval ms)
+see: adc~ dac~ loadbang

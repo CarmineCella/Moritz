@@ -1,0 +1,1108 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{microtype}
+\usepackage[margin=2.6cm]{geometry}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{bm}
+\usepackage{booktabs}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{enumitem}
+\usepackage[hidelinks]{hyperref}
+
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\D}{\mathcal{D}}
+\newcommand{\inner}[2]{\langle #1, #2 \rangle}
+\newcommand{\norm}[1]{\lVert #1 \rVert}
+\DeclareMathOperator*{\argmax}{arg\,max}
+\DeclareMathOperator*{\argmin}{arg\,min}
+
+\title{Sound decomposition strategies for creative hybridizations}
+\author{Carmine-Emanuele Cella}
+\date{}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+A sound hybrid is a sound that belongs to two sounds at once: it takes its
+form from one and its matter from the other. This paper presents hybridization
+as a problem of representation: a sound is decomposed on a dictionary,
+and the hybrid is obtained by reading the decomposition of one sound with the
+elements of another. The kind of hybrid depends on the level at which the
+representation operates, from the waveform to the spectrum to structured
+decompositions. Two methods are described in detail. The first, Maple, is a
+matching pursuit over parametric dictionaries (Gabor and gammatone atoms) and
+over dictionaries made of recorded sounds, which approximates a target with
+pieces of a corpus. The second, sound types, turns a sound into a hierarchy
+of symbolic sequences (frames or notes, gestures, sections), generates new
+sequences with $n$-grams, variable-order Markov models or a factor oracle, and
+replaces the units of one sound with those of another at any level of the
+hierarchy. The two meet when the units of sound types are made of the atoms
+found by matching pursuit.
+\end{abstract}
+
+% =====================================================================
+\section{Introduction}
+
+\subsection{Hybridization}
+
+Composers have always wished to make a sound that is two sounds at once: a
+voice that is also a bell, an orchestra that speaks, a city that sings a
+song. Such a sound is not a mixture. A mixture of two sounds is heard as two
+sounds, because the auditory system groups the components of each source by
+their common onsets, harmonicity and common fate~\cite{bregman1990}; the two
+remain separable streams. A \emph{hybrid}, on the contrary, is heard as one
+sound whose properties come from two origins. Wishart describes the
+transformations that lead from one sound to another and the intermediate
+states in which a sound is ambiguously both~\cite{wishart1994}; Smalley's
+spectromorphology gives a vocabulary to the way the spectral content of a
+sound (its matter) and its evolution in time (its form) can be thought of
+separately~\cite{smalley1997}.
+
+This separation is the key to hybridization. In most hybrids one sound gives
+the \emph{form}: its temporal organisation, its rhythm, its envelope, its
+articulation, sometimes its contour of brightness or pitch; the other gives
+the \emph{matter}: the timbre, the spectral fine structure, the identity of
+its sources. We call the first the \emph{target} and the second the
+\emph{source} (or \emph{corpus}, when it is a collection of sounds). The
+hybrid is the target rebuilt with the source's matter: John Cage's speech
+made of a song by the Beach Boys, a voice played by a clarinet, a Bach
+prelude played with the sound of a kitchen. The perceptual success of a
+hybrid depends on a balance: if the target dominates, the source is not
+recognised; if the source dominates, the target's form is lost. A good
+hybrid lets the listener hear both: the speech and the song, the voice and
+the clarinet.
+
+\subsection{Decomposition and approximation}
+
+To separate form and matter one needs a representation in which the two are
+distinct objects. The general framework is \emph{decomposition on a
+dictionary}. Let $x \in \R^N$ be a sound and let
+$\D = \{ d_\gamma \}_{\gamma \in \Gamma}$ be a dictionary: a collection of
+waveforms (\emph{atoms}), normalised so that $\norm{d_\gamma} = 1$, indexed by
+a set of parameters $\Gamma$. A decomposition of $x$ on $\D$ is an
+approximation
+\begin{equation}
+  x \;=\; \sum_{k=1}^{K} \alpha_k \, d_{\gamma_k} \;+\; r_K ,
+  \label{eq:decomposition}
+\end{equation}
+where the $\alpha_k$ are coefficients, the $\gamma_k$ the atoms chosen, and
+$r_K$ the residual: what the dictionary cannot (or does not need to)
+explain. When $\D$ is a basis (the Fourier basis, a wavelet basis) the
+decomposition is unique and exact; when $\D$ is \emph{redundant}, there are
+infinitely many decompositions and one looks for a \emph{sparse} one: few
+atoms that explain most of the energy. Redundancy is what makes a dictionary
+expressive: Gabor's acoustic quanta~\cite{gabor1947}, grains of sound
+localised in time and frequency, form a redundant dictionary in which a sound
+is a cloud of events, as in granular synthesis~\cite{roads2001}.
+
+The decomposition~\eqref{eq:decomposition} is a description of $x$ in the
+terms of $\D$: the list $\{(\gamma_k, \alpha_k)\}$ (the \emph{book}) says
+which elements of the dictionary sound when, and how strongly. Two remarks
+make it a tool for hybridization.
+
+\begin{enumerate}[leftmargin=*]
+\item The book carries the \emph{form} of $x$ (positions, amplitudes, the
+  order of events), while the atoms carry the \emph{matter}. If the
+  dictionary is made of pieces of another sound, the approximation
+  $\hat x = \sum \alpha_k d_{\gamma_k}$ is $x$ rebuilt with that sound's
+  matter: a hybrid, whose degree of resemblance to $x$ is controlled by the
+  number of atoms $K$ and by how well $\D$ can approximate $x$.
+\item The book can be \emph{read with another dictionary}. Given a map
+  $\phi : \D \to \D'$ that associates to each atom an atom of a second
+  dictionary, the sound $\sum \alpha_k \, \phi(d_{\gamma_k})$ keeps the form
+  of $x$ and takes the matter of $\D'$. The map can be a similarity in some
+  descriptor space, or the identity of a symbolic label.
+\end{enumerate}
+
+In both cases the hybrid is an \emph{approximation of the target with a
+specific dictionary}. Its quality is not the precision of the approximation
+(an exact reconstruction is just the target) but the right amount of
+\emph{infidelity}: the target must be recognisable, the dictionary audible.
+
+\subsection{The level of the representation}
+
+The kind of hybrid one obtains depends on the level at which the sounds are
+represented, that is, on what the atoms are and how much structure they
+carry.
+
+\paragraph{Waveform.} At the level of samples the only operation is the
+weighted sum $y = (1-\lambda)\, a + \lambda\, b$, possibly with a time-varying
+$\lambda(t)$: a crossfade. It is the degenerate case of
+\eqref{eq:decomposition} with the canonical basis of Dirac impulses, in which
+form and matter cannot be separated. The result is a mixture or a
+succession, never a hybrid.
+
+\paragraph{Spectrum.} With the short-time Fourier transform
+$X(m, k) = |X(m,k)|\, e^{i \varphi_X(m,k)}$ form and matter begin to separate.
+\emph{Cross-synthesis} combines the magnitudes of one sound with the phases
+of another, $Y = |A|\, e^{i\varphi_B}$, or more musically the spectral
+envelope of one with the fine structure of the other,
+$|Y| = E_A \cdot |B| / E_B$, where $E$ is a smoothed envelope (cepstral or
+by linear prediction): this is the principle of the vocoder~\cite{dudley1939}
+and of its digital descendants, the phase vocoder~\cite{flanagan1966,dolson1986}
+and source-filter cross-synthesis by linear prediction~\cite{moorer1979}.
+Here the target gives a slowly varying filter, the source an excitation. The
+result is convincing when the target is a voice (its formants are its form)
+and the source is rich and stationary; it is limited by the frame: the hybrid
+is a pointwise product of two spectra at the same instant, and the temporal
+organisation of the source is lost or imposed.
+
+\paragraph{Decompositions with structured dictionaries.} When the atoms are
+themselves sounds (grains, notes, strokes, gestures) the map
+$\phi$ can operate between units that have duration, internal evolution and
+identity. A voice approximated with clarinet notes is not a voice filtered by
+a clarinet: it is a sequence of clarinet notes whose positions, amplitudes and
+pitches follow the voice. A speech whose units are replaced, one by one, by
+the units of a song that most resemble them is the speech made of the song,
+with the song's textures, chords and voices recognisable inside the
+articulation of the speech. The higher the level of the units, the more of
+the source's own organisation survives: frames give a texture, notes a
+re-orchestration, gestures and phrases a recomposition. The two methods of
+this paper work at these levels: Maple at the level of atoms (parametric
+or sampled), sound types at the level of symbols organised in a hierarchy.
+
+% =====================================================================
+\section{State of the art}
+
+\paragraph{Spectral cross-synthesis and morphing.} Beyond the vocoder and
+linear prediction~\cite{dudley1939,moorer1979,dolson1986}, sinusoidal and
+spectral modelling~\cite{serra1990} made it possible to interpolate the
+parameters of two sounds (frequencies, amplitudes, residual envelopes) and
+to morph between them; automatic morphing aligns the two sounds in time and
+in their spectral features before interpolating~\cite{slaney1996,caetano2011}.
+Morphing produces intermediate sounds along a path between two endpoints; a
+hybrid, as defined above, is rather a sound in which the two endpoints
+coexist with different roles.
+
+\paragraph{Concatenative synthesis and mosaicing.} Corpus-based concatenative
+synthesis~\cite{schwarz2007} assembles a sound from units of a corpus chosen
+by their descriptors. Musical mosaicing~\cite{zils2001} formulated the choice
+of samples that follow a target sequence as a constraint problem; MATConcat
+applied frame-based matching of descriptors to target-driven
+synthesis~\cite{sturm2004}. CataRT~\cite{schwarz2006} made the approach
+interactive: the units of a corpus are displayed in a descriptor space and
+played by navigating it, or selected to follow a target in real time.
+AudioGuide~\cite{hackbarth2013} uses a target to drive the selection and the
+superposition of corpus segments, matching not only static descriptors but
+their evolution in time, and lets several corpus segments overlap to
+approximate a single target segment: a concatenative approach that is already
+a decomposition, since the target is explained by a sum of sounds.
+NMF-inspired mosaicing~\cite{driedger2015} keeps the activations of the
+target while constraining the corpus to its own temporal continuity.
+
+\paragraph{Dictionary-based methods.} Matching pursuit~\cite{mallat1993}
+computes a sparse decomposition~\eqref{eq:decomposition} greedily, choosing
+at each step the atom most correlated with the residual. Efficient
+implementations for audio, with local updates and very large time-frequency
+dictionaries, are provided by MPTK~\cite{krstulovic2006}. Sturm and
+collaborators studied the analysis, visualisation and transformation of audio
+through dictionary-based methods~\cite{sturm2009}, and cross-synthesis and
+morphing by exchanging dictionaries or books between
+sounds~\cite{collins2011}. Matching pursuit with dictionaries made of
+recorded sounds turns concatenative synthesis into an approximation problem:
+the corpus units are atoms, the target the signal to explain.
+
+\paragraph{Target-based orchestration.} Computer-assisted orchestration can
+be read as hybridization with an instrumental dictionary: a target sound is
+approximated by a combination of instrumental notes, chosen among thousands
+of samples of playing techniques, so that the orchestra imitates the
+target. Orch\'id\'ee formulated it as multi-objective combinatorial
+optimisation~\cite{carpentier2010}; Orchids extended it to dynamic targets.
+Orchidea~\cite{cella2022orchidea,cella2018toolbox} solves target-based
+dynamic orchestration with a modular framework, sparse and evolutionary
+optimisation and large datasets of instrumental techniques such as
+OrchideaSOL and TinySOL~\cite{cella2020orchideasol}. The orchestration of a
+sound is a hybrid in which the form comes from the target and the matter
+from the orchestra; the solutions are scores, i.e. symbolic books, that can
+be performed.
+
+\paragraph{Sound types.} The theory of sound types~\cite{cella2011soundtypes}
+proposed to represent a sound by a sequence of symbols: the frames of the
+sound are clustered in a feature space and each cluster, a \emph{sound
+type}, is a symbol whose realisation is a set of sound fragments; the
+temporal organisation of the sound becomes a sequence on a finite alphabet,
+whose statistics ($n$-grams) can generate new sequences, hence new sounds
+made of the original's matter. The approach was then applied to
+hybridization~\cite{cella2013hybrid}: the types of a target are matched to
+the closest types of a source in their respective feature spaces, so that the
+target's sequence is played with the source's sounds, and the transition
+probabilities of the two sounds can be combined to generate sequences that
+belong to both.
+
+\paragraph{Generation from symbolic sequences.} Variable-order Markov
+models~\cite{ron1996,begleiter2004} adapt the length of the context to the
+data; the factor oracle~\cite{allauzen1999} indexes all the factors of a
+sequence in linear space and, navigated through its suffix links, generates
+recombinations that preserve local continuity, as in machine
+improvisation~\cite{assayag2004} and in the Variable Markov
+Oracle~\cite{wang2014}. Surprise, the information content of an event given
+its context, is a cue for the perception of
+boundaries~\cite{abdallah2009,pearce2010}.
+
+\paragraph{Neural methods.} Neural audio models learn latent spaces in which
+timbres can be interpolated~\cite{engel2017}, or transfer the timbre of an
+instrument to a performance by another through differentiable
+synthesis~\cite{engel2020} or variational
+autoencoders~\cite{caillon2021}. They offer powerful hybrids at the cost of
+training on large corpora; the methods presented here require no training
+and work with any pair of sounds, including very short and very unusual
+ones.
+
+% =====================================================================
+\section{Methods}
+
+Both methods operate on monophonic signals sampled at rate $f_s$. A
+recurring tool is onset detection: the magnitude spectrogram $|X(m,k)|$
+(frames of $1024$ samples, hop $256$) gives the spectral flux
+\begin{equation}
+  F(m) = \sum_k \max\bigl(0,\; |X(m,k)| - |X(m-1,k)|\bigr),
+\end{equation}
+whose local maxima above $\theta \cdot (\mathrm{med}_{21}F(m) + 0.01 \max F)$
+are onsets~\cite{bello2005,dixon2006}, $\mathrm{med}_{21}$ being a running
+median over 21 frames and $\theta$ a sensitivity; each onset is refined to
+the sample where the energy rises in short blocks, and onsets closer than a
+minimum gap are merged.
+
+% ---------------------------------------------------------------------
+\subsection{Maple: matching pursuit over parametric and sampled dictionaries}
+
+Maple (\emph{matching pursuit linear expansion}) approximates a target with a
+dictionary by matching pursuit~\cite{mallat1993}: starting from $r_0 = x$, at
+each step it selects the atom with the largest projection on the residual,
+\begin{equation}
+  \gamma_k = \argmax_{\gamma \in \Gamma} \bigl|\inner{r_{k-1}}{d_\gamma}\bigr| ,
+  \qquad
+  \alpha_k = \inner{r_{k-1}}{d_{\gamma_k}} ,
+  \qquad
+  r_k = r_{k-1} - \alpha_k\, d_{\gamma_k},
+\end{equation}
+so that the energy of the residual decreases by $\alpha_k^2$ at each step,
+$\norm{r_k}^2 = \norm{r_{k-1}}^2 - \alpha_k^2$. The book
+$\{(\gamma_k, \alpha_k)\}$ is the description of the target; the
+approximation after $K$ steps has a signal-to-residual ratio
+$\mathrm{SRR}_K = 10 \log_{10} \bigl(\norm{x}^2 / \norm{r_K}^2\bigr)$.
+Two families of dictionaries are used.
+
+\subsubsection{Parametric dictionaries}
+
+A parametric atom is a windowed sinusoid
+\begin{equation}
+  g_{s,u,\xi,\varphi}(t) = c \; w_s(t - u)\, \cos\bigl(2\pi \xi (t-u) + \varphi\bigr),
+\end{equation}
+with scale (window length) $s$, position $u$, frequency $\xi$ and phase
+$\varphi$, and $c$ normalising it to unit energy. Two windows are offered.
+The \emph{Gabor} window is a Gaussian truncated at $\pm 3\sigma$,
+$w_s(t) = \exp\bigl(-18\,(t/s - \tfrac12)^2\bigr)$ for $0 \le t < s$, which
+gives the best time-frequency concentration~\cite{gabor1947}. The
+\emph{gammatone} window
+$w_s(t) \propto (t/s)^3 \, e^{-12\, t/s}$ has a sharp attack and an
+exponential decay: it fits percussive and resonant events, whose energy
+precedes their tail, without the pre-echo of symmetric windows.
+
+The scales are powers of two from $s_{\min}$ to $s_{\max}$ (by default 256
+to 8192 samples, i.e.\ 6 to 186\,ms at 44.1\,kHz); the positions are on a
+grid of a quarter of the scale, $u \in \{0, s/4, s/2, \dots\}$; the frequency
+is continuous between $\max(f_{\min}, f_s/s)$ and $f_{\max}$; the phase is
+continuous.
+
+\paragraph{Selection with the STFT.} For each scale $s$ the residual is
+analysed by an STFT with window $w_s$, hop $s/4$ and a transform of size
+$M = 2s$ (zero-padded). For a frame at position $u$ and a bin $k$, with
+$\omega_k = 2\pi k / M$, let
+\begin{equation}
+  a = \sum_t r(u+t)\, w_s(t) \cos(\omega_k t), \qquad
+  b = \sum_t r(u+t)\, w_s(t) \sin(\omega_k t)
+\end{equation}
+be the correlations with the windowed cosine and sine. Because the windowed
+cosine and sine are not orthogonal, the best atom of frequency $\omega_k$ at
+$u$ is found by projecting on the plane they span. With the Gram terms
+\begin{equation}
+  C = \tfrac12 (W + c_2), \quad S = \tfrac12 (W - c_2), \quad X = \tfrac12 s_2, \qquad
+  W = \sum_t w_s^2(t), \quad c_2 + i\, s_2 = \sum_t w_s^2(t)\, e^{i 2\omega_k t},
+\end{equation}
+the coefficients of the projection are
+\begin{equation}
+  \alpha = \frac{S a - X b}{C S - X^2}, \qquad
+  \beta = \frac{C b - X a}{C S - X^2},
+\end{equation}
+and the energy captured is $E = \alpha a + \beta b$. The terms $c_2, s_2$ are
+read from the transform of $w_s^2$ at bin $2k$, so that all bins of a frame
+are evaluated with two FFTs. Each frame stores its best bin and energy.
+
+\paragraph{Refinement.} The frame with the largest energy over all scales is
+selected; the frequency is refined by a parabola through the logarithmic
+magnitudes of the best bin and its neighbours, and the projection is
+recomputed exactly at the refined frequency $\omega$. The atom is then
+\begin{equation}
+  \alpha \, w_s(t)\cos(\omega t) + \beta\, w_s(t)\sin(\omega t)
+  = A \, w_s(t) \cos(\omega t - \varphi), \qquad
+  A = \sqrt{\alpha^2 + \beta^2},\; \varphi = \operatorname{atan2}(\beta, \alpha),
+\end{equation}
+which is subtracted from the residual.
+
+\paragraph{Local updates.} Only the frames that overlap the support of the
+atom just subtracted change: for every scale, the frames intersecting
+$[u, u+s)$ are re-analysed, and the others keep their stored maxima, as in
+MPTK~\cite{krstulovic2006}. The cost of an iteration is therefore
+proportional to the length of the atom, not to the length of the sound.
+
+\paragraph{Stopping.} The pursuit stops after $K_{\max}$ atoms (2000) or when
+the residual is $\mathrm{SRR}_{\text{target}}$ dB below the sound (30 dB).
+Resynthesis is the sum of the atoms, optionally transposed by a ratio $\rho$
+(each $\omega$ multiplied by $\rho$) or stretched in time by $\sigma$ (each
+$u$ multiplied by $\sigma$, durations unchanged); because the atoms are
+explicit, transposition and stretching are free of the artefacts of the
+phase vocoder. Keeping only the fraction $q$ of the strongest atoms gives a
+\emph{skeleton} of the sound.
+
+\subsubsection{Sampled dictionaries}
+
+A sampled dictionary is a collection of sound fragments taken from a corpus
+of recordings. Each file can be cut in three ways:
+\begin{itemize}[leftmargin=*]
+  \item \emph{frames}: Hann-windowed segments of length $L$ (100\,ms) every
+    hop $H$ (50 or 100\,ms);
+  \item \emph{onsets}: the spans between consecutive onsets (at most
+    $L_{\max}$ long), with 10\,ms fades;
+  \item \emph{whole}: each file as one atom (at most $L_{\max}$ long).
+\end{itemize}
+Each fragment $d$ is normalised to unit energy and described by:
+its prefix energies $P_d(m) = \sum_{t<m} d(t)^2$, $m = 0, \dots, n_d$; a
+\emph{mel descriptor} $\mu_d \in \R^{40}$, the mean over its frames of the log
+energies in 40 mel bands, with the mean removed and unit norm; its spectral
+centroid.
+
+\paragraph{Segments.} The target is cut into segments, either at its onsets
+or in blocks of fixed length $B$ (a segment longer than $B$ is cut into
+blocks too). Each segment $[a, a+S)$ is explained by $P$ \emph{components},
+i.e.\ $P$ steps of pursuit restricted to atoms that start in the segment.
+
+\paragraph{Preselection.} At each component, the residual segment is
+described by its own mel descriptor $\mu_r$, and the $Q$ atoms of the
+dictionary with the largest cosine similarity $\inner{\mu_r}{\mu_d}$ are kept
+as candidates. This step makes large dictionaries (thousands of atoms)
+tractable and acts as a perceptual prior: candidates are atoms whose spectral
+envelope resembles the part of the target to explain.
+
+\paragraph{Sliding by cross-correlation.} An atom of length $n$ can start at
+any offset $\tau \in [0, S)$ of the segment, and it is matched over its whole
+length, including the part that extends beyond the segment (up to the end of
+the target). Let $W = \min(S + n, N - a)$ be the length of the residual
+window considered. The correlation of the atom with the residual at every
+offset,
+\begin{equation}
+  c(\tau) = \sum_{t=0}^{m(\tau) - 1} r(a + \tau + t)\, d(t), \qquad
+  m(\tau) = \min(n, W - \tau),
+\end{equation}
+is computed for all $\tau$ at once with one FFT of size $\ge S + n$. Since
+near the end of the signal only part of the atom fits, the gain of the
+least-squares fit of the part that fits is
+\begin{equation}
+  G(\tau) = \frac{c(\tau)^2}{P_d\bigl(m(\tau)\bigr)}, \qquad
+  \alpha(\tau) = \frac{c(\tau)}{P_d\bigl(m(\tau)\bigr)},
+\end{equation}
+discarding offsets where $P_d(m) < 0.05$ (too little of the atom fits). The
+candidate and offset with the largest $G$ are chosen, the scaled atom is
+subtracted from the residual over its whole length, and the book records its
+index, start, coefficient, energy and the length of the part inside its
+segment.
+
+\paragraph{Synthesis.} The hybrid is
+\begin{equation}
+  \hat x(t) = \sum_k \alpha_k \, d_{\gamma_k}\!\bigl(\rho\,(t - \sigma u_k)\bigr),
+\end{equation}
+with transposition $\rho$ (by resampling) and stretch $\sigma$. With
+\emph{tails} on, every atom plays whole and rings beyond its segment (as a
+note that is allowed to resonate); with tails off it stops at the end of its
+segment, which gives a drier, more articulated hybrid. A result that would
+clip is scaled down.
+
+\paragraph{Cross.} A book made with dictionary $\D_1$ can be read with a
+dictionary $\D_2$: each atom $d \in \D_1$ is replaced by the atom of $\D_2$
+whose mel descriptor is closest, with the same position and coefficient.
+This is the map $\phi$ of the introduction: the target is explained once,
+and its explanation is re-performed by another corpus.
+
+\paragraph{Parameters and their effect.} Table~\ref{tab:maple} summarises
+them. The number of components per segment is the main control of the
+balance between target and source: one or two atoms per segment give a
+hybrid in which the source is clearly heard and the target is a rhythm and a
+contour; many atoms approach the target and the source dissolves into a
+texture. Short frames and short blocks favour the target's spectral detail;
+whole notes cut at onsets favour the source's identity (one recognisable
+note per syllable). The number of candidates trades accuracy for speed.
+
+\begin{table}[t]
+\centering
+\small
+\begin{tabular}{lll}
+\toprule
+Parameter & Default & Role \\
+\midrule
+$s_{\min}, s_{\max}$ & 256, 8192 samples & scales of parametric atoms \\
+$f_{\max}$ & 16 kHz & highest frequency of parametric atoms \\
+$K_{\max}$, SRR & 2000, 30 dB & stopping (parametric) \\
+cut, $L$, $H$, $L_{\max}$ & frames, 100, 100 ms, 1--2 s & how the corpus becomes atoms \\
+segments, $B$, $\theta$ & onsets, 100 ms, 2 & how the target is cut \\
+$P$ & 4 & atoms per segment \\
+$Q$ & 16 & candidates after preselection \\
+$\rho$, $\sigma$ & 1, 1 & transposition, time stretch \\
+$q$ & 1 & share of the strongest atoms kept \\
+tails & on & atoms ring whole or stop at their segment \\
+\bottomrule
+\end{tabular}
+\caption{Parameters of Maple.}
+\label{tab:maple}
+\end{table}
+
+\begin{algorithm}[t]
+\caption{Matching pursuit with a sampled dictionary}
+\label{alg:soundmp}
+\begin{algorithmic}[1]
+\Require target $x$, dictionary $\{d_j, P_{d_j}, \mu_{d_j}\}$, segments $\{[a_i, a_i+S_i)\}$, $P$, $Q$
+\State $r \gets x$; book $\gets \emptyset$
+\For{each segment $[a, a+S)$}
+  \For{$p = 1, \dots, P$}
+    \State $\mu_r \gets$ mel descriptor of $r[a, a+S)$
+    \State $\mathcal{C} \gets$ the $Q$ atoms with largest $\inner{\mu_r}{\mu_{d_j}}$
+    \For{$d \in \mathcal{C}$}
+      \State $c(\tau) \gets$ correlation of $d$ with $r[a, a+S+n_d)$, $\tau \in [0, S)$ \Comment{FFT}
+      \State $G(\tau) \gets c(\tau)^2 / P_d(m(\tau))$
+    \EndFor
+    \State $(d^*, \tau^*) \gets \argmax G$; $\alpha \gets c(\tau^*) / P_{d^*}(m(\tau^*))$
+    \State $r[a+\tau^* + t] \gets r[a+\tau^*+t] - \alpha\, d^*(t)$ for $t < m(\tau^*)$
+    \State append $(d^*, a+\tau^*, \alpha)$ to book
+  \EndFor
+\EndFor
+\State \Return book, $r$
+\end{algorithmic}
+\end{algorithm}
+
+% ---------------------------------------------------------------------
+\subsection{Sound types: hierarchical symbolic representations}
+
+The theory of sound types was introduced in~\cite{cella2011soundtypes} and
+applied to hybridization in~\cite{cella2013hybrid}: a sound is represented by
+a sequence of symbols, the \emph{types}, obtained by clustering its frames in
+a feature space; the sequence can be modelled statistically and re-performed
+with the sound's own fragments, or with the fragments of another sound. The
+version presented here expands and improves that definition in five
+directions: the units of the first level can be frames or notes (spans
+between onsets); the representation is a hierarchy of levels (units,
+gestures, sections), each level being a sequence of types; generation is done
+at any level with $n$-grams, variable-order Markov models or a factor oracle,
+and levels can be mixed; hybridization works frame by frame or unit by unit
+at any level; and the units can be made of atoms of a matching pursuit.
+
+\subsubsection{Features}
+
+A sound is analysed by an STFT with Hann window of $N_w$ samples and hop
+$h$ (by default 2048 and 512), the frames centred on multiples of $h$. Each
+frame $m$ is described by a vector $\bm{f}_m$:
+\begin{itemize}[leftmargin=*]
+  \item 13 mel-frequency cepstral coefficients~\cite{davis1980}: the DCT of
+    the log energies in 40 mel bands;
+  \item the logarithm (base 2) of the spectral centroid, so that brightness
+    is measured in octaves;
+  \item the level in dB;
+  \item optionally, the 12 pitch classes (chroma~\cite{fujishima1999}),
+    computed from the spectral peaks (each peak, refined by parabolic
+    interpolation, adds its magnitude to the nearest pitch class, partials 3,
+    5, 6 and 7 of a lower peak being discounted), normalised to a maximum of
+    1 and weighted by 3, so that harmony counts as much as timbre.
+\end{itemize}
+When the sound is given as a book of atoms (Section~\ref{sec:atoms}), the
+frame features are the energies of the atoms present in each frame, in 40
+logarithmic bands from 50\,Hz to 16\,kHz, compressed as $\log(1 + 10^3 e)$.
+
+A stretch of frames $[m_0, m_1]$ of duration $T$ seconds is described by
+\begin{equation}
+  \bm{\delta}(m_0, m_1) = \bigl[\, \bm{\mu},\; \bm{\sigma},\; \log T \,\bigr],
+  \label{eq:describe}
+\end{equation}
+the mean and standard deviation of its frame features and its log duration:
+a description of the unit as a whole, comparable between units of different
+lengths and between different sounds.
+
+\subsubsection{Level 1: units}
+
+Level 1 turns the sound into a sequence of \emph{units}, each with a type.
+Two segmentations are possible.
+
+\paragraph{Frames.} The frame features are standardised (each dimension to
+zero mean and unit variance) and clustered into $k_1$ types by $k$-means
+with $k$-means++ seeding~\cite{arthur2007}, keeping the best of four
+starts. The labels are smoothed by a majority vote over a window of
+$n_s$ frames (5), which removes isolated frames. A run of consecutive frames
+of the same type is a unit. This segmentation is adapted to textures,
+speech and sounds without clear onsets: the units are as long as the sound
+stays in one region of the feature space.
+
+\paragraph{Onsets.} The units are the spans between consecutive onsets
+(a first span shorter than 50\,ms joins the next). Each unit is described as
+a whole by~\eqref{eq:describe}; the descriptions are standardised and
+clustered into $k_1$ types. This segmentation is adapted to instrumental
+music: a unit is a note or a chord, and its type, with pitch classes in the
+features, reflects both its timbre and its harmony.
+
+In both cases each type $t$ has a centroid $\bar{\bm{\delta}}_t$, the mean
+description of its units.
+
+\subsubsection{Higher levels: gestures and sections}
+
+The sequence of types $s_1, s_2, \dots, s_n$ of level $\ell$ is grouped into
+the units of level $\ell+1$ (gestures, then sections) by cutting it where the
+next type is \emph{surprising}. A bigram model with additive smoothing
+estimates
+\begin{equation}
+  P(s_i = b \mid s_{i-1} = a) = \frac{\mathrm{count}(a, b) + \tfrac12}{\sum_{b'} \bigl(\mathrm{count}(a, b') + \tfrac12\bigr)},
+\end{equation}
+and the surprise of each unit is $h_i = -\log P(s_i \mid s_{i-1})$. With
+$\bar h$ and $\sigma_h$ the mean and standard deviation of the surprises, a
+boundary is placed before unit $i$ when
+\begin{equation}
+  h_i > \bar h + z\, \sigma_h \quad \text{and} \quad h_i \ge h_{i-1},\; h_i \ge h_{i+1},
+\end{equation}
+i.e.\ at a local peak of surprise above the threshold $z$ (1 by default), with
+groups of at least 2 and at most 24 units. The choice follows the idea that
+boundaries are perceived where expectation fails~\cite{abdallah2009,pearce2010}:
+inside a gesture the next sound is predictable, at its end it is not.
+
+Each group $G$ (units $i_0, \dots, i_1$ of level $\ell$) is described by
+\eqref{eq:describe} over all its frames, augmented with the histogram of the
+types of level $\ell$ it contains, weighted by duration,
+\begin{equation}
+  \bm{\eta}_G(t) = \frac{\sum_{i \in G,\, s_i = t} T_i}{\sum_{i \in G} T_i},
+\end{equation}
+so that two gestures are similar when they sound alike on average
+\emph{and} are made of similar sounds. The augmented descriptions are
+standardised and clustered into $k_{\ell+1}$ types. The procedure is applied
+recursively; three levels are used in practice ($k = 12, 6, 4$ by default;
+for a piano prelude cut at its onsets, $16, 8, 4$ yield notes, phrases and
+sections). Each unit at every level keeps its span in samples and the range
+of units of the level below it covers.
+
+\subsubsection{Generation}
+
+Generation produces a new sequence of units of a chosen level, until a
+requested duration, and realises it with the original's sound. Three models
+are available.
+
+\paragraph{$n$-grams.} The classic model of~\cite{cella2011soundtypes}: the
+next type is drawn from the distribution of the types that followed the last
+$n-1$ types in the original. When the context was never seen, the
+generation restarts from a random place, copying $n-1$ original units.
+Small $n$ wanders; large $n$ copies long stretches, since few contexts are
+shared.
+
+\paragraph{Variable-order Markov.} The next type is drawn from the
+distribution that follows the longest context, of length at most $D$, that
+appears at least $c_{\min}$ times in the original, backing off to shorter
+contexts (down to the unconditional distribution) when longer ones are
+rare~\cite{ron1996,begleiter2004}. This adapts the memory to the material:
+long where the music repeats, short where it does not.
+
+\paragraph{Factor oracle.} The factor oracle~\cite{allauzen1999} of the
+sequence $s_1 \dots s_n$ is an automaton with states $0, \dots, n$, a
+transition $i-1 \to i$ labelled $s_i$, additional forward transitions that
+recognise all factors of the sequence, and a suffix link $\mathrm{sfx}(i)$
+from each state to the state where the longest repeated suffix of
+$s_1 \dots s_i$ ends. The length of that repeated suffix,
+$\mathrm{lrs}(i)$, is computed during construction~\cite{lefebvre2000}.
+Navigation~\cite{assayag2004,wang2014} starts at state 0; at state $i$:
+\begin{itemize}[leftmargin=*]
+  \item with probability $\kappa$ (the \emph{continuity}), it moves to $i+1$,
+    i.e.\ plays the next unit of the original;
+  \item otherwise it jumps: the candidates are $\mathrm{sfx}(i)$ and every
+    state $j \ne i$ with $\mathrm{sfx}(j) = \mathrm{sfx}(i)$, provided their
+    repeated suffix is at least $\lambda$ units long
+    ($\mathrm{lrs} \ge \lambda$, the \emph{context}); one is chosen at random
+    and the next unit after it is played.
+\end{itemize}
+At the end of the sequence the navigation restarts. With $\kappa = 1$ the
+oracle replays the original; as $\kappa$ decreases it recombines it, always
+jumping between places where the last $\lambda$ types are the same, so that
+every junction is locally plausible. Unlike $n$-grams, the oracle generates
+unit \emph{indices}, not types: it keeps track of where it is in the
+original, and long stretches of the original survive between jumps.
+
+\paragraph{Realisation.} For the $n$-gram and Markov models a type is
+realised by one of its units: preferably the unit that follows the last one
+played in the original (so that original continuations are kept whenever the
+model allows them), otherwise a random unit of that type. The chosen units
+are concatenated with crossfades of $x_f$ ms (10 by default). To avoid holes
+and clicks, each unit is taken with $x_f/2$ ms of its original context on
+both sides, which become the material of the fades; with $\kappa = 1$ the
+concatenation reproduces the original almost exactly.
+
+\paragraph{Mixing levels.} A sequence generated at level $\ell \ge 2$
+decides the \emph{form} (which gestures or sections, in which order); the
+content of each of its units can itself be regenerated at the level below.
+For a unit $U$ of level $\ell$ covering units $f, \dots, l$ of level $\ell-1$,
+the realisation keeps its first sub-unit $f$ and its number of sub-units
+$l - f + 1$, and replaces the rest by an oracle walk on level $\ell-1$ that
+starts at $f$ with an inner continuity $\kappa'$:
+\begin{equation}
+  f \;\to\; \mathrm{step}_{\kappa'}(f) \;\to\; \mathrm{step}_{\kappa'}^2(f) \;\to\; \dots
+  \qquad (l - f + 1 \text{ sub-units}),
+\end{equation}
+recursively down to level 1. With $\kappa' = 1$ the units are played as
+they are; with $\kappa' < 1$ the phrases still begin as the original ones
+and last about as long, but their notes are new. Mixing levels gives a
+family of results between two extremes: recombining notes (level 1), which
+creates a new surface without phrasing of its own, and recombining phrases
+or sections (levels 2 and 3), which keeps the inside of the units intact and
+changes the form. The mixture keeps the large form of one level and the
+detail of another: for instance the plan of sections of a prelude, with
+every phrase rewritten.
+
+\begin{algorithm}[t]
+\caption{Factor oracle step and level mixing}
+\label{alg:oracle}
+\begin{algorithmic}[1]
+\Function{Step}{$i$, $\kappa$, $\lambda$}
+  \If{$i < n$ \textbf{and} ($\mathrm{rand}() < \kappa$ \textbf{or} $i = 0$)} \Return $i+1$ \EndIf
+  \State $\mathcal{J} \gets \{\mathrm{sfx}(i)\} \cup \{ j \neq i : \mathrm{sfx}(j) = \mathrm{sfx}(i) \}$, keeping those with $\mathrm{lrs} \ge \lambda$
+  \State $j \gets$ random element of $\mathcal{J}$ (a random state if empty)
+  \State \Return $\min(j+1, n)$
+\EndFunction
+\Function{Nest}{sequence $u_1 \dots u_m$ at level $\ell$, $\kappa'$}
+  \For{$L = \ell, \ell-1, \dots, 2$}
+    \State $v \gets ()$
+    \For{each $u$ in the sequence}
+      \State $(f, l) \gets$ sub-units of $u$ at level $L-1$; append $f$ to $v$; $i \gets f+1$
+      \For{$q = 1, \dots, l - f$} $i \gets \textsc{Step}(i, \kappa', \lambda)$ on level $L-1$; append $i-1$ to $v$ \EndFor
+    \EndFor
+    \State sequence $\gets v$
+  \EndFor
+  \State \Return sequence (units of level 1)
+\EndFunction
+\end{algorithmic}
+\end{algorithm}
+
+\subsubsection{Hybridization: rematch}
+
+Hybridization replaces the units of a target $A$ with units of a source
+$B$, both analysed into types. The central choice is the space in which they
+are compared. Each sound's features are standardised \emph{in its own
+space}: $\bm{z}^A = (\bm{f}^A - \bm{m}_A)/\bm{s}_A$ and
+$\bm{z}^B = (\bm{f}^B - \bm{m}_B)/\bm{s}_B$, with the mean and standard
+deviation of each sound. Distances are then relative: the brightest part of
+$A$ corresponds to the brightest part of $B$, the loudest to the loudest, so
+that the whole range of the source is used to render the variations of the
+target, whatever the absolute difference between the two (a dry speech and
+a full mix). A joint standardisation, measuring absolute distances, is also
+possible; it tends to map most of the target onto the few source sounds that
+are absolutely closest to it.
+
+\paragraph{Frame by frame (level 0).} This is the rematch of the original
+theory~\cite{cella2013hybrid}. Let $\bar{\bm{z}}^B_t$ be the centroid of the
+frames of $B$ of type $t$ (level 1). For each frame $i$ of $A$:
+\begin{equation}
+  t^*(i) = \argmin_t \norm{\bm{z}^A_i - \bar{\bm{z}}^B_t}, \qquad
+  j^*(i) = \argmin_{j : \mathrm{type}(j) = t^*} \norm{\bm{z}^A_i - \bm{z}^B_j},
+\end{equation}
+the closest type of $B$, then its closest frame. The frame $j^*$ of $B$ is
+taken as a grain: the $N_B$ samples centred on it, with a Hann window $v$.
+The grains are overlap-added at the frames of $A$ and normalised by the sum
+of the windows,
+\begin{equation}
+  y(t) = \frac{\sum_i g_i \, v(t - i h_A + N_B/2)\; b\bigl(t - i h_A + j^*(i)\, h_B\bigr)}{\max\Bigl(\sum_i v(t - i h_A + N_B/2),\; \tfrac14 V\Bigr)},
+  \qquad
+  g_i = \min\Bigl(10,\; \bigl(e^A_i / e^B_{j^*(i)}\bigr)^{c}\Bigr),
+\end{equation}
+where $V$ is the maximum of the window sum (the floor avoids boosting the
+edges), $e^A_i$ and $e^B_j$ are the frames' amplitudes and $c \in [0,1]$ is
+the \emph{contour}: with $c = 0$ the grains keep their own level, with
+$c = 1$ they take the target's. With long grains ($N_B = 8192$ samples,
+$h = 2048$, i.e.\ 186\,ms grains overlapping four times) the result is a
+continuous texture of the source that follows the target's timbre and
+loudness frame by frame: the speech is heard through the song.
+
+\paragraph{Unit by unit (levels $\ge 1$).} At level $\ell$, each unit
+$u$ of $A$ is described by~\eqref{eq:describe}; the descriptions of the units
+of $A$ and of $B$ are standardised in their own spaces; the type of $B$ with
+the closest centroid is chosen, then its unit closest to $u$ (the log
+duration being part of the description, the closest unit is also close in
+length). The units of $B$ are placed either at the times of $A$, cut or
+continued to $A$'s durations (\emph{fit}), or one after the other at their
+own lengths, and joined by crossfades. At level 1 a speech becomes a
+sequence of song fragments, one per syllable or sound; at level 2 each
+gesture of the speech becomes a whole gesture of the song, and the source's
+own phrases appear within the target's phrasing.
+
+\paragraph{Contour.} At levels $\ge 1$ the target's loudness can be
+imposed afterwards: with $\mathrm{env}$ the RMS over 20\,ms windows,
+\begin{equation}
+  y'(t) = y(t) \cdot \min\Bigl(10,\; \Bigl(\frac{\mathrm{env}_A(t)}{\max(\mathrm{env}_y(t), 10^{-3} \max \mathrm{env}_y)}\Bigr)^{c}\Bigr),
+\end{equation}
+then $y'$ is rescaled to the RMS of $y$: the shape of the target's dynamics
+at the level of the source. The limit of $+20$\,dB and the floor on
+$\mathrm{env}_y$ prevent the noise floor of the source from being pulled up
+in the target's silences. The contour is what makes the target's rhythm and
+phrasing intelligible in the hybrid.
+
+\begin{table}[t]
+\centering
+\small
+\begin{tabular}{lll}
+\toprule
+Parameter & Default & Role \\
+\midrule
+$N_w$, $h$ & 2048, 512 & analysis window and hop (8192, 2048 for level-0 grains) \\
+segmentation & frames & level 1 from runs of frame types, or from onsets \\
+pitch & off & add the 12 pitch classes to the features \\
+$k_1, k_2, k_3$ & 12, 6, 4 & types per level \\
+levels & 2 & depth of the hierarchy (1 to 3) \\
+$n_s$ & 5 & majority smoothing of frame labels \\
+$z$ & 1 & surprise threshold for boundaries \\
+model & oracle & $n$-grams ($n$), Markov ($D$, $c_{\min}$), oracle ($\kappa$, $\lambda$) \\
+$\kappa'$ & 1 & inner continuity when mixing levels \\
+$x_f$ & 10 ms & crossfades between units \\
+level (rematch) & 1 & 0 frames, 1 units, 2 gestures \\
+fit, contour $c$, space & on, 0, own & timing, loudness, standardisation \\
+\bottomrule
+\end{tabular}
+\caption{Parameters of sound types.}
+\label{tab:st}
+\end{table}
+
+\subsubsection{Sound types made of atoms}
+\label{sec:atoms}
+
+The two methods connect when the sound analysed into types is not a
+recording but a book of atoms. Given a book $\{(d_k, u_k, \alpha_k)\}$ of
+the target $x$ on a dictionary $\D$, the frame features are the energies of
+the atoms active in each frame, in 40 logarithmic bands; an atom whose
+support covers several frames contributes to each of them. Types, units,
+gestures and sections are then computed as before, and a unit spanning
+$[a, b)$ is realised by resynthesising the atoms whose start falls in it:
+\begin{equation}
+  \hat x_{[a,b)}(t) = \sum_{k :\, a \le u_k < b} \alpha_k\, d_k(t - u_k + a).
+\end{equation}
+This has three consequences.
+\begin{enumerate}[leftmargin=*]
+  \item A book made with a sampled dictionary is already a hybrid; its types
+    describe the hybrid, and generation recombines it: a voice explained by
+    clarinet notes becomes a new clarinet piece with the voice's phrasing,
+    reordered by the oracle.
+  \item Units rebuilt from atoms have no cuts: the atoms of a unit ring on
+    into the next one, and the junctions are as smooth as the atoms
+    themselves. Transposition, time stretching and the selection of the
+    strongest atoms apply to the generated sequences too.
+  \item Two books made with different dictionaries but described in the same
+    band space can be rematched: the symbolic level and the atomic level
+    become two stages of the same hybridization, the first deciding
+    \emph{what} replaces what, the second \emph{with which matter}.
+\end{enumerate}
+The chain is therefore: decompose the target with the atoms of a source
+(Maple), describe the decomposition as types at several levels (sound
+types), generate or rematch at the level that suits the musical intention,
+and resynthesise from atoms.
+
+% =====================================================================
+\section{Conclusion}
+
+The two methods presented here treat hybridization as the approximation of
+one sound with the elements of another, at levels of representation that
+carry more structure than the spectrum: atoms (parametric or sampled) and
+symbolic types organised in a hierarchy. Their creative applications are
+many: rebuilding a voice with an instrument (or an instrument with the
+sounds of a place), at a controllable degree of resemblance; making the
+skeleton of a sound audible by keeping its strongest atoms; transposing and
+stretching sounds without spectral artefacts; recomposing a piece from its
+own notes, phrases or sections, with models that range from free
+recombination to near-literal continuation; mixing the form of one level
+with the detail of another; playing the articulation of a speech with the
+textures and voices of a song, frame by frame or gesture by gesture. Both
+methods are fast enough to be used interactively on sounds of a few minutes
+and require no training, so they work on any material, including the
+composer's own recordings.
+
+This paper describes the algorithms and their parameters; it contains no
+testing or evaluation. Further development would need objective measures of
+the trade-off between the target and the source in a hybrid (for instance
+the correlation of their envelopes and of their spectral features with the
+result, and the recognisability of each), listening tests on the perceived
+fusion and identity, a study of the effect of the parameters, and
+comparisons with concatenative and neural approaches. Natural extensions are
+dictionaries learned from the corpus rather than cut from it, joint models
+of the type sequences of two sounds for generation that belongs to both, and
+sequence models of larger capacity (such as transformers) trained on the
+symbolic sequences produced by sound types.
+
+% =====================================================================
+\begin{thebibliography}{99}
+\small
+
+\bibitem{abdallah2009}
+S.~Abdallah and M.~Plumbley.
+\newblock Information dynamics: patterns of expectation and surprise in the
+  perception of music.
+\newblock \emph{Connection Science}, 21(2--3):89--117, 2009.
+
+\bibitem{allauzen1999}
+C.~Allauzen, M.~Crochemore, and M.~Raffinot.
+\newblock Factor oracle: a new structure for pattern matching.
+\newblock In \emph{SOFSEM'99: Theory and Practice of Informatics}, LNCS 1725,
+  pages 295--310. Springer, 1999.
+
+\bibitem{arthur2007}
+D.~Arthur and S.~Vassilvitskii.
+\newblock k-means++: the advantages of careful seeding.
+\newblock In \emph{Proceedings of the ACM-SIAM Symposium on Discrete
+  Algorithms (SODA)}, pages 1027--1035, 2007.
+
+\bibitem{assayag2004}
+G.~Assayag and S.~Dubnov.
+\newblock Using factor oracles for machine improvisation.
+\newblock \emph{Soft Computing}, 8(9):604--610, 2004.
+
+\bibitem{begleiter2004}
+R.~Begleiter, R.~El-Yaniv, and G.~Yona.
+\newblock On prediction using variable order Markov models.
+\newblock \emph{Journal of Artificial Intelligence Research}, 22:385--421,
+  2004.
+
+\bibitem{bello2005}
+J.~P. Bello, L.~Daudet, S.~Abdallah, C.~Duxbury, M.~Davies, and M.~Sandler.
+\newblock A tutorial on onset detection in music signals.
+\newblock \emph{IEEE Transactions on Speech and Audio Processing},
+  13(5):1035--1047, 2005.
+
+\bibitem{bregman1990}
+A.~S. Bregman.
+\newblock \emph{Auditory Scene Analysis: The Perceptual Organization of
+  Sound}.
+\newblock MIT Press, 1990.
+
+\bibitem{caetano2011}
+M.~Caetano and X.~Rodet.
+\newblock Sound morphing by feature interpolation.
+\newblock In \emph{Proceedings of ICASSP}, 2011.
+
+\bibitem{caillon2021}
+A.~Caillon and P.~Esling.
+\newblock RAVE: a variational autoencoder for fast and high-quality neural
+  audio synthesis.
+\newblock arXiv:2111.05011, 2021.
+
+\bibitem{carpentier2010}
+G.~Carpentier, G.~Assayag, and E.~Saint-James.
+\newblock Solving the musical orchestration problem using multiobjective
+  constrained optimization with a genetic local search approach.
+\newblock \emph{Journal of Heuristics}, 16(5):681--714, 2010.
+
+\bibitem{cella2011soundtypes}
+C.-E. Cella.
+\newblock Sound-types: a new framework for symbolic sound analysis and
+  synthesis.
+\newblock In \emph{Proceedings of the International Computer Music
+  Conference (ICMC)}, Huddersfield, 2011.
+
+\bibitem{cella2013hybrid}
+C.-E. Cella and J.~J. Burred.
+\newblock Advanced sound hybridizations by means of the theory of
+  sound-types.
+\newblock In \emph{Proceedings of the International Computer Music
+  Conference (ICMC)}, Perth, 2013.
+
+\bibitem{cella2018toolbox}
+C.-E. Cella and P.~Esling.
+\newblock Open-source modular toolbox for computer-aided orchestration.
+\newblock In \emph{Proceedings of the International Conference on
+  Technologies for Music Notation and Representation (TENOR)}, 2018.
+
+\bibitem{cella2020orchideasol}
+C.-E. Cella, D.~Ghisi, V.~Lostanlen, F.~L\'evy, J.~Fineberg, and Y.~Maresz.
+\newblock OrchideaSOL: a dataset of extended instrumental techniques for
+  computer-aided orchestration.
+\newblock In \emph{Proceedings of the International Computer Music
+  Conference (ICMC)}, 2020.
+
+\bibitem{cella2022orchidea}
+C.-E. Cella.
+\newblock Orchidea: a comprehensive framework for target-based
+  computer-assisted dynamic orchestration.
+\newblock \emph{Journal of New Music Research}, 2022.
+
+\bibitem{collins2011}
+N.~Collins and B.~L. Sturm.
+\newblock Sound cross-synthesis and morphing using dictionary-based methods.
+\newblock In \emph{Proceedings of the International Computer Music
+  Conference (ICMC)}, 2011.
+
+\bibitem{davis1980}
+S.~Davis and P.~Mermelstein.
+\newblock Comparison of parametric representations for monosyllabic word
+  recognition in continuously spoken sentences.
+\newblock \emph{IEEE Transactions on Acoustics, Speech, and Signal
+  Processing}, 28(4):357--366, 1980.
+
+\bibitem{dixon2006}
+S.~Dixon.
+\newblock Onset detection revisited.
+\newblock In \emph{Proceedings of the International Conference on Digital
+  Audio Effects (DAFx)}, 2006.
+
+\bibitem{dolson1986}
+M.~Dolson.
+\newblock The phase vocoder: a tutorial.
+\newblock \emph{Computer Music Journal}, 10(4):14--27, 1986.
+
+\bibitem{driedger2015}
+J.~Driedger, T.~Pr\"atzlich, and M.~M\"uller.
+\newblock Let it Bee -- towards NMF-inspired audio mosaicing.
+\newblock In \emph{Proceedings of the International Society for Music
+  Information Retrieval Conference (ISMIR)}, 2015.
+
+\bibitem{dudley1939}
+H.~Dudley.
+\newblock Remaking speech.
+\newblock \emph{Journal of the Acoustical Society of America},
+  11(2):169--177, 1939.
+
+\bibitem{engel2017}
+J.~Engel, C.~Resnick, A.~Roberts, S.~Dieleman, D.~Eck, K.~Simonyan, and
+  M.~Norouzi.
+\newblock Neural audio synthesis of musical notes with WaveNet
+  autoencoders.
+\newblock In \emph{Proceedings of the International Conference on Machine
+  Learning (ICML)}, 2017.
+
+\bibitem{engel2020}
+J.~Engel, L.~Hantrakul, C.~Gu, and A.~Roberts.
+\newblock DDSP: differentiable digital signal processing.
+\newblock In \emph{Proceedings of the International Conference on Learning
+  Representations (ICLR)}, 2020.
+
+\bibitem{flanagan1966}
+J.~L. Flanagan and R.~M. Golden.
+\newblock Phase vocoder.
+\newblock \emph{Bell System Technical Journal}, 45(9):1493--1509, 1966.
+
+\bibitem{fujishima1999}
+T.~Fujishima.
+\newblock Realtime chord recognition of musical sound: a system using Common
+  Lisp Music.
+\newblock In \emph{Proceedings of the International Computer Music
+  Conference (ICMC)}, 1999.
+
+\bibitem{gabor1947}
+D.~Gabor.
+\newblock Acoustical quanta and the theory of hearing.
+\newblock \emph{Nature}, 159:591--594, 1947.
+
+\bibitem{hackbarth2013}
+B.~Hackbarth, N.~Schnell, P.~Esling, and D.~Schwarz.
+\newblock Composing morphology: concatenative synthesis as an intuitive
+  medium for prescribing sound in time.
+\newblock \emph{Contemporary Music Review}, 32(1):49--59, 2013.
+
+\bibitem{krstulovic2006}
+S.~Krstulovi\'c and R.~Gribonval.
+\newblock MPTK: matching pursuit made tractable.
+\newblock In \emph{Proceedings of ICASSP}, 2006.
+
+\bibitem{lefebvre2000}
+A.~Lefebvre and T.~Lecroq.
+\newblock Computing repeated factors with a factor oracle.
+\newblock In \emph{Proceedings of the Australasian Workshop on Combinatorial
+  Algorithms (AWOCA)}, pages 145--158, 2000.
+
+\bibitem{mallat1993}
+S.~Mallat and Z.~Zhang.
+\newblock Matching pursuits with time-frequency dictionaries.
+\newblock \emph{IEEE Transactions on Signal Processing}, 41(12):3397--3415,
+  1993.
+
+\bibitem{moorer1979}
+J.~A. Moorer.
+\newblock The use of linear prediction of speech in computer music
+  applications.
+\newblock \emph{Journal of the Audio Engineering Society}, 27(3):134--140,
+  1979.
+
+\bibitem{pearce2010}
+M.~T. Pearce, D.~M\"ullensiefen, and G.~A. Wiggins.
+\newblock The role of expectation and probabilistic learning in auditory
+  boundary perception: a model comparison.
+\newblock \emph{Perception}, 39(10):1365--1389, 2010.
+
+\bibitem{roads2001}
+C.~Roads.
+\newblock \emph{Microsound}.
+\newblock MIT Press, 2001.
+
+\bibitem{ron1996}
+D.~Ron, Y.~Singer, and N.~Tishby.
+\newblock The power of amnesia: learning probabilistic automata with variable
+  memory length.
+\newblock \emph{Machine Learning}, 25(2--3):117--149, 1996.
+
+\bibitem{schwarz2006}
+D.~Schwarz, G.~Beller, B.~Verbrugghe, and S.~Britton.
+\newblock Real-time corpus-based concatenative synthesis with CataRT.
+\newblock In \emph{Proceedings of the International Conference on Digital
+  Audio Effects (DAFx)}, 2006.
+
+\bibitem{schwarz2007}
+D.~Schwarz.
+\newblock Corpus-based concatenative synthesis.
+\newblock \emph{IEEE Signal Processing Magazine}, 24(2):92--104, 2007.
+
+\bibitem{serra1990}
+X.~Serra and J.~O. Smith.
+\newblock Spectral modeling synthesis: a sound analysis/synthesis system
+  based on a deterministic plus stochastic decomposition.
+\newblock \emph{Computer Music Journal}, 14(4):12--24, 1990.
+
+\bibitem{slaney1996}
+M.~Slaney, M.~Covell, and B.~Lassiter.
+\newblock Automatic audio morphing.
+\newblock In \emph{Proceedings of ICASSP}, 1996.
+
+\bibitem{smalley1997}
+D.~Smalley.
+\newblock Spectromorphology: explaining sound-shapes.
+\newblock \emph{Organised Sound}, 2(2):107--126, 1997.
+
+\bibitem{sturm2004}
+B.~L. Sturm.
+\newblock MATConcat: an application for exploring concatenative sound
+  synthesis using MATLAB.
+\newblock In \emph{Proceedings of the International Computer Music
+  Conference (ICMC)}, 2004.
+
+\bibitem{sturm2009}
+B.~L. Sturm, C.~Roads, A.~McLeran, and J.~J. Shynk.
+\newblock Analysis, visualization, and transformation of audio signals using
+  dictionary-based methods.
+\newblock \emph{Journal of New Music Research}, 38(4):325--341, 2009.
+
+\bibitem{wang2014}
+C.~Wang and S.~Dubnov.
+\newblock Guided music synthesis with variable Markov oracle.
+\newblock In \emph{Proceedings of the Musical Metacreation Workshop (AIIDE)},
+  2014.
+
+\bibitem{wishart1994}
+T.~Wishart.
+\newblock \emph{Audible Design: A Plain and Easy Introduction to Practical
+  Sound Composition}.
+\newblock Orpheus the Pantomime, 1994.
+
+\bibitem{zils2001}
+A.~Zils and F.~Pachet.
+\newblock Musical mosaicing.
+\newblock In \emph{Proceedings of the International Conference on Digital
+  Audio Effects (DAFx)}, 2001.
+
+\end{thebibliography}
+
+\end{document}

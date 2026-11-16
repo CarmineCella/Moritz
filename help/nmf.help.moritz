@@ -34,7 +34,7 @@
   (obj sd buffer~ helpnmfdrums ../examples/sounds/drums.wav (pos 240 575))
   (obj sl message "components 8, learn helpnmfvox, learn helpnmfdrums" (pos 20 605))
   (obj sfg message forget (pos 360 605))
-  (obj sex comment "then: separate yourmix yourdest. A full example: examples/nmf-supervised.moritz" (pos 20 635))
+  (obj sex comment "then: separate yourmix yourdest. A full example: examples/10-learning/nmf-supervised.moritz" (pos 20 635))
   (connect k3 0 nm 0)
   (connect k5 0 nm 0)
   (connect run 0 nm 0)

@@ -70,6 +70,11 @@ std::vector<std::string>& libraryPath() {
     return v;
 }
 
+std::vector<std::string>& soundPath() {
+    static std::vector<std::string> v;
+    return v;
+}
+
 std::vector<std::string>& helpPath() {
     static std::vector<std::string> v;
     return v;

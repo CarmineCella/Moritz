@@ -5,9 +5,11 @@
 ; sound into a sequence of symbols at several levels (notes, phrases,
 ; sections of a Bach prelude); new sequences become new music, and the types
 ; of one sound can be played with the sounds of another (John Cage with the
-; Beach Boys).
+; Beach Boys). The methods are described in the document "Sound
+; decomposition strategies for creative hybridizations" (Help > Documents).
 (patch
   (obj title comment "Tutorial 10 · Atoms and types: matching pursuit and sound types" (pos 20 12))
+  (obj paper link "Read more: Sound decomposition strategies for creative hybridizations (PDF)" docs/hybridization/hybridizations.pdf (pos 520 8))
   (obj s1 comment "1. A sound as a sum of atoms. pursuit finds the windowed cosine that explains most of the bell, subtracts it, and starts again." (pos 20 40))
   (obj s1b comment "   Each dot of the map is an atom (time, frequency; colour: level). Rebuild from the strongest ones only: the bell's skeleton." (pos 20 58))
   (obj b1 buffer~ t10bell ../examples/sounds/archeos-bell.wav (pos 20 85))
