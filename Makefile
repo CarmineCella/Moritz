@@ -412,14 +412,16 @@ run: $(BUNDLE)
 endif
 
 # the language inside another program: interpreters on threads, nothing left alive afterwards
+EMBED_CXX := $(CXX)
 ifeq ($(UNAME),Linux)
 EMBED_LIBS := -pthread
 else ifdef WINDOWS_HOST
+EMBED_CXX := $(WIN_CXX)
 EMBED_LIBS := -static -lws2_32
 endif
 embed-test:
 	mkdir -p $(BUILD)
-	$(CXX) -std=c++17 -O2 -Isrc tests/language/embed.cpp -o $(BUILD)/embed-test $(EMBED_LIBS)
+	$(EMBED_CXX) -std=c++17 -O2 -Isrc tests/language/embed.cpp -o $(BUILD)/embed-test $(EMBED_LIBS)
 	MORITZ_PATH=language $(BUILD)/embed-test
 
 clean:
