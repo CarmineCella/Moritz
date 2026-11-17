@@ -5,10 +5,13 @@
 
 #include "gui.h"
 #include "lang/lang.h"
+#include "langpatch.h"
+#include "objects.h"
 
 #include <FL/Fl.H>
 
 #include <algorithm>
+#include <condition_variable>
 #include <cstring>
 #include <fstream>
 #include <set>
@@ -18,6 +21,10 @@
 #include <pthread.h>
 #else
 #include <thread>
+#endif
+
+#ifdef OPAQUE      // Windows (wingdi.h) defines it; the language has a value type of that name
+#undef OPAQUE
 #endif
 
 namespace moritz {
@@ -119,6 +126,229 @@ std::string preview(const lang::vptr& v, size_t max) {
 
 std::string languageDir() { return resourceDir("language"); }
 
+// ---- the live patches: code on its thread reaches them through the main thread
+
+std::thread::id& mainThread() {
+    static std::thread::id id = std::this_thread::get_id();   // first used on the main thread (a context is made there)
+    return id;
+}
+
+// runs f on the main thread and waits for it (at once when already there)
+void onMainWait(const std::function<void()>& f) {
+    if (std::this_thread::get_id() == mainThread()) { f(); return; }
+    std::mutex m;
+    std::condition_variable cv;
+    bool done = false;
+    std::exception_ptr ex;
+    onMain([&] {
+        try { f(); } catch (...) { ex = std::current_exception(); }
+        std::lock_guard<std::mutex> g(m);
+        done = true;
+        cv.notify_one();
+    });
+    std::unique_lock<std::mutex> g(m);
+    cv.wait(g, [&] { return done; });
+    if (ex) std::rethrow_exception(ex);
+}
+
+struct LiveRef { const void* doc; };
+
+lang::vptr liveValue(const void* doc) { return lang::v_opaque("live-patch", std::make_shared<LiveRef>(LiveRef{doc})); }
+
+// the open patch a live value names (main thread), or nullptr when it was closed
+MainWindow* liveDoc(const lang::vptr& v) {
+    if (!v || v->t != lang::Value::OPAQUE || v->opaque_tag != "live-patch") return nullptr;
+    const void* d = std::static_pointer_cast<LiveRef>(v->opaque)->doc;
+    for (auto* w : App::get().docs) if (w == d) return w;
+    return nullptr;
+}
+
+bool isLive(const lang::vptr& v) { return v && v->t == lang::Value::OPAQUE && v->opaque_tag == "live-patch"; }
+
+// the text of a patch value or of an open patch
+std::string anyPatchText(lang::Interp& I, const lang::vptr& v) {
+    std::string t;
+    if (patchValueText(v, t)) return t;
+    if (!isLive(v)) I.bad("expected a patch, got " + std::string(lang::type_name(v)));
+    bool open = false;
+    onMainWait([&] { if (auto* d = liveDoc(v)) { t = d->patch.serialize(); open = true; } });
+    if (!open) I.bad("that patch is closed");
+    return t;
+}
+
+// language values as a message: numbers, strings and symbols, lists spliced
+void toMessage(const lang::vptr& v, Message& m) {
+    if (!v || v->t == lang::Value::NIL) return;
+    if (v->t == lang::Value::NUM) {
+        for (double d : v->num) {
+            if (v->num.size() == 1 && !v->s.empty()) m.push_back(parseAtom(v->s));
+            else m.push_back(Atom(d));
+        }
+    } else if (v->t == lang::Value::LIST) {
+        for (auto& x : v->l) toMessage(x, m);
+    } else {
+        m.push_back(Atom(v->s));
+    }
+}
+
+// (this-patch) the patch of this context
+lang::vptr fnThisPatch(lang::vlist&, lang::Interp& I) {
+    auto v = I.global->find("*patch*");
+    if (!v || !isLive(v)) I.bad("the session has no patch: choose a patch's context");
+    return v;
+}
+
+// (patch-text p) (patch-boxes p): of a patch value or an open patch
+lang::vptr fnAnyPatchText(lang::vlist& a, lang::Interp& I) { return lang::v_str(anyPatchText(I, a[0]) + "\n"); }
+lang::vptr fnAnyPatchBoxes(lang::vlist& a, lang::Interp& I) { return patchBoxes(anyPatchText(I, a[0])); }
+
+// (send name values...) to every receive name (as a send box, or a ; message)
+lang::vptr fnSend(lang::vlist& a, lang::Interp& I) {
+    std::string name = I.str(a[0]);
+    Message m;
+    for (size_t k = 1; k < a.size(); ++k) toMessage(a[k], m);
+    if (m.empty()) m.push_back(Atom("bang"));
+    onMainWait([&] { App::get().host.sendTo(name, m); });
+    return lang::v_nil();
+}
+
+// (box-send p id values...) a message into the left inlet of a box of an open patch
+lang::vptr fnBoxSend(lang::vlist& a, lang::Interp& I) {
+    std::string id = I.str(a[1]);
+    Message m;
+    for (size_t k = 2; k < a.size(); ++k) toMessage(a[k], m);
+    if (m.empty()) m.push_back(Atom("bang"));
+    bool found = false, open = false;
+    onMainWait([&] {
+        auto* d = liveDoc(a[0]);
+        if (!d) return;
+        open = true;
+        for (auto& b : d->patch.boxes)
+            if (b->id == id) { found = true; b->message(0, m); break; }
+    });
+    if (!open) I.bad("that patch is closed");
+    if (!found) I.bad("no box " + id);
+    return lang::v_nil();
+}
+
+// (buffer name) the channels of a buffer~ as vectors; (buffer-rate name) its sample rate
+lang::vptr fnBuffer(lang::vlist& a, lang::Interp& I) {
+    std::string name = I.str(a[0]);
+    SampleBuffer copy;
+    bool found = false;
+    onMainWait([&] {
+        if (auto* b = findBuffer(&App::get().host, name)) {
+            std::lock_guard<std::mutex> lk(b->patch->mutex());
+            copy = b->buf;
+            found = true;
+        }
+    });
+    if (!found) I.bad("no buffer~ " + name);
+    lang::vlist chans;
+    for (int c = 0; c < copy.channels; ++c) {
+        std::valarray<double> v((size_t)copy.frames);
+        for (long f = 0; f < copy.frames; ++f) v[(size_t)f] = copy.data[(size_t)f * copy.channels + c];
+        chans.push_back(lang::v_arr(std::move(v)));
+    }
+    return lang::v_list(std::move(chans));
+}
+
+lang::vptr fnBufferRate(lang::vlist& a, lang::Interp& I) {
+    std::string name = I.str(a[0]);
+    double sr = 0;
+    onMainWait([&] { if (auto* b = findBuffer(&App::get().host, name)) sr = b->buf.sr; });
+    if (sr <= 0) I.bad("no buffer~ " + name);
+    return lang::v_num(sr);
+}
+
+// (set-buffer! name channels [rate]) fills a buffer~: a vector, or a list of channels
+lang::vptr fnSetBuffer(lang::vlist& a, lang::Interp& I) {
+    std::string name = I.str(a[0]);
+    std::vector<std::valarray<double>> ch;
+    if (a[1]->t == lang::Value::NUM) ch.push_back(a[1]->num);
+    else for (auto& c : I.list(a[1])) ch.push_back(I.num(c));
+    if (ch.empty() || ch.size() > 8) I.bad("1 to 8 channels");
+    size_t frames = 0;
+    for (auto& c : ch) frames = std::max(frames, c.size());
+    double sr = a.size() > 2 ? I.scalar(a[2]) : 0;
+    bool found = false;
+    onMainWait([&] {
+        auto* b = findBuffer(&App::get().host, name);
+        if (!b) return;
+        found = true;
+        {
+            std::lock_guard<std::mutex> lk(b->patch->mutex());
+            b->buf.channels = (int)ch.size();
+            b->buf.frames = (long)frames;
+            if (sr > 0) b->buf.sr = sr;
+            b->buf.data.assign(frames * ch.size(), 0.f);
+            for (size_t c = 0; c < ch.size(); ++c)
+                for (size_t f = 0; f < ch[c].size(); ++f) b->buf.data[f * ch.size() + c] = (float)ch[c][f];
+            ++b->version;
+        }
+        b->patch->rebuild();
+    });
+    if (!found) I.bad("no buffer~ " + name);
+    return a[1];
+}
+
+// (insert! p patch [dx dy]) adds the boxes of a patch value to an open patch (ids already used are renamed)
+lang::vptr fnInsert(lang::vlist& a, lang::Interp& I) {
+    std::string text;
+    if (!patchValueText(a[1], text)) I.bad("expected a patch to insert, got " + std::string(lang::type_name(a[1])));
+    int dx = a.size() > 2 ? (int)I.scalar(a[2]) : 0, dy = a.size() > 3 ? (int)I.scalar(a[3]) : 0;
+    std::string err;
+    bool open = false, ok = false;
+    int n = 0;
+    onMainWait([&] {
+        auto* d = liveDoc(a[0]);
+        if (!d) return;
+        open = true;
+        d->pushUndo();
+        std::vector<Box*> added;
+        ok = d->patch.merge(text, dx, dy, added, err);
+        if (!ok) { d->dropUndo(); return; }
+        n = (int)added.size();
+        d->markDirty();
+        d->redraw();
+    });
+    if (!open) I.bad("that patch is closed");
+    if (!ok) I.bad(err);
+    return lang::v_num(n);
+}
+
+// (replace! p patch) an open patch becomes the patch value; boxes that did not change go on running
+lang::vptr fnReplace(lang::vlist& a, lang::Interp& I) {
+    std::string text;
+    if (!patchValueText(a[1], text)) I.bad("expected a patch, got " + std::string(lang::type_name(a[1])));
+    std::string err;
+    bool open = false, ok = false;
+    onMainWait([&] {
+        auto* d = liveDoc(a[0]);
+        if (!d) return;
+        open = true;
+        d->pushUndo();
+        ok = d->patch.applyText(text, err);
+        if (!ok) { d->dropUndo(); return; }
+        d->markDirty();
+        d->redraw();
+    });
+    if (!open) I.bad("that patch is closed");
+    if (!ok) I.bad(err);
+    return a[0];
+}
+
+// (open-patch p [title]) a patch value in a window of its own; => the open patch
+lang::vptr fnOpenPatch(lang::vlist& a, lang::Interp& I) {
+    std::string text;
+    if (!patchValueText(a[0], text)) I.bad("expected a patch, got " + std::string(lang::type_name(a[0])));
+    std::string title = a.size() > 1 ? I.str(a[1]) : "made by code";
+    const void* doc = nullptr;
+    onMainWait([&] { doc = App::get().openPatchText(text, title, ""); });
+    if (!doc) I.bad("the patch could not be opened");
+    return liveValue(doc);
+}
+
 // the names the libraries define at their top level: their variables (var) and, with functions = true,
 // their functions; neither is shown among the user's variables
 const std::set<std::string>& languageLibraryNames(bool functions) {
@@ -145,9 +375,25 @@ const std::set<std::string>& languageLibraryNames(bool functions) {
 
 }  // namespace
 
-LangContext::LangContext(std::string l) : label(std::move(l)), interp_(std::make_unique<lang::Interp>()) {
+LangContext::LangContext(std::string l, const void* doc)
+    : label(std::move(l)), interp_(std::make_unique<lang::Interp>()) {
+    mainThread();
     auto& I = *interp_;
     lang::make_env(I);
+    addPatchLanguage(I);
+    // the live patches
+    I.def("this-patch", fnThisPatch, 0, 0);
+    I.def("patch-text", fnAnyPatchText, 1, 1);
+    I.def("patch-boxes", fnAnyPatchBoxes, 1, 1);
+    I.def("send", fnSend, 1, -1);
+    I.def("box-send", fnBoxSend, 2, -1);
+    I.def("buffer", fnBuffer, 1, 1);
+    I.def("buffer-rate", fnBufferRate, 1, 1);
+    I.def("set-buffer!", fnSetBuffer, 2, 3);
+    I.def("insert!", fnInsert, 2, 4);
+    I.def("replace!", fnReplace, 2, 2);
+    I.def("open-patch", fnOpenPatch, 1, 2);
+    if (doc) I.def("*patch*", liveValue(doc));
     if (std::string d = languageDir(); !d.empty()) I.load_path.push_back(d);
     auto* buf = new ConsoleStream();
     I.out = new std::ostream(buf);
@@ -183,8 +429,13 @@ bool LangContext::eval(const std::string& code, const std::string& file, int fir
     startThread([self, src, file, done] {
         auto& I = *self->interp_;
         EvalResult r;
+        I.toplevel_fn = [&r](const lang::vptr& v) {
+            std::string t;
+            if (patchValueText(v, t)) r.patches.push_back(t);
+        };
         try {
             lang::vptr v = I.run(src, file);
+            if (std::string t; patchValueText(v, t)) v = nullptr;   // shown as a window, not as text
             if (v && v->t != lang::Value::NIL) r.value = preview(v, 400);
         } catch (lang::Exit_signal&) {
         } catch (const lang::Error& e) {
@@ -197,6 +448,7 @@ bool LangContext::eval(const std::string& code, const std::string& file, int fir
             r.ok = false;
             r.error = e.what();
         }
+        I.toplevel_fn = nullptr;
         I.call_stack.clear();
         I.function_depth = 0;
         I.loop_depth = 0;
@@ -266,13 +518,15 @@ std::map<const void*, std::shared_ptr<LangContext>>& contexts() {
 
 std::shared_ptr<LangContext> sessionContext() {
     auto& c = contexts()[nullptr];
-    if (!c) c = std::make_shared<LangContext>("session");
+    if (!c) c = std::make_shared<LangContext>("session", nullptr);
     return c;
 }
 
-std::shared_ptr<LangContext> patchContext(const void* doc, const std::string& title) {
+std::shared_ptr<LangContext> patchContext(const void* doc, const std::string& t) {
+    std::string title = t;
+    if (size_t k = title.find(" — Moritz"); k != std::string::npos) title.resize(k);
     auto& c = contexts()[doc];
-    if (!c) c = std::make_shared<LangContext>(title);
+    if (!c) c = std::make_shared<LangContext>(title, doc);
     c->label = title;
     return c;
 }

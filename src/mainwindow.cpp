@@ -6,6 +6,7 @@
 #include "codewindow.h"
 #include "reference.h"
 #include "session.h"
+#include "langpatch.h"
 #include "maximport.h"
 #include "objects.h"
 
@@ -372,6 +373,9 @@ void App::buildMenu(Fl_Menu_Bar* m) {
         addNew("Patch/New/Library/" + escapeMenu(name), name);
     m->add("Patch/Edit Mode", FL_COMMAND + 'e', DOC_CB(toggleLock), nullptr, FL_MENU_TOGGLE);
     m->add("Patch/Code View", FL_COMMAND + 't', [](Fl_Widget*, void*) { App::get().showText(); }, nullptr);
+    m->add("Patch/Freeze (keep the boxes, drop the code)", 0, [](Fl_Widget*, void*) {
+        if (auto* d = App::get().frontDoc()) d->freeze();
+    }, nullptr);
     m->add("Patch/Audio On", FL_COMMAND + '/', APP_CB(toggleAudio), nullptr,
            FL_MENU_TOGGLE | FL_MENU_DIVIDER);
     m->add("Patch/Audio Setup...", 0, APP_CB(audioSetup), nullptr);
@@ -483,9 +487,12 @@ MainWindow* App::newDocument() {
 MainWindow* App::openDocument(const std::string& path) {
     for (auto* d : docs)                              // already open: bring it forward
         if (!d->path().empty() && d->path() == path) { d->show(); return d; }
-    if (std::string text; readFile(path, text) && isCodeText(text)) {   // code, not a patch: the editor
-        openCode(path);
-        return nullptr;
+    if (std::string text; readFile(path, text)) {
+        if (!makesPatch(text)) { openCode(path); return nullptr; }         // code that makes no patch: the editor
+        if (isCodeText(text) || patchNeedsLanguage(text)) {                // a patch written with code
+            runPatchFile(path);
+            return nullptr;
+        }
     }
     MainWindow* d = frontDoc();
     bool fresh = !(d && d->isEmptyUntitled());
@@ -733,6 +740,79 @@ void App::closeCode(CodeWindow* w) {
 
 CodeWindow* App::frontCode() {
     return dynamic_cast<CodeWindow*>(Fl::first_window());
+}
+
+MainWindow* App::openPatchText(const std::string& text, const std::string& title, const std::string& key) {
+    if (!key.empty())
+        for (auto* d : docs)
+            if (d->madeFrom == key) {                  // made again: the same window, running boxes kept
+                std::string err;
+                d->pushUndo();
+                if (!d->patch.applyText(text, err)) {
+                    d->dropUndo();
+                    print(title + ": " + err);
+                    return d;
+                }
+                if (!err.empty()) log(title + ":\n" + err);
+                d->redraw();
+                d->show();
+                return d;
+            }
+    MainWindow* d = frontDoc();
+    bool fresh = !(d && d->isEmptyUntitled());
+    if (fresh) d = newDocument();
+    std::string file = key.substr(0, key.rfind('#'));
+    std::string dir = !file.empty() && file[0] != '<' ? dirOf(file) : std::string();
+    if (!d->loadConverted(text, dir, title)) {
+        if (fresh) closeDocument(d);
+        return nullptr;
+    }
+    d->madeFrom = key;
+    if (!key.empty()) {                                // the code is its source: Freeze to edit the boxes
+        d->canvas->setLocked(true);
+        d->canvas->readOnly = true;
+        std::string src = file.empty() || file[0] == '<' ? std::string("code") : file.substr(file.find_last_of("/\\") + 1);
+        d->setStatus("made by " + src + ": Code shows it, running it again updates this window; Patch > Freeze keeps the boxes");
+    }
+    d->updateTitle();
+    d->show();
+    return d;
+}
+
+void App::showPatches(const std::vector<std::string>& patches, const std::string& source) {
+    std::string name = source;
+    if (size_t s = name.find_last_of("/\\"); s != std::string::npos) name = name.substr(s + 1);
+    if (name.size() > 7 && name.compare(name.size() - 7, 7, ".moritz") == 0) name.resize(name.size() - 7);
+    if (!name.empty() && name[0] == '<') name = name.substr(1, name.size() - 2);
+    for (size_t k = 0; k < patches.size(); ++k)
+        openPatchText(patches[k], patches.size() > 1 ? name + "-" + std::to_string(k + 1) : name,
+                      source + "#" + std::to_string(k));
+}
+
+void App::runPatchFile(const std::string& path) {
+    std::string text;
+    if (!readFile(path, text)) { print("can't open " + path); return; }
+    auto ctx = sessionContext();
+    if (!ctx->eval(text, path, 1, [path](const EvalResult& r) {
+            if (!r.ok) {
+                App::get().log("error: " + r.error);
+                App::get().openCode(path);           // to see and fix it
+                return;
+            }
+            if (r.patches.empty()) { App::get().openCode(path); return; }
+            App::get().showPatches(r.patches, path);
+            App::get().addRecent(path);
+        }))
+        print("the session is busy: try again when it ends");
+}
+
+void MainWindow::freeze() {
+    if (madeFrom.empty()) return;
+    madeFrom.clear();
+    canvas->readOnly = false;
+    markDirty();
+    updateTitle();
+    setStatus("frozen: the boxes are yours now, the code that made them is left as it was");
 }
 
 // ---- tools: zoom, interface size, quick recorder, the toolbar's meters
@@ -1172,6 +1252,10 @@ void App::showText() {
 }
 
 void App::showText(MainWindow* doc, Patch* p, const std::string& title, bool readOnly) {
+    if (doc && p == &doc->patch && !doc->madeFrom.empty() && doc->madeFromFile()[0] != '<') {
+        openCode(doc->madeFromFile());           // a patch made by code: its code is the file
+        return;
+    }
     PatchTextWindow* tw = textWindow(p);
     if (!tw) {
         std::string t = title;

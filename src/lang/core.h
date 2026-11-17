@@ -65,6 +65,11 @@ using vlist = std::vector<vptr>;
 using varr = std::valarray<double>;
 using sptr = std::shared_ptr<std::string>;
 using op_t = vptr (*)(vlist&, Interp&);
+// A form defined by a host (the patch library: patch, obj, connect): its handler gets the form as written,
+// arguments unevaluated, and the environment, and decides what to evaluate. Called as a function (handed to
+// map, say), it refuses.
+using form_fn = std::function<vptr(vlist& form, eptr env, Interp& i)>;
+inline vptr fn_host_form(vlist&, Interp& i);
 
 // How many values and environments are alive, in every interpreter of the process: (live-objects) reads
 // them, and the memory test checks that what a program makes is freed when it is no longer used.
@@ -325,7 +330,8 @@ struct Parser {
         }
         if (w.empty()) err(line, "empty word");
         char* e = nullptr; double d = std::strtod(w.c_str(), &e);
-        return (e && *e == '\0' && e != w.c_str()) ? v_num(d) : v_sym(std::move(w));
+        if (e && *e == '\0' && e != w.c_str()) { auto v = v_num(d); v->s = std::move(w); return v; }   // as written: 2. stays a float for patches
+        return v_sym(std::move(w));
     }
     // At the top level an indented line continues the command above it (a function's body on
     // the next line, a long call split over several); inside { } lines are separate commands.
@@ -391,6 +397,11 @@ struct Interp {
     int function_depth = 0, loop_depth = 0;
     unsigned long eval_count = 0;
     std::function<void()> yield_fn;         // called every 1024 evals, for hosts that need to breathe
+    std::function<void(const vptr&)> toplevel_fn;   // sees the value of every top-level form of a run (not of a load)
+    void def_form(const std::string& name, form_fn f) {
+        auto v = v_op(fn_host_form, name, 0, -1); v->opaque = std::make_shared<form_fn>(std::move(f)); v->opaque_tag = "form";
+        global->vars[name] = v;
+    }
     std::function<void()> idle_fn;          // background work (schedulers, servers): called with yield_fn, from sleep,
                                             // and by hosts while they wait for input; never re-entered
     bool in_idle = false;
@@ -670,6 +681,10 @@ try {
         op_t op = head->op;
 
         if (op == fn_quote) { cleanup(); return l.size() > 1 ? l[1] : v_nil(); }
+        if (op == fn_host_form) {
+            auto h = std::static_pointer_cast<form_fn>(head->opaque);
+            vptr r = (*h)(l, e, *this); cleanup(); return r;
+        }
         if (op == fn_do) {
             if (l.size() == 1) { cleanup(); return v_nil(); }
             for (size_t i=1; i+1<l.size(); i++) eval(l[i], e);
@@ -1159,8 +1174,12 @@ inline vptr Interp::run(const std::string& src, const std::string& filename) {
         stack_base = reinterpret_cast<std::uintptr_t>(&here);
         if (!fixed_budget) stack_budget = thread_stack_size() / 4 * 3;
     }
-    return eval(prog, global);
+    if (!toplevel_fn || !loading_files.empty()) return eval(prog, global);
+    vptr last = v_nil();
+    for (size_t k = 1; k < prog->l.size(); ++k) { last = eval(prog->l[k], global); toplevel_fn(last); }
+    return last;
 }
+inline vptr fn_host_form(vlist&, Interp& i) { i.err(std::string(i.who) + ": a form, not a function: write it as (" + i.who + " ...)"); }
 inline Interp*& repl_interp() { static Interp* p = nullptr; return p; }
 inline void Interp::repl() {
     std::string buffer; int depth = 0;

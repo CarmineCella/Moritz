@@ -15,9 +15,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 LIBS = [["src/lang/core.h"], ["src/lang/std.h", "language/std.moritz"], ["src/lang/system.h", "language/system.moritz"],
         ["src/lang/scientific.h", "language/scientific.moritz"], ["src/lang/signals.h", "language/signals.moritz"],
-        ["src/lang/music.h", "src/lang/music/midi.h", "language/music.moritz"], ["language/plot.moritz"]]
+        ["src/lang/music.h", "src/lang/music/midi.h", "language/music.moritz"], ["language/plot.moritz"],
+        ["src/langpatch.cpp", "src/session.cpp"]]
 FORM = re.compile(r"^\(([^\s()]+)[^)]*\)")
-REG = re.compile(r'(?:i\.def\(|\ba\(|\{)\s*"([^"]+)"')
+REG = re.compile(r'(?:[iI]\.def\(|[iI]\.def_form\(|\ba\(|\{)\s*"([^"]+)"')
 DEF = re.compile(r"^function\s+([^\s()]+)", re.M)
 
 

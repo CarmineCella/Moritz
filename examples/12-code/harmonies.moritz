@@ -1,0 +1,23 @@
+; harmonies.moritz - code without a patch: the harmonic field above a note,
+; chords taken from it, and a melody that wanders through them. Open it to
+; read it in the code editor; Cmd-Enter runs a paragraph, Shift-Cmd-Enter the
+; whole file, and the Console shows what it prints.
+load "music"
+
+; (above pitch k) k notes of the harmonic field above a pitch, from its fifth partial
+function above (pitch k) {
+    var field (harmonic-series pitch 16)
+    return (take (drop field 4) k)
+}
+
+var chord (above "C2" 5)
+print "the field above C2:" (map chord midi->pitch)
+
+; a melody: each note one step of a random walk, kept inside the chord's notes
+var notes (list)
+var at 2
+for (var k 0) (< k 12) (var k (+ k 1)) {
+    set at (max 0 (min 4 (+ at (- (floor (* 3 (rand))) 1))))
+    push notes (getidx chord at)
+}
+print "a melody through it:" (map notes midi->pitch)

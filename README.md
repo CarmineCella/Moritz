@@ -53,8 +53,11 @@ and the signal processing, analysis and learning of *Musil*.
   and analysis, statistics and learning. Write it in the code editor (File >
   New Code; Cmd-Enter runs the paragraph at the cursor, Tab completes, the
   help of the name under the cursor is beside it) or at the Console's
-  prompt. Its libraries are in `language/`; `moritz --run` and
-  `moritz --repl` run it from a terminal (see below).
+  prompt. A patch file is a program of the language, so a loop or a
+  function can write a patch (`examples/12-code`), and code can reach the
+  open patch: its boxes, its buffers, sending messages, adding boxes. A
+  patch's Code view is the same editor. Its libraries are in `language/`;
+  `moritz --run` and `moritz --repl` run it from a terminal (see below).
 
 The complete list of objects is in [OBJECTS.md](OBJECTS.md).
 

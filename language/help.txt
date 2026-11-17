@@ -441,6 +441,12 @@
 #assert-equal
   (assert-equal actual expected msg)
   structural comparison with a helpful message
+#near?
+  (near? a b eps)
+  1 when a and b differ by less than eps
+#midi->hz hz->midi
+  (midi->hz n)  (hz->midi f)
+  MIDI note numbers and Hz (69 = A4 = 440)
 #platform
   (platform)
   => "macos", "linux" or "windows"
@@ -2534,3 +2540,57 @@
 #histogram-figure
   (histogram-figure v bins)
   a bar chart of (histogram v bins)
+#read-patch
+  (read-patch path)
+  the patch a file makes: a plain patch file, or one written with code
+#patch
+  (patch forms...)
+  a patch: its (obj ...) and (connect ...) forms, and any code that writes them
+#obj
+  (obj id class args... (pos x y)
+  ) a box of the patch being written; arguments as written, ,x and ,(...) computed
+#connect
+  (connect from outlet to inlet)
+  a cable of the patch being written
+#patch?
+  (patch? x)
+  1 when x is a patch
+#patch-text
+  (patch-text p)
+  the text of a patch, as a file holds it
+#save-patch
+  (save-patch p path)
+  writes a patch as a file; => the patch
+#patch-boxes
+  (patch-boxes p)
+  the boxes of a patch: records with 'id 'class 'args 'x 'y
+#read-patch
+  (read-patch path)
+  the patch a file makes, a plain one or one written with code
+#this-patch
+  (this-patch)
+  the patch of this context
+#patch-text patch-boxes
+  (patch-text p)  (patch-boxes p)
+  of a patch value or an open patch
+#send
+  (send name values...)
+  to every receive name (as a send box, or a ; message)
+#box-send
+  (box-send p id values...)
+  a message into the left inlet of a box of an open patch
+#buffer
+  (buffer name)
+  the channels of a buffer~ as vectors; (buffer-rate name) its sample rate
+#set-buffer!
+  (set-buffer! name channels [rate])
+  fills a buffer~: a vector, or a list of channels
+#insert!
+  (insert! p patch [dx dy])
+  adds the boxes of a patch value to an open patch (ids already used are renamed)
+#replace!
+  (replace! p patch)
+  an open patch becomes the patch value; boxes that did not change go on running
+#open-patch
+  (open-patch p [title])
+  a patch value in a window of its own; => the open patch

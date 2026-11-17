@@ -28,6 +28,10 @@
 #include <set>
 #include <sstream>
 
+#ifdef OPAQUE      // Windows (wingdi.h) defines it; the language has a value type of that name
+#undef OPAQUE
+#endif
+
 namespace moritz {
 
 namespace {
@@ -400,9 +404,8 @@ CodeWindow::CodeWindow() : Fl_Double_Window(1060, 680, "Untitled — code") {
         if (ins || del) static_cast<CodeWindow*>(d)->textChanged();
     }, this);
     callback([](Fl_Widget* w, void*) {
-        auto* cw = static_cast<CodeWindow*>(w);
         if (Fl::event() == FL_SHORTCUT && Fl::event_key() == FL_Escape) return;   // Esc stops, it does not close
-        if (cw->confirmDiscard()) App::get().closeCode(cw);
+        static_cast<CodeWindow*>(w)->closeRequested();
     });
     fillContexts();
     refreshVariables();
@@ -512,7 +515,30 @@ std::shared_ptr<LangContext> CodeWindow::context() {
     return patchContext(key, context_->text() ? context_->text() : "patch");
 }
 
-void CodeWindow::run(const std::string& code, int firstLine, int lastLine) {
+void CodeWindow::patchesMade(const std::vector<std::string>& patches, const std::string& file) {
+    App::get().showPatches(patches, file);
+}
+
+void CodeWindow::closeRequested() {
+    if (confirmDiscard()) App::get().closeCode(this);
+}
+
+void CodeWindow::setText(const std::string& t) {
+    syncing_ = true;
+    text_->text(t.c_str());
+    syncing_ = false;
+    restyle();
+    refreshOutline();
+}
+
+std::string CodeWindow::text() const {
+    char* all = text_->text();
+    std::string t = all;
+    std::free(all);
+    return t;
+}
+
+void CodeWindow::run(const std::string& code, int firstLine, int lastLine, const std::string& fileName) {
     auto ctx = context();
     if (ctx->busy()) { setStatus("busy: " + ctx->label + " is still running (Stop to end it)"); return; }
     errorLine_ = 0;
@@ -521,7 +547,7 @@ void CodeWindow::run(const std::string& code, int firstLine, int lastLine) {
     restyle();
     Fl::remove_timeout(flashTimer, this);
     Fl::add_timeout(0.35, flashTimer, this);
-    std::string file = path_.empty() ? "untitled.moritz" : path_;
+    std::string file = fileName;
     setStatus("running in " + ctx->label + "...");
     App::get().ensureConsole();
     show();
@@ -542,6 +568,7 @@ void CodeWindow::run(const std::string& code, int firstLine, int lastLine) {
                 editor_->scroll(std::max(1, r.line - 5), 0);
             }
         }
+        if (r.ok && !r.patches.empty()) patchesMade(r.patches, file);
         refreshVariables();
     });
 }
@@ -573,14 +600,14 @@ void CodeWindow::runBlock() {
     }
     std::string code;
     for (int k = first - 1; k < last && k < (int)lines.size(); ++k) code += lines[(size_t)k] + "\n";
-    run(code, first, last);
+    run(code, first, last, path_.empty() ? "untitled.moritz" : path_);
 }
 
 void CodeWindow::runFile() {
     char* all = text_->text();
     std::string t = all;
     std::free(all);
-    run(t, 1, text_->count_lines(0, text_->length()) + 1);
+    run(t, 1, text_->count_lines(0, text_->length()) + 1, path_.empty() ? "untitled.moritz" : path_);
 }
 
 void CodeWindow::stop() {
@@ -646,6 +673,7 @@ void CodeWindow::cursorMoved() {
 }
 
 void CodeWindow::textChanged() {
+    if (syncing_) return;
     if (!dirty_) {
         dirty_ = true;
         refreshTitle();
@@ -681,6 +709,14 @@ void CodeWindow::refreshOutline() {
     outlineLines_.clear();
     for (size_t k = 0; k < lines.size(); ++k) {
         const std::string& l = lines[k];
+        if (size_t o = l.find("(obj "); o != std::string::npos && l.find_first_not_of(" \t") == o) {   // a box
+            std::istringstream ss(l.substr(o + 5));
+            std::string id, cls;
+            ss >> id >> cls;
+            outline_->add(("▫ " + id + "  " + cls).c_str());
+            outlineLines_.push_back((int)k + 1);
+            continue;
+        }
         for (const char* kw : {"function ", "var ", "object "}) {
             size_t n = std::strlen(kw);
             if (l.compare(0, n, kw) != 0) continue;
@@ -779,8 +815,10 @@ public:
         std::string code = p.pending;
         p.pending.clear();
         if (!ctx->eval(code, "<console>", 1, [](const EvalResult& r) {
-                if (r.ok) { if (!r.value.empty()) App::get().log("→ " + r.value); }
-                else App::get().log(r.stopped ? "stopped" : "error: " + r.error);
+                if (r.ok) {
+                    if (!r.value.empty()) App::get().log("→ " + r.value);
+                    if (!r.patches.empty()) App::get().showPatches(r.patches, "<console>");
+                } else App::get().log(r.stopped ? "stopped" : "error: " + r.error);
             }))
             App::get().log(ctx->label + " is busy: Esc stops it");
     }

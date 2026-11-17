@@ -30,5 +30,9 @@ for r in reference*.moritz; do
         fails=$((fails + 1))
     fi
 done
+# every patch reads the same through the language as through Moritz's loader
+if ! "$MORITZ" --language-check ../../examples/*/*.moritz ../../help/*.moritz ../../library/*.moritz ../../tutorials/*.moritz; then
+    echo "FAIL patches read differently by the language"; fails=$((fails + 1))
+fi
 echo "language: $(ls test_*.moritz reference*.moritz | wc -l | tr -d ' ') files, $fails failed"
 [ $fails -eq 0 ]

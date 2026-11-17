@@ -8,6 +8,7 @@
 #include "jobs.h"
 #include "midi.h"
 #include "moritz.h"
+#include "codewindow.h"
 
 #include <FL/Fl.H>
 #include <FL/Fl_Box.H>
@@ -170,30 +171,39 @@ public:
 
 // A patch as text, in its own window: a second view on the same patch,
 // kept in sync both ways (see textview.cpp).
-class PatchTextWindow : public Fl_Double_Window {
+// A patch's code view: the code editor bound to the patch. It shows the patch's text and stays in sync
+// both ways (an edit applies once typing pauses; a change in the drawing rewrites the text); Save saves
+// the patch. Text with code in it runs in the patch's context and its patch replaces the drawing.
+class PatchTextWindow : public CodeWindow {
 public:
     PatchTextWindow(MainWindow* doc, Patch* p, const std::string& title, bool readOnly);
     ~PatchTextWindow() override;
     void detach();                 // the patch is being destroyed
     void applyNow();               // apply a pending text edit
     void refresh(bool force);      // show the patch's current text
-    Fl_Text_Editor* editor() const { return editor_; }
     Patch* patch;
 
+    bool save() override;
+    bool saveAs() override;
+    bool confirmDiscard() override { return true; }
+    void closeRequested() override;
+    void runFile() override;
+    void textChanged() override;
+
+protected:
+    std::shared_ptr<LangContext> context() override;
+    void patchesMade(const std::vector<std::string>& patches, const std::string& file) override;
+
 private:
-    static void modified(int pos, int nIns, int nDel, int nRestyled, const char* deleted, void* d);
     static void applyLater(void* d);
     static void poll(void* d);
-    void setStatus(const std::string& s, bool error = false);
+    void applyText(const std::string& t);
+    void note(const std::string& s);
     MainWindow* doc_;
     bool readOnly_;
-    Fl_Text_Buffer* text_;
-    Fl_Text_Buffer* style_;
-    Fl_Text_Editor* editor_;
-    Fl_Box* status_;
+    std::string title_;
     std::string shown_;            // the text last in sync with the patch
     bool pending_ = false;         // edited, not applied yet
-    bool syncing_ = false;
 };
 
 // Round toolbar button (audio on/off, edit mode, code view).
@@ -272,6 +282,10 @@ public:
     CodeWindow* openCode(const std::string& path);
     void closeCode(CodeWindow* w);      // already confirmed
     CodeWindow* frontCode();            // the code window in front, if one is
+    // patches that code made: each in a window, updated when the same source makes it again (source#k)
+    void showPatches(const std::vector<std::string>& patches, const std::string& source);
+    MainWindow* openPatchText(const std::string& text, const std::string& title, const std::string& key);
+    void runPatchFile(const std::string& path);   // a patch file written with code: run it, show its patches
     const std::vector<CodeWindow*>& codeWindows() const { return codeWindows_; }
     Fl_Double_Window* consoleWindow() { return console_; }
     void clearConsole();
@@ -354,7 +368,12 @@ public:
     bool save();
     bool saveAs();
     bool confirmDiscard();
-    bool isEmptyUntitled() const { return path_.empty() && !dirty_ && patch.boxes.empty(); }
+    bool isEmptyUntitled() const { return path_.empty() && !dirty_ && patch.boxes.empty() && madeFrom.empty(); }
+    // made by code: "file#k", the k-th patch the file's top-level forms make (empty for a patch drawn here).
+    // Running the file again updates this window; its code view is the file; Freeze keeps the boxes.
+    std::string madeFrom;
+    std::string madeFromFile() const { return madeFrom.substr(0, madeFrom.rfind('#')); }
+    void freeze();
     const std::string& path() const { return path_; }
     // Edit
     void pushUndo();

@@ -25,6 +25,7 @@ struct EvalResult {
     std::string error;          // the message, with the call stack
     std::string file;           // where the error is
     int line = 0;
+    std::vector<std::string> patches;   // the patches the run's top-level forms made (their text)
 };
 
 struct Variable {
@@ -33,7 +34,8 @@ struct Variable {
 
 class LangContext : public std::enable_shared_from_this<LangContext> {
 public:
-    explicit LangContext(std::string label);
+    // doc: the patch whose context this is (its MainWindow), nullptr for the session
+    LangContext(std::string label, const void* doc);
     ~LangContext();
     std::string label;
     bool busy() const { return busy_; }

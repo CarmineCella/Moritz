@@ -26,21 +26,29 @@ public:
     CodeWindow();
     ~CodeWindow() override;
     bool load(const std::string& path);
-    bool save();
-    bool saveAs();
-    bool confirmDiscard();                        // asks to save when edited; false: cancel
+    virtual bool save();
+    virtual bool saveAs();
+    virtual bool confirmDiscard();                // asks to save when edited; false: cancel
+    virtual void closeRequested();                // the window's close button, Cmd-W
     const std::string& path() const { return path_; }
     Fl_Text_Editor* editor() { return editor_; }
 
     void runBlock();                              // the selection, or the paragraph at the cursor
-    void runFile();
+    virtual void runFile();
     void stop();
     void toggleComment();
     void complete();                              // Tab after a name: the names that start like it
     void cursorMoved();                           // help on the name under the cursor
-    void textChanged();
+    virtual void textChanged();
 
-private:
+protected:
+    virtual std::shared_ptr<LangContext> context();   // the one chosen
+    // the patches a run's top-level forms made: windows of their own, kept per source (a later run updates them)
+    virtual void patchesMade(const std::vector<std::string>& patches, const std::string& file);
+    void run(const std::string& code, int firstLine, int lastLine, const std::string& file);
+    void setText(const std::string& t);           // without marking the window edited
+    std::string text() const;
+    bool syncing_ = false;                        // setting the text: not an edit
     std::string path_;
     bool dirty_ = false;
     int errorLine_ = 0;                           // highlighted until the next edit
@@ -59,13 +67,11 @@ private:
     std::string helpName_;
     std::string statusText_;
 
-    std::shared_ptr<LangContext> context();       // the one chosen
     void fillContexts();
-    void run(const std::string& code, int firstLine, int lastLine);
     void restyle();
     void refreshTitle();
     void refreshOutline();
-    void refreshVariables();
+    void refreshVariables();          // the context's variables (after a run)
     void setStatus(const std::string& s);
     static void outlineTimer(void* data);
     static void flashTimer(void* data);
