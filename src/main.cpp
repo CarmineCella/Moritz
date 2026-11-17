@@ -13,6 +13,9 @@
 // mode, or edit mode with "edit"), so drawing can be checked without a screen.
 
 #include "language.h"
+#include <chrono>
+#include "codewindow.h"
+#include "session.h"
 #include "gui.h"
 #include "reference.h"
 #include "maximport.h"
@@ -295,10 +298,45 @@ int main(int argc, char** argv) {
         if (std::string(argv[k]) == "--no-audio" || std::string(argv[k]) == "--window-png") app.startAudio = false;
     for (int k = 1; k < argc; ++k)       // each patch on the command line in its window
         if (argv[k][0] != '-' && std::string(argv[k]).find('=') == std::string::npos &&
-            (k == 1 || std::string(argv[k - 1]) != "--window-png"))
+            (k == 1 || std::string(argv[k - 1]) != "--window-png") && std::string(argv[k]) != "run")
             app.openDocument(moritz::portablePath(argv[k]));
     // --window-png out.png [patch] [zoom=z]: draws the first document window
-    // (toolbar, canvas, status bar) into an image, without showing it: for tests
+    // (toolbar, canvas, status bar) into an image, without showing it: for tests.
+    // With a code file: its editor; run: runs it first; console=out2.png: the Console too
+    auto writePng = [](Fl_Window* w, const char* file) {
+        Fl_Image_Surface surf(w->w(), w->h());
+        Fl_Surface_Device::push_current(&surf);
+        surf.draw(w);
+        Fl_Surface_Device::pop_current();
+        Fl_RGB_Image* img = surf.image();
+        int r = fl_write_png(file, img);
+        delete img;
+        return r;
+    };
+    for (int k = 1; k + 1 < argc; ++k)
+        if (std::string(argv[k]) == "--window-png" && !app.codeWindows().empty()) {
+            moritz::CodeWindow* cw = app.codeWindows().front();
+            bool run = false;
+            std::string console;
+            for (int j = 1; j < argc; ++j) {
+                std::string a = argv[j];
+                if (a == "run") run = true;
+                if (a.rfind("console=", 0) == 0) console = a.substr(8);
+            }
+            if (run) {
+                cw->runFile();
+                for (int t = 0; t < 400 && moritz::sessionContext()->busy(); ++t) Fl::wait(0.05);
+                for (auto t0 = std::chrono::steady_clock::now();
+                     std::chrono::steady_clock::now() - t0 < std::chrono::milliseconds(700);) Fl::wait(0.05);
+            }
+            int r = writePng(cw, argv[k + 1]);
+            if (!console.empty()) {
+                app.ensureConsole();
+                for (int t = 0; t < 5; ++t) Fl::wait(0.05);
+                r |= writePng(app.consoleWindow(), console.c_str());
+            }
+            return r == 0 ? 0 : 1;
+        }
     for (int k = 1; k + 1 < argc; ++k)
         if (std::string(argv[k]) == "--window-png") {
             if (app.docs.empty()) app.newDocument();

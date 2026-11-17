@@ -45,6 +45,7 @@
 // not bring in <windows.h> and its macros
 extern "C" __declspec(dllimport) void __stdcall GetCurrentThreadStackLimits(unsigned long long* low, unsigned long long* high);
 #else
+#include <pthread.h>
 #include <sys/resource.h>
 #include <sys/select.h>
 #include <unistd.h>
@@ -362,13 +363,31 @@ struct Parser {
         return v_list(std::move(out), 1, file);
     }
 };
+// The stack of the calling thread, in bytes (at most 64 MB): an interpreter may run on a thread other
+// than the one that made it (an editor's worker), so the budget is measured where it runs.
+inline size_t thread_stack_size() {
+    size_t limit = 1u << 20;   // 1 MB: the Windows default
+#if defined(_WIN32)
+    unsigned long long lo = 0, hi = 0; GetCurrentThreadStackLimits(&lo, &hi);
+    if (hi > lo) limit = (size_t)(hi - lo);
+#elif defined(__APPLE__)
+    limit = pthread_get_stacksize_np(pthread_self());
+#else
+    pthread_attr_t a;
+    if (pthread_getattr_np(pthread_self(), &a) == 0) { size_t s = 0; if (pthread_attr_getstacksize(&a, &s) == 0 && s) limit = s; pthread_attr_destroy(&a); }
+    else { struct rlimit rl; if (getrlimit(RLIMIT_STACK, &rl) == 0 && rl.rlim_cur != RLIM_INFINITY) limit = (size_t)rl.rlim_cur; else limit = 8u << 20; }
+#endif
+    if (limit > (64u << 20)) limit = 64u << 20;
+    return limit;
+}
 struct Frame { vptr name; sptr file; int line; };   // call-stack entry; formatted lazily on error
 struct Interp {
     eptr global;
     std::vector<Frame> call_stack;
     int stack_depth = 0, max_stack = 100000;   // depth cap (secondary; the byte budget below is the real guard)
     std::uintptr_t stack_base = 0;             // address of a local in the outermost run()
-    size_t stack_budget = 0;                   // bytes of C++ stack eval may use; set in the constructor, hosts may lower it
+    size_t stack_budget = 0;                   // bytes of C++ stack eval may use, measured at the outermost run
+    bool fixed_budget = false;                 // a host that sets stack_budget itself sets this too
     int function_depth = 0, loop_depth = 0;
     unsigned long eval_count = 0;
     std::function<void()> yield_fn;         // called every 1024 evals, for hosts that need to breathe
@@ -1043,18 +1062,7 @@ inline vptr fn_vars(vlist&, Interp& i) { std::vector<std::string> names; for (au
 // constructor/destructor, methods
 inline Interp::Interp() {
     rng.seed((uint64_t)std::chrono::high_resolution_clock::now().time_since_epoch().count());
-    size_t limit = 1u << 20;   // 1 MB: the Windows default
-#ifdef _WIN32
-    unsigned long long lo = 0, hi = 0; GetCurrentThreadStackLimits(&lo, &hi);
-    if (hi > lo) limit = (size_t)(hi - lo);
-    if (limit > (64u << 20)) limit = 64u << 20;
-#else
-    struct rlimit rl;
-    if (getrlimit(RLIMIT_STACK, &rl) == 0 && rl.rlim_cur != RLIM_INFINITY) limit = (size_t)rl.rlim_cur;
-    else limit = 8u << 20;
-    if (limit > (64u << 20)) limit = 64u << 20;
-#endif
-    stack_budget = limit / 4 * 3;
+    stack_budget = thread_stack_size() / 4 * 3;
     global = make_env(); global->global = true;
 #ifdef _WIN32
     const char sep = ';'; const char* home = std::getenv("USERPROFILE");
@@ -1147,7 +1155,10 @@ inline vptr Interp::run(const std::string& src, const std::string& filename) {
     current_file = file;
     if (!main_file && !filename.empty() && filename[0] != '<' && loading_files.empty()) main_file = file;
     char here;
-    if (stack_depth == 0) stack_base = reinterpret_cast<std::uintptr_t>(&here);   // outermost run on this thread
+    if (stack_depth == 0) {   // outermost run on this thread: measure its stack
+        stack_base = reinterpret_cast<std::uintptr_t>(&here);
+        if (!fixed_budget) stack_budget = thread_stack_size() / 4 * 3;
+    }
     return eval(prog, global);
 }
 inline Interp*& repl_interp() { static Interp* p = nullptr; return p; }

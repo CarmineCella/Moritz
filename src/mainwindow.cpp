@@ -3,7 +3,9 @@
 // setup, console) and the windows of subpatchers.
 
 #include "gui.h"
+#include "codewindow.h"
 #include "reference.h"
+#include "session.h"
 #include "maximport.h"
 #include "objects.h"
 
@@ -319,12 +321,19 @@ void App::buildMenu(Fl_Menu_Bar* m) {
 #define APP_CB(method) [](Fl_Widget*, void*) { App::get().method(); }
 #define DOC_CB(method) [](Fl_Widget*, void*) { if (auto* d = App::get().frontDoc()) d->method(); }
     m->add("File/New", FL_COMMAND + 'n', APP_CB(newDocument), nullptr);
+    m->add("File/New Code", FL_COMMAND + FL_SHIFT + 'n', [](Fl_Widget*, void*) { App::get().newCode(); }, nullptr);
     m->add("File/Open...", FL_COMMAND + 'o', APP_CB(openDialog), nullptr);
     m->add("File/Import from Max...", FL_COMMAND + FL_SHIFT + 'i', APP_CB(importDialog), nullptr,
            FL_MENU_DIVIDER);
-    m->add("File/Save", FL_COMMAND + 's', DOC_CB(save), nullptr);
+    m->add("File/Save", FL_COMMAND + 's', [](Fl_Widget*, void*) {
+        if (auto* c = App::get().frontCode()) { c->save(); return; }
+        if (auto* d = App::get().frontDoc()) d->save();
+    }, nullptr);
     m->add("File/Close", FL_COMMAND + 'w', APP_CB(closeFront), nullptr);
-    m->add("File/Save as...", FL_COMMAND + FL_SHIFT + 's', DOC_CB(saveAs), nullptr, FL_MENU_DIVIDER);
+    m->add("File/Save as...", FL_COMMAND + FL_SHIFT + 's', [](Fl_Widget*, void*) {
+        if (auto* c = App::get().frontCode()) { c->saveAs(); return; }
+        if (auto* d = App::get().frontDoc()) d->saveAs();
+    }, nullptr, FL_MENU_DIVIDER);
     m->add("File/Quit", FL_COMMAND + 'q', APP_CB(quit), nullptr);
     // with a text view in front, the Edit commands work on its text
 #define TEXT_OR(kf, call) [](Fl_Widget*, void*) {                                  \
@@ -474,6 +483,10 @@ MainWindow* App::newDocument() {
 MainWindow* App::openDocument(const std::string& path) {
     for (auto* d : docs)                              // already open: bring it forward
         if (!d->path().empty() && d->path() == path) { d->show(); return d; }
+    if (std::string text; readFile(path, text) && isCodeText(text)) {   // code, not a patch: the editor
+        openCode(path);
+        return nullptr;
+    }
     MainWindow* d = frontDoc();
     bool fresh = !(d && d->isEmptyUntitled());
     if (fresh) d = newDocument();
@@ -487,9 +500,9 @@ MainWindow* App::openDocument(const std::string& path) {
 
 void App::openDialog() {
     Fl_Native_File_Chooser fc;
-    fc.title("Open Patch");
+    fc.title("Open");
     fc.type(Fl_Native_File_Chooser::BROWSE_FILE);
-    fc.filter("Moritz patch\t*.{moritz,mlsp}\nAll files\t*");
+    fc.filter("Moritz file\t*.{moritz,mlsp}\nAll files\t*");
     MainWindow* front = frontDoc();
     std::string dir = front && !front->path().empty() ? dirOf(front->path()) : examplesDir();
     if (!dir.empty()) fc.directory(dir.c_str());
@@ -532,6 +545,8 @@ MainWindow* App::importMax(const std::string& path) {
 
 void App::closeDocument(MainWindow* w) {
     docs.erase(std::remove(docs.begin(), docs.end(), w), docs.end());
+    dropPatchContext(w);                 // its interpreter
+    refreshConsoleContexts();
     w->closeAllSubwindows();
     w->hide();
     w->canvas->reset();
@@ -556,6 +571,7 @@ void App::closeFront() {
     }
     if (w && w == console_) { w->hide(); return; }
     if (auto tw = dynamic_cast<PatchTextWindow*>(w)) { tw->do_callback(); return; }
+    if (auto cw = dynamic_cast<CodeWindow*>(w)) { cw->do_callback(); return; }
     if (auto d = dynamic_cast<MainWindow*>(w)) {
         if (d->confirmDiscard()) closeDocument(d);
     }
@@ -567,6 +583,11 @@ void App::quit() {
         d->show();
         if (!d->confirmDiscard()) return;
     }
+    for (auto* c : std::vector<CodeWindow*>(codeWindows_)) {
+        c->show();
+        if (!c->confirmDiscard()) return;
+    }
+    for (auto* c : codeWindows_) c->hide();
     quitting = true;
     host.onDsp = nullptr;      // a dspstate~ reacting to the stop can't restart audio
     audio.stop();
@@ -639,19 +660,24 @@ void App::showReference(const std::string& cls) {
 
 void App::showConsole() {
     if (!console_) {
-        console_ = new Fl_Double_Window(560, 320, "Moritz Console");
+        console_ = new Fl_Double_Window(640, 380, "Moritz Console");
         centerOnScreen(console_, frontDoc());
         console_->color(kStatusBg);
         consoleBuf_ = new Fl_Text_Buffer();
-        consoleView_ = new Fl_Text_Display(0, 0, 560, 290);
-        auto* clear = new Fl_Button(470, 294, 82, 22, "Clear");
-        clear->labelsize(11);
-        clear->callback([](Fl_Widget*, void*) { App::get().clearConsole(); });
-        auto* hint = new Fl_Box(8, 294, 450, 22,
-                                "print objects, errors, audio and file events");
+        consoleView_ = new Fl_Text_Display(0, 0, 640, 320);
+        auto* hint = new Fl_Box(8, 322, 540, 22,
+                                "print objects, errors, audio and file events; below, the Moritz language");
         hint->labelsize(11);
         hint->labelcolor(kDim);
         hint->align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE);
+        auto* clear = new Fl_Button(574, 322, 60, 20, "Clear");
+        clear->labelsize(11);
+        clear->callback([](Fl_Widget*, void*) { App::get().clearConsole(); });
+        clear->clear_visible_focus();
+        auto* row = new Fl_Group(0, 348, 640, 28);
+        buildConsolePrompt(console_, 6, 350, 628, 24);
+        row->end();
+        row->resizable(nullptr);
         consoleView_->buffer(consoleBuf_);
         consoleView_->box(FL_FLAT_BOX);
         consoleView_->color(fl_rgb_color(20, 21, 24));
@@ -662,10 +688,51 @@ void App::showConsole() {
         console_->end();
         for (auto& line : consoleLines_) consoleBuf_->append((line + "\n").c_str());
     }
+    refreshConsoleContexts();
     console_->show();
     consoleView_->scroll(consoleBuf_->count_lines(0, consoleBuf_->length()), 0);
     consoleAlert = false;
     refreshTools();
+}
+
+void App::ensureConsole() {
+    if (!console_ || !console_->visible()) showConsole();
+}
+
+CodeWindow* App::newCode() {
+    auto* w = new CodeWindow();
+    codeWindows_.push_back(w);
+    centerOnScreen(w, frontDoc());
+    w->show();
+    w->editor()->take_focus();
+    return w;
+}
+
+CodeWindow* App::openCode(const std::string& path) {
+    for (auto* w : codeWindows_)
+        if (w->path() == path) { w->show(); return w; }
+    auto* w = new CodeWindow();
+    if (!w->load(path)) {
+        delete w;
+        print("can't open " + path);
+        return nullptr;
+    }
+    codeWindows_.push_back(w);
+    centerOnScreen(w, frontDoc());
+    w->show();
+    w->editor()->take_focus();
+    addRecent(path);
+    return w;
+}
+
+void App::closeCode(CodeWindow* w) {
+    codeWindows_.erase(std::remove(codeWindows_.begin(), codeWindows_.end(), w), codeWindows_.end());
+    w->hide();
+    Fl::delete_widget(w);
+}
+
+CodeWindow* App::frontCode() {
+    return dynamic_cast<CodeWindow*>(Fl::first_window());
 }
 
 // ---- tools: zoom, interface size, quick recorder, the toolbar's meters

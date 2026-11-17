@@ -50,8 +50,11 @@ and the signal processing, analysis and learning of *Musil*.
   numbers, in which patches are written and in which you can program what is
   easier to write than to draw: algorithmic composition, orchestration with
   sample databases (Orchidea), scores and MusicXML, offline signal processing
-  and analysis, statistics and learning. Its libraries are in `language/`;
-  `moritz --run` and `moritz --repl` run it from a terminal (see below).
+  and analysis, statistics and learning. Write it in the code editor (File >
+  New Code; Cmd-Enter runs the paragraph at the cursor, Tab completes, the
+  help of the name under the cursor is beside it) or at the Console's
+  prompt. Its libraries are in `language/`; `moritz --run` and
+  `moritz --repl` run it from a terminal (see below).
 
 The complete list of objects is in [OBJECTS.md](OBJECTS.md).
 

@@ -26,6 +26,7 @@
 namespace moritz {
 
 class MainWindow;
+class CodeWindow;
 
 // A folder bundled with the app ("examples", "library", "help"): inside the
 // .app's Resources, or next to the executable when run from the source tree.
@@ -265,6 +266,14 @@ public:
     void addRecent(const std::string& path);
     void showBanner();                  // Shift+Cmd+J: Max und Moritz
     void showConsole();
+    void ensureConsole();               // shows the console if it is hidden, without raising it
+    // the code editors (code.cpp): files of the Moritz language that are not patches
+    CodeWindow* newCode();
+    CodeWindow* openCode(const std::string& path);
+    void closeCode(CodeWindow* w);      // already confirmed
+    CodeWindow* frontCode();            // the code window in front, if one is
+    const std::vector<CodeWindow*>& codeWindows() const { return codeWindows_; }
+    Fl_Double_Window* consoleWindow() { return console_; }
     void clearConsole();
     bool consoleAlert = false;          // an error since the console was last shown
     // the quick recorder (Extras): what goes to the dac, into a WAV file
@@ -298,6 +307,7 @@ private:
     App() = default;
     std::vector<PatchWindow*> helpWindows_;
     std::vector<PatchTextWindow*> textWindows_;
+    std::vector<CodeWindow*> codeWindows_;
     Fl_Menu_Bar* sysMenu_ = nullptr;          // macOS: one menu bar for all windows
     Fl_Double_Window* console_ = nullptr;
     Fl_Text_Display* consoleView_ = nullptr;
