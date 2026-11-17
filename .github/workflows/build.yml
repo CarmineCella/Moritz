@@ -80,7 +80,7 @@ jobs:
         with:
           msystem: MINGW64
           update: false
-          install: make curl zip mingw-w64-x86_64-gcc mingw-w64-x86_64-cmake
+          install: make curl zip diffutils mingw-w64-x86_64-gcc mingw-w64-x86_64-cmake
       - name: Version and cache key
         id: v
         shell: bash
