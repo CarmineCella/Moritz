@@ -1,7 +1,7 @@
 # Moritz
 
 <p align="center">
-  <img src="resources/maxundmoritz.png" width="360" alt="Max and Moritz, drawn by Wilhelm Busch (1865)">
+  <img src="resources/moritz.png" width="200" alt="The Moritz logo: a Lissajous figure on an oscilloscope over a harmonic spectrum">
 </p>
 
 Moritz is a Max-like environment for sound and music computing. You build
@@ -46,6 +46,12 @@ and the signal processing, analysis and learning of *Musil*.
 - **MIDI**: keyboards, controllers, notes in and out, polyphonic voices.
 - **Max patches**: File > Import from Max opens `.maxpat` files, converting
   what Moritz knows and reporting the rest.
+- **A language**: Moritz has a language of its own, a Lisp with vectors for
+  numbers, in which patches are written and in which you can program what is
+  easier to write than to draw: algorithmic composition, orchestration with
+  sample databases (Orchidea), scores and MusicXML, offline signal processing
+  and analysis, statistics and learning. Its libraries are in `language/`;
+  `moritz --run` and `moritz --repl` run it from a terminal (see below).
 
 The complete list of objects is in [OBJECTS.md](OBJECTS.md).
 
@@ -192,6 +198,9 @@ test runs locally: `tools/test-patches.sh ./moritz`.
 
 ## Command line
 
+- `moritz --run file.moritz [-- args...]` evaluates a file of the Moritz
+  language without opening a window; `moritz --repl` gives a prompt. A file
+  names the libraries it needs: `load "music"` loads `language/music.moritz`.
 - `moritz --no-audio [patch...]` opens with audio off, for a machine whose
   audio device misbehaves.
 - `moritz --import patch.maxpat [out.moritz]` converts a Max patch, as File >
@@ -233,6 +242,6 @@ Carmine-Emanuele Cella (2026).
 Bill Gardner and Keith Martin, MIT Media Laboratory (1994), "HRTF Measurements
 of a KEMAR Dummy-Head Microphone".
 
-The drawing of Max and Moritz is Wilhelm Busch's own, from *Max und Moritz*
+The drawing of Max and Moritz (Shift+Cmd+J in Moritz) is Wilhelm Busch's own, from *Max und Moritz*
 (1865), in the public domain (scan from Wikimedia Commons, "Max und Moritz
 (Busch) 001.png").

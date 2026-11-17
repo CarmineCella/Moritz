@@ -1,0 +1,5 @@
+; b.moritz — loaded by a.moritz; loads a.moritz again (no-op: already loaded) and a file in a subdirectory
+var loads (append loads "b")
+load "a.moritz"
+load "sub/c.moritz"
+function from-b () (concat "b+" (from-c))

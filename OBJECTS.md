@@ -1144,11 +1144,11 @@ Convolution and deconvolution of whole buffer~s, computed at once when asked (th
 | --- | --- |
 | 1 | bang when the result is in the out buffer~ |
 
-See also: `conv~` `buffer~` `reverb~` `moritz`
+See also: `conv~` `buffer~` `reverb~` `render`
 
-### `moritz`
+### `render`
 
-`moritz [patch] [channels]`
+`render [patch] [channels]`
 
 Renders another patch offline, faster than real time, into a buffer~, as a background job. Each render starts the patch afresh at the audio's sample rate (loaded, the stored sends applied, loadbang) and records its dac~. The rendered patch has its own send/receive and buffer~ names; its printed output appears when the render ends. Renders asked for while one runs wait their turn, with the sends and input of the moment they were asked for.
 
@@ -1426,7 +1426,7 @@ Separates a buffer~ into parts that repeat (notes, sources) by non-negative matr
 | 1 | progress, 0 to 1 |
 | 2 | bang: done (dest has one part, or one source, per channel) |
 
-See also: `hpss` `buffer~` `moritz` `atoms`
+See also: `hpss` `buffer~` `render` `atoms`
 
 ### `hpss`
 
@@ -1455,7 +1455,7 @@ Harmonic/percussive separation of a buffer~ (Musil's), as a background job. The 
 | 1 | progress, 0 to 1 |
 | 2 | bang: the two buffer~s are ready |
 
-See also: `nmf` `buffer~` `onset~` `moritz`
+See also: `nmf` `buffer~` `onset~` `render`
 
 ### `specenv~`
 
@@ -2568,7 +2568,7 @@ See also: `dac~` `dspstate~` `meter~` `record~`
 
 `dac~ [ch...]`
 
-Audio output: one inlet per channel given, numbered from 1. Several dac~s add up on the same channel. The output device is opened with all its channels (Patch > Audio Setup can limit them), so dac~ 1 2 3 4 5 6 7 8 plays on eight speakers. Channels beyond the device's are not heard, but the toolbar's meter shows them and the quick recorder writes them, and --render and moritz render them: an eight-channel piece can be made on a stereo card. A console note says when this happens.
+Audio output: one inlet per channel given, numbered from 1. Several dac~s add up on the same channel. The output device is opened with all its channels (Patch > Audio Setup can limit them), so dac~ 1 2 3 4 5 6 7 8 plays on eight speakers. Channels beyond the device's are not heard, but the toolbar's meter shows them and the quick recorder writes them, and --render and the render object write them: an eight-channel piece can be made on a stereo card. A console note says when this happens.
 
 | Argument | |
 | --- | --- |

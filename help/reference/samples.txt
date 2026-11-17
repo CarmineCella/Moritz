@@ -148,10 +148,10 @@ h where h is above a threshold, so a recording can be "un-reverberated" by its
 impulse response. The outlet bangs when the result is in.
 msg conv x h out [scale] [mix]: writes x convolved with h into out (length x + h - 1), times scale (1), plus x times mix (0)
 msg deconv y h out [threshold] [scale]: writes y deconvolved by h into out (the length of y): bins where h is below threshold (0.001) times its peak are set to 0; times scale (1)
-see: conv~ buffer~ reverb~ moritz
+see: conv~ buffer~ reverb~ render
 
-@ moritz
-syntax: moritz [patch] [channels]
+@ render
+syntax: render [patch] [channels]
 Renders another patch offline, faster than real time, into a buffer~, as a
 background job. Each render starts the patch afresh at the audio's sample
 rate (loaded, the stored sends applied, loadbang) and records its dac~. The

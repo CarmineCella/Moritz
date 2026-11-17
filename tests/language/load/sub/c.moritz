@@ -1,0 +1,4 @@
+; sub/c.moritz — resolved relative to b.moritz, not to the current directory
+var loads (append loads "c")
+load "../b.moritz"
+function from-c () "c"

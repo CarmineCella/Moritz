@@ -1,5 +1,5 @@
 // Copyright (c) 2026 Carmine-Emanuele Cella. SPDX-License-Identifier: BSD-2-Clause
-// objects_offline.cpp — offline processing as background jobs: moritz
+// objects_offline.cpp — offline processing as background jobs: render
 // (render another patch into a buffer~), nmf (non-negative matrix
 // factorisation: separate a sound into parts) and hpss (harmonic/percussive
 // separation). The algorithms of nmf and hpss are Musil's.
@@ -84,8 +84,8 @@ struct Stft {
     }
 };
 
-// ---------------------------------------------------------------- moritz
-// moritz [patch] [channels]: renders another patch offline, faster than real
+// ---------------------------------------------------------------- render
+// render [patch] [channels]: renders another patch offline, faster than real
 // time, into a buffer~. `open patch.moritz` chooses it (relative to this
 // patch); `send name value...` sets its receive name before every render
 // (kept until `clear`); `input buffer` feeds its adc~; `render buffer
@@ -95,10 +95,10 @@ struct Stft {
 // not those of this patch. Its print output appears when the render ends.
 // A render asked for while another runs waits its turn, with the sends and
 // input of the moment it was asked for; `stop` cancels them all.
-class MoritzBox : public OfflineBox {
+class RenderBox : public OfflineBox {
 public:
-    ~MoritzBox() override { job_.cancel(); }   // before inner_ goes: the worker may be using it
-    explicit MoritzBox(const Message& a) {
+    ~RenderBox() override { job_.cancel(); }   // before inner_ goes: the worker may be using it
+    explicit RenderBox(const Message& a) {
         size_t k = 0;
         if (k < a.size() && a[k].isSymbol()) file_ = a[k++].s;
         ch_ = std::clamp((int)argf(a, k, 2.f), 1, 16);
@@ -136,10 +136,10 @@ private:
         float seconds = req.seconds;
         const auto& sends = req.sends;
         const std::string& input = req.input;
-        if (file_.empty()) { patch->print("moritz: no patch; send \"open name.moritz\""); return; }
-        if (depth() > 8) { patch->print("moritz: rendering nested more than 8 deep"); return; }
+        if (file_.empty()) { patch->print("render: no patch; send \"open name.moritz\""); return; }
+        if (depth() > 8) { patch->print("render: rendering nested more than 8 deep"); return; }
         std::string path = patch->resolvePath(file_), src, err;
-        if (!readFile(path, src)) { patch->print("moritz: can't read " + path); return; }
+        if (!readFile(path, src)) { patch->print("render: can't read " + path); return; }
         double sr = patch->root()->sampleRate.load();
         // the patch is made and destroyed on the GUI thread; only processing runs on the worker
         inner_ = std::make_unique<Patch>();
@@ -156,8 +156,8 @@ private:
         };
         auto frame = std::make_shared<long>(0);
         p.clock = [frame, sr] { return *frame / sr; };
-        if (!p.load(src, err)) { patch->print("moritz: " + path + ": " + err); inner_.reset(); return; }
-        if (!err.empty()) patch->print("moritz: " + err);
+        if (!p.load(src, err)) { patch->print("render: " + path + ": " + err); inner_.reset(); return; }
+        if (!err.empty()) patch->print("render: " + err);
         for (auto& [name, msg] : sends) p.sendTo(name, msg);
         p.loadbangAll();
         // the input, interleaved
@@ -165,7 +165,7 @@ private:
         int inCh = 0;
         if (!input.empty()) {
             if (BufferBox* b = findBuffer(patch, input)) { in = b->buf.data; inCh = b->buf.channels; }
-            else patch->print("moritz: no buffer~ " + input);
+            else patch->print("render: no buffer~ " + input);
         }
         long total = (long)(seconds * sr);
         int ch = ch_;
@@ -544,7 +544,7 @@ private:
 
 void registerOfflineObjects(ClassTable& t) {
     t.insert(t.end(), {
-        {"moritz", "Samples", "render a patch offline into a buffer~: [patch] [channels]", with<MoritzBox>()},
+        {"render", "Samples", "render a patch offline into a buffer~: [patch] [channels]", with<RenderBox>()},
         {"nmf", "Spectral", "separate a buffer~ into parts (NMF): [components] [iterations]", with<NmfBox>()},
         {"hpss", "Spectral", "harmonic/percussive separation of a buffer~: [kernel] [size]", with<HpssBox>()},
     });

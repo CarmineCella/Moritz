@@ -128,7 +128,7 @@ const std::map<std::string, PortDocs>& docs() {
                     {"bang when the result is in the out buffer~"}}},
         {"function", {{"bang: the curve for line~; a number (ms): the value there; domain, range, clear, set"},
                       {"value at the time received", "the curve for line~: first value, then value-time pairs"}}},
-        {"moritz", {{"open patch, send name value, input buffer, render buffer seconds, clear, stop"},
+        {"render", {{"open patch, send name value, input buffer, render buffer seconds, clear, stop"},
                      {"progress, 0 to 1", "bang: the buffer~ is ready"}}},
         {"nmf", {{"run source dest (unsupervised); learn example, separate mix dest, forget (supervised); "
                   "components k, iterations n, size n, seed n, stop"},

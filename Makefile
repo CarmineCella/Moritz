@@ -162,7 +162,7 @@ copy_docs = for f in $$(find docs -name '*.pdf'); do mkdir -p "$(1)/$$(dirname $
 
 SOURCES    := $(wildcard src/*.cpp)
 OBJECTS    := $(patsubst src/%.cpp,$(BUILD)/%.o,$(SOURCES))
-HEADERS    := $(wildcard src/*.h)
+HEADERS    := $(wildcard src/*.h src/lang/*.h src/lang/*/*.h)
 
 $(BUILD)/%.o: src/%.cpp $(HEADERS) $(FLTK_LIB) $(MA_HDR) $(RTMIDI_HDR)
 	@mkdir -p $(BUILD)
@@ -203,12 +203,12 @@ define INFO_PLIST
 endef
 export INFO_PLIST
 
-$(BUNDLE): $(APP) $(wildcard examples/*/*.moritz examples/sounds/* library/* help/* tutorials/* resources/* docs/*/*.pdf) LICENSE
+$(BUNDLE): $(APP) $(wildcard examples/*/*.moritz examples/sounds/* library/* language/* help/* tutorials/* resources/* docs/*/*.pdf) LICENSE
 	@echo "==> creating $(BUNDLE)"
 	rm -rf $(BUNDLE)
 	mkdir -p $(BUNDLE)/Contents/MacOS $(BUNDLE)/Contents/Resources
 	cp $(APP) $(BUNDLE)/Contents/MacOS/$(APP)
-	cp -R examples library help tutorials $(BUNDLE)/Contents/Resources/ 2>/dev/null || true
+	cp -R examples library language help tutorials $(BUNDLE)/Contents/Resources/ 2>/dev/null || true
 	$(call copy_docs,$(BUNDLE)/Contents/Resources)
 	cp resources/moritz.icns resources/about.png resources/maxundmoritz.png LICENSE $(BUNDLE)/Contents/Resources/
 	echo "$$INFO_PLIST" > $(BUNDLE)/Contents/Info.plist
@@ -273,10 +273,10 @@ $(LX_DIR)/$(APP): $(LX_OBJECTS) $(LX_BUILD)/miniaudio.o $(LX_BUILD)/RtMidi.o
 	$(LX_CXX) $^ $$($(LX_FLTK)/bin/fltk-config --use-images --ldstaticflags) \
 	  -static-libstdc++ -static-libgcc -lasound -lpthread -ldl -lm -o $@
 
-linux: $(LX_DIR)/$(APP) $(wildcard examples/*/*.moritz examples/sounds/* library/* help/* tutorials/* docs/*/*.pdf)
-	rm -rf $(LX_DIR)/examples $(LX_DIR)/library $(LX_DIR)/help $(LX_DIR)/tutorials $(LX_DIR)/resources
+linux: $(LX_DIR)/$(APP) $(wildcard examples/*/*.moritz examples/sounds/* library/* language/* help/* tutorials/* docs/*/*.pdf)
+	rm -rf $(LX_DIR)/examples $(LX_DIR)/library $(LX_DIR)/language $(LX_DIR)/help $(LX_DIR)/tutorials $(LX_DIR)/resources
 	rm -rf $(LX_DIR)/docs
-	cp -R examples library help tutorials LICENSE README.md OBJECTS.md $(LX_DIR)/
+	cp -R examples library language help tutorials LICENSE README.md OBJECTS.md $(LX_DIR)/
 	$(call copy_docs,$(LX_DIR))
 	mkdir -p $(LX_DIR)/resources && cp resources/about.png resources/maxundmoritz.png $(LX_DIR)/resources/
 	@echo "==> built $(LX_DIR)/$(APP)"
@@ -352,14 +352,14 @@ $(WIN_BUILD)/%.o: src/%.cpp $(HEADERS) $(WIN_FLTK_LIB) $(MA_HDR) $(RTMIDI_HDR)
 
 $(WIN_DIR)/$(APP).exe: $(WIN_OBJECTS) $(WIN_BUILD)/miniaudio.o $(WIN_BUILD)/RtMidi.o $(WIN_BUILD)/resources.o
 	@mkdir -p $(WIN_DIR)
-	$(WIN_CXX) -mwindows -static -s $^ $(WIN_FLTK)/lib/libfltk_images.a $(WIN_FLTK)/lib/libfltk_png.a \
+	$(WIN_CXX) -mwindows -static -s -Wl,--stack,8388608 $^ $(WIN_FLTK)/lib/libfltk_images.a $(WIN_FLTK)/lib/libfltk_png.a \
 	  $(WIN_FLTK)/lib/libfltk_z.a $(WIN_FLTK_LIB) -lwinmm -lole32 -luuid -lcomctl32 -lcomdlg32 \
 	  -lgdi32 -lgdiplus -lwinspool -lws2_32 -lshell32 -ladvapi32 -limm32 -loleaut32 -o $@
 
-windows: $(WIN_DIR)/$(APP).exe $(wildcard examples/*/*.moritz examples/sounds/* library/* help/* tutorials/* docs/*/*.pdf)
-	rm -rf $(WIN_DIR)/examples $(WIN_DIR)/library $(WIN_DIR)/help $(WIN_DIR)/tutorials $(WIN_DIR)/resources
+windows: $(WIN_DIR)/$(APP).exe $(wildcard examples/*/*.moritz examples/sounds/* library/* language/* help/* tutorials/* docs/*/*.pdf)
+	rm -rf $(WIN_DIR)/examples $(WIN_DIR)/library $(WIN_DIR)/language $(WIN_DIR)/help $(WIN_DIR)/tutorials $(WIN_DIR)/resources
 	rm -rf $(WIN_DIR)/docs
-	cp -R examples library help tutorials LICENSE README.md OBJECTS.md $(WIN_DIR)/
+	cp -R examples library language help tutorials LICENSE README.md OBJECTS.md $(WIN_DIR)/
 	$(call copy_docs,$(WIN_DIR))
 	mkdir -p $(WIN_DIR)/resources && cp resources/about.png resources/maxundmoritz.png $(WIN_DIR)/resources/
 	@echo "==> built $(WIN_DIR)/$(APP).exe"
@@ -411,10 +411,21 @@ run: $(BUNDLE)
 	open $(BUNDLE)
 endif
 
+# the language inside another program: interpreters on threads, nothing left alive afterwards
+ifeq ($(UNAME),Linux)
+EMBED_LIBS := -pthread
+else ifdef WINDOWS_HOST
+EMBED_LIBS := -static -lws2_32
+endif
+embed-test:
+	mkdir -p $(BUILD)
+	$(CXX) -std=c++17 -O2 -Isrc tests/language/embed.cpp -o $(BUILD)/embed-test $(EMBED_LIBS)
+	MORITZ_PATH=language $(BUILD)/embed-test
+
 clean:
 	rm -rf $(BUILD) $(APP) $(BUNDLE)
 
 distclean: clean
 	rm -rf $(DEPS)
 
-.PHONY: all deps run linux linux-dist windows windows-zip dist notarize clean distclean
+.PHONY: all deps run embed-test linux linux-dist windows windows-zip dist notarize clean distclean

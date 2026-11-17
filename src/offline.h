@@ -67,7 +67,7 @@ protected:
             finished();
         });
     }
-    virtual void finished() {}      // after the outlets: moritz starts its next render
+    virtual void finished() {}      // after the outlets: render starts its next render
     bool busy() {
         if (job_.running()) { patch->print(cls + ": still working (stop cancels)"); return true; }
         return false;

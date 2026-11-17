@@ -384,7 +384,7 @@ add up on the same channel. The output device is opened with all its
 channels (Patch > Audio Setup can limit them), so dac~ 1 2 3 4 5 6 7 8 plays
 on eight speakers. Channels beyond the device's are not heard, but the
 toolbar's meter shows them and the quick recorder writes them, and --render
-and moritz render them: an eight-channel piece can be made on a stereo
+and the render object write them: an eight-channel piece can be made on a stereo
 card. A console note says when this happens.
 arg ch: the output channels (1 2)
 msg start: turns audio on (also startwindow)

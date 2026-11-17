@@ -140,7 +140,7 @@ msg iterations n: 1 to 10000
 msg size n: the FFT size, rounded to a power of two, 256 to 16384 (2048; hop size/4); a new size forgets what was learned
 msg seed n: the seed of the random start (1)
 msg stop: cancels the job and the messages waiting
-see: hpss buffer~ moritz atoms
+see: hpss buffer~ render atoms
 
 @ hpss
 syntax: hpss [kernel] [size]
@@ -155,4 +155,4 @@ msg run source harmonic percussive: writes the two parts into the buffer~s harmo
 msg kernel n: the filter length, 3 to 101 (made odd)
 msg size n: the FFT size, 256 to 16384
 msg stop: cancels the job
-see: nmf buffer~ onset~ moritz
+see: nmf buffer~ onset~ render

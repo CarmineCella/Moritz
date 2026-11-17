@@ -1,6 +1,6 @@
-; moritz.help.moritz - help for moritz
+; render.help.moritz - help for render
 (patch
-  (obj title comment "moritz [patch] [channels]: renders another patch offline into a buffer~, faster than real time" (pos 20 12))
+  (obj title comment "render [patch] [channels]: renders another patch offline into a buffer~, faster than real time" (pos 20 12))
   (obj sub comment "open patch.moritz; send name value (kept for every render, until clear); input buffer (feeds its adc~); render buffer seconds; stop." (pos 20 34))
   (obj sub2 comment "Each render starts the patch afresh. It has its own send/receive and buffer~ names. Outlets: progress 0..1, bang when ready." (pos 20 52))
   (obj buf buffer~ helpbounce (pos 20 85))
@@ -8,7 +8,7 @@
   (obj r2 message "send pitch 60, send speed 90, render helpbounce 4" (pos 20 150))
   (obj r3 message "send pitch 36, send speed 400, render helpbounce 4" (pos 20 180))
   (obj cr comment "three versions of help-render.moritz (open it to see it)" (pos 370 151))
-  (obj mz moritz help-render.moritz (pos 20 220))
+  (obj mz render help-render.moritz (pos 20 220))
   (obj prog flonum (pos 20 260))
   (obj done button (pos 100 260))
   (obj cp comment "progress, done" (pos 130 263))

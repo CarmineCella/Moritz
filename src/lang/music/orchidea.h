@@ -1,0 +1,373 @@
+// orchidea.h — mimetic (assisted) orchestration: Orchidea's search core inside Moritz.
+//
+// After Orchidea, (c) 2018-2020 Carmine E. Cella, HEM, Ircam (GeneticOrchestra.h, forecasts.h, connections.h,
+// Session.h, SessionI.h, Solution.h, OrchestrationModel.h, segmentations.h, analysis.h): the genetic search over
+// the database, the additive forecast, the asymmetric fitness with its sparsity, hysteresis and regularisation,
+// the closest/best connection between segments and the continuity model are ported as they are. What Orchidea
+// did with files (reading the databases, the WAVs, exporting connection.txt and the mixes) Moritz already does:
+// db-load holds the entries, the score plays and renders, score-save writes the connection. The target's
+// analysis uses the feature code of signals.h (the same that db-gen uses: average_spectrum, db_features_of) and the language's
+// pitch names, C4 = 261.6 Hz, as the databases' file names have them.
+//
+// Copyright (c) 2026 Carmine-Emanuele Cella. SPDX-License-Identifier: BSD-2-Clause
+
+#pragma once
+#include <vector>
+#include <map>
+#include <string>
+#include <random>
+#include <deque>
+#include <algorithm>
+#include <cmath>
+#include <functional>
+#include <thread>
+
+namespace moritz::lang { namespace orchidea {
+
+// --- the parameters (Orchidea's, with their defaults; the names are in music.moritz) ---
+struct params {
+    int pop_size = 300, max_epochs = 300, pursuit = 0;
+    double xover_rate = 0.8, mutation_rate = 0.01, sparsity = 0.001;
+    double positive = 0.5, negative = 10.0, hysteresis = 0.0, regularization = 0.0;
+    double dovetail = 0.0;                                // the pitches of the previous segment's solution kept (on any player): the memory in pitch
+    double movement = 1.0;                                // the 'path connection: the cost of a semitone of melodic movement per player, against a percent of fitness
+    int max_solutions = 10;                               // how many of the best unique solutions are kept per segment
+    int patience = 150;                                   // epochs without a better population before the search stops (MAX_EQUAL_EPOCHS)
+    unsigned seed = 1;
+    std::function<bool(int, int)> progress;               // (epoch, epochs) => false to stop the search
+};
+// a database entry: what the search needs of a sound (the index is its place in the database's entries)
+struct entry { int index = 0; int midi = -1; std::string instr, tech, pitch, dyn, other; std::vector<float> features; };
+// a segment of the target: its features (standardised, as Orchidea's normalize2), the pitches of its partials with
+// their cents, its place in seconds
+struct segment { double start = 0, length = 0; std::vector<float> features; std::map<std::string, int> notes; };
+// a solution: one database index per player (-1: the player silent), a duration per player, the fitness
+struct solution {
+    std::vector<int> indices; std::vector<double> durations; float fitness = 0;
+    bool operator<(const solution& r) const { return fitness < r.fitness; }
+    bool is_empty() const { for (int k : indices) if (k != -1) return false; return true; }
+};
+// the search space of one segment: the entries that pass the filters, by instrument, and the orchestra restricted
+// to the instruments present
+struct model {
+    const segment* seg = nullptr;
+    std::vector<const entry*> database;
+    std::map<std::string, std::vector<int>> instruments;
+    std::vector<std::string> orchestra;
+    std::vector<int> slots;                               // for each player kept, its index in the orchestra given
+    std::vector<int> fixed;                               // per slot: the local index of the sound the player holds on from the segment before (-1: free)
+    std::vector<std::string> missing;                     // the target's pitches no sound of the orchestra covers
+    std::vector<solution> solutions;
+    std::vector<float> curve;                             // the population's total fitness per epoch
+    float cost_of(const solution& s) const { return s.fitness > 0 ? (float)(1.0 / std::sqrt((double)s.fitness)) : 1e9f; }
+};
+
+// --- the numerics of the original (algorithms.h) ---
+inline float norm_of(const std::vector<float>& v) { double s = 0; for (float x : v) s += (double)x * x; return (float)std::sqrt(s); }
+inline float inner_prod(const std::vector<float>& a, const std::vector<float>& b) { double s = 0; size_t n = std::min(a.size(), b.size()); for (size_t k = 0; k < n; k++) s += (double)a[k] * b[k]; return std::isfinite(s) ? (float)s : 0.0f; }
+// Orchidea's normalize2: the values standardised (mean 0, deviation 1)
+inline void standardise(std::vector<float>& v) {
+    if (v.empty()) return;
+    double m = 0;
+    for (float x : v) m += x;
+    m /= v.size();
+    double s = 0; for (float x : v) s += (x - m) * (x - m); s = std::sqrt(s / v.size());
+    const float fm = (float)m, inv = s != 0 ? (float)(1.0 / s) : 0.0f;
+    for (auto& x : v) x = (x - fm) * inv;
+}
+inline void tokenize(const std::string& s, std::vector<std::string>& out, char sep) { std::string cur; for (char c : s) { if (c == sep) { if (!cur.empty()) out.push_back(cur); cur.clear(); } else cur += c; } if (!cur.empty()) out.push_back(cur); }
+
+// --- the forecast: the features of a solution, the sum of its sounds' (AdditiveForecast) ---
+inline void additive_forecast(const solution& id, const std::vector<const entry*>& db, std::vector<float>& forecast) {
+    std::fill(forecast.begin(), forecast.end(), 0.0f);
+    const float inv = 1.0f / (float)std::max<size_t>(1, id.indices.size()); float* out = forecast.data(); size_t n = forecast.size();
+    for (int k : id.indices) { if (k == -1) continue; const entry* e = db[(size_t)k]; const float* f = e->features.data(); size_t m = std::min(n, e->features.size());
+        for (size_t j = 0; j < m; j++) out[j] += f[j] * inv; }
+}
+// the asymmetric distance: a partial the target has not is penalised more than one it has and the solution lacks
+inline float asym_distance(const std::vector<float>& values, const std::vector<float>& target, double pos, double neg) {
+    float sp = 0, sn = 0; const float* a = values.data(); const float* b = target.data(); size_t n = std::min(values.size(), target.size());
+    for (size_t k = 0; k < n; k++) { float d = a[k] - b[k]; if (d >= 0) sp += d; else sn -= d; }
+    return (float)(pos * sp + neg * sn);
+}
+
+// --- the search space of a segment (SessionI::make_model) ---
+// filters: the target's pitches (when partials were found), and the styles, dynamics and others asked for
+inline void make_model(const std::vector<entry>& db, const std::vector<std::string>& orchestra, const segment& seg,
+                       const std::vector<std::string>& styles, const std::vector<std::string>& dynamics, const std::vector<std::string>& others, model& m) {
+    m.database.clear(); m.instruments.clear(); m.orchestra.clear(); m.slots.clear(); m.seg = &seg;
+    for (const entry& e : db) {
+        bool note_ok = seg.notes.empty(), style_ok = styles.empty(), dyn_ok = dynamics.empty(), other_ok = others.empty();
+        if (!note_ok) note_ok = seg.notes.count(e.pitch) > 0;
+        for (auto& s : styles) if (e.tech == s) { style_ok = true; break; }
+        for (auto& s : dynamics) if (e.dyn == s) { dyn_ok = true; break; }
+        for (auto& s : others) if (e.other.find(s) != std::string::npos) { other_ok = true; break; }
+        if (note_ok && style_ok && dyn_ok && other_ok) m.database.push_back(&e);
+    }
+    if (m.database.empty()) throw std::runtime_error("empty search space: no sound passes the filters (the pitches found in the target, the styles, the dynamics)");
+    for (size_t k = 0; k < m.database.size(); k++) m.instruments[m.database[k]->instr].push_back((int)k);
+    for (size_t k = 0; k < orchestra.size(); k++) {
+        const std::string& player = orchestra[k];
+        if (player.find('|') != std::string::npos) {          // a doubling: every instrument of it must be in the space
+            std::vector<std::string> alts; tokenize(player, alts, '|'); bool missing = false;
+            for (auto& a : alts) if (!m.instruments.count(a)) { missing = true; break; }
+            if (!missing) { m.orchestra.push_back(player); m.slots.push_back((int)k); }
+        } else if (m.instruments.count(player)) { m.orchestra.push_back(player); m.slots.push_back((int)k); }
+    }
+    if (m.orchestra.empty()) throw std::runtime_error("empty orchestra: none of its instruments has a sound in the search space");
+    m.fixed.assign(m.orchestra.size(), -1);
+    m.missing.clear();
+    for (auto& kv : seg.notes) {                              // a pitch of the target no instrument of the orchestra has a sound at
+        bool covered = false;
+        for (const entry* e : m.database) if (e->pitch == kv.first) { for (auto& player : m.orchestra) { if (player == e->instr || player.find(e->instr) != std::string::npos) { covered = true; break; } } if (covered) break; }
+        if (!covered) m.missing.push_back(kv.first);
+    }
+}
+// (hold_on m prev prev_choice next_notes hold) the players whose sound continues into this segment: a player of the
+// previous chosen solution whose pitch the target still has (the partial goes on) keeps its very sound, fixed in
+// every chromosome, unless it has already held it 'hold seconds; => how many hold on
+inline int hold_on(model& m, const model& prev, const solution& chosen, double hold, std::vector<double>& held_since) {
+    int n = 0;
+    for (size_t k = 0; k < chosen.indices.size(); k++) {
+        if (chosen.indices[k] == -1) continue;
+        const entry* e = prev.database[(size_t)chosen.indices[k]]; int slot = prev.slots[k];
+        if (!m.seg->notes.count(e->pitch) && !m.seg->notes.empty()) continue;   // the target dropped that pitch
+        if (held_since[(size_t)slot] >= 0 && m.seg->start + m.seg->length - held_since[(size_t)slot] > hold) continue;   // held long enough: a fresh start
+        for (size_t j = 0; j < m.slots.size(); j++) if (m.slots[j] == slot) {
+            for (size_t i = 0; i < m.database.size(); i++) if (m.database[i] == e) { m.fixed[j] = (int)i; n++; break; }
+        }
+    }
+    return n;
+}
+
+// the pitches a solution sounds (the names), for the dovetailing and the movement
+inline std::vector<std::string> pitches_of(const solution& id, const std::vector<const entry*>& db) {
+    std::vector<std::string> out; for (int k : id.indices) if (k != -1) out.push_back(db[(size_t)k]->pitch); std::sort(out.begin(), out.end()); out.erase(std::unique(out.begin(), out.end()), out.end()); return out;
+}
+
+// --- the genetic search (GeneticOrchestra) ---
+// The memory of the segments before: the hysteresis compares each candidate with the standardised forecasts of the
+// solutions chosen for the previous segments (the original compared a standardised candidate with unstandardised
+// forecasts of the best of the population, which no weight could make meaningful), fading by 'hysteresis per
+// segment back; the dovetailing counts the pitches of the previous chosen solution the candidate keeps, on any
+// player (a pivot note passed from one instrument to another is what dovetailing is), and raises the cost of a
+// candidate by 'dovetail times the fraction it drops
+struct genetic {
+    params p; std::mt19937 rng; std::deque<std::vector<float>> history;   // the standardised forecasts of the solutions chosen before (hysteresis)
+    std::vector<std::string> prev_pitches;                                  // the pitches of the solution chosen for the previous segment (dovetailing)
+    // what the driver tells the search after choosing a segment's solution: the memory for the next
+    void remember(const model& m, const solution& chosen) {
+        std::vector<float> f(m.seg->features.size(), 0.0f); additive_forecast(chosen, m.database, f); standardise(f); history.push_front(f);
+        while (history.size() > 8) history.pop_back();
+        prev_pitches = pitches_of(chosen, m.database);
+    }
+    static const int MAX_EQUAL_EPOCHS = 150;
+    genetic(const params& pr) : p(pr), rng(pr.seed) {}
+    double frand() { return std::uniform_real_distribution<double>(0.0, 1.0)(rng); }
+    int irand(int n) { return n <= 1 ? 0 : (int)(rng() % (unsigned)n); }
+    std::string instrument_of(const model& m, size_t slot) {   // the instrument a slot plays now (a doubling: one of them, drawn)
+        const std::string& s = m.orchestra[slot];
+        if (s.find('|') == std::string::npos) return s;
+        std::vector<std::string> alts; tokenize(s, alts, '|'); return alts[(size_t)irand((int)alts.size())];
+    }
+    void random_chromosome(model& m, std::vector<int>& f) {
+        f.resize(m.orchestra.size());
+        for (size_t k = 0; k < f.size(); k++) { if (m.fixed[k] >= 0) { f[k] = m.fixed[k]; continue; } auto& pool = m.instruments[instrument_of(m, k)]; f[k] = pool[(size_t)irand((int)pool.size())]; }
+    }
+    // the stochastic pursuit: each slot one of the kth sounds of its instrument nearest the target (by projection, less the norm)
+    void pursuit_chromosome(model& m, std::vector<int>& f, const std::vector<float>& target, int kth) {
+        f.resize(m.orchestra.size());
+        for (size_t k = 0; k < f.size(); k++) {
+            if (m.fixed[k] >= 0) { f[k] = m.fixed[k]; continue; }
+            auto& pool = m.instruments[instrument_of(m, k)];
+            std::vector<std::pair<float, int>> scored;
+            for (int idx : pool) { const entry* e = m.database[(size_t)idx]; float d = inner_prod(target, e->features); scored.push_back({ std::fabs(d) - norm_of(e->features), idx }); }
+            int n = std::min<int>(kth, (int)scored.size());
+            std::partial_sort(scored.begin(), scored.begin() + n, scored.end(), [](const std::pair<float, int>& a, const std::pair<float, int>& b) { return a.first > b.first; });
+            f[k] = scored[(size_t)irand(n)].second;
+        }
+    }
+    void mutate(model& m, solution& id) {
+        for (size_t k = 0; k < id.indices.size(); k++) { if (id.indices[k] == -1 || m.fixed[k] >= 0) continue;
+            if (frand() < p.mutation_rate) { auto& pool = m.instruments[instrument_of(m, k)]; id.indices[k] = pool[(size_t)irand((int)pool.size())]; } }
+    }
+    void apply_sparsity(const model& m, solution& id) { for (size_t k = 0; k < id.indices.size(); k++) if (m.fixed[k] < 0 && frand() < p.sparsity) id.indices[k] = -1; }
+    float evaluate_individual(const solution& id, const std::vector<float>& target, const std::vector<const entry*>& db, std::vector<float>& values) {
+        additive_forecast(id, db, values); standardise(values);
+        float s = asym_distance(values, target, p.positive, p.negative);
+        long sum = 0; for (int k : id.indices) if (k != -1) sum++;
+        float reg = (float)(p.regularization * sum);
+        float memory = 0; double forget = 1;
+        for (size_t k = 0; k < history.size() && forget > 0.0001; k++) { forget *= p.hysteresis; if (forget <= 0.0001) break; float h = asym_distance(values, history[k], p.positive, p.negative); memory += (float)(h * forget); }
+        float dove = 0;
+        if (p.dovetail > 0 && !prev_pitches.empty()) {                        // the fraction of the previous pitches the candidate drops
+            size_t kept = 0;
+            for (auto& q : prev_pitches) { for (int k : id.indices) if (k != -1 && db[(size_t)k]->pitch == q) { kept++; break; } }
+            dove = (float)(p.dovetail * (1.0 - (double)kept / (double)prev_pitches.size()) * s);
+        }
+        return s + reg + memory + dove;
+    }
+    // the population evaluated: a chromosome seen before takes its fitness from the cache (a child of parents that
+    // crossed and mutated nowhere is its parent), the others are shared among the cores
+    std::map<std::vector<int>, float> cache; size_t cache_hits = 0, cache_misses = 0;
+    float evaluate_population(std::vector<solution>& pop, const std::vector<float>& target, const std::vector<const entry*>& db, std::vector<float>& values) {
+        std::vector<size_t> todo;
+        for (size_t k = 0; k < pop.size(); k++) { auto it = cache.find(pop[k].indices); if (it != cache.end()) { pop[k].fitness = it->second; cache_hits++; } else todo.push_back(k); }
+        cache_misses += todo.size();
+        auto eval = [&](size_t k, std::vector<float>& vals) { float v = evaluate_individual(pop[k], target, db, vals); pop[k].fitness = v == 0 ? 1e9f : (float)std::pow(1.0 / v, 2.0); };
+        unsigned cores = std::max(1u, std::min(8u, std::thread::hardware_concurrency()));
+        if (todo.size() < 64 || cores < 2) { for (size_t k : todo) eval(k, values); }
+        else {
+            std::vector<std::thread> pool; size_t share = (todo.size() + cores - 1) / cores;
+            for (unsigned c = 0; c < cores; c++) {
+                size_t from = c * share, to = std::min(todo.size(), from + share); if (from >= to) break;
+                pool.emplace_back([&, from, to]() { std::vector<float> vals(target.size(), 0.0f); for (size_t j = from; j < to; j++) eval(todo[j], vals); });
+            }
+            for (auto& t : pool) t.join();
+        }
+        for (size_t k : todo) cache[pop[k].indices] = pop[k].fitness;
+        if (cache.size() > 200000) cache.clear();
+        double total = 0; for (auto& id : pop) total += id.fitness;
+        return (float)total;
+    }
+    const solution& select_parent(const std::vector<solution>& pop, float total) {
+        double wheel = frand() * total, psum = 0; size_t sel = 0;
+        for (size_t k = 0; k < pop.size(); k++) { psum += pop[k].fitness; if (psum >= wheel) { sel = k; break; } }
+        return pop[sel];
+    }
+    void offspring(model& m, const std::vector<solution>& old, std::vector<solution>& fresh, float total) {
+        while (fresh.size() < (size_t)p.pop_size) {
+            const solution& a = select_parent(old, total); const solution& b = select_parent(old, total);
+            solution o1, o2; o1.indices = a.indices; o2.indices = b.indices;
+            if (frand() < p.xover_rate) { size_t cp = (size_t)(frand() * (double)o1.indices.size()); for (size_t k = cp; k < o1.indices.size(); k++) { o1.indices[k] = b.indices[k]; o2.indices[k] = a.indices[k]; } }
+            mutate(m, o1); mutate(m, o2); apply_sparsity(m, o1); apply_sparsity(m, o2);
+            fresh.push_back(o1); fresh.push_back(o2);
+        }
+        fresh.erase(std::remove_if(fresh.begin(), fresh.end(), [](const solution& s) { return s.is_empty(); }), fresh.end());
+    }
+    // the search of one segment: => the best total fitness reached; the model's solutions are the unique individuals
+    // of the best population, ranked, the best first
+    float search(model& m) {
+        const std::vector<float>& target = m.seg->features;
+        std::vector<solution> population((size_t)p.pop_size);
+        for (auto& id : population) { if (p.pursuit == 0) random_chromosome(m, id.indices); else { pursuit_chromosome(m, id.indices, target, p.pursuit); mutate(m, id); } }
+        std::vector<float> values(target.size(), 0.0f);
+        m.curve.clear(); m.solutions.clear(); cache.clear();
+        float max_fit = 0, old_fit = 0; int fit_count = 0; std::vector<solution> best_pop;
+        for (int epoch = 0; epoch < p.max_epochs; epoch++) {
+            if (p.progress && !p.progress(epoch, p.max_epochs)) break;
+            float total = evaluate_population(population, target, m.database, values);
+            std::vector<solution> fresh; offspring(m, population, fresh, total);
+            for (size_t k = 0; k < population.size() && k < fresh.size(); k++) { population[k].indices = fresh[k].indices; population[k].fitness = fresh[k].fitness; }
+            if (max_fit < total) { max_fit = total; best_pop = fresh; }
+            m.curve.push_back(total);
+            if (old_fit == max_fit) fit_count++; else fit_count = 0;
+            if (fit_count > p.patience) break;
+            old_fit = max_fit;
+        }
+        if (best_pop.empty()) best_pop = population;
+        std::map<std::vector<int>, solution> uniques; for (auto& s : best_pop) uniques[s.indices] = s;
+        for (auto& kv : uniques) m.solutions.push_back(kv.second);
+        evaluate_population(m.solutions, target, m.database, values);
+        std::sort(m.solutions.begin(), m.solutions.end()); std::reverse(m.solutions.begin(), m.solutions.end());
+        if (p.max_solutions > 0 && m.solutions.size() > (size_t)p.max_solutions) m.solutions.resize((size_t)p.max_solutions);
+        for (auto& s : m.solutions) s.durations.assign(s.indices.size(), m.seg->length);
+        return max_fit;
+    }
+};
+
+// --- the movement between two solutions of consecutive segments (the 'path connection) ---
+// each player that sounds in both: the interval it moves by, in semitones (0 when it keeps its pitch); a player
+// that starts or stops: a leap of 'rest semitones; players are matched by their slot in the orchestra
+inline double movement_between(const solution& a, const std::vector<const entry*>& dba, const std::vector<int>& slots_a,
+                               const solution& b, const std::vector<const entry*>& dbb, const std::vector<int>& slots_b, double rest = 6.0) {
+    std::map<int, int> ma, mb;                                             // slot -> midi (-1 unpitched)
+    for (size_t k = 0; k < a.indices.size(); k++) if (a.indices[k] != -1) ma[slots_a[k]] = dba[(size_t)a.indices[k]]->midi;
+    for (size_t k = 0; k < b.indices.size(); k++) if (b.indices[k] != -1) mb[slots_b[k]] = dbb[(size_t)b.indices[k]]->midi;
+    double cost = 0;
+    for (auto& kv : ma) { auto it = mb.find(kv.first); if (it == mb.end()) cost += rest; else if (kv.second >= 0 && it->second >= 0) cost += std::min(12.0, (double)std::abs(kv.second - it->second)); }
+    for (auto& kv : mb) if (!ma.count(kv.first)) cost += rest;
+    return cost;
+}
+// the shortest path through the segments' solutions (a layered graph, dynamic programming): each node costs how much
+// worse its solution is than its segment's best, in percent; each edge the movement between its solutions times
+// 'movement; => the solution chosen per segment
+inline std::vector<int> shortest_path(const std::vector<model>& models, double movement) {
+    std::vector<int> choices; size_t n = models.size(); if (n == 0) return choices;
+    std::vector<std::vector<double>> cost(n); std::vector<std::vector<int>> from(n);
+    auto node_cost = [&](const model& m, size_t j) { double best = m.cost_of(m.solutions[0]), c = m.cost_of(m.solutions[j]); return best > 0 ? 100.0 * (c / best - 1.0) : 0.0; };
+    for (size_t k = 0; k < n; k++) {
+        size_t ns = models[k].solutions.size(); cost[k].assign(ns, 1e300); from[k].assign(ns, -1);
+        for (size_t j = 0; j < ns; j++) {
+            double own = node_cost(models[k], j);
+            if (k == 0) { cost[k][j] = own; continue; }
+            for (size_t i = 0; i < models[k - 1].solutions.size(); i++) {
+                double c = cost[k - 1][i] + own + movement * movement_between(models[k - 1].solutions[i], models[k - 1].database, models[k - 1].slots, models[k].solutions[j], models[k].database, models[k].slots);
+                if (c < cost[k][j]) { cost[k][j] = c; from[k][j] = (int)i; }
+            }
+        }
+    }
+    choices.assign(n, 0);
+    size_t last = n - 1; int best = 0; for (size_t j = 0; j < cost[last].size(); j++) if (cost[last][j] < cost[last][(size_t)best]) best = (int)j;
+    for (size_t k = last + 1; k-- > 0;) { choices[k] = best; if (k > 0) best = from[k][(size_t)best]; if (best < 0) best = 0; }
+    return choices;
+}
+
+// --- the connection between the segments (connections.h) ---
+// 'closest' (Orchidea's): the solution of a segment whose forecast is nearest, by the asymmetric distance, to the
+// forecast of the solution chosen for the segment before (the original measured against the previous segment's
+// target instead); the first segment takes its best. => the index chosen for the model given, prev the forecast
+// of the previous choice (standardised; empty for the first)
+inline int closest_choice(const model& m, const std::vector<float>& prev, const params& p) {
+    if (m.solutions.size() < 2 || prev.empty()) return 0;
+    float best = 1e30f; int argmin = 0; std::vector<float> values(m.seg->features.size(), 0.0f);
+    for (size_t j = 0; j < m.solutions.size(); j++) { additive_forecast(m.solutions[j], m.database, values); standardise(values);
+        float s = asym_distance(values, prev, p.positive, p.negative); if (s < best) { best = s; argmin = (int)j; } }
+    return argmin;
+}
+
+// --- the target's analysis ---
+// the onsets by the spectral flux (segmentations.h: the rectified difference of consecutive magnitude spectra, its
+// local maxima above a threshold of its maximum, at least a timegate apart); => seconds
+inline std::vector<double> flux_onsets(const std::vector<double>& x, int bsize, int hop, double sr, double threshold, double timegate, const std::function<void(double*, size_t, int)>& fft) {
+    std::vector<double> win((size_t)bsize), old((size_t)bsize, 0.0), spec((size_t)bsize), fr(2 * (size_t)bsize), flux;
+    for (int k = 0; k < bsize; k++) win[(size_t)k] = 0.5 - 0.5 * std::cos(2 * 3.14159265358979323846 * k / (bsize - 1));
+    for (size_t i = 0; i < x.size(); i += (size_t)hop) {
+        std::fill(fr.begin(), fr.end(), 0.0); size_t rsize = std::min<size_t>((size_t)bsize, x.size() - i);
+        for (size_t j = 0; j < rsize; j++) fr[2 * j] = x[i + j] * win[j];
+        fft(fr.data(), (size_t)bsize, -1);
+        for (size_t j = 0; j < (size_t)bsize; j++) spec[j] = std::hypot(fr[2 * j], fr[2 * j + 1]);
+        double sf = 0; for (size_t j = 0; j < (size_t)bsize; j++) { double a = spec[j] - old[j]; old[j] = spec[j]; sf += a < 0 ? 0 : a; }
+        flux.push_back(sf);
+    }
+    std::vector<double> onsets; if (flux.empty()) return onsets;
+    double ma = *std::max_element(flux.begin(), flux.end()); if (ma > 0) for (auto& v : flux) v /= ma;
+    std::vector<size_t> peaks; if (flux.size() >= 2 && flux[0] > flux[1]) peaks.push_back(0);
+    for (size_t k = 1; k + 1 < flux.size(); k++) if (flux[k] > flux[k - 1] && flux[k] > flux[k + 1]) peaks.push_back(k);
+    double prev = 0;
+    for (size_t k = 0; k < peaks.size(); k++) if (flux[peaks[k]] > threshold) { double pos = (double)peaks[k] * hop / sr; if (std::fabs(pos - prev) > timegate || k == 0) { onsets.push_back(pos); prev = pos; } }
+    return onsets;
+}
+// the partials of a segment as pitches with their cents (analysis.h's partials_to_notes): the averaged spectrum over
+// a long window, scaled to 0..1, its local maxima above the threshold read as frequencies (quadratic interpolation)
+// and named as the nearest tempered pitch, C4 = 261.6 Hz, with the deviation in cents; a later partial at the same
+// pitch replaces the earlier
+inline std::map<std::string, int> partials_to_notes(const std::vector<double>& x, int window, int hop, double threshold, double sr,
+                                                    const std::function<std::vector<double>(const std::vector<double>&, int, int)>& avg_spectrum,
+                                                    const std::function<std::string(int)>& name_of) {
+    std::map<std::string, int> notes;
+    std::vector<double> spec = avg_spectrum(x, window, hop); size_t N = (size_t)window / 2; spec.resize(N);
+    double lo = spec[0], hi = spec[0]; for (double v : spec) { lo = std::min(lo, v); hi = std::max(hi, v); }
+    for (auto& v : spec) v = hi != lo ? (v - lo) / (hi - lo) : 0;
+    double per_bin = sr / (double)window;
+    for (size_t k = 1; k + 1 < N; k++) {
+        if (!(spec[k] > spec[k - 1] && spec[k] > spec[k + 1]) || spec[k] <= threshold) continue;
+        double y1 = spec[k - 1], y2 = spec[k], y3 = spec[k + 1], den = 2 * (2 * y2 - y1 - y3), d = den != 0 ? (y3 - y1) / den : 0;
+        double f = per_bin * ((double)k + d); if (f <= 27.5) continue;
+        double midi = 69 + 12 * std::log2(f / 440.0); int m = (int)std::lround(midi); int cents = (int)std::lround(1200 * std::log2(f / (440.0 * std::pow(2.0, (m - 69) / 12.0))));
+        notes[name_of(m)] = cents;
+    }
+    return notes;
+}
+
+} } // namespace moritz::lang::orchidea

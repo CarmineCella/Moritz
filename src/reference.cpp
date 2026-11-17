@@ -107,7 +107,7 @@ const Reference& reference() {
 // the inlets and outlets of a class: one box made with no arguments
 void ports(const std::string& cls, std::vector<std::string>& ins, std::vector<std::string>& outs) {
     if (const char* d = describeClass(cls); !d || !*d) return;   // not a built-in class
-    if (cls == "pfft~" || cls == "poly~" || cls == "moritz") return;   // their ports come from a patch file
+    if (cls == "pfft~" || cls == "poly~" || cls == "render") return;   // their ports come from a patch file
     std::unique_ptr<Box> b = makeBox(cls, Message{}, nullptr);
     if (!b || b->kind == BoxKind::Broken) return;
     auto body = [](const std::string& h) {

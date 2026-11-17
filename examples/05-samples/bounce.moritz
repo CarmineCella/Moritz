@@ -1,10 +1,10 @@
-; bounce.moritz - moritz renders bounce-source.moritz (FM bells) offline,
+; bounce.moritz - render renders bounce-source.moritz (FM bells) offline,
 ; faster than real time, four times with different settings: each render
 ; loads the patch afresh, applies the sends (seed, pitch, speed) and writes
 ; six seconds of its output into a buffer~. Render them all, then play and
 ; compare; edit the messages to make new variations.
 (patch
-  (obj title comment "moritz: four variations of a generative patch rendered offline into buffers, then played" (pos 20 12))
+  (obj title comment "render: four variations of a generative patch rendered offline into buffers, then played" (pos 20 12))
   (obj b1 buffer~ var1 (pos 20 40))
   (obj b2 buffer~ var2 (pos 120 40))
   (obj b3 buffer~ var3 (pos 220 40))
@@ -16,7 +16,7 @@
   (obj r2 message "send seed 2, send pitch 48, send speed 400, render var2 6" (pos 20 175))
   (obj r3 message "send seed 3, send pitch 72, send speed 120, render var3 6" (pos 20 205))
   (obj r4 message "send seed 4, send pitch 36, send speed 700, render var4 6" (pos 20 235))
-  (obj mz moritz bounce-source.moritz (pos 20 275))
+  (obj mz render bounce-source.moritz (pos 20 275))
   (obj prog flonum (pos 20 310))
   (obj done button (pos 100 310))
   (obj cp comment "progress of each render, and done" (pos 130 313))

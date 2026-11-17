@@ -12,6 +12,7 @@
 // png= draws the patch, as it looks after the render, into an image (locked
 // mode, or edit mode with "edit"), so drawing can be checked without a screen.
 
+#include "language.h"
 #include "gui.h"
 #include "reference.h"
 #include "maximport.h"
@@ -239,6 +240,10 @@ int main(int argc, char** argv) {
     }
 #endif
     if (argc >= 2 && std::string(argv[1]) == "--render") return renderCli(argc, argv);
+    if (argc >= 2 && (std::string(argv[1]) == "--run" || std::string(argv[1]) == "--repl")) {
+        moritz::setupSearchPaths();
+        return moritz::languageCli(argc, argv);
+    }
     if (argc >= 3 && std::string(argv[1]) == "--import") {     // Max patch -> Moritz text
         moritz::setupSearchPaths();
         std::string text, err;
