@@ -17,3 +17,4 @@ Moritz.zip
 *.blg
 *.nav
 *.snm
+!tests/language/golden/*.out

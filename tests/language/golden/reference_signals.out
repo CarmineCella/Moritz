@@ -1,0 +1,140 @@
+================================================================
+  moritz: library reference (signals)
+================================================================
+
+--- generators ---
+sine sr 440 0.01 : 80 samples, rms 0.7114
+noise 5          : (0.509 0.899 -0.765 0.784 -0.717)
+impulse 5        : (1 0 0 0 0)
+gen 8 (1)        : (0 0.707 1 0.707 0 -0.707 -1 -0.707 0) (one period plus a guard point)
+gen 8 (1 0.5)    : (0 1 0.828 0.172 0 -0.172 -0.828 -1 0) (two harmonics)
+osc              : (0 0.707 1 0.707 0 -0.707 -1 -0.707) (1 Hz at 8 Hz, table lookup)
+oscbank          : 80
+mix              : (1 1 0 2 2) (layers at positions)
+add-at           : (0 5 5 5)
+fade-in, fade-out: (0 0.5 1 1) (1 1 0.5 0)
+normalize-peak   : (0.25 -1 0.5)
+normalize-rms    : 0.1
+db, undb         : -6.02059991327962 0.501187233627272
+
+--- windows and spectra ---
+hann 8           : (0 0.146 0.5 0.854 1 0.854 0.5 0.146) (periodic: overlap-adds exactly at hop n/4)
+hamming 8        : (0.08 0.215 0.54 0.865 1 0.865 0.54 0.215)
+blackman 8       : (0 0.066 0.34 0.774 1 0.774 0.34 0.066)
+fft              : (list re im), re = (0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0)
+magnitudes       : (0 0 0 8 0 0 0 0 0 0 0 0 0 8 0 0)
+ifft round trip  : 0
+car->pol         : ((1 1) (0 1.5707963267949))
+pol->car         : ((1 0) (0 1))
+spectrum-freqs   : (0 1000 2000 3000)
+magnitude-spectrum: peak at 1000 Hz, height 0.5
+conv             : (1 3 5 3)
+complex-mul      : (-1 0) (i times i)
+
+--- spectral envelope ---
+spectral-envelope: peak bin of the spectrum 128 , of its envelope (order 20) 94
+flatten-spectrum : harmonics 1-4 raw (1.9 4.8 9.7 20.3) flattened (3.59 4.69 4.62 4.14)
+impose-envelope  : carrier reshaped by a source's envelope; cepstrum: the cepstrum itself
+
+--- stft ---
+stft             : 9 frames of 256, hop 64
+istft            : 768 samples, error where frames overlap fully: 0
+stft-magnitudes  : 128 bins per frame
+
+--- features (amps: positive-frequency magnitudes, freqs: their frequencies) ---
+spectral-centroid    : 702.7
+spectral-spread      : 896.4
+spectral-skewness    : 1.069
+spectral-kurtosis    : 3.132
+spectral-flux        : 3 (rectified difference from the previous frame)
+spectral-irregularity: 3
+spectral-decrease    : -1.382
+spectral-flatness    : 1 0 (white, tonal)
+spectral-rolloff 0.85: 1000
+hfc                  : 0.0675
+rms, zcr             : 0.7114 0.113
+acf-f0               : 200 Hz; 0 for noise
+autocorr             : (0.5 0.354 0.016 -0.309 -0.438)
+
+--- filters ---
+biquad lowpass   : b = (0.1464 0.2929 0.1464)  a = (1.5001 -1.4142 0.4999)
+types            : lowpass highpass bandpass notch peak lowshelf highshelf
+apply-filter     : (0.0976 0.2873 0.3359 0.221 0.0964 0.0172)
+iir one-pole     : (1 0.5 0.25 0.125)
+centroid of noise: 1981  lowpass 300: 413  highpass 2000: 2726
+comb             : (1 0 0.5 0 0.25 0)
+allpass          : (-0.5 0 0.75 0)
+dc-block         : (1 0.995 0.99 0.985 0.98)
+reson            : 400 samples ringing at 444 Hz
+schroeder-reverb : 8100 samples (input + rt60 seconds); level at 0.1 s and 0.9 s: -38 -86.1 dB
+delay 1.5        : (0 0.5 1.5 2.5)
+
+--- phase vocoder ---
+local-maxima     : (1 4)   gather: (30 10 30)
+princarg 7       : 0.7168
+pvoc x opts      : one pass for everything; opts are (list key value), ramps as (list start end)
+pvoc-stretch x2  : 8192 samples from 4000 ; f0 222.2 Hz, same as the original 222.2
+pvoc-pitch x1.5  : 4096 samples; f0 333.3 Hz
+pvoc-pitch-formant, pvoc-formants: with the cepstral envelope (order ~ sr/100)
+ramped           : 6144 samples, stretch 1->3 and pitch 1->2 at once
+pvoc-cross       : modes 1 (multiplicative), 2 (flattener), 3 (morph); denoise, robotize, whisperize
+robotize, whisperize, denoise: lengths 4096 4032 4096
+
+--- hpss and onsets ---
+hpss             : harmonic rms 0.349 percussive rms 0.069 ; they add up to the input within 0
+onset-strength   : 28 values (the spectral flux per frame)
+onsets           : (0 0.248) (seconds; 0 first)
+onsets-adaptive  : (0 0.248) (threshold on a moving median of the flux)
+segments         : (1984 2016) (the pieces between onsets)
+
+--- nmf-separate ---
+nmf-separate     : 2 sources of 4000 samples; W (257 2) H (2 36) ; they add up to the input within 0
+nmf-learn-parts, nmf-separate-with: supervised, parts learnt from each source alone (see nmf.moritz)
+
+--- morphology ---
+frame-spectra    : 61 frames of 1024 bins (the database's feature space, per frame)
+spectral-similarity: tone vs itself 0.98 , tone vs noise 0.06
+event-rate       : 3 events that change the spectrum; rates up to 1 a second
+polyphony-estimate: (1 1 1 1)  register-curve: centroid 57 lowest partial 57 (MIDI)
+loudness-curve   : (-10 -9.9 -9.9) dB; coherence-time: (0.13 0.06 0.83) s
+spectral-peaks   : 219.8 Hz (parabolic)
+
+--- converb, concerthall ---
+converb          : 13 samples: dry + wet through any response (a vector, or one per channel)
+concerthall      : 2 channels, the Concertgebouw's response shipped with the libraries; play-score uses it
+
+--- spatial (azimuth 0 in front, positive to the left; elevation up) ---
+pan-azimuth 45   : stereo levels (0.616 0.356)
+ambi-gains 1 30 0: (1 0.5 0 0.866) (W Y Z X, SN3D)
+ambi-encode      : 9 channels at second order
+ambi-rotate      : a left source turned by -90 is in front: 1
+speaker-ring 4   : (0 90 180 -90)
+ambi-decode      : levels of a source at 45 on that ring (0.356 0.356 0 0)
+pan-n            : levels on a ring of 8, source at 100 (0 0 0.684 0.195 0 0 0 0)
+hrir 90 0        : two ears, 23 samples; the far ear later and quieter; 710 measured KEMAR directions loaded (hrtf-unload: the spherical model)
+binaural         : a left click, ear levels (0.293 0.14)
+binaural-decode  : B-format for headphones; a front source (1.15 1.15)
+moving-source, ambi-render, channel, stereo-add, normalize-peak-stereo: see spatial.moritz
+
+--- resampling and channels ---
+resample x2      : 320 samples
+resample-to 4000 : 80 samples
+interleave       : (1 3 2 4)
+deinterleave     : ((1 2) (3 4))
+
+--- envelopes ---
+bpf 0 ((4 1) (4 0)): (0 0.25 0.5 0.75 1 0.75 0.5 0.25) (an attack and a decay; each end starts the next segment)
+envelope-follow  : (1 1 0)
+envelope-from-values: (0 0.5 1 0.5)
+
+--- music information retrieval ---
+chromagram      : 12 pitch classes x 65 frames; the profile (0 0.87 0 0 0.98 0 0 0 0 1 0 0) (C first)
+key-estimate    : A major (Krumhansl-Kessler profiles; key-scores ranks all 24)
+tempo-estimate  : 120 bpm from a click every half second (the autocorrelation of the onset strength, a prior on the tapped tempo)
+beats           : 120 bpm, 16 beats, the first at 0.023 s, every 0.498 s (beat-track: Ellis's dynamic programming)
+tempogram       : 271 rows (bpm 30-300) x 686 frames; mel-spectrogram, mfcc-gram: the timbre per frame
+self-similarity : 259 x 259 (Foote); foote-novelty peaks at (3) s: where the texture changes
+
+================================================================
+  end of signals reference
+================================================================
