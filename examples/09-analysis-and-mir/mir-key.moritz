@@ -8,9 +8,9 @@
 (patch
   (obj title comment "Which key? Pitch classes against the profiles of the 24 keys" (pos 20 12))
   (obj sub comment "Choose a piece (or a part of it): the bars show how much of each pitch class sounds, and how well each key fits. Listen and compare." (pos 20 34))
-  (obj b1 buffer~ mkcmin sounds/Bach_Prelude_Cminor.flac (pos 20 65))
-  (obj b2 buffer~ mkdmaj sounds/Bach_Prelude_Dmajor.flac (pos 320 65))
-  (obj b3 buffer~ mksousa sounds/Sousa_StarsAndStripes.flac (pos 620 65))
+  (obj b1 buffer~ mkcmin Bach_Prelude_Cminor.flac (pos 20 65))
+  (obj b2 buffer~ mkdmaj Bach_Prelude_Dmajor.flac (pos 320 65))
+  (obj b3 buffer~ mksousa Sousa_StarsAndStripes.flac (pos 620 65))
   (obj c1 comment "whole pieces" (pos 20 100))
   (obj r1 message "run mkcmin" (pos 20 120))
   (obj r2 message "run mkdmaj" (pos 110 120))

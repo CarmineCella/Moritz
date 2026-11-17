@@ -7,9 +7,9 @@
 (patch
   (obj title comment "condec: convolve and deconvolve whole sounds (offline, on demand)" (pos 20 12))
   (obj sub comment "Click 1 to 4 in order: each computes a new buffer~ (the button flashes when it's ready). Then play any of them." (pos 20 34))
-  (obj vox buffer~ cdvox sounds/Vox.wav (pos 20 65))
-  (obj hall buffer~ cdhall sounds/hall.wav (pos 260 65))
-  (obj gong buffer~ cdgong sounds/gong_c_sharp.wav (pos 470 65))
+  (obj vox buffer~ cdvox Vox.wav (pos 20 65))
+  (obj hall buffer~ cdhall hall_concertgebouw.wav (pos 260 65))
+  (obj gong buffer~ cdgong gong_c_sharp.wav (pos 470 65))
   (obj wet buffer~ cdwet (pos 20 92))
   (obj dry buffer~ cddry (pos 200 92))
   (obj vg buffer~ cdvoxgong (pos 380 92))

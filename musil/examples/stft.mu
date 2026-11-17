@@ -3,7 +3,7 @@
 load "system.mu"
 load "signals.mu"
 
-var w (read-wav (if (> (length args) 0) (getidx args 0) "data/Vox.wav"))
+var w (read-wav (if (> (length args) 0) (getidx args 0) "../../data/Vox.wav"))
 var sr (head w)
 var x (head (getidx w 1))
 var n (next-pow2 (/ sr 16))       ; 512 at 8 kHz, 4096 at 44.1 kHz

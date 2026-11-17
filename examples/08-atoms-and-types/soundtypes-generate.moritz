@@ -10,8 +10,8 @@
 (patch
   (obj title comment "A Bach prelude recomposed: n-grams, Markov, oracle, at three levels" (pos 20 12))
   (obj sub comment "The prelude is cut at its onsets (notes) and analysed when the patch opens (a few seconds). Choose a method and a level, then generate." (pos 20 34))
-  (obj b1 buffer~ stgbach sounds/Bach_Prelude_Cminor.flac (pos 20 65))
-  (obj b2 buffer~ stgbach2 sounds/Bach_Prelude_Dmajor.flac (pos 330 65))
+  (obj b1 buffer~ stgbach Bach_Prelude_Cminor.flac (pos 20 65))
+  (obj b2 buffer~ stgbach2 Bach_Prelude_Dmajor.flac (pos 330 65))
   (obj out buffer~ stgout (pos 640 65))
   (obj lab buffer~ stglab (pos 740 65))
   (obj olab buffer~ stgolab (pos 840 65))

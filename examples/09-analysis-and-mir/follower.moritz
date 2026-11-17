@@ -4,7 +4,7 @@
 ; voice, or hear it alone; the numbers show what descriptors~ measures.
 (patch
   (obj title comment "descriptors~ -> synthesis: f0, centroid and rms of the voice drive a filtered sawtooth" (pos 20 12))
-  (obj buf buffer~ follvoice sounds/Vox.wav (pos 20 45))
+  (obj buf buffer~ follvoice Vox.wav (pos 20 45))
   (obj lb loadbang (pos 310 45))
   (obj lp message "loop 1" (pos 310 75))
   (obj one sig~ 1 (pos 400 75))

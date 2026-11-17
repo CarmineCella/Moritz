@@ -4,7 +4,7 @@
   (obj sub comment "tapin~ writes its input into a delay line (default 1000 ms, at most 60000); clear empties it. Connect it to tapout~'s left inlet." (pos 20 34))
   (obj sub2 comment "tapout~ has one tap per argument: each inlet sets the delay of its tap in ms (signal or float), and each outlet plays that tap." (pos 20 52))
   (obj lb loadbang (pos 20 82))
-  (obj open message "open ../examples/sounds/drums.wav" (pos 20 120))
+  (obj open message "open ../data/drums.wav" (pos 20 120))
   (obj play message 1 (pos 290 120))
   (obj cplay comment "play the drums" (pos 332 124))
   (obj sf sfplay~ (pos 20 165))

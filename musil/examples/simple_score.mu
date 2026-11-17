@@ -5,7 +5,7 @@
 ; Usage: musil simple_score.mu      (renders and opens the roll: Play there)
 load "music.mu"
 
-var db (db-load "data/microsol/microsol.spectrum.db")           ; the bundled MicroSOL: Ob, Hn, Vn, Vc, C4-G4
+var db (db-load "../../data/microsol/microsol.spectrum.db")           ; the bundled MicroSOL: Ob, Hn, Vn, Vc, C4-G4
 ; var db (db-load "../datasets/TinySOL.spectrum.db")           # the full TinySOL, after ./fetch_tinysol.sh (or any *SOL set)
 var s (score "chorale" 44100)
 var q 0.6                                  ; a quarter note, in seconds (100 bpm)
@@ -38,7 +38,7 @@ event-at s (* 14 q) (* 2 q) (chord db 'Vn 'p 'ord (list "A4" "E4" "C4")) 0 0
 
 ; --- the other kinds of event, after the chorale --------------------------------------------------------
 var end (* 16.5 q)
-event-at s end 2.5 "data/gong_c_sharp.wav" 0 20                           ; a sound file, placed above and in front
+event-at s end 2.5 "../../data/gong_c_sharp.wav" 0 20                           ; a sound file, placed above and in front
 event s (+ end 1) 1.5 (* 0.3 (sine 44100 293.66 1.5))                    ; a buffer: a D4 sine, 1.5 s
 function pluck-d (gate freq cutoff) (* (adsr 44100 gate 0.005 0.2 0.3 0.3) (lowpass (osc 44100 (sig gate freq) saw-table) 44100 cutoff 2))
 event-at s (+ end 2.5) 1 (instrument pluck-d (list (list 'freq 146.83) (list 'cutoff 1500))) -45 0   ; a synth: D3 pluck at the right

@@ -54,7 +54,7 @@
   (obj csrc comment "source: 1 noise, 2 Beethoven" (pos 100 626))
   (obj nz noise~ (pos 20 655))
   (obj nzg *~ 0.2 (pos 20 690))
-  (obj bb buffer~ fltbeet sounds/Beethoven_Symph7.wav (pos 120 655))
+  (obj bb buffer~ fltbeet Beethoven_Symph7.wav (pos 120 655))
   (obj pb message "loop 1, 36000" (pos 425 655))
   (obj bg groove~ fltbeet (pos 425 690))
   (obj br sig~ 1 (pos 545 655))

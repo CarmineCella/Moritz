@@ -226,12 +226,12 @@ if(MUSIL_TESTS)
   set_tests_properties(inf-recursion PROPERTIES WILL_FAIL TRUE)
   # every example must run without error
   # the signal examples read recordings that are not part of the repository; they are tests only when present
-  set(D ${CMAKE_CURRENT_SOURCE_DIR}/examples/data)
+  set(D ${CMAKE_CURRENT_SOURCE_DIR}/../data)   # the data shared with Moritz, at the root of its tree
   set(NEEDS_stft "${D}/Vox.wav")
   set(NEEDS_features "${D}/Vox.wav")
   set(NEEDS_cross_synth "${D}/Vox.wav;${D}/Beethoven_Symph7.wav")
   set(NEEDS_additive "${D}/gong_c_sharp.wav")
-  set(NEEDS_reverb "${D}/anechoic1.wav;${D}/Concertgebouw-s.wav")
+  set(NEEDS_reverb "${D}/anechoic1.wav")
   set(NEEDS_transients "${D}/Gambale_cut.wav")
   set(NEEDS_filters "${D}/cage.wav")
   set(NEEDS_plots "${D}/cage.wav")
@@ -246,7 +246,7 @@ if(MUSIL_TESTS)
   set(NEEDS_live_spatial "${D}/skip-in-tests")
   set(NEEDS_spatial "${D}/Vox.wav")
   set(NEEDS_nmf "${D}/stems_demo.wav")
-  set(NEEDS_classic_mir "${D}/toms_diner.wav")
+  set(NEEDS_classic_mir "${D}/beachboys.wav")
   set(NEEDS_flyby "${D}/skip-in-tests")            # 15 s of binaural rendering: run it, don't test it
   set(NEEDS_flyby_controls "${D}/skip-in-tests")
   set(NEEDS_loaddb "${D}/microsol/microsol.spectrum.db")

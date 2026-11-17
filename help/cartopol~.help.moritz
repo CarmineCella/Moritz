@@ -4,7 +4,7 @@
   (obj sub comment "They convert sample by sample, so in a pfft~ they convert every bin. The phase is in radians, -pi to pi." (pos 20 34))
   (obj sub2 comment "Their inlets need signals: a number sent to them is ignored, so use sig~." (pos 20 52))
   (obj lb loadbang (pos 20 80))
-  (obj buf buffer~ helpcp ../examples/sounds/Vox.wav (pos 100 80))
+  (obj buf buffer~ helpcp ../data/Vox.wav (pos 100 80))
   (obj init message "loop 1, 0" (pos 20 115))
   (obj rate sig~ 1 (pos 110 115))
   (obj gr groove~ helpcp (pos 20 150))

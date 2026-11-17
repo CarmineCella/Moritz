@@ -3,7 +3,7 @@
   (obj title comment "similarity [frames], novelty [width] [threshold]: the form of a piece" (pos 20 12))
   (obj sub comment "similarity: run features matrix compares every frame of a feature matrix (a chromagram, MFCCs) with every other (Foote 1999): sections" (pos 20 34))
   (obj sub2 comment "are squares on the diagonal, repeats are stripes beside it. novelty: run similarity curve finds where the past and the future differ (Foote 2000)." (pos 20 52))
-  (obj bee buffer~ hsmbee ../examples/sounds/Beethoven_Symph7.wav (pos 20 85))
+  (obj bee buffer~ hsmbee ../data/Beethoven_Symph7.wav (pos 20 85))
   (obj ch buffer~ hsmchroma (pos 380 85))
   (obj ss buffer~ hsmssm (pos 510 85))
   (obj nv buffer~ hsmnov (pos 620 85))

@@ -60,7 +60,7 @@ private:
 // the session's context
 std::shared_ptr<LangContext> sessionContext();
 
-// the documentation of Musil's functions (musil/help.txt)
+// the documentation of Musil's functions (help/musil/help.txt)
 struct HelpEntry {
     std::vector<std::string> names;
     std::string signature;

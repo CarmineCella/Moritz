@@ -6,7 +6,7 @@
   (obj title comment "waveform~: record into a buffer~, drag a region to loop it, save the result with sfrecord~" (pos 20 12))
   (obj buf buffer~ tape 4000 (pos 20 45))
   (obj lb loadbang (pos 160 45))
-  (obj opn message "open sounds/Vox.wav, loop 1, 1" (pos 160 75))
+  (obj opn message "open Vox.wav, loop 1, 1" (pos 160 75))
   (obj setup message "loop 1, select 0 4000" (pos 400 75))
   (obj mic adc~ 1 (pos 20 115))
   (obj voice sfplay~ (pos 160 115))

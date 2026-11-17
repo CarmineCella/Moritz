@@ -13,10 +13,10 @@ load "signals.mu"
 load "plot.mu"
 
 var names (list "drums" "bass" "chords" "melody")
-var w (read-wav "data/stems_demo.wav")
+var w (read-wav "../../data/stems_demo.wav")
 var sr (head w)
 var x (take (head (getidx w 1)) (* 10 sr))
-var stems (map names (function (nm) (take (head (getidx (read-wav (concat "data/stems_" nm ".wav")) 1)) (length x))))
+var stems (map names (function (nm) (take (head (getidx (read-wav (concat "../../data/stems_" nm ".wav")) 1)) (length x))))
 var n 2048
 var hop 512
 print (fixed (/ (length x) sr) 1) "s of a four-stem mix at" sr "Hz"

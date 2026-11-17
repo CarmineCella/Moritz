@@ -3,7 +3,7 @@
   (obj title comment "hpss [kernel] [size]: harmonic/percussive separation of a buffer~" (pos 20 12))
   (obj sub comment "Median filters on the spectrogram: along time keeps sustained (harmonic) sounds, along frequency keeps attacks (percussive)." (pos 20 34))
   (obj sub2 comment "run source harmonic percussive writes two buffer~s that add up to the source. kernel: filter length (odd, 17). Outlets: progress, bang." (pos 20 52))
-  (obj src buffer~ helphpsrc ../examples/sounds/hpss_demo.wav (pos 20 85))
+  (obj src buffer~ helphpsrc ../data/hpss_demo.wav (pos 20 85))
   (obj hb buffer~ helpharm (pos 340 85))
   (obj pb buffer~ helpperc (pos 460 85))
   (obj run message "run helphpsrc helpharm helpperc" (pos 20 120))

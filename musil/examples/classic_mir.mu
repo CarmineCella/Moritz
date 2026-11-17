@@ -1,5 +1,5 @@
-; classic_mir: the classic analyses of music information retrieval on a song, Suzanne Vega's "Tom's Diner"
-; (data/toms_diner.wav, mono). Every step is a feature computed over frames, a picture, and a decision read
+; classic_mir: the classic analyses of music information retrieval on a song, 24 seconds of a pop song
+; (data/beachboys.wav, its left channel). Every step is a feature computed over frames, a picture, and a decision read
 ; from it:
 ;   1. onset strength and tempo     the spectral flux frame by frame (onset-strength); its autocorrelation read at
 ;                                   the lags of 30-300 bpm, a prior on what a listener taps (tempo-estimate); the
@@ -14,11 +14,11 @@
 ; Usage: musil classic_mir.mu
 load "signals.mu"
 load "plot.mu"
-var w (read-wav "data/toms_diner.wav")
+var w (read-wav "../../data/beachboys.wav")
 var sr (head w)
 var x (head (getidx w 1))
 var secs (/ (length x) sr)
-print "Tom's Diner:" (fixed secs 1) "s at" sr "Hz"
+print "the song:" (fixed secs 1) "s at" sr "Hz"
 
 ; --- 1. onset strength, tempo, tempogram ---------------------------------------------------------------------------
 var n 2048
@@ -40,8 +40,8 @@ add-line fig-flux (/ (range (length flux)) fps) flux "flux"
 add-scatter fig-flux beat-times (gather flux beat-frames) "beats"
 set-labels fig-flux "time (s)" "flux"
 var with-clicks (list (* 0.7 x) (+ (* 0.7 x) (* 0.5 (clicks beat-times sr secs))))    ; the song left, the song and the clicks right
-write-wav "/tmp/musil_toms_beats.wav" sr with-clicks
-print "wrote /tmp/musil_toms_beats.wav: the song, the clicks on the right channel"
+write-wav "/tmp/musil_song_beats.wav" sr with-clicks
+print "wrote /tmp/musil_song_beats.wav: the song, the clicks on the right channel"
 
 ; --- 3. chromagram and key ----------------------------------------------------------------------------------------
 var C (chromagram x sr 4096 2048)                                  ; 12 x frames, rows C C# D ... B, a frame every 2048 samples
@@ -76,9 +76,9 @@ add-scatter fig-novelty bounds (gather novelty bounds) "boundaries"
 set-labels fig-novelty "beat" "novelty"
 
 ; --- the pictures -------------------------------------------------------------------------------------------------
-var all (subplots "Tom's Diner: tempo, beats, chroma, structure" (list fig-flux fig-tempo fig-chroma fig-profile fig-harmony fig-timbre fig-novelty) 0 2)
-save-png all "/tmp/musil_toms_mir.png" 1600 1200
+var all (subplots "A song: tempo, beats, chroma, structure" (list fig-flux fig-tempo fig-chroma fig-profile fig-harmony fig-timbre fig-novelty) 0 2)
+save-png all "/tmp/musil_song_mir.png" 1600 1200
 show all 1400 900
 show fig-harmony 700 700                                           ; the two matrices square, on their own
 show fig-timbre 700 700
-; to hear the beats: (play-file "/tmp/musil_toms_beats.wav")     (load "live.mu") (audio-init) first
+; to hear the beats: (play-file "/tmp/musil_song_beats.wav")     (load "live.mu") (audio-init) first

@@ -19,9 +19,9 @@
 load "music.mu"
 var k (if (> (length args) 0) (num (getidx args 0)) 1)
 seed (if (> (length args) 1) (num (getidx args 1)) 11)
-var db (db-load-first (list "../datasets/FullSOL2020.spectrum.db" "../datasets/TinySOL.spectrum.db" "data/microsol/microsol.spectrum.db"))   ; FullSOL (every instrument and technique), else TinySOL after ./fetch_tinysol.sh, else the bundled MicroSOL (a sketch)
+var db (db-load-first (list "../datasets/FullSOL2020.spectrum.db" "../datasets/TinySOL.spectrum.db" "../../data/microsol/microsol.spectrum.db"))   ; FullSOL (every instrument and technique), else TinySOL after ./fetch_tinysol.sh, else the bundled MicroSOL (a sketch)
 var sr 44100
-var curves-path "data/atmospheres_curves.csv"
+var curves-path "../../data/atmospheres_curves.csv"
 
 ; --- the analysis of a recording, when one is given: the curves, one line a second -------------------------------
 function analyse-recording (path) {

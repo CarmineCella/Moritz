@@ -15,7 +15,7 @@
   (obj c3 comment "3. Randomness: irregular times, frequencies spread around 440 Hz, grains spread left to right. A cloud." (pos 20 208))
   (obj s4 message "gliss 0.5" (pos 20 235))
   (obj c4 comment "4. Each grain glides to another pitch while it sounds." (pos 100 236))
-  (obj b buffer~ t6vox ../examples/sounds/Vox.wav (pos 20 270))
+  (obj b buffer~ t6vox ../data/Vox.wav (pos 20 270))
   (obj s5 message "proto1 t6vox, proto2 t6vox, freq 1 0.02, gliss 0, speed 0.3, density 40 0.3, length 100 0.3, amp 0.4" (pos 20 300))
   (obj c5 comment "5. Grains of a recording: freq is now a speed ratio (1 = as recorded), speed how fast they move through it." (pos 20 323))
   (obj s6 message "speed 0" (pos 20 350))

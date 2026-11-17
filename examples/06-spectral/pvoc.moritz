@@ -5,7 +5,7 @@
 ; analysed, then the stretched version starts. Open either pfft~ to see how.
 (patch
   (obj title comment "phase vocoder: time stretching and freezing with pfft~" (pos 20 12))
-  (obj buf buffer~ pvguitar sounds/Gambale_cut.wav (pos 20 40))
+  (obj buf buffer~ pvguitar Gambale_cut.wav (pos 20 40))
   (obj amp buffer~ pvamp 12000 (pos 240 40))
   (obj ph buffer~ pvphase 12000 (pos 410 40))
   (obj ab buffer~ pvabs 12000 (pos 580 40))

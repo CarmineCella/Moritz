@@ -7,11 +7,11 @@ load "music.mu"
 seed (if (> (length args) 0) (num (getidx args 0)) 11)
 var sr 44100
 var secs 24
-var db (db-load "data/microsol/microsol.spectrum.db")           ; the bundled MicroSOL: Ob, Hn, Vn, Vc, C4-G4
+var db (db-load "../../data/microsol/microsol.spectrum.db")           ; the bundled MicroSOL: Ob, Hn, Vn, Vc, C4-G4
 ; var db (db-load "../datasets/TinySOL.spectrum.db")           # the full TinySOL, after ./fetch_tinysol.sh (or any *SOL set)
 
 ; --- material: recordings, and processed versions of them (the processing is a call, made when rendered) ---
-var files (list "data/gong_c_sharp.wav" "data/archeos-bell.wav" "data/cage.wav" "data/Vox.wav")
+var files (list "../../data/gong_c_sharp.wav" "../../data/archeos-bell.wav" "../../data/cage.wav" "../../data/Vox.wav")
 function mono-of (path) (head (getidx (read-wav path) 1))
 function stretched (path factor d) (take (pvoc-stretch (mono-of path) factor) (floor (* d sr)))       ; slower, same pitch
 function reversed (path d) (reverse (take (mono-of path) (floor (* d sr))))

@@ -7,8 +7,8 @@
 ; orchestra speak. Double-click the pfft~ box in locked mode to open it.
 (patch
   (obj title comment "cross synthesis: Beethoven's 7th (or a saw chord) speaking with a voice: A = X a1 + x a2 + q sqrt(a1 a2), phi = Y phi1 + y phi2" (pos 20 12))
-  (obj buf buffer~ crossvox sounds/Vox.wav (pos 20 40))
-  (obj bb buffer~ crossbeet sounds/Beethoven_Symph7.wav (pos 220 40))
+  (obj buf buffer~ crossvox Vox.wav (pos 20 40))
+  (obj bb buffer~ crossbeet Beethoven_Symph7.wav (pos 220 40))
   (obj lb loadbang (pos 20 75))
   (obj init message "loop 1, 0" (pos 20 110))
   (obj binit message "loop 1, 36000" (pos 220 110))

@@ -19,7 +19,7 @@
   (obj l4 message "0 0 1 1 2 4 3 9 4 16 5 25 6 36" (pos 660 105))
   (obj p3 plot 220 120 scatter (pos 660 165))
   (obj c4 comment "a buffer~: a sound is a curve; a matrix (many channels) an image" (pos 20 305))
-  (obj src buffer~ hplsrc ../examples/sounds/Vox.wav (pos 20 325))
+  (obj src buffer~ hplsrc ../data/Vox.wav (pos 20 325))
   (obj p4 plot hplsrc 420 100 (pos 20 360))
   (obj cur message "cursor 6000" (pos 20 470))
   (obj cur0 message "cursor -1" (pos 20 500))

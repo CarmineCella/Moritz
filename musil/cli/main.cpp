@@ -10,8 +10,33 @@
 //   musil --version | --help
 
 #include "musil.h"
+#include <filesystem>
 #include <fstream>
 #include <sstream>
+#if defined(__APPLE__)
+#include <mach-o/dyld.h>
+#elif defined(_WIN32)
+#include <windows.h>
+#endif
+
+// the folder of this program: a musil shipped with its libraries in src/ next to it finds them there
+static std::string program_dir(const char* argv0) {
+    namespace fs = std::filesystem;
+    std::error_code ec; fs::path p;
+#if defined(__APPLE__)
+    char buf[4096]; uint32_t n = sizeof buf;
+    if (_NSGetExecutablePath(buf, &n) == 0) p = buf;
+#elif defined(_WIN32)
+    wchar_t buf[4096]; DWORD n = GetModuleFileNameW(nullptr, buf, 4096);
+    if (n > 0 && n < 4096) p = fs::path(std::wstring(buf, n));
+#else
+    p = fs::read_symlink("/proc/self/exe", ec);
+#endif
+    if (p.empty() && argv0) p = argv0;
+    if (p.empty()) return "";
+    fs::path c = fs::weakly_canonical(p, ec);
+    return (ec ? p : c).parent_path().string();
+}
 
 #ifndef _WIN32
 #include <arpa/inet.h>
@@ -53,6 +78,10 @@ static bool run_file(musil::Interp& I, const std::string& file) {
 
 int main(int argc, char** argv) {
     musil::Interp I;
+    if (std::string d = program_dir(argc > 0 ? argv[0] : nullptr); !d.empty()) {     // after MUSIL_PATH, before ~/.musil
+        std::error_code ec;
+        if (std::filesystem::is_directory(d + "/src", ec)) I.load_path.push_back(d + "/src");
+    }
     musil::make_env(I);
 
     bool interactive = false;

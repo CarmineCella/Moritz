@@ -23,15 +23,21 @@ std::string musilLibraryDir() {
 }
 
 std::string musilHelpFile() {
-    std::string d = resourceDir("musil");
-    return d.empty() ? d : d + "/help.txt";
+    std::string d = resourceDir("help");
+    return d.empty() ? d : d + "/musil/help.txt";
+}
+
+void musilPaths(musil::Interp& I) {
+    // first the folder of Moritz's help.txt (what (help name) reads: Musil as Moritz hosts it), then the libraries
+    if (std::string f = musilHelpFile(); !f.empty()) I.load_path.push_back(f.substr(0, f.find_last_of('/')));
+    if (std::string dir = musilLibraryDir(); !dir.empty()) I.load_path.push_back(dir);
 }
 
 namespace {
 
 void prepare(musil::Interp& I) {
     musilLibraries(I);
-    if (std::string dir = musilLibraryDir(); !dir.empty()) I.load_path.push_back(dir);
+    musilPaths(I);
 }
 
 }  // namespace

@@ -3,7 +3,7 @@
   (obj title comment "onsets [threshold] [size] [hop]: where the notes and hits of a buffer~ begin" (pos 20 12))
   (obj sub comment "run sound [curve]: the peaks of the spectral flux (how much the spectrum grows) above threshold times its moving median, each placed" (pos 20 34))
   (obj sub2 comment "where the energy jumps. Out: onset times (ms), the flux into curve. Then segment k gives start and end of segment k, for play~." (pos 20 52))
-  (obj src buffer~ hosrc ../examples/sounds/drums.wav (pos 20 85))
+  (obj src buffer~ hosrc ../data/drums.wav (pos 20 85))
   (obj fx buffer~ hoflux (pos 280 85))
   (obj lb loadbang (pos 20 120))
   (obj run message "run hosrc hoflux" (pos 20 150))

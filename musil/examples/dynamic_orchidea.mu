@@ -7,11 +7,11 @@
 ; Usage: musil dynamic_orchidea.mu [seed]
 load "music.mu"
 seed (if (> (length args) 0) (num (getidx args 0)) 1)
-var db (db-load-first (list "../datasets/TinySOL.spectrum.db" "data/microsol/microsol.spectrum.db"))   ; TinySOL after ./fetch_tinysol.sh (or FullSOL2020), else the bundled MicroSOL: Ob, Hn, Vn, Vc, C4-G4 (a sketch)
+var db (db-load-first (list "../datasets/TinySOL.spectrum.db" "../../data/microsol/microsol.spectrum.db"))   ; TinySOL after ./fetch_tinysol.sh (or FullSOL2020), else the bundled MicroSOL: Ob, Hn, Vn, Vc, C4-G4 (a sketch)
 var sr 44100
 
 ; --- the target: the piano phrase ----------------------------------------------------------------------------------
-var path "data/A_minor.wav"
+var path "../../data/A_minor.wav"
 var w (read-wav path)
 var x (head (getidx w 1))
 var fsr (head w)

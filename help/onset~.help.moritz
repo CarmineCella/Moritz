@@ -3,7 +3,7 @@
   (obj title comment "onset~ [threshold] [size] [hop]: a bang when a note or a hit begins" (pos 20 12))
   (obj sub comment "The live onsets: the spectral flux of each frame against threshold times its median over the last 21 frames, at least gap ms apart," (pos 20 34))
   (obj sub2 comment "while the level is above gate dB. Messages: threshold x (2), gap ms (50), gate dB (-50). Turn audio on: each onset rings a bell." (pos 20 52))
-  (obj src buffer~ hoosrc ../examples/sounds/drums.wav (pos 20 85))
+  (obj src buffer~ hoosrc ../data/drums.wav (pos 20 85))
   (obj lb loadbang (pos 20 115))
   (obj go message "loop 1, start" (pos 20 145))
   (obj rate sig~ 1 (pos 130 145))

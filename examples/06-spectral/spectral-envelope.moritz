@@ -7,8 +7,8 @@
 (patch
   (obj title comment "Spectral envelope: the colour of one sound on another (specenv~ in pfft~)" (pos 20 12))
   (obj sub comment "Audio on, play the voice, choose a carrier and a mode. The order is the envelope's resolution: low = smooth." (pos 20 34))
-  (obj b1 buffer~ sevox sounds/Vox.wav (pos 20 65))
-  (obj b2 buffer~ sebeet sounds/Beethoven_Symph7.wav (pos 220 65))
+  (obj b1 buffer~ sevox Vox.wav (pos 20 65))
+  (obj b2 buffer~ sebeet Beethoven_Symph7.wav (pos 220 65))
   (obj pv message "loop 1, start" (pos 20 100))
   (obj vox groove~ sevox (pos 20 135))
   (obj ccar comment "carrier" (pos 330 100))

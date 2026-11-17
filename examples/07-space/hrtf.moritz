@@ -10,7 +10,7 @@
 (patch
   (obj title comment "hrtf~: a sound anywhere around and above you, on headphones" (pos 20 12))
   (obj sub comment "Headphones. Choose a source and let it fly (circling, rising and falling), or place it with the sliders. Compare hrtf~ and ambisonics." (pos 20 34))
-  (obj b buffer~ hrvox sounds/Vox.wav (pos 20 65))
+  (obj b buffer~ hrvox Vox.wav (pos 20 65))
   (obj pl message "loop 1, start" (pos 20 100))
   (obj v groove~ hrvox (pos 20 135))
   (obj rate sig~ 1 (pos 140 100))

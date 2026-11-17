@@ -3,7 +3,7 @@
   (obj title comment "curves [size] [hop]: how a sound evolves: loudness, register, polyphony" (pos 20 12))
   (obj sub comment "Curves over time, written to a buffer~ (a frame every hop samples). loudness: the level in dB, roughly as the ear weighs it. register: 3 channels," (pos 20 34))
   (obj sub2 comment "the centroid (MIDI pitch), the spread around it (octaves), the lowest strong partial (MIDI pitch). polyphony: how many voices seem to sound (rough)." (pos 20 52))
-  (obj bee buffer~ hcvbee ../examples/sounds/Beethoven_Symph7.wav (pos 20 85))
+  (obj bee buffer~ hcvbee ../data/Beethoven_Symph7.wav (pos 20 85))
   (obj ld buffer~ hcvloud (pos 380 85))
   (obj rg buffer~ hcvreg (pos 490 85))
   (obj pp buffer~ hcvpoly (pos 590 85))

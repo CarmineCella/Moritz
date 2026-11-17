@@ -8,7 +8,7 @@
 (patch
   (obj title comment "Pitch shifting with sparkle~: transpose, keep or move the formants" (pos 20 12))
   (obj sub comment "Audio on, then play. Drag the semitones; switch formant preservation on and off to hear the difference." (pos 20 34))
-  (obj buf buffer~ pshvox sounds/Vox.wav (pos 20 65))
+  (obj buf buffer~ pshvox Vox.wav (pos 20 65))
   (obj play message "loop 1, start" (pos 20 100))
   (obj stp message stop (pos 120 100))
   (obj cst comment "semitones" (pos 20 140))

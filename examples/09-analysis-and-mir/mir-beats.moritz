@@ -7,7 +7,7 @@
 (patch
   (obj title comment "Tempo and beats: a click track for a march" (pos 20 12))
   (obj sub comment "The analysis runs when the patch opens. Play the march with its click track: the clicks fall on the beats the machine found." (pos 20 34))
-  (obj src buffer~ mbsrc sounds/Sousa_StarsAndStripes.flac (pos 20 65))
+  (obj src buffer~ mbsrc Sousa_StarsAndStripes.flac (pos 20 65))
   (obj bfx buffer~ mbflux (pos 330 65))
   (obj bck buffer~ mbclick (pos 440 65))
   (obj btg buffer~ mbtg (pos 560 65))

@@ -20,7 +20,7 @@
 load "music.mu"
 var k (if (> (length args) 0) (num (getidx args 0)) 1)
 seed (if (> (length args) 1) (num (getidx args 1)) 13)
-var db (db-load-first (list "../datasets/FullSOL2020.spectrum.db" "data/microsol/microsol.spectrum.db"))   ; TinySOL after ./fetch_tinysol.sh (or FullSOL2020), else the bundled MicroSOL: Ob, Hn, Vn, Vc, C4-G4 (a sketch)
+var db (db-load-first (list "../datasets/FullSOL2020.spectrum.db" "../../data/microsol/microsol.spectrum.db"))   ; TinySOL after ./fetch_tinysol.sh (or FullSOL2020), else the bundled MicroSOL: Ob, Hn, Vn, Vc, C4-G4 (a sketch)
 var sr 44100
 
 ; --- the ensemble: 22 players after in vain's, the flutes doubling piccolo (a seated ossia) ------------------------

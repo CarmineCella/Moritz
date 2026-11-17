@@ -7,7 +7,7 @@
 (patch
   (obj title comment "A prelude cut into notes: onsets and segments" (pos 20 12))
   (obj sub comment "The onsets are found when the patch opens. Choose an order and start: each tick of the metro plays the next segment." (pos 20 34))
-  (obj src buffer~ mgsrc sounds/Bach_Prelude_Cminor.flac (pos 20 65))
+  (obj src buffer~ mgsrc Bach_Prelude_Cminor.flac (pos 20 65))
   (obj lb loadbang (pos 20 100))
   (obj run message "run mgsrc" (pos 20 130))
   (obj on onsets 2 1024 256 (pos 20 165))

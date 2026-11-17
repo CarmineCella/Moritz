@@ -11,7 +11,7 @@
   (obj a cycle~ 440 (pos 20 120))
   (obj b saw~ 220 (pos 120 120))
   (obj c noise~ (pos 210 120))
-  (obj vb buffer~ helpdesc ../examples/sounds/Vox.wav (pos 290 120))
+  (obj vb buffer~ helpdesc ../data/Vox.wav (pos 290 120))
   (obj vg groove~ helpdesc (pos 290 150))
   (obj lb loadbang (pos 590 120))
   (obj lp message "loop 1" (pos 590 150))

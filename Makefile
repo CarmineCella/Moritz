@@ -15,6 +15,10 @@
 #   make linux-dist   the Linux build as a .tar.gz for a release
 #   make dist     macOS: build the release zip (app + examples + license) in build/
 #   make notarize macOS: sign with a Developer ID, notarize and staple (see below)
+#   make musil    Musil on its own (musil/): the musil command line, with its live audio,
+#                 plots and controls, in build/musil/ (Linux: build/linux/musil/,
+#                 Windows: build/windows/musil/)
+#   make test-musil  Musil's tests on Musil itself, then on Musil in Moritz
 #   make clean    remove build products
 #   make distclean  also remove downloaded dependencies
 #
@@ -31,7 +35,7 @@
 
 APP        := moritz
 BUNDLE     := Moritz.app
-VERSION    := 0.9
+VERSION    := 0.10
 UNAME      := $(shell uname -s)
 # MSYS2 on Windows reports MINGW64_NT-..., UCRT64_NT-..., MSYS_NT-...
 ifneq (,$(findstring _NT,$(UNAME)))
@@ -157,8 +161,13 @@ $(BUILD)/RtMidi.o: $(RTMIDI_HDR)
 	@mkdir -p $(BUILD)
 	$(CXX) -std=c++17 -O2 $(ARCHFLAGS) -D__MACOSX_CORE__ -w -c $(RTMIDI_SRC) -o $@
 
-# Musil's libraries (the halves written in Musil, and their data) and its help, without its C++ sources
-copy_musil = mkdir -p "$(1)/musil/src" && cp musil/src/*.mu musil/src/*.csv musil/src/*.wav "$(1)/musil/src/" && cp musil/help.txt "$(1)/musil/"
+# Musil's libraries (the halves written in Musil, their data and its help) and its examples, without its
+# C++ sources; the sounds and data shared by Moritz and Musil; Musil's manual among the documents.
+# The destination is a fresh folder (data/ is copied into it).
+copy_musil = mkdir -p "$(1)/musil/src" "$(1)/musil/examples" "$(1)/docs/musil" && \
+	cp musil/src/*.mu musil/src/*.csv musil/src/*.wav musil/src/help.txt "$(1)/musil/src/" && \
+	cp musil/examples/*.mu "$(1)/musil/examples/" && cp musil/docs/musil_manual.pdf "$(1)/docs/musil/" && \
+	cp -R data "$(1)/" && find "$(1)/data" -name .DS_Store -delete
 
 # the PDFs of docs/ (their LaTeX sources stay in the repository), keeping their folders
 copy_docs = for f in $$(find docs -name '*.pdf'); do mkdir -p "$(1)/$$(dirname $$f)"; cp "$$f" "$(1)/$$f"; done
@@ -166,6 +175,9 @@ copy_docs = for f in $$(find docs -name '*.pdf'); do mkdir -p "$(1)/$$(dirname $
 SOURCES    := $(wildcard src/*.cpp)
 OBJECTS    := $(patsubst src/%.cpp,$(BUILD)/%.o,$(SOURCES))
 HEADERS    := $(wildcard src/*.h musil/src/*.h musil/src/*/*.h)
+MUSIL_DEPS := musil/cli/main.cpp $(wildcard musil/src/*.h musil/src/*/*.h)
+SHARED     := $(wildcard examples/*/*.moritz data/* library/* musil/src/*.mu musil/src/help.txt musil/examples/*.mu \
+              help/* tutorials/* docs/*/*.pdf) musil/docs/musil_manual.pdf
 
 $(BUILD)/%.o: src/%.cpp $(HEADERS) $(FLTK_LIB) $(MA_HDR) $(RTMIDI_HDR)
 	@mkdir -p $(BUILD)
@@ -173,6 +185,14 @@ $(BUILD)/%.o: src/%.cpp $(HEADERS) $(FLTK_LIB) $(MA_HDR) $(RTMIDI_HDR)
 
 $(APP): $(OBJECTS) $(BUILD)/miniaudio.o $(BUILD)/RtMidi.o
 	$(CXX) $(LDFLAGS) $^ $(FLTK_LIBS) $(FRAMEWORKS) -o $@
+
+# Musil on its own, built from musil/ alone (its own miniaudio, inside live.h), with Moritz's FLTK
+MUSIL_BIN := $(BUILD)/musil/musil
+$(MUSIL_BIN): $(MUSIL_DEPS) $(FLTK_LIB)
+	@mkdir -p $(dir $@)
+	$(CXX) -std=c++17 -O2 -Wall -Wextra -Wno-unused-parameter $(ARCHFLAGS) -DMUSIL_HAS_FLTK -I$(FLTK_INST)/include \
+	  -Imusil/src musil/cli/main.cpp $(FLTK_LIBS) -framework Cocoa -framework CoreAudio -framework AudioToolbox \
+	  -framework CoreFoundation -weak_framework UniformTypeIdentifiers -o $@
 
 # ---------------------------------------------------------------- bundle (macOS)
 define INFO_PLIST
@@ -206,14 +226,14 @@ define INFO_PLIST
 endef
 export INFO_PLIST
 
-$(BUNDLE): $(APP) $(wildcard examples/*/*.moritz examples/sounds/* library/* musil/src/*.mu musil/help.txt help/* tutorials/* resources/* docs/*/*.pdf) LICENSE
+$(BUNDLE): $(APP) $(SHARED) $(wildcard resources/*) LICENSE
 	@echo "==> creating $(BUNDLE)"
 	rm -rf $(BUNDLE)
 	mkdir -p $(BUNDLE)/Contents/MacOS $(BUNDLE)/Contents/Resources
 	cp $(APP) $(BUNDLE)/Contents/MacOS/$(APP)
 	cp -R examples library help tutorials $(BUNDLE)/Contents/Resources/ 2>/dev/null || true
-	$(call copy_musil,$(BUNDLE)/Contents/Resources)
 	$(call copy_docs,$(BUNDLE)/Contents/Resources)
+	$(call copy_musil,$(BUNDLE)/Contents/Resources)
 	cp resources/moritz.icns resources/about.png resources/maxundmoritz.png LICENSE $(BUNDLE)/Contents/Resources/
 	echo "$$INFO_PLIST" > $(BUNDLE)/Contents/Info.plist
 	printf 'APPL????' > $(BUNDLE)/Contents/PkgInfo
@@ -277,12 +297,20 @@ $(LX_DIR)/$(APP): $(LX_OBJECTS) $(LX_BUILD)/miniaudio.o $(LX_BUILD)/RtMidi.o
 	$(LX_CXX) $^ $$($(LX_FLTK)/bin/fltk-config --use-images --ldstaticflags) \
 	  -static-libstdc++ -static-libgcc -lasound -lpthread -ldl -lm -o $@
 
-linux: $(LX_DIR)/$(APP) $(wildcard examples/*/*.moritz examples/sounds/* library/* musil/src/*.mu musil/help.txt help/* tutorials/* docs/*/*.pdf)
+LX_MUSIL := $(LX_BUILD)/musil/musil
+$(LX_MUSIL): $(MUSIL_DEPS) $(LX_FLTK_LIB)
+	@mkdir -p $(dir $@)
+	$(LX_CXX) -std=c++17 -O2 -Wall -Wextra -Wno-unused-parameter -DMUSIL_HAS_FLTK -I$(LX_FLTK)/include -Imusil/src \
+	  musil/cli/main.cpp $$($(LX_FLTK)/bin/fltk-config --use-images --ldstaticflags) \
+	  -static-libstdc++ -static-libgcc -lpthread -ldl -lm -o $@
+
+linux: $(LX_DIR)/$(APP) $(LX_MUSIL) $(SHARED)
 	rm -rf $(LX_DIR)/examples $(LX_DIR)/library $(LX_DIR)/musil $(LX_DIR)/help $(LX_DIR)/tutorials $(LX_DIR)/resources
-	rm -rf $(LX_DIR)/docs
+	rm -rf $(LX_DIR)/docs $(LX_DIR)/data
 	cp -R examples library help tutorials LICENSE README.md OBJECTS.md $(LX_DIR)/
-	$(call copy_musil,$(LX_DIR))
 	$(call copy_docs,$(LX_DIR))
+	$(call copy_musil,$(LX_DIR))
+	cp $(LX_MUSIL) $(LX_DIR)/musil/
 	mkdir -p $(LX_DIR)/resources && cp resources/about.png resources/maxundmoritz.png $(LX_DIR)/resources/
 	@echo "==> built $(LX_DIR)/$(APP)"
 
@@ -361,12 +389,21 @@ $(WIN_DIR)/$(APP).exe: $(WIN_OBJECTS) $(WIN_BUILD)/miniaudio.o $(WIN_BUILD)/RtMi
 	  $(WIN_FLTK)/lib/libfltk_z.a $(WIN_FLTK_LIB) -lwinmm -lole32 -luuid -lcomctl32 -lcomdlg32 \
 	  -lgdi32 -lgdiplus -lwinspool -lws2_32 -lshell32 -ladvapi32 -limm32 -loleaut32 -o $@
 
-windows: $(WIN_DIR)/$(APP).exe $(wildcard examples/*/*.moritz examples/sounds/* library/* musil/src/*.mu musil/help.txt help/* tutorials/* docs/*/*.pdf)
+WIN_MUSIL := $(WIN_BUILD)/musil/musil.exe
+$(WIN_MUSIL): $(MUSIL_DEPS) $(WIN_FLTK_LIB)
+	@mkdir -p $(dir $@)
+	$(WIN_CXX) -std=c++17 -O2 -Wall -Wextra -Wno-unused-parameter -DMUSIL_HAS_FLTK -I$(WIN_FLTK)/include -Imusil/src \
+	  musil/cli/main.cpp -static -s -Wl,--stack,8388608 $(WIN_FLTK)/lib/libfltk_images.a $(WIN_FLTK)/lib/libfltk_png.a \
+	  $(WIN_FLTK)/lib/libfltk_z.a $(WIN_FLTK_LIB) -lwinmm -lole32 -luuid -lcomctl32 -lcomdlg32 \
+	  -lgdi32 -lgdiplus -lwinspool -lws2_32 -lshell32 -ladvapi32 -limm32 -loleaut32 -o $@
+
+windows: $(WIN_DIR)/$(APP).exe $(WIN_MUSIL) $(SHARED)
 	rm -rf $(WIN_DIR)/examples $(WIN_DIR)/library $(WIN_DIR)/musil $(WIN_DIR)/help $(WIN_DIR)/tutorials $(WIN_DIR)/resources
-	rm -rf $(WIN_DIR)/docs
+	rm -rf $(WIN_DIR)/docs $(WIN_DIR)/data
 	cp -R examples library help tutorials LICENSE README.md OBJECTS.md $(WIN_DIR)/
-	$(call copy_musil,$(WIN_DIR))
 	$(call copy_docs,$(WIN_DIR))
+	$(call copy_musil,$(WIN_DIR))
+	cp $(WIN_MUSIL) $(WIN_DIR)/musil/
 	mkdir -p $(WIN_DIR)/resources && cp resources/about.png resources/maxundmoritz.png $(WIN_DIR)/resources/
 	@echo "==> built $(WIN_DIR)/$(APP).exe"
 
@@ -376,17 +413,20 @@ windows-zip: windows
 	@ls -l $(WIN_ZIP)
 
 # ---------------------------------------------------------------- release (macOS)
-# The zip holds the app (with the examples inside), the examples as a
-# folder next to it, the README and the license. --norsrc leaves out
+# The zip holds the app (with the examples inside), the examples, the shared
+# data and Musil on its own (musil/musil, its libraries and examples) as
+# folders next to it, the documents, the README and the license. --norsrc leaves out
 # resource forks and extended attributes, which would otherwise travel as
 # ._ files and can invalidate the signature once unzipped on another Mac.
-dist: $(BUNDLE)
+dist: $(BUNDLE) $(MUSIL_BIN)
 	@echo "==> packaging $(DIST_ZIP)"
 	rm -rf $(BUILD)/dist $(DIST_ZIP)
 	mkdir -p $(BUILD)/dist/$(DIST_NAME)
 	ditto $(BUNDLE) $(BUILD)/dist/$(DIST_NAME)/$(BUNDLE)
 	ditto examples $(BUILD)/dist/$(DIST_NAME)/examples
 	$(call copy_docs,$(BUILD)/dist/$(DIST_NAME))
+	$(call copy_musil,$(BUILD)/dist/$(DIST_NAME))
+	cp $(MUSIL_BIN) $(BUILD)/dist/$(DIST_NAME)/musil/
 	cp LICENSE README.md OBJECTS.md $(BUILD)/dist/$(DIST_NAME)/
 	find $(BUILD)/dist -name .DS_Store -delete
 	xattr -cr $(BUILD)/dist
@@ -417,14 +457,30 @@ run: $(BUNDLE)
 	open $(BUNDLE)
 endif
 
-# Musil inside another program: interpreters on threads, nothing left alive afterwards. Built from
-# musil/src alone, so it also proves that Musil needs nothing of Moritz.
-EMBED_CXX := $(CXX)
 ifeq ($(UNAME),Linux)
-EMBED_LIBS := -pthread
+musil: $(LX_MUSIL)
+MUSIL_HOST_BIN := $(LX_MUSIL)
+else ifdef WINDOWS_HOST
+musil: $(WIN_MUSIL)
+MUSIL_HOST_BIN := $(WIN_MUSIL)
+else
+musil: $(MUSIL_BIN)
+MUSIL_HOST_BIN := $(MUSIL_BIN)
+endif
+
+# Musil's tests on Musil itself (the reference), then on Musil in Moritz (moritz --run: no live, plot, controls)
+test-musil: musil
+	tools/test-musil.sh musil $(MUSIL_HOST_BIN)
+
+# Musil inside another program: interpreters on threads, nothing left alive afterwards. Built from
+# musil/ alone, so it also proves that Musil needs nothing of Moritz.
+EMBED_CXX := $(CXX)
+EMBED_LIBS := -framework CoreAudio -framework AudioToolbox -framework CoreFoundation
+ifeq ($(UNAME),Linux)
+EMBED_LIBS := -pthread -ldl -lm
 else ifdef WINDOWS_HOST
 EMBED_CXX := $(WIN_CXX)
-EMBED_LIBS := -static -lws2_32
+EMBED_LIBS := -static -lws2_32 -lole32 -lwinmm
 endif
 embed-test:
 	mkdir -p $(BUILD)
@@ -437,4 +493,4 @@ clean:
 distclean: clean
 	rm -rf $(DEPS)
 
-.PHONY: all deps run embed-test linux linux-dist windows windows-zip dist notarize clean distclean
+.PHONY: all deps run musil test-musil embed-test linux linux-dist windows windows-zip dist notarize clean distclean

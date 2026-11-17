@@ -3,7 +3,7 @@
   (obj title comment "binpan~ [azimuth] [elevation]: a mono sound placed around the listener, on headphones" (pos 20 12))
   (obj sub comment "Inlets: the signal, the azimuth (0 front, 90 left, -90 right, 180 behind), the elevation (up). Outlets: left, right." (pos 20 34))
   (obj sub2 comment "An abstraction: ambienc~ 2 into binaural~ 2. For many sources, sum their fields and use one binaural~ (see binaural.moritz)." (pos 20 52))
-  (obj b buffer~ helpbpvox ../examples/sounds/Vox.wav (pos 20 85))
+  (obj b buffer~ helpbpvox ../data/Vox.wav (pos 20 85))
   (obj pl message "loop 1, start" (pos 20 120))
   (obj v sparkle~ helpbpvox (pos 20 155))
   (obj caz comment "azimuth" (pos 200 100))

@@ -9,7 +9,6 @@ docs/*.log
 docs/*.out
 docs/*.gz
 docs/*.toc
-src/help.txt
 *.o
 *.a
 .DS_Store

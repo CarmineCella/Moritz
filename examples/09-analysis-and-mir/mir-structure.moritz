@@ -9,7 +9,7 @@
 (patch
   (obj title comment "The form of a march: self-similarity, novelty, and the key of each section" (pos 20 12))
   (obj sub comment "Sousa, The Stars and Stripes Forever (U.S. Marine Band). The analyses run when the patch opens; then play a section, or click the matrix." (pos 20 34))
-  (obj src buffer~ mssrc sounds/Sousa_StarsAndStripes.flac (pos 20 65))
+  (obj src buffer~ mssrc Sousa_StarsAndStripes.flac (pos 20 65))
   (obj bch buffer~ msch (pos 20 95))
   (obj bss buffer~ msssm (pos 120 95))
   (obj bnv buffer~ msnov (pos 20 155))

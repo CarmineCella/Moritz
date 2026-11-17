@@ -9,8 +9,8 @@
 load "system.mu"
 load "signals.mu"
 
-var a (read-wav (if (> (length args) 0) (getidx args 0) "data/Vox.wav"))
-var b (read-wav (if (> (length args) 1) (getidx args 1) "data/Beethoven_Symph7.wav"))
+var a (read-wav (if (> (length args) 0) (getidx args 0) "../../data/Vox.wav"))
+var b (read-wav (if (> (length args) 1) (getidx args 1) "../../data/Beethoven_Symph7.wav"))
 var sr (head a)
 var voice (head (getidx a 1))
 var orchestra (head (getidx b 1))

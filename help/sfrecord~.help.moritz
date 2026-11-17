@@ -4,7 +4,7 @@
   (obj sub comment "open file.wav names the file (relative to the patch), 1 starts, 0 stops; the file is complete once it stops. Audio must be on." (pos 20 34))
   (obj sub2 comment "Each inlet records one channel. Recording again overwrites the file. The outlet reports the time recorded, every 250 ms." (pos 20 52))
   (obj lb loadbang (pos 20 80))
-  (obj of message "open ../examples/sounds/Gambale_cut.wav" (pos 20 115))
+  (obj of message "open ../data/Gambale_cut.wav" (pos 20 115))
   (obj orec message "open help-recording.wav" (pos 260 115))
   (obj p1 message 1 (pos 260 155))
   (obj p0 message 0 (pos 300 155))

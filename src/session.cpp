@@ -267,7 +267,7 @@ LangContext::LangContext(std::string l) : label(std::move(l)), interp_(std::make
     I.def("buffer", fnBuffer, 1, 1);
     I.def("buffer-rate", fnBufferRate, 1, 1);
     I.def("set-buffer!", fnSetBuffer, 2, 3);
-    if (std::string d = musilLibraryDir(); !d.empty()) I.load_path.push_back(d);
+    musilPaths(I);
 #ifndef _WIN32
     I.stack_budget = (64u << 20) / 4 * 3;          // code runs on a thread of 64 MB (startThread)
 #endif

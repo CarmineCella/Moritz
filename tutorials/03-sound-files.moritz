@@ -5,7 +5,7 @@
   (obj title comment "Tutorial 3 · Sound files and buffers" (pos 20 12))
   (obj t1 comment "A buffer~ loads a sound file and keeps it in memory under a name; any object can then use it by that name." (pos 20 40))
   (obj t2 comment "Paths are relative to the patch. Turn the audio on (the toolbar) before playing." (pos 20 58))
-  (obj b buffer~ t3drums ../examples/sounds/drums.wav (pos 20 90))
+  (obj b buffer~ t3drums ../data/drums.wav (pos 20 90))
   (obj wave waveform~ t3drums 500 70 (pos 20 120))
   (obj s1 comment "1. play~ plays the buffer once, from the start." (pos 20 210))
   (obj go message start (pos 20 235))

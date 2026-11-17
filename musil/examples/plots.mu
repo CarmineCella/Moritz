@@ -4,7 +4,7 @@
 load "system.mu"
 load "plot.mu"
 
-var w (read-wav (if (> (length args) 0) (getidx args 0) "data/cage.wav"))
+var w (read-wav (if (> (length args) 0) (getidx args 0) "../../data/cage.wav"))
 var sr (head w)
 var x (head (getidx w 1))
 var n (next-pow2 (/ sr 16))

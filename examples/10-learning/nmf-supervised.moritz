@@ -9,8 +9,8 @@
 (patch
   (obj title comment "NMF source separation: unsupervised (run) and supervised (learn, separate)" (pos 20 12))
   (obj sub comment "Audio on. 1 records a mix of the voice and the drums (4 s). 2 learns each source alone and separates the mix. 3 does it blindly." (pos 20 34))
-  (obj b1 buffer~ nsvox sounds/Vox.wav (pos 20 65))
-  (obj b2 buffer~ nsdrums sounds/drums.wav (pos 220 65))
+  (obj b1 buffer~ nsvox Vox.wav (pos 20 65))
+  (obj b2 buffer~ nsdrums drums.wav (pos 220 65))
   (obj b3 buffer~ nsmix 4000 (pos 440 65))
   (obj b4 buffer~ nssup (pos 580 65))
   (obj b5 buffer~ nsunsup (pos 700 65))

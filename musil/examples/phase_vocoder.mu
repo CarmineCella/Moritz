@@ -9,7 +9,7 @@
 load "system.mu"
 load "signals.mu"
 
-var w (read-wav (if (> (length args) 0) (getidx args 0) "data/Vox.wav"))
+var w (read-wav (if (> (length args) 0) (getidx args 0) "../../data/Vox.wav"))
 var sr (head w)
 var x (head (getidx w 1))
 var order 80 ;(floor (/ sr 100))            # cepstral order for the envelope: ~80 at 8 kHz, ~400 at 44.1 kHz

@@ -3,7 +3,7 @@
   (obj title comment "melbands~, mfcc~, chroma~: live analysis of a signal, a list every hop" (pos 20 12))
   (obj sub comment "The same analyses as melgram, mfccgram and chromagram, on the signal as it plays: plot in image mode adds each list as a column." (pos 20 34))
   (obj sub2 comment "Turn audio on. Arguments: melbands~ [bands] [size] [hop], mfcc~ [coeffs] [bands] [size] [hop], chroma~ [size] [hop]; bang analyses at once." (pos 20 52))
-  (obj src buffer~ hmbsrc ../examples/sounds/Gambale_cut.wav (pos 20 85))
+  (obj src buffer~ hmbsrc ../data/Gambale_cut.wav (pos 20 85))
   (obj lb loadbang (pos 20 115))
   (obj go message "loop 1, start" (pos 20 145))
   (obj rate sig~ 1 (pos 130 145))

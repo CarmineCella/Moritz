@@ -8,9 +8,9 @@
 (patch
   (obj title comment "A sound in atoms: matching pursuit with Gabor and gammatone atoms" (pos 20 12))
   (obj sub comment "Choose a sound, a dictionary and how many atoms; the atom map fills in. Then rebuild it: transposed, stretched, from its strongest atoms." (pos 20 34))
-  (obj b1 buffer~ mabell sounds/archeos-bell.wav (pos 20 65))
-  (obj b2 buffer~ mavox sounds/Vox.wav (pos 260 65))
-  (obj b3 buffer~ magong sounds/gong_c_sharp.wav (pos 450 65))
+  (obj b1 buffer~ mabell archeos-bell.wav (pos 20 65))
+  (obj b2 buffer~ mavox Vox.wav (pos 260 65))
+  (obj b3 buffer~ magong gong_c_sharp.wav (pos 450 65))
   (obj bk buffer~ mabook (pos 720 65))
   (obj rs buffer~ mares (pos 830 65))
   (obj sy buffer~ masyn (pos 930 65))

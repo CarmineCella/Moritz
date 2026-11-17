@@ -4,7 +4,7 @@
   (obj title comment "reverb~ mix T60: stereo Freeverb (see reverb~.moritz, fvcomb~.moritz)" (pos 20 12))
   (obj lb loadbang (pos 20 40))
   (obj tog toggle (pos 20 75))
-  (obj open message "open sounds/gong_c_sharp.wav" (pos 120 75))
+  (obj open message "open gong_c_sharp.wav" (pos 120 75))
   (obj met metro 4000 (pos 20 115))
   (obj go message 1 (pos 20 150))
   (obj sf sfplay~ (pos 20 190))

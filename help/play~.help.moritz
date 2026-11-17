@@ -3,7 +3,7 @@
   (obj title comment "play~ name [channels]: play a buffer~" (pos 20 12))
   (obj sub comment "start plays it once; start from, or start from to (ms), plays a part. bang = start, stop stops, set name changes the buffer~." (pos 20 34))
   (obj sub2 comment "With a signal in its inlet it does not play by itself: it reads the buffer~ at that position in ms, e.g. a line~ ramp." (pos 20 52))
-  (obj buf buffer~ helpplay ../examples/sounds/Vox.wav (pos 20 80))
+  (obj buf buffer~ helpplay ../data/Vox.wav (pos 20 80))
   (obj m1 message start (pos 20 120))
   (obj m2 message "start 1500" (pos 72 120))
   (obj m3 message "start 500 1500" (pos 152 120))

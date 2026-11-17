@@ -128,13 +128,15 @@ void setupSearchPaths() {
         for (int k = 0; k < n; ++k) {
             std::string f = list[k]->d_name;
             if (!f.empty() && f.back() == '/') f.pop_back();
-            if (f.empty() || f[0] == '.' || f == "sounds") continue;
+            if (f.empty() || f[0] == '.') continue;
             if (std::string sub = d + "/" + f; fl_filename_isdir(sub.c_str())) abstractionPath().push_back(sub);
         }
         fl_filename_free_list(&list, n);
         soundPath().push_back(d);
-        soundPath().push_back(d + "/sounds");
     }
+    // the sounds and data shared by Moritz's patches and Musil's examples, then Musil's own data (the hall)
+    if (std::string d = resourceDir("data"); !d.empty()) soundPath().push_back(d);
+    if (std::string d = resourceDir("musil"); !d.empty()) soundPath().push_back(d + "/src");
     if (std::string d = resourceDir("docs"); !d.empty()) {          // "docs/...": the bundled documents
         std::string root = d.substr(0, d.find_last_of('/'));
         soundPath().push_back(root);

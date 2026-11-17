@@ -3,7 +3,7 @@
   (obj title comment "spectrogram, melgram, mfccgram, chromagram: pictures of a sound, as matrices" (pos 20 12))
   (obj sub comment "run sound matrix analyses a buffer~ in the background and writes a matrix into another buffer~: a channel a row, a sample a frame." (pos 20 34))
   (obj sub2 comment "The matrix's sample rate is its frames per second, so plot shows time. Double-click a plot to explore it (zoom, values, export)." (pos 20 52))
-  (obj src buffer~ hspsrc ../examples/sounds/Gambale_cut.wav (pos 20 85))
+  (obj src buffer~ hspsrc ../data/Gambale_cut.wav (pos 20 85))
   (obj b1 buffer~ hspspec (pos 490 85))
   (obj b2 buffer~ hspmel (pos 610 85))
   (obj b3 buffer~ hspmfcc (pos 720 85))

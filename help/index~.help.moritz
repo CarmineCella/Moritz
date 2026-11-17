@@ -3,7 +3,7 @@
   (obj title comment "index~ name [channel]: read a buffer~ at a sample index" (pos 20 12))
   (obj sub comment "The inlet is the sample index, a signal such as count~ (or a float). There is no interpolation; outside the buffer it gives 0." (pos 20 34))
   (obj sub2 comment "channel counts from 1 (default 1). set name reads another buffer~." (pos 20 52))
-  (obj buf buffer~ helpindex ../examples/sounds/Vox.wav (pos 20 80))
+  (obj buf buffer~ helpindex ../data/Vox.wav (pos 20 80))
   (obj go message bang (pos 20 120))
   (obj mid message 332955 (pos 70 120))
   (obj st message stop (pos 130 120))

@@ -4,7 +4,7 @@
   (obj sub comment "Left inlet: the amplitudes (from cartopol~). Outlets: the envelope (the formants: the colour of the sound) and the fine structure" (pos 20 34))
   (obj sub2 comment "(the amplitudes divided by the envelope: the harmonics or the noise, flat). order: the resolution, about sr / (2 f0); right inlet." (pos 20 52))
   (obj sub3 comment "iterations: 12 by default, the true envelope, which rides on the harmonic peaks; 0 for the plain cepstral smoothing." (pos 20 70))
-  (obj b buffer~ helpsevox ../examples/sounds/Vox.wav (pos 20 105))
+  (obj b buffer~ helpsevox ../data/Vox.wav (pos 20 105))
   (obj pl message "loop 1, start" (pos 20 140))
   (obj v groove~ helpsevox (pos 20 175))
   (obj rate sig~ 1 (pos 150 140))

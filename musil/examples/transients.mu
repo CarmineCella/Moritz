@@ -8,7 +8,7 @@ load "system.mu"
 load "signals.mu"
 load "plot.mu"
 
-var w (read-wav (if (> (length args) 0) (getidx args 0) "data/hpss_demo.wav"))
+var w (read-wav (if (> (length args) 0) (getidx args 0) "../../data/hpss_demo.wav"))
 var sr (head w)
 var x (head (getidx w 1))
 var n 2048

@@ -10,9 +10,9 @@
 (patch
   (obj title comment "nebula~: granular clouds of waveforms and sounds" (pos 20 12))
   (obj sub comment "Turn audio on, then the cloud (top right); choose a preset and play with the controls. Every control can be reached; presets set them all." (pos 20 34))
-  (obj vox buffer~ nbvox sounds/Vox.wav (pos 20 65))
-  (obj gong buffer~ nbgong sounds/gong_c_sharp.wav (pos 230 65))
-  (obj bell buffer~ nbbell sounds/archeos-bell.wav (pos 480 65))
+  (obj vox buffer~ nbvox Vox.wav (pos 20 65))
+  (obj gong buffer~ nbgong gong_c_sharp.wav (pos 230 65))
+  (obj bell buffer~ nbbell archeos-bell.wav (pos 480 65))
   (obj tog toggle (pos 760 65))
   (obj son send nbon (pos 760 95))
   (obj ctog comment "cloud on / off" (pos 790 68))

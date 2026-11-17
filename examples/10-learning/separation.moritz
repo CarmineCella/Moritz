@@ -7,10 +7,10 @@
 ; bits of two.
 (patch
   (obj title comment "separation: hpss (harmonic / percussive) on hpss_demo.wav, nmf (four parts) on a four-stem mix" (pos 20 12))
-  (obj bsrc buffer~ sephp sounds/hpss_demo.wav (pos 20 40))
+  (obj bsrc buffer~ sephp hpss_demo.wav (pos 20 40))
   (obj bh buffer~ sepharm (pos 20 62))
   (obj bp buffer~ sepperc (pos 130 62))
-  (obj dsrc buffer~ sepstems sounds/stems_demo.wav (pos 460 40))
+  (obj dsrc buffer~ sepstems stems_demo.wav (pos 460 40))
   (obj dp buffer~ sepparts (pos 460 62))
   (obj hrun message "run sephp sepharm sepperc" (pos 20 90))
   (obj hp hpss (pos 20 125))

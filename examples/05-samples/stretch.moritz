@@ -5,7 +5,7 @@
 ; current sound; the cursor on the waveform shows where sparkle~ reads.
 (patch
   (obj title comment "sparkle~ + function: draw the speed and the pitch over 15 s, then play (locked mode: click/drag/Shift-click points)" (pos 20 12))
-  (obj buf buffer~ stretchvoice sounds/Vox.wav (pos 20 45))
+  (obj buf buffer~ stretchvoice Vox.wav (pos 20 45))
   (obj play button (pos 20 80))
   (obj cplay comment "play" (pos 50 83))
   (obj trig t b b b (pos 20 115))

@@ -1,35 +1,91 @@
 #!/bin/sh
-# test-musil.sh — runs the tests of Musil (musil/tests) with moritz --run: every test_*.mu must pass,
-# and every reference_*.mu must print what musil/tests/golden holds (lines with timings, random numbers
-# or file sizes are left out, paths reduced to file names).
+# test-musil.sh — Musil's tests, as Musil's own build runs them (musil/CMakeLists.txt):
 #
-#   tools/test-musil.sh [path/to/moritz]
-#   tools/test-musil.sh [path/to/moritz] --update    rewrites the golden files after an intended change
+#   tools/test-musil.sh musil  path/to/musil     Musil on its own, the reference: every test_*.mu, the golden
+#                                                references (musil/examples/reference*.mu against
+#                                                musil/tests/golden), the limits, every example
+#   tools/test-musil.sh moritz path/to/moritz    Musil in Moritz (moritz --run): the same tests and references,
+#                                                without what Moritz leaves out (the live, plot and controls
+#                                                libraries; its synths are silent)
+#   add --update (musil only) to rewrite the golden files after an intended change
 #
-# Used by CI on macOS, Linux and Windows.
-MORITZ=$(cd "$(dirname "${1:-./moritz}")" && pwd)/$(basename "${1:-./moritz}")
-UPDATE=$2
-cd "$(dirname "$0")/../musil/tests" || exit 1
-export MUSIL_NOSHOW=1
+# Lines with timings, random numbers or file sizes are left out of the comparison, and paths are reduced
+# to file names. Used by CI on macOS, Linux and Windows.
+MODE=$1
+BIN=$(cd "$(dirname "$2")" && pwd)/$(basename "$2")
+UPDATE=$3
+ROOT=$(cd "$(dirname "$0")/.." && pwd)
+case "$MODE" in musil|moritz) ;; *) echo "usage: tools/test-musil.sh musil|moritz path/to/program [--update]"; exit 2 ;; esac
+case "$(uname -s)" in *_NT*) WINDOWS=1 ;; *) WINDOWS= ;; esac
+export MUSIL_NOSHOW=1 MUSIL_NULL_AUDIO=1
+[ "$MODE" = musil ] && export MUSIL_PATH="$ROOT/musil/src"
+TMP=$(mktemp -d 2>/dev/null || mktemp -d -t musil)
 fails=0
+count=0
+
+run() {     # run a .mu file with the program under test
+    if [ "$MODE" = musil ]; then "$BIN" "$@"; else "$BIN" --run "$@"; fi
+}
+fail() { echo "FAIL $1"; fails=$((fails + 1)); }
 filter() {
     grep -vE "took|rand|bytes" | sed -E 's#[^ ]*/([^ /]+\.mu)#\1#g; s#(^| )(std|system|scientific)\.mu:[0-9]+#\1\2.mu#g' | tr -d '\r' |
         awk 'NF { for (; blank > 0; blank--) print ""; print; seen = 1; next } seen { blank++ }'   # no blank lines at either end
 }
-for t in test_*.mu; do
-    out=$("$MORITZ" --run "$t" 2>&1)
-    if [ $? -ne 0 ]; then echo "FAIL $t"; printf '%s\n' "$out" | tail -5; fails=$((fails + 1)); fi
+# what Moritz's Musil prints differently: its synths are silent, so a score with a synth never needs scaling
+hosted() {
+    if [ "$MODE" = moritz ]; then grep -v "render: the mix peaked"; else cat; fi
+}
+
+# --- the tests of each library
+cd "$ROOT/musil/tests" || exit 1
+TESTS="test_core test_std test_system test_scientific test_signals test_live test_music test_plot test_memory test_stress test_smoke test_load"
+[ "$MODE" = moritz ] && TESTS=$(echo "$TESTS" | sed 's/test_live//; s/test_plot//')
+for t in $TESTS; do
+    count=$((count + 1))
+    if ! run "$t.mu" > "$TMP/out.txt" 2>&1; then fail "$t"; tail -5 "$TMP/out.txt"; fi
 done
-for r in reference*.mu; do
-    name=${r%.mu}
-    "$MORITZ" --run "$r" > /tmp/musil_golden_out.txt 2>&1
+
+# --- the golden references
+REFS="reference reference_std reference_scientific reference_signals reference_live reference_music reference_plot"
+[ "$MODE" = moritz ] && REFS="reference reference_std reference_scientific reference_signals reference_music"
+[ -n "$WINDOWS" ] && REFS=$(echo "$REFS" | sed 's/reference_live//')     # OSC input (live.h) is not available on Windows
+for r in $REFS; do
+    count=$((count + 1))
+    run "../examples/$r.mu" > "$TMP/out.txt" 2>&1
     status=$?
-    filter < /tmp/musil_golden_out.txt > /tmp/musil_golden_actual.txt
-    if [ "$UPDATE" = "--update" ]; then cp /tmp/musil_golden_actual.txt "golden/$name.out"; continue; fi
-    if [ $status -ne 0 ] || ! diff -q "golden/$name.out" /tmp/musil_golden_actual.txt > /dev/null; then
-        echo "FAIL $r (exit $status)"; diff "golden/$name.out" /tmp/musil_golden_actual.txt | head -10
-        fails=$((fails + 1))
+    filter < "$TMP/out.txt" | hosted > "$TMP/actual.txt"
+    if [ "$UPDATE" = "--update" ] && [ "$MODE" = musil ]; then cp "$TMP/actual.txt" "golden/$r.out"; continue; fi
+    hosted < "golden/$r.out" > "$TMP/golden.txt"
+    if [ $status -ne 0 ] || ! diff -q "$TMP/golden.txt" "$TMP/actual.txt" > /dev/null; then
+        fail "$r (exit $status)"; diff "$TMP/golden.txt" "$TMP/actual.txt" | head -10
     fi
 done
-echo "musil: $(ls test_*.mu reference*.mu | wc -l | tr -d ' ') files, $fails failed"
+count=$((count + 1))     # machine-dependent output: only run
+run ../examples/reference_system.mu > "$TMP/out.txt" 2>&1 || { fail reference_system; tail -5 "$TMP/out.txt"; }
+
+if [ "$MODE" = musil ]; then
+    # --- the limits: performance, and a runaway recursion that must stop with an error
+    for t in perf_loop perf_fib perf_matrix; do
+        count=$((count + 1))
+        run "$t.mu" > "$TMP/out.txt" 2>&1 || { fail "$t"; tail -5 "$TMP/out.txt"; }
+    done
+    count=$((count + 1))
+    if run inf_recursion.mu > /dev/null 2>&1; then fail "inf_recursion (should stop with an error)"; fi
+
+    # --- every example runs without error (the long ones are run by hand, not tested)
+    SKIP="live_loops live_session live_house live_techno live_trance live_emptyset live_spatial flyby flyby_controls
+          atmospheres atmospheres2 haas dynamic_orchidea make_audio_demos"
+    [ -n "$WINDOWS" ] && SKIP="$SKIP live_controls"
+    cd "$ROOT/musil/examples" || exit 1
+    for ex in *.mu; do
+        name=${ex%.mu}
+        case "$name" in reference*) continue ;; esac
+        case " $(echo $SKIP) " in *" $name "*) continue ;; esac
+        count=$((count + 1))
+        if ! run "$ex" > "$TMP/out.txt" 2>&1; then fail "example $name"; tail -5 "$TMP/out.txt"; fi
+    done
+fi
+
+rm -rf "$TMP"
+echo "musil ($MODE): $count runs, $fails failed"
 [ $fails -eq 0 ]

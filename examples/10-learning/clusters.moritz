@@ -12,7 +12,7 @@
 ; and the replacement to compare.
 (patch
   (obj title comment "kmeans: a drum loop classified into clusters it learnt by itself, then replayed with synthesized drums" (pos 20 12))
-  (obj buf buffer~ cldrums sounds/drums.wav (pos 20 40))
+  (obj buf buffer~ cldrums drums.wav (pos 20 40))
   (obj lb loadbang (pos 240 40))
   (obj lp message "loop 1, 0" (pos 220 75))
   (obj one sig~ 1 (pos 320 75))

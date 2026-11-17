@@ -5,7 +5,7 @@
 ; Usage: musil loaddb.mu [path/to/features.db]
 load "music.mu"
 
-var db (db-load (if (> (length args) 0) (getidx args 0) "data/microsol/microsol.spectrum.db"))
+var db (db-load (if (> (length args) 0) (getidx args 0) "../../data/microsol/microsol.spectrum.db"))
 ; a full set, after ./fetch_tinysol.sh:  musil loaddb.mu ../datasets/TinySOL.spectrum.db
 print "database:" (get db 'path)
 print "  " (db-size db) "entries;" (get db 'type) "features of" (get db 'ncoeff) "coefficients, block" (get db 'block) "hop" (get db 'hop)

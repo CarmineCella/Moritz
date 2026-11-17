@@ -7,8 +7,8 @@
 (patch
   (obj title comment "Ambisonics: two sources in a sound field, decoded to four speakers" (pos 20 12))
   (obj sub comment "Needs a four-channel output (1 FL, 2 BL, 3 BR, 4 FR). The voice circles by itself; place the drums with the slider." (pos 20 34))
-  (obj b1 buffer~ ambvox sounds/Vox.wav (pos 20 65))
-  (obj b2 buffer~ ambdrums sounds/drums.wav (pos 220 65))
+  (obj b1 buffer~ ambvox Vox.wav (pos 20 65))
+  (obj b2 buffer~ ambdrums drums.wav (pos 220 65))
   (obj pl message "loop 1, start" (pos 20 100))
   (obj v groove~ ambvox (pos 20 135))
   (obj d groove~ ambdrums (pos 330 135))

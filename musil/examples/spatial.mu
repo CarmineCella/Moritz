@@ -16,7 +16,7 @@ load "system.mu"
 load "signals.mu"
 load "plot.mu"
 
-var w (read-wav (if (> (length args) 0) (getidx args 0) "data/Vox.wav"))
+var w (read-wav (if (> (length args) 0) (getidx args 0) "../../data/Vox.wav"))
 var sr (head w)
 var x (take (normalize-peak (head (getidx w 1))) (* 8 sr))
 var secs (/ (length x) sr)
@@ -39,7 +39,7 @@ print "at the left / above the head       -> /tmp/musil_spatial_left.wav, _above
 ; --- 3. a moving field, third order: three sources on their own paths ------------------------------
 ;        the voice circles at ear height (one turn), the drums cross from front-left to back-right over the
 ;        head, a tone rises from below to above on the right; all encoded block by block, then summed
-var d (read-wav "data/drums.wav")
+var d (read-wav "../../data/drums.wav")
 var drums (take (vec (resample-to (head (getidx d 1)) (head d) sr) (zeros (length x))) (length x))
 var tone (* 0.25 (sine sr 330 secs))
 var u (/ (range nb) nb)

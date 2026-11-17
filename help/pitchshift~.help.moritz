@@ -3,7 +3,7 @@
   (obj title comment "pitchshift~ [semitones]: transposes a live signal, keeping its formants" (pos 20 12))
   (obj sub comment "Inlets: the signal, semitones (decimals allowed), formant preservation 1/0 (on at the start). One window (2048 samples) of latency." (pos 20 34))
   (obj sub2 comment "An abstraction: sparkle~ without a buffer~, pitch ratio 2^(semitones/12), envelope 60. Double-click it to see inside." (pos 20 52))
-  (obj b buffer~ helppsvox ../examples/sounds/Vox.wav (pos 20 85))
+  (obj b buffer~ helppsvox ../data/Vox.wav (pos 20 85))
   (obj pl message "loop 1, start" (pos 20 120))
   (obj v sparkle~ helppsvox (pos 20 155))
   (obj cst comment "semitones" (pos 200 100))

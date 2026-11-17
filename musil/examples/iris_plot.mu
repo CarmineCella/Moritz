@@ -3,7 +3,7 @@
 load "system.mu"
 load "plot.mu"
 
-var rows (read-csv "data/iris.data.txt")
+var rows (read-csv "../../data/iris.data.txt")
 var X (map rows (function (r) (vec (take r 4))))
 var labels (map rows last)
 var species (unique labels)

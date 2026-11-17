@@ -6,7 +6,7 @@
 load "system.mu"
 load "scientific.mu"
 
-var rows (read-csv "data/iris.data.txt")
+var rows (read-csv "../../data/iris.data.txt")
 print "loaded" (length rows) "rows"
 
 ; features as a 150 x 4 matrix; labels as a list of strings

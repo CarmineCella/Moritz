@@ -3,7 +3,7 @@
   (obj title comment "pursuit: matching pursuit, after Maple: a sound as a sum of atoms" (pos 20 12))
   (obj sub comment "run sound dictionary book [residual]: the strongest atom first, subtracted, then the next, until atoms n are found or the residual" (pos 20 34))
   (obj sub2 comment "is snr dB under the sound. The book (a buffer~, an atom a frame) draws as an atom map. synth book dictionary out rebuilds the sound." (pos 20 52))
-  (obj src buffer~ hpubell ../examples/sounds/archeos-bell.wav (pos 20 85))
+  (obj src buffer~ hpubell ../data/archeos-bell.wav (pos 20 85))
   (obj bk buffer~ hpubook (pos 330 85))
   (obj rs buffer~ hpures (pos 450 85))
   (obj sy buffer~ hpusyn (pos 560 85))

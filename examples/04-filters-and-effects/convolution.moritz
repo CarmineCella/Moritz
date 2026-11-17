@@ -4,12 +4,12 @@
 ; a source played into conv~ ir 2 alone feeds both channels.
 (patch
   (obj title comment "conv~: a voice, Beethoven's 7th or drums in the Concertgebouw, or convolved with a bell or a gong" (pos 20 12))
-  (obj hall buffer~ convhall sounds/hall.wav (pos 20 40))
-  (obj bell buffer~ convbell sounds/archeos-bell.wav (pos 220 40))
-  (obj gong buffer~ convgong sounds/gong_c_sharp.wav (pos 540 40))
-  (obj vox buffer~ convvox sounds/Vox.wav (pos 20 62))
-  (obj beet buffer~ convbeet sounds/Beethoven_Symph7.wav (pos 220 62))
-  (obj drum buffer~ convdrums sounds/drums.wav (pos 540 62))
+  (obj hall buffer~ convhall hall_concertgebouw.wav (pos 20 40))
+  (obj bell buffer~ convbell archeos-bell.wav (pos 220 40))
+  (obj gong buffer~ convgong gong_c_sharp.wav (pos 540 40))
+  (obj vox buffer~ convvox Vox.wav (pos 20 62))
+  (obj beet buffer~ convbeet Beethoven_Symph7.wav (pos 220 62))
+  (obj drum buffer~ convdrums drums.wav (pos 540 62))
   (obj pv message start (pos 20 100))
   (obj pb message start (pos 150 100))
   (obj pd message start (pos 300 100))

@@ -105,14 +105,15 @@ struct HrirSet {
     std::vector<float> left, right;                    // [direction * taps + t]
     struct Ring { float el; int first, count; };
     std::vector<Ring> rings;                           // by elevation; each ring by azimuth
+    std::vector<kemar::Direction> dirs;                // the measured directions (az, el; their responses at 44.1 kHz)
     const float* L(int d) const { return &left[(size_t)d * taps]; }
     const float* R(int d) const { return &right[(size_t)d * taps]; }
     int nearest(double az, double el) const {
         double a = rad(az), e = rad(el), x = std::cos(e) * std::cos(a), y = std::cos(e) * std::sin(a), z = std::sin(e);
         int best = 0;
         double bd = -2;
-        for (int d = 0; d < kemar::kDirections; ++d) {
-            double a2 = rad(kemar::kSet[d].az), e2 = rad(kemar::kSet[d].el);
+        for (int d = 0; d < (int)dirs.size(); ++d) {
+            double a2 = rad(dirs[(size_t)d].az), e2 = rad(dirs[(size_t)d].el);
             double dot = x * std::cos(e2) * std::cos(a2) + y * std::cos(e2) * std::sin(a2) + z * std::sin(e2);
             if (dot > bd) { bd = dot; best = d; }
         }
@@ -135,9 +136,9 @@ struct HrirSet {
             if (ring.count == 1) { idx[n] = ring.first; w[n++] = (float)wr; continue; }
             // the azimuths around az on this ring (sorted, wrapping)
             int j = 0;
-            while (j < ring.count && kemar::kSet[ring.first + j].az <= az) ++j;
+            while (j < ring.count && dirs[(size_t)(ring.first + j)].az <= az) ++j;
             int lo = (j - 1 + ring.count) % ring.count, hi = j % ring.count;
-            double a0 = kemar::kSet[ring.first + lo].az, a1 = kemar::kSet[ring.first + hi].az;
+            double a0 = dirs[(size_t)(ring.first + lo)].az, a1 = dirs[(size_t)(ring.first + hi)].az;
             double span = std::remainder(a1 - a0, 360.0);
             if (span <= 0) span += 360.0;
             double ta = std::remainder(az - a0, 360.0);
@@ -162,14 +163,18 @@ const HrirSet& hrirsAt(double sr) {
     double f = sr / kemar::kRate;
     int T = std::max(1, (int)std::ceil(kemar::kTaps * f));
     set->taps = T;
-    set->left.resize((size_t)kemar::kDirections * T);
-    set->right.resize((size_t)kemar::kDirections * T);
-    for (int d = 0; d < kemar::kDirections; ++d) {
-        auto l = resampleIr(kemar::kSet[d].left, kemar::kTaps, f, T), r = resampleIr(kemar::kSet[d].right, kemar::kTaps, f, T);
+    set->dirs = kemar::directions();
+    if (set->dirs.empty()) set->dirs.push_back(kemar::Direction{});   // no data: one silent direction
+    const int D = (int)set->dirs.size();
+    set->left.resize((size_t)D * T);
+    set->right.resize((size_t)D * T);
+    for (int d = 0; d < D; ++d) {
+        const kemar::Direction& k = set->dirs[(size_t)d];
+        auto l = resampleIr(k.left, kemar::kTaps, f, T), r = resampleIr(k.right, kemar::kTaps, f, T);
         std::copy(l.begin(), l.end(), set->left.begin() + (size_t)d * T);
         std::copy(r.begin(), r.end(), set->right.begin() + (size_t)d * T);
-        if (set->rings.empty() || set->rings.back().el != kemar::kSet[d].el)
-            set->rings.push_back({kemar::kSet[d].el, d, 0});
+        if (set->rings.empty() || set->rings.back().el != k.el)
+            set->rings.push_back({k.el, d, 0});
         ++set->rings.back().count;
     }
     int front = set->nearest(0, 0);

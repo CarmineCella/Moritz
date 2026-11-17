@@ -45,7 +45,7 @@ std::string folderTitle(std::string f) {
     return out;
 }
 
-// the category folders of the examples, in order (not sounds)
+// the category folders of the examples, in order
 std::vector<std::string> exampleFolders(const std::string& dir) {
     std::vector<std::string> out;
     if (dir.empty()) return out;
@@ -54,7 +54,7 @@ std::vector<std::string> exampleFolders(const std::string& dir) {
     for (int k = 0; k < n; ++k) {
         std::string f = list[k]->d_name;
         if (!f.empty() && f.back() == '/') f.pop_back();
-        if (f.empty() || f[0] == '.' || f == "sounds") continue;
+        if (f.empty() || f[0] == '.') continue;
         if (std::string sub = dir + "/" + f; fl_filename_isdir(sub.c_str())) out.push_back(f);
     }
     fl_filename_free_list(&list, n);

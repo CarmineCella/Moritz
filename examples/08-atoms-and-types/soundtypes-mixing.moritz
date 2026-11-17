@@ -9,7 +9,7 @@
 (patch
   (obj title comment "Mixing levels: the form of one level, the detail of another" (pos 20 12))
   (obj sub comment "The prelude is analysed when the patch opens. Click a recipe: it generates 40 s and plays it. Compare them, then make your own with the controls." (pos 20 34))
-  (obj b1 buffer~ stmbach sounds/Bach_Prelude_Cminor.flac (pos 20 65))
+  (obj b1 buffer~ stmbach Bach_Prelude_Cminor.flac (pos 20 65))
   (obj out buffer~ stmout (pos 330 65))
   (obj lab buffer~ stmlab (pos 430 65))
   (obj olab buffer~ stmolab (pos 530 65))

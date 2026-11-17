@@ -4,8 +4,8 @@
 ; pan; poly~ plays each one in a free grainvoice (32 of them). Random
 ; timing keeps the texture smooth: no grain-rate buzz.
 (patch
-  (obj title comment "granulator: poly~ with 32 grain voices reading a voice (sounds/Vox.wav)" (pos 20 12))
-  (obj buf buffer~ grainvox sounds/Vox.wav (pos 20 40))
+  (obj title comment "granulator: poly~ with 32 grain voices reading a voice (Vox.wav)" (pos 20 12))
+  (obj buf buffer~ grainvox Vox.wav (pos 20 40))
   (obj lb loadbang (pos 20 75))
   (obj init message "25 90 1 2200 150" (pos 20 110))
   (obj on message 1 (pos 130 110))

@@ -9,8 +9,8 @@
 load "music.mu"
 load "plot.mu"
 seed (if (> (length args) 1) (num (getidx args 1)) 3)
-var db (db-load-first (list "../datasets/TinySOL.spectrum.db" "data/microsol/microsol.spectrum.db"))   ; TinySOL after ./fetch_tinysol.sh (or FullSOL2020), else the bundled MicroSOL: Ob, Hn, Vn, Vc, C4-G4 (a sketch)
-var path (if (> (length args) 0) (getidx args 0) "data/A_minor.wav")
+var db (db-load-first (list "../datasets/TinySOL.spectrum.db" "../../data/microsol/microsol.spectrum.db"))   ; TinySOL after ./fetch_tinysol.sh (or FullSOL2020), else the bundled MicroSOL: Ob, Hn, Vn, Vc, C4-G4 (a sketch)
+var path (if (> (length args) 0) (getidx args 0) "../../data/A_minor.wav")
 
 ; --- the target and its analysis: the same spectral space as the database's features ------------------------------
 var w (read-wav path)

@@ -1,6 +1,7 @@
-# Builds Moritz on macOS, Linux and Windows (each on its own system, with the
-# same make targets a user runs), renders every patch on each system
-# (tools/test-patches.sh), and keeps the downloads as artifacts.
+# Builds Moritz and Musil on its own on macOS, Linux and Windows (each on its
+# own system, with the same make targets a user runs), renders every patch on
+# each system (tools/test-patches.sh), runs Musil's tests on Musil itself and
+# on Musil in Moritz (tools/test-musil.sh), and keeps the downloads as artifacts.
 # Pushing a tag v<version> also publishes them as a GitHub release.
 name: build
 
@@ -33,7 +34,11 @@ jobs:
       - name: Render every patch
         run: tools/test-patches.sh ./moritz
       - name: Test Musil
-        run: tools/check-musil.sh && tools/test-musil.sh ./moritz && make embed-test
+        run: |
+          tools/check-musil.sh
+          tools/test-musil.sh musil build/musil/musil
+          tools/test-musil.sh moritz ./moritz
+          make embed-test
       - uses: actions/upload-artifact@v4
         with:
           name: macos
@@ -63,7 +68,11 @@ jobs:
       - name: Render every patch
         run: xvfb-run -a tools/test-patches.sh build/linux/Moritz/moritz build/linux/Moritz
       - name: Test Musil
-        run: xvfb-run -a tools/test-musil.sh build/linux/Moritz/moritz && make embed-test
+        run: |
+          tools/check-musil.sh
+          xvfb-run -a tools/test-musil.sh musil build/linux/Moritz/musil/musil
+          xvfb-run -a tools/test-musil.sh moritz build/linux/Moritz/moritz
+          make embed-test
       - uses: actions/upload-artifact@v4
         with:
           name: linux
@@ -100,7 +109,10 @@ jobs:
       - name: Test Musil
         run: |
           mkdir -p /c/tmp /d/tmp     # /tmp is on the drive of the working directory
-          tools/test-musil.sh build/windows/Moritz/moritz.exe && make embed-test
+          tools/check-musil.sh
+          tools/test-musil.sh musil build/windows/Moritz/musil/musil.exe
+          tools/test-musil.sh moritz build/windows/Moritz/moritz.exe
+          make embed-test
       - uses: actions/upload-artifact@v4
         with:
           name: windows

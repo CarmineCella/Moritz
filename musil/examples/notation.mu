@@ -9,7 +9,7 @@
 ; Usage: musil notation.mu [seed]
 load "music.mu"
 seed (if (> (length args) 0) (num (getidx args 0)) 1)
-var db (db-load-first (list "../datasets/TinySOL.spectrum.db" "data/microsol/microsol.spectrum.db"))   ; TinySOL after ./fetch_tinysol.sh, else the bundled MicroSOL
+var db (db-load-first (list "../datasets/TinySOL.spectrum.db" "../../data/microsol/microsol.spectrum.db"))   ; TinySOL after ./fetch_tinysol.sh, else the bundled MicroSOL
 var sr 44100
 var here (db-instruments-available db)
 var orch (orchestra (filter (list 'Ob 'Hn 'Vn 'Vn 'Vc) (function (i) (contains? here (str i)))))
@@ -25,7 +25,7 @@ event s (* 4 b) (* 2 b) (chord db 'Vc 'mf 'ord (list "C3" "G3"))
 add! s (* 6 b) (notes db 'Vc 'ff 'pizz-lv (list "C3" "C3" "C3") (list (* b 0.25) (* b 0.25) (* b 0.5)))
 
 ; --- 2. a chord orchestrated by Orchidea: the bell, the players at once (chords where they share a rhythm, voices otherwise)
-var w (read-wav "data/archeos-bell.wav")
+var w (read-wav "../../data/archeos-bell.wav")
 var bell (head (getidx w 1))
 var mimetic (orchestrate-mimetic db orch bell (head w) (record (list 'population 60 'epochs 40 'sparsity 0.01 'threshold 2 'partials 0 'solutions 3)))
 connect! s (* 8 b) mimetic (get mimetic 'choices)
@@ -33,7 +33,7 @@ connect! s (* 8 b) mimetic (get mimetic 'choices)
 ; --- 3. a granular cloud: free timing ----------------------------------------------------------------------------------
 var cloud (orchestrate-granular db orch (* 8 b) (record (list 'density (list 3 6) 'duration (list 0.15 1) 'register (list 4 4) 'dynamics 0.4)))
 connect! s (* 16 b) cloud (list 0)
-event s (* 16 b) (* 8 b) "data/cage.wav"                          ; a sound file: a one-line staff with its name
+event s (* 16 b) (* 8 b) "../../data/cage.wav"                          ; a sound file: a one-line staff with its name
 
 ; --- the export: MusicXML, and what the quantization did ---------------------------------------------------------------
 var m (score-musicxml s "/tmp/musil_notation.musicxml" (record (list)))

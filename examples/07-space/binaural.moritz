@@ -8,8 +8,8 @@
 (patch
   (obj title comment "Binaural: the same sound field on headphones (binaural~)" (pos 20 12))
   (obj sub comment "Use headphones. The voice circles around your head by itself; place the drums with the sliders, and turn the scene." (pos 20 34))
-  (obj b1 buffer~ binvox sounds/Vox.wav (pos 20 65))
-  (obj b2 buffer~ bindrums sounds/drums.wav (pos 220 65))
+  (obj b1 buffer~ binvox Vox.wav (pos 20 65))
+  (obj b2 buffer~ bindrums drums.wav (pos 220 65))
   (obj pl message "loop 1, start" (pos 20 100))
   (obj v groove~ binvox (pos 20 135))
   (obj d groove~ bindrums (pos 330 135))

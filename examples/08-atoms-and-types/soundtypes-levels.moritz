@@ -9,7 +9,7 @@
 (patch
   (obj title comment "Sound types at three levels: frames, gestures, sections" (pos 20 12))
   (obj sub comment "The analysis runs when the patch opens. A colour is a type; click the bands to play from there, or play units of one type." (pos 20 34))
-  (obj src buffer~ stlsrc sounds/Sousa_StarsAndStripes.flac (pos 20 65))
+  (obj src buffer~ stlsrc Sousa_StarsAndStripes.flac (pos 20 65))
   (obj lab buffer~ stllab (pos 330 65))
   (obj tr1 buffer~ stltr1 (pos 440 65))
   (obj tr2 buffer~ stltr2 (pos 550 65))

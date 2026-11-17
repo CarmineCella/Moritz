@@ -6,8 +6,8 @@
 (patch
   (obj title comment "Listening as it happens: live onsets, harmony and timbre" (pos 20 12))
   (obj sub comment "Turn audio on and choose a source: the microphone (not played back: no feedback), the D major prelude, or the drums." (pos 20 34))
-  (obj b1 buffer~ mlbach sounds/Bach_Prelude_Dmajor.flac (pos 20 65))
-  (obj b2 buffer~ mldrums sounds/drums.wav (pos 330 65))
+  (obj b1 buffer~ mlbach Bach_Prelude_Dmajor.flac (pos 20 65))
+  (obj b2 buffer~ mldrums drums.wav (pos 330 65))
   (obj cs comment "source:" (pos 20 100))
   (obj s1 message 1 (pos 75 98))
   (obj s2 message 2 (pos 115 98))

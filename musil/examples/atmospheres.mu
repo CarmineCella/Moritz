@@ -18,7 +18,7 @@
 load "music.mu"
 var k (if (> (length args) 0) (num (getidx args 0)) 1)          ; the timeline: 1 is the piece, 0.25 four times faster
 seed (if (> (length args) 1) (num (getidx args 1)) 11)
-var db (db-load-first (list "../datasets/FullSOL2020.spectrum.db" "data/microsol/microsol.spectrum.db"))   ; TinySOL after ./fetch_tinysol.sh (or FullSOL2020), else the bundled MicroSOL: Ob, Hn, Vn, Vc, C4-G4 (a sketch)
+var db (db-load-first (list "../datasets/FullSOL2020.spectrum.db" "../../data/microsol/microsol.spectrum.db"))   ; TinySOL after ./fetch_tinysol.sh (or FullSOL2020), else the bundled MicroSOL: Ob, Hn, Vn, Vc, C4-G4 (a sketch)
 var sr 44100
 
 ; --- the orchestra: Ligeti's, halved, seated as a real one (13 first and second violins, 5 violas, 5 cellos, 4 basses;
@@ -56,7 +56,7 @@ var points (styled (list 'pizz-sec 'col-legno-batt 'stacc 'pizz-bartok 'ord))
 ;     by atmospheres2.mu; the curve transcribed by eye from the waveform is the fallback). The piece is soft nearly
 ;     throughout and loud in a few places, so the loudness is mapped with a curve that keeps the middle soft: -62 dB
 ;     is ppp, -20 dB (the recording's loudest) fff, and the typical -45 dB comes out around p
-var curves (try (read-csv "data/atmospheres_curves.csv") catch err nil)
+var curves (try (read-csv "../../data/atmospheres_curves.csv") catch err nil)
 var loud-by-eye (env (list 0 0.05  40 0.1  60 0.15  95 0.2  108 0.55  122 0.9  135 0.75  148 0.25  160 0.15  185 0.2
                            205 0.4  225 0.35  238 0.7  250 1  262 0.7  272 0.25  300 0.15  310 0.6  322 0.55  333 0.15
                            352 0.3  365 0.75  380 0.65  392 0.35  420 0.15  440 0.1  470 0.08  500 0.05  530 0))
