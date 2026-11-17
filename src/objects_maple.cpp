@@ -39,68 +39,9 @@ std::vector<std::string> soundFiles(const std::string& folder) {
     return out;
 }
 
-std::vector<float> resampleTo(const std::vector<float>& x, double from, double to) {
-    if (from == to || from <= 0 || to <= 0) return x;
-    double r = from / to;
-    std::vector<float> y((size_t)(x.size() / r));
-    for (size_t i = 0; i < y.size(); ++i) {
-        double p = i * r;
-        size_t a = (size_t)p;
-        float f = (float)(p - a);
-        y[i] = a + 1 < x.size() ? x[a] + f * (x[a + 1] - x[a]) : (a < x.size() ? x[a] : 0.f);
-    }
-    return y;
-}
-
-void fade(std::vector<float>& x, long n) {
-    n = std::min(n, (long)x.size() / 2);
-    for (long i = 0; i < n; ++i) {
-        float g = (float)i / n;
-        x[(size_t)i] *= g;
-        x[x.size() - 1 - (size_t)i] *= g;
-    }
-}
-
-// How a sound becomes atoms
-struct CutOptions {
-    std::string mode = "frames";    // frames, onsets, whole
-    double ms = 100, hop = 100, threshold = 2, maxMs = 2000;
-};
-
-void cutSound(const std::vector<float>& x, double sr, const CutOptions& c, const std::string& source,
-              maple::MelDescriptor& desc, std::vector<maple::SoundAtom>& out) {
-    auto add = [&](std::vector<float> v, double start) {
-        maple::SoundAtom a;
-        if (maple::makeSoundAtom(std::move(v), sr, source, start, desc, a)) out.push_back(std::move(a));
-    };
-    long maxN = (long)(c.maxMs / 1000.0 * sr);
-    if (c.mode == "frames") {
-        long n = std::max(64L, (long)(c.ms / 1000.0 * sr)), hop = std::max(16L, (long)(c.hop / 1000.0 * sr));
-        for (long s = 0; s + n <= (long)x.size(); s += hop) {
-            std::vector<float> v(x.begin() + s, x.begin() + s + n);
-            for (long t = 0; t < n; ++t) v[(size_t)t] *= (float)(.5 - .5 * std::cos(dsp::kTwoPi * t / n));
-            add(std::move(v), s / sr);
-        }
-    } else if (c.mode == "onsets") {
-        mir::Mat mag = mir::magSpectrogram(x, 1024, 256);
-        mir::Vec flux = mir::fluxOf(mag);
-        std::vector<long> cuts{0};
-        for (double t : mir::onsetTimes(x, sr, 1024, 256, flux, c.threshold, 21, .05)) cuts.push_back((long)(t * sr));
-        cuts.push_back((long)x.size());
-        std::sort(cuts.begin(), cuts.end());
-        for (size_t k = 0; k + 1 < cuts.size(); ++k) {
-            long a = cuts[k], b = std::min(cuts[k + 1], a + maxN);
-            if (b - a < (long)(.02 * sr)) continue;
-            std::vector<float> v(x.begin() + a, x.begin() + b);
-            fade(v, (long)(.01 * sr));
-            add(std::move(v), a / sr);
-        }
-    } else {                                                   // whole
-        std::vector<float> v(x.begin(), x.begin() + std::min((long)x.size(), maxN));
-        fade(v, (long)(.01 * sr));
-        add(std::move(v), 0);
-    }
-}
+using maple::CutOptions;
+using maple::cutSound;
+using maple::resampleTo;
 
 }  // namespace
 
@@ -138,14 +79,9 @@ public:
         const Atom& h = m[0];
         if (h.is("stop")) { job_.cancel(); return; }
         if (h.is("gabor") || h.is("gammatone")) {
-            auto d = std::make_shared<maple::Dictionary>();
-            d->kind = h.s;
-            d->sr = patch->root()->sampleRate.load() > 0 ? patch->root()->sampleRate.load() : 44100;
-            int lo = pow2((int)argf(m, 1, 256.f)), hi = pow2((int)argf(m, 2, 8192.f));
-            d->minScale = std::clamp(std::min(lo, hi), 32, 65536);
-            d->maxScale = std::clamp(std::max(lo, hi), 32, 65536);
-            d->fmax = std::max(100.f, argf(m, 3, 16000.f));
-            dict_ = d;
+            double sr = patch->root()->sampleRate.load() > 0 ? patch->root()->sampleRate.load() : 44100;
+            dict_ = std::make_shared<maple::Dictionary>(maple::parametric(h.is("gammatone"), sr, (int)argf(m, 1, 256.f),
+                                                                          (int)argf(m, 2, 8192.f), argf(m, 3, 16000.f)));
             ready();
         } else if ((h.is("frames") || h.is("onsets") || h.is("files")) && m.size() > 1) {
             CutOptions c;
@@ -180,11 +116,6 @@ public:
     }
 
 private:
-    static int pow2(int v) {
-        int n = 1;
-        while (n < v) n <<= 1;
-        return n;
-    }
     void ready() {
         outletFloat(2, (float)dict_->size());
         outletBang(1);
@@ -234,48 +165,14 @@ private:
             },
             [this, out] { dict_ = out; outletFloat(2, (float)dict_->size()); });
     }
-    bool write(const std::string& path) const {
-        std::ofstream f(path, std::ios::binary);
-        if (!f) return false;
-        auto w32 = [&](int32_t v) { f.write((const char*)&v, 4); };
-        auto wd = [&](double v) { f.write((const char*)&v, 8); };
-        auto ws = [&](const std::string& s) { w32((int32_t)s.size()); f.write(s.data(), (std::streamsize)s.size()); };
-        f.write("MORITZATOMS1", 12);
-        ws(dict_->kind);
-        wd(dict_->sr); w32(dict_->minScale); w32(dict_->maxScale); wd(dict_->fmin); wd(dict_->fmax);
-        w32((int32_t)dict_->atoms.size());
-        for (auto& a : dict_->atoms) {
-            ws(a.source);
-            wd(a.start);
-            w32((int32_t)a.x.size());
-            f.write((const char*)a.x.data(), (std::streamsize)(a.x.size() * sizeof(float)));
-        }
-        return (bool)f;
-    }
+    bool write(const std::string& path) const { return maple::saveDictionary(*dict_, path); }
     void read(const std::string& path) {
         if (busy()) return;
         auto out = std::make_shared<maple::Dictionary>();
         run(
             [path, out](Job& job) {
-                std::ifstream f(path, std::ios::binary);
-                char magic[12];
-                if (!f.read(magic, 12) || std::string(magic, 12) != "MORITZATOMS1") { out->kind = "bad"; return; }
-                auto r32 = [&]() { int32_t v = 0; f.read((char*)&v, 4); return v; };
-                auto rd = [&]() { double v = 0; f.read((char*)&v, 8); return v; };
-                auto rs = [&]() { std::string s((size_t)std::max(0, r32()), ' '); f.read(&s[0], (std::streamsize)s.size()); return s; };
-                out->kind = rs();
-                out->sr = rd(); out->minScale = r32(); out->maxScale = r32(); out->fmin = rd(); out->fmax = rd();
-                int n = r32();
-                maple::MelDescriptor desc(out->sr);
-                for (int i = 0; i < n && f; ++i) {
-                    std::string src = rs();
-                    double start = rd();
-                    std::vector<float> x((size_t)std::max(0, r32()));
-                    f.read((char*)x.data(), (std::streamsize)(x.size() * sizeof(float)));
-                    maple::SoundAtom a;
-                    if (maple::makeSoundAtom(std::move(x), out->sr, src, start, desc, a)) out->atoms.push_back(std::move(a));
-                    if (i % 32 == 0) job.progress((float)i / std::max(1, n));
-                }
+                auto tick = [&job](double p) { job.progress((float)p); return !job.cancelled(); };
+                if (!maple::loadDictionary(path, *out, tick)) out->kind = "bad";
             },
             [this, out, path] {
                 if (out->kind == "bad") { patch->print("atoms " + name + ": " + path + " is not a dictionary"); return; }
@@ -299,38 +196,16 @@ namespace {
 
 // a book to and from a buffer~
 void storeBook(Patch* patch, const std::string& name, const maple::Book& book, const maple::Dictionary& d) {
-    std::vector<std::vector<float>> ch(8);
-    for (auto& a : book.atoms) {
-        double lev = a.index >= 0 && a.index < (int)d.atoms.size() ? std::fabs(a.amp) * d.atoms[(size_t)a.index].peak : a.amp;
-        ch[0].push_back((float)((a.start + a.length / 2.0) / book.sr));
-        ch[1].push_back((float)a.freq);
-        ch[2].push_back((float)(20 * std::log10(std::max(lev, 1e-9))));
-        ch[3].push_back((float)a.index);
-        ch[4].push_back((float)a.length);
-        ch[5].push_back((float)a.amp);
-        ch[6].push_back((float)a.phase);
-        ch[7].push_back((float)a.start);
-    }
+    std::vector<std::vector<float>> ch;
+    for (auto& row : maple::bookRows(book, d)) ch.emplace_back(row.begin(), row.end());
     storeBuffer(patch, name, ch, book.sr);
 }
 bool readBook(const SampleBuffer& b, maple::Book& book) {
     if (b.channels < 8) return false;
-    book.sr = b.sr;
-    book.atoms.clear();
-    book.length = 0;
-    for (long f = 0; f < b.frames; ++f) {
-        auto at = [&](int c) { return (double)b.data[(size_t)f * b.channels + c]; };
-        maple::BookAtom a;
-        a.freq = at(1);
-        a.index = (int)at(3);
-        a.length = (int)at(4);
-        a.amp = at(5);
-        a.phase = at(6);
-        a.start = at(7);
-        a.energy = a.amp * a.amp * (a.index < 0 ? a.length * .3 : 1.0);   // for the ordering by strength
-        book.length = std::max(book.length, (long)(a.start + a.length));
-        book.atoms.push_back(a);
-    }
+    std::vector<std::vector<double>> ch(8, std::vector<double>((size_t)b.frames));
+    for (long f = 0; f < b.frames; ++f)
+        for (int c = 0; c < 8; ++c) ch[(size_t)c][(size_t)f] = b.data[(size_t)f * b.channels + c];
+    book = maple::bookFromRows(ch, b.sr);
     return true;
 }
 
@@ -389,10 +264,6 @@ private:
         if (!d) return;
         double sr = b->buf.sr;
         auto x = std::make_shared<std::vector<float>>(monoOf(b->buf));
-        if (!d->parametric() && d->sr != sr) {                 // the sound at the dictionary's rate
-            *x = resampleTo(*x, sr, d->sr);
-            sr = d->sr;
-        }
         auto book = std::make_shared<maple::Book>();
         auto res = std::make_shared<std::vector<float>>();
         int maxAtoms = maxAtoms_;
@@ -401,18 +272,12 @@ private:
         run(
             [x, d, sr, book, res, maxAtoms, snr, so](Job& job) {
                 auto tick = [&job](double p) { job.progress((float)p); return !job.cancelled(); };
-                if (d->parametric()) {
-                    maple::ParametricPursuit pp(*d, *x, sr);
-                    if (pp.run(*book, maxAtoms, snr, tick)) *res = pp.residual();
-                } else {
-                    maple::soundPursuit(*d, *x, sr, so, *book, *res, tick);
-                }
+                maple::decompose(*d, *x, sr, maxAtoms, snr, so, *book, *res, tick);
             },
             [this, d, book, res, bookName, resName] {
                 storeBook(patch, bookName, *book, *d);
                 if (!resName.empty() && !res->empty()) storeBuffer(patch, resName, {*res}, book->sr);
-                double snr = book->residual > 0 ? 10 * std::log10(book->energy / book->residual) : 120.0;
-                outletFloat(3, (float)snr);
+                outletFloat(3, (float)maple::snrOf(*book));
                 outletFloat(2, (float)book->atoms.size());
             });
     }
@@ -433,19 +298,7 @@ private:
         auto y = std::make_shared<std::vector<float>>();
         run(
             [book, d, to, o, y](Job&) {
-                if (to != d) {                                    // each atom by the closest of the other dictionary
-                    std::vector<int> map(d->atoms.size(), 0);
-                    for (size_t i = 0; i < d->atoms.size(); ++i) {
-                        float best = -2;
-                        for (size_t j = 0; j < to->atoms.size(); ++j) {
-                            float s = 0;
-                            for (size_t k = 0; k < d->atoms[i].mel.size(); ++k) s += d->atoms[i].mel[k] * to->atoms[j].mel[k];
-                            if (s > best) { best = s; map[i] = (int)j; }
-                        }
-                    }
-                    for (auto& a : book->atoms)
-                        if (a.index >= 0 && a.index < (int)map.size()) a.index = map[(size_t)a.index];
-                }
+                if (to != d) *book = maple::crossBook(*book, *d, *to);   // each atom by the closest of the other dictionary
                 *y = maple::synthesize(*book, *to, o);
             },
             [this, y, book, out] {

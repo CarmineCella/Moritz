@@ -121,8 +121,6 @@ private:
         if (busy()) return;
         BufferBox* b = findBuffer(patch, src);
         auto m = std::make_shared<soundtypes::Model>();
-        m->size = size_;
-        m->hop = hop_;
         if (!dictName.empty()) {                                   // a book and its dictionary
             auto book = std::make_shared<maple::Book>();
             if (!b || !loadBook(b->buf, *book)) { patch->print("soundtypes " + name + ": no book in buffer~ " + src); return; }
@@ -136,18 +134,19 @@ private:
             m->sound = monoOf(b->buf);
             m->sr = b->buf.sr;
         }
-        soundtypes::Options o = opt_;
-        bool onsets = onsets_ && !m->book, pitch = pitch_;
-        double thr = onsetThreshold_, gap = onsetGap_;
+        soundtypes::AnalyseOptions o;
+        o.types = opt_;
+        o.size = size_;
+        o.hop = hop_;
+        o.onsets = onsets_ && !m->book;
+        o.pitch = pitch_;
+        o.onsetThreshold = onsetThreshold_;
+        o.onsetGap = onsetGap_;
         if (onsets_ && m->book) patch->print("soundtypes " + name + ": a book is cut into frames (onsets need a sound)");
         run(
-            [m, o, onsets, pitch, thr, gap](Job& job) {
+            [m, o](Job& job) {
                 auto tick = [&job](double p) { job.progress((float)p); return !job.cancelled(); };
-                if (m->book) m->frames = soundtypes::bookFeatures(*m->book, m->hop);
-                else m->frames = soundtypes::soundFeatures(m->sound, m->sr, m->size, m->hop,
-                                                           [&](double p) { return tick(.5 * p); }, pitch);
-                if (onsets && !job.cancelled()) m->onsets = soundtypes::soundOnsets(m->sound, m->sr, thr, gap);
-                if (m->frames.empty() || !soundtypes::analyse(*m, o, tick)) m->levels.clear();
+                soundtypes::analyseModel(*m, o, tick);
             },
             [this, m] {
                 if (m->levels.empty()) { patch->print("soundtypes " + name + ": the analysis found nothing"); return; }
@@ -256,21 +255,9 @@ private:
         auto y = std::make_shared<std::vector<float>>();
         auto strips = std::make_shared<std::vector<std::vector<float>>>();
         run(
-            [md, level, seconds, go, xf, inner, ictx, y, strips](Job&) mutable {
+            [md, level, seconds, go, xf, inner, ictx, y, strips](Job&) {
                 std::vector<int> seq = soundtypes::generate(*md, level, std::max(.1, seconds), go);
-                if (level > 0 && inner < 1) {
-                    seq = soundtypes::nest(*md, level, seq, inner, ictx, go.seed);
-                    level = 0;
-                }
-                std::vector<soundtypes::Piece> pieces;
-                for (int u : seq) {
-                    soundtypes::Piece p;
-                    p.src0 = md->levels[(size_t)level].units[(size_t)u].start;
-                    p.src1 = md->levels[(size_t)level].units[(size_t)u].end;
-                    pieces.push_back(p);
-                }
-                *y = soundtypes::join(*md, pieces, xf);
-                *strips = soundtypes::generatedStrips(*md, level, seq);
+                *y = soundtypes::realise(*md, level, seq, xf, inner, ictx, go.seed, strips.get());
             },
             [this, md, y, strips, out, labels] {
                 limitPeak(patch, "typegen", out, *y);
@@ -356,7 +343,7 @@ private:
             bool own = own_;
             auto y = std::make_shared<std::vector<float>>();
             auto types = std::make_shared<std::vector<int>>();
-            run([A, B, ct, own, y, types](Job&) { *y = soundtypes::matchFrames(*A, *B, ct, own, types.get()); },
+            run([A, B, ct, own, y, types](Job&) { *y = soundtypes::rematch(*A, *B, 0, false, own, 0, ct, types.get()); },
                 [this, A, B, y, types, out, labels] {
                     limitPeak(patch, "typematch", out, *y);
                     storeBuffer(patch, out, {*y}, B->sr);
@@ -373,14 +360,7 @@ private:
         auto y = std::make_shared<std::vector<float>>();
         auto types = std::make_shared<std::vector<int>>();
         run(
-            [A, B, L, fit, own, xf, ct, y, types](Job&) {
-                auto pieces = soundtypes::match(*A, *B, L, fit, own, types.get());
-                *y = soundtypes::join(*B, pieces, xf);
-                if (fit && ct > 0) {
-                    std::vector<float> a = A->book ? soundtypes::span(*A, 0, A->length()) : A->sound;
-                    soundtypes::contour(*y, a, B->sr, ct);
-                }
-            },
+            [A, B, L, fit, own, xf, ct, y, types](Job&) { *y = soundtypes::rematch(*A, *B, L + 1, fit, own, xf, ct, types.get()); },
             [this, A, B, L, y, types, out, labels] {
                 limitPeak(patch, "typematch", out, *y);
                 storeBuffer(patch, out, {*y}, B->sr);
