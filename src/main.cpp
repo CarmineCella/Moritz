@@ -1,7 +1,8 @@
 // Copyright (c) 2026 Carmine-Emanuele Cella. SPDX-License-Identifier: BSD-2-Clause
 // main.cpp — entry point: the GUI, or a headless `--render` mode for tests
 //
-//   moritz [--no-audio] [patch.moritz ...]
+//   moritz [--no-audio] [patch.moritz | script.mu ...]
+//   moritz --run script.mu [-- args...] | --repl    Musil, the scripting language, without a window
 //   moritz --import patch.maxpat [out.moritz]   converts a Max patch (to stdout,
 //          or to out.moritz with its abstractions converted next to the original)
 //   moritz --render patch.moritz seconds [out.wav] [bang=<id>] [send=<id>:<message>] ...
@@ -12,8 +13,7 @@
 // png= draws the patch, as it looks after the render, into an image (locked
 // mode, or edit mode with "edit"), so drawing can be checked without a screen.
 
-#include "language.h"
-#include "langpatch.h"
+#include "musil_cli.h"
 #include <chrono>
 #include "codewindow.h"
 #include "session.h"
@@ -113,10 +113,6 @@ int renderCli(int argc, char** argv) {
     }
     std::string src, err, path = argv[2];
     if (!moritz::readFile(path, src)) { std::fprintf(stderr, "can't read %s\n", argv[2]); return 1; }
-    if (moritz::isCodeText(src) || moritz::patchNeedsLanguage(src)) {   // written with code: the language makes it
-        if (!moritz::languagePatch(path, src, err)) { std::fprintf(stderr, "error: %s\n", err.c_str()); return 1; }
-        if (src.empty()) return 0;                   // code that makes no patch: it ran, nothing to render
-    }
     const int sr = 44100, blk = dsp::kBlock;
     int ch = 2;                          // as many as the highest dac~ channel (at least 2)
     long frame = 0;
@@ -248,10 +244,9 @@ int main(int argc, char** argv) {
     }
 #endif
     if (argc >= 2 && std::string(argv[1]) == "--render") return renderCli(argc, argv);
-    if (argc >= 2 && (std::string(argv[1]) == "--run" || std::string(argv[1]) == "--repl" ||
-                      std::string(argv[1]) == "--language-check")) {
+    if (argc >= 2 && (std::string(argv[1]) == "--run" || std::string(argv[1]) == "--repl")) {
         moritz::setupSearchPaths();
-        return moritz::languageCli(argc, argv);
+        return moritz::musilCli(argc, argv);
     }
     if (argc >= 3 && std::string(argv[1]) == "--import") {     // Max patch -> Moritz text
         moritz::setupSearchPaths();
@@ -304,8 +299,7 @@ int main(int argc, char** argv) {
         if (std::string(argv[k]) == "--no-audio" || std::string(argv[k]) == "--window-png") app.startAudio = false;
     for (int k = 1; k < argc; ++k)       // each patch on the command line in its window
         if (argv[k][0] != '-' && std::string(argv[k]).find('=') == std::string::npos &&
-            (k == 1 || std::string(argv[k - 1]) != "--window-png") && std::string(argv[k]) != "run" &&
-            std::string(argv[k]).rfind("code=", 0) != 0 && std::string(argv[k]).rfind("eval=", 0) != 0)
+            (k == 1 || std::string(argv[k - 1]) != "--window-png") && std::string(argv[k]) != "run")
             app.openDocument(moritz::portablePath(argv[k]));
     // --window-png out.png [patch] [zoom=z]: draws the first document window
     // (toolbar, canvas, status bar) into an image, without showing it: for tests.
@@ -346,31 +340,8 @@ int main(int argc, char** argv) {
         }
     for (int k = 1; k + 1 < argc; ++k)
         if (std::string(argv[k]) == "--window-png") {
-            // a patch written with code is made on the session's thread: wait for it
-            for (int t = 0; t < 400 && moritz::sessionContext()->busy(); ++t) Fl::wait(0.05);
-            for (auto t0 = std::chrono::steady_clock::now();
-                 std::chrono::steady_clock::now() - t0 < std::chrono::milliseconds(300);) Fl::wait(0.05);
             if (app.docs.empty()) app.newDocument();
-            moritz::MainWindow* w = app.docs.back();
-            for (int j = 1; j < argc; ++j)
-                if (std::string(argv[j]).rfind("eval=", 0) == 0) {   // code run in the patch's context first
-                    std::string code, file = argv[j] + 5;
-                    moritz::readFile(file, code);
-                    auto ctx = moritz::patchContext(w, w->label() ? w->label() : "patch");
-                    ctx->eval(code, file, 1, [](const moritz::EvalResult& r) {
-                        std::printf("%s%s\n", r.ok ? "ok " : "error: ", r.ok ? r.value.c_str() : r.error.c_str());
-                    });
-                    for (int t = 0; t < 400 && ctx->busy(); ++t) Fl::wait(0.05);
-                    for (auto t0 = std::chrono::steady_clock::now();
-                         std::chrono::steady_clock::now() - t0 < std::chrono::milliseconds(300);) Fl::wait(0.05);
-                }
-            for (int j = 1; j < argc; ++j)
-                if (std::string(argv[j]).rfind("code=", 0) == 0) {   // its code view too
-                    app.showText(w, &w->patch, w->label() ? w->label() : "patch", false);
-                    for (int t = 0; t < 6; ++t) Fl::wait(0.05);
-                    if (auto* tw = app.textWindow(&w->patch)) writePng(tw, argv[j] + 5);
-                    else if (!app.codeWindows().empty()) writePng(app.codeWindows().back(), argv[j] + 5);
-                }
+            moritz::MainWindow* w = app.docs.front();
             for (int j = 1; j < argc; ++j)
                 if (std::string(argv[j]).rfind("zoom=", 0) == 0) w->canvas->setZoom(std::atof(argv[j] + 5));
             Fl_Image_Surface surf(w->w(), w->h());

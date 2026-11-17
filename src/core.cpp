@@ -201,9 +201,8 @@ static std::string quoteSymbol(const std::string& s) {
     bool need = s.empty();
     for (char c : s)
         if (std::isspace((unsigned char)c) || c == '(' || c == ')' || c == '"' || c == ';' ||
-            c == '\\' || c == '\'' || c == '{' || c == '}')   // the language reads these differently
+            c == '\\')
             need = true;
-    if (!s.empty() && s[0] == ',') need = true;          // a comma computes, in the language
     if (!need && parseAtom(s).isFloat()) need = true;   // keep "440" a symbol
     if (!need) return s;
     std::string r = "\"";

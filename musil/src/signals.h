@@ -1,0 +1,960 @@
+// signals.h — offline signal processing on vectors, C++ half. The Musil half
+// is signals.mu. Ported from Musil 1.
+//
+// Copyright (c) 2026 Carmine-Emanuele Cella. SPDX-License-Identifier: BSD-2-Clause
+//
+// A signal is a vector of samples. A complex spectrum is (list re im): two
+// vectors of the same length. A polar spectrum is (list mag phase). A stereo
+// buffer is (list left right), as read-wav returns it.
+//
+// Only what needs an element loop is here: the FFT, the table oscillator,
+// the recursive (IIR) filter, fractional delay, windowed-sinc resampling,
+// autocorrelation, channel (de)interleaving, peak picking, gather, the in-place
+// overlap-add, and the comb and allpass delay lines. Windows, wavetables,
+// polar conversion, convolution, spectral features, filter design, comb and
+// allpass sections, STFT and overlap-add are compositions of vector
+// operations and live in signals.mu.
+
+#pragma once
+#include "core.h"
+#include <map>
+
+namespace musil {
+
+inline size_t next_pow2(size_t n) { size_t p = 1; while (p < n) p <<= 1; return p; }
+
+// In-place iterative radix-2 FFT on interleaved (re, im) pairs; n a power of two; sign -1 forward, +1 inverse (unscaled).
+inline void fft_inplace(double* d, size_t n, int sign) {
+    for (size_t i = 1, j = 0; i < n; i++) {                       // bit reversal
+        size_t bit = n >> 1; for (; j & bit; bit >>= 1) j ^= bit; j ^= bit;
+        if (i < j) { std::swap(d[2 * i], d[2 * j]); std::swap(d[2 * i + 1], d[2 * j + 1]); }
+    }
+    for (size_t len = 2; len <= n; len <<= 1) {
+        double ang = sign * 2 * 3.14159265358979323846 / (double)len, wr = std::cos(ang), wi = std::sin(ang);
+        for (size_t i = 0; i < n; i += len) {
+            double cr = 1, ci = 0;
+            for (size_t j = 0; j < len / 2; j++) {
+                size_t p = 2 * (i + j), q = 2 * (i + j + len / 2);
+                double ur = d[p], ui = d[p + 1], vr = d[q] * cr - d[q + 1] * ci, vi = d[q] * ci + d[q + 1] * cr;
+                d[p] = ur + vr; d[p + 1] = ui + vi; d[q] = ur - vr; d[q + 1] = ui - vi;
+                double t = cr * wr - ci * wi; ci = cr * wi + ci * wr; cr = t;
+            }
+        }
+    }
+}
+
+// (fft signal) => (list re im), each of length next-pow2(length); the signal is zero-padded
+inline vptr sig_fft(vlist& a, Interp& i) {
+    const varr& x = i.num(a[0]); size_t n = next_pow2(std::max<size_t>(2, x.size()));
+    std::vector<double> buf(2 * n, 0.0);
+    for (size_t k = 0; k < x.size(); k++) buf[2 * k] = x[k];
+    fft_inplace(buf.data(), n, -1);
+    varr re(n), im(n);
+    for (size_t k = 0; k < n; k++) { re[k] = buf[2 * k]; im[k] = buf[2 * k + 1]; }
+    return v_list({ v_arr(std::move(re)), v_arr(std::move(im)) });
+}
+// (ifft (list re im)) => real signal of the same length (a power of two)
+inline vptr sig_ifft(vlist& a, Interp& i) {
+    vlist& s = i.list(a[0]);
+    if (s.size() != 2) i.bad("a spectrum is (list re im)");
+    const varr& re = i.num(s[0]); const varr& im = i.num(s[1]);
+    size_t n = re.size();
+    if (im.size() != n) i.bad("re and im must have the same length");
+    if (n < 2 || (n & (n - 1))) i.bad("spectrum length must be a power of two (as fft produces)");
+    std::vector<double> buf(2 * n);
+    for (size_t k = 0; k < n; k++) { buf[2 * k] = re[k]; buf[2 * k + 1] = im[k]; }
+    fft_inplace(buf.data(), n, 1);
+    varr out(n); for (size_t k = 0; k < n; k++) out[k] = buf[2 * k] / (double)n;
+    return v_arr(std::move(out));
+}
+
+// (osc sr freqs table) => one sample per element of freqs, reading the wavetable with linear
+// interpolation. The table's last element must equal its first (a guard point; gen makes one).
+// --- stateful loops: each is written once, with its state as an argument, so the offline builtin
+// (fresh state, the whole vector) and the streaming node in live.h (state kept between blocks)
+// run the same code and produce the same samples ---
+struct osc_state { double phase = 0; };
+inline void osc_run(const double* freq, double* out, size_t n, const double* table, size_t table_len, double sr, osc_state& st) {
+    size_t len = table_len - 1; double fn = sr / (double)len;
+    for (size_t k = 0; k < n; k++) {
+        size_t ip = (size_t)st.phase; double fp = st.phase - (double)ip;
+        out[k] = (1 - fp) * table[ip] + fp * table[ip + 1];
+        st.phase += freq[k] / fn;
+        while (st.phase >= (double)len) st.phase -= (double)len;
+        while (st.phase < 0) st.phase += (double)len;
+    }
+}
+inline vptr sig_osc(vlist& a, Interp& i) {
+    double sr = i.scalar(a[0]); const varr& f = i.num(a[1]); const varr& t = i.num(a[2]);
+    if (t.size() < 2) i.bad("table must have at least 2 elements");
+    varr out(f.size()); osc_state st;
+    if (f.size()) osc_run(&f[0], &out[0], f.size(), &t[0], t.size(), sr, st);
+    return v_arr(std::move(out));
+}
+
+// (iir x b a) => y with a0 y[n] = sum b[k] x[n-k] - sum a[k>0] y[n-k]; a[0] need not be 1
+struct iir_state { std::vector<double> xs, ys; };   // the last nb inputs and na outputs, newest first
+inline void iir_run(const double* x, double* y, size_t n, const double* b, size_t nb, const double* a, size_t na, iir_state& st) {
+    if (st.xs.size() != nb) st.xs.assign(nb, 0.0);
+    if (st.ys.size() != na) st.ys.assign(na, 0.0);
+    for (size_t k = 0; k < n; k++) {
+        for (size_t j = nb - 1; j > 0; j--) st.xs[j] = st.xs[j - 1];
+        st.xs[0] = x[k];
+        double acc = 0;
+        for (size_t j = 0; j < nb; j++) acc += b[j] * st.xs[j];
+        for (size_t j = 1; j < na; j++) acc -= a[j] * st.ys[j];
+        double out = acc / a[0];
+        for (size_t j = na - 1; j > 0; j--) st.ys[j] = st.ys[j - 1];
+        st.ys[1 < na ? 1 : 0] = out; st.ys[0] = out;
+        y[k] = out;
+    }
+}
+inline vptr sig_iir(vlist& a, Interp& i) {
+    const varr& x = i.num(a[0]); const varr& b = i.num(a[1]); const varr& av = i.num(a[2]);
+    if (av.size() == 0 || b.size() == 0) i.bad("b and a must not be empty");
+    if (av[0] == 0) i.bad("a[0] must be nonzero");
+    varr y(0.0, x.size()); iir_state st;
+    if (x.size()) iir_run(&x[0], &y[0], x.size(), &b[0], b.size(), &av[0], av.size(), st);
+    return v_arr(std::move(y));
+}
+
+// (delay x d) => x delayed by d samples (fractional, linear interpolation), same length
+struct delay_state { std::vector<double> ring; size_t w = 0; };   // a ring of past inputs; w is the write index
+inline void delay_run(const double* x, double* y, size_t n, const double* d, delay_state& st, size_t max_delay) {
+    size_t cap = max_delay + 2;
+    if (st.ring.size() != cap) { st.ring.assign(cap, 0.0); st.w = 0; }
+    for (size_t k = 0; k < n; k++) {
+        st.ring[st.w] = x[k];
+        double dd = d[k] < 0 ? 0 : (d[k] > (double)max_delay ? (double)max_delay : d[k]);
+        double pos = (double)st.w - dd; while (pos < 0) pos += cap;
+        size_t i0 = (size_t)pos, i1 = (i0 + 1) % cap; double fr = pos - (double)i0;
+        y[k] = (1 - fr) * st.ring[i0] + fr * st.ring[i1 % cap];
+        st.w = (st.w + 1) % cap;
+    }
+}
+inline vptr sig_delay(vlist& a, Interp& i) {
+    const varr& x = i.num(a[0]); double d = i.scalar(a[1]);
+    if (d < 0) i.bad("delay must be >= 0");
+    size_t n = x.size(); varr y(0.0, n); delay_state st; varr dd(d, n);
+    if (n) delay_run(&x[0], &y[0], n, &dd[0], st, (size_t)std::ceil(d) + 1);
+    return v_arr(std::move(y));
+}
+
+// (resample x factor) => x with its length multiplied by factor, by windowed-sinc interpolation
+// (any ratio; when downsampling the sinc is also the anti-aliasing lowpass)
+inline varr resample_sinc(const varr& x, double factor) {
+    size_t in = x.size(); if (in == 0) return varr();
+    size_t out_len = std::max<size_t>(1, (size_t)std::floor(in * factor + 0.5));
+    const int half = 24, taps = 2 * half; const double pi = 3.14159265358979323846;
+    double fc = factor < 1 ? factor : 1.0;                 // cutoff relative to the input Nyquist
+    // the windowed sinc tabulated over Q fractional phases (interpolated between them), normalised so that a constant
+    // stays a constant; kept between calls with the same cutoff (a note's pitch shift is asked for thousands of times)
+    static const int Q = 512; static double table_fc = -1; static std::vector<double> table;
+    if (fc != table_fc) {
+        table.assign((size_t)(Q + 1) * taps, 0.0);
+        for (int q = 0; q <= Q; q++) {
+            double phase = (double)q / Q, wsum = 0; double* row = &table[(size_t)q * taps];
+            for (int m = -half + 1; m <= half; m++) {
+                double d = phase - m, win = 0.5 + 0.5 * std::cos(pi * d / half);   // Hann-windowed sinc
+                double sn = d == 0 ? fc : std::sin(pi * fc * d) / (pi * d);
+                row[m + half - 1] = sn * win; wsum += sn * win;
+            }
+            if (wsum != 0) for (int m = 0; m < taps; m++) row[m] /= wsum;
+        }
+        table_fc = fc;
+    }
+    varr out(0.0, out_len);
+    for (size_t k = 0; k < out_len; k++) {
+        double t = (double)k / factor; long c = (long)std::floor(t); double phase = t - (double)c;
+        double qf = phase * Q; int q = (int)qf; double u = qf - q; if (q >= Q) { q = Q - 1; u = 1; }
+        const double* r0 = &table[(size_t)q * taps]; const double* r1 = r0 + taps;
+        double acc = 0;
+        long j0 = c - half + 1, j1 = c + half;
+        long lo = std::max(j0, 0L), hi = std::min(j1, (long)in - 1);
+        for (long j = lo; j <= hi; j++) { int m = (int)(j - j0); acc += x[(size_t)j] * ((1 - u) * r0[m] + u * r1[m]); }
+        out[k] = acc;
+    }
+    return out;
+}
+inline vptr sig_resample(vlist& a, Interp& i) {
+    const varr& x = i.num(a[0]); double factor = i.scalar(a[1]);
+    if (factor <= 0) i.bad("factor must be > 0");
+    return v_arr(resample_sinc(x, factor));
+}
+
+// (autocorr x) => biased autocorrelation (sum / n) for lags 0 .. n/2 - 1; it decays with lag, which
+// makes the first periodicity peak the largest
+inline vptr sig_autocorr(vlist& a, Interp& i) {
+    const varr& x = i.num(a[0]); size_t n = x.size();
+    if (n < 4) i.bad("signal too short");
+    size_t h = n / 2; varr r(0.0, h);
+    for (size_t lag = 0; lag < h; lag++) { double s = 0; for (size_t k = 0; k + lag < n; k++) s += x[k] * x[k + lag]; r[lag] = s / (double)n; }
+    return v_arr(std::move(r));
+}
+
+// (interleave (list a b ...)) => one vector a0 b0 a1 b1 ...
+inline vptr sig_interleave(vlist& a, Interp& i) {
+    vlist& ch = i.list(a[0]); if (ch.empty()) i.bad("no channels");
+    size_t n = i.num(ch[0]).size(), c = ch.size();
+    for (auto& v : ch) if (i.num(v).size() != n) i.bad("all channels must have the same length");
+    varr out(n * c);
+    for (size_t k = 0; k < n; k++) for (size_t j = 0; j < c; j++) out[k * c + j] = ch[j]->num[k];
+    return v_arr(std::move(out));
+}
+// (deinterleave v channels) => (list a b ...): the channels of an interleaved vector
+inline vptr sig_deinterleave(vlist& a, Interp& i) {
+    const varr& v = i.num(a[0]); long c = i.index(a[1]);
+    if (c < 1) i.bad("channels must be >= 1");
+    if (v.size() % (size_t)c) i.bad("length is not a multiple of the channel count");
+    size_t n = v.size() / (size_t)c; vlist out;
+    for (long j = 0; j < c; j++) { varr ch(n); for (size_t k = 0; k < n; k++) ch[k] = v[k * c + j]; out.push_back(v_arr(std::move(ch))); }
+    return v_list(std::move(out));
+}
+
+// (local-maxima v) => indices k with v[k] > v[k-1] and v[k] > v[k+1] (interior points only)
+inline vptr sig_local_maxima(vlist& a, Interp& i) {
+    const varr& v = i.num(a[0]); std::vector<double> out;
+    for (size_t k = 1; k + 1 < v.size(); k++) if (v[k] > v[k - 1] && v[k] > v[k + 1]) out.push_back((double)k);
+    return from_vec(out);
+}
+// (gather v indices) => the elements of v at the given (integer) indices, as a vector
+inline vptr sig_gather(vlist& a, Interp& i) {
+    const varr& v = i.num(a[0]); const varr& idx = i.num(a[1]); varr out(idx.size());
+    for (size_t k = 0; k < idx.size(); k++) {
+        long j = (long)idx[k]; if (j < 0) j += (long)v.size();
+        if (j < 0 || (size_t)j >= v.size()) i.bad("index " + std::to_string((long)idx[k]) + " out of range (size " + std::to_string(v.size()) + ")");
+        out[k] = v[j];
+    }
+    return v_arr(std::move(out));
+}
+
+// (add-at! dst pos src) => dst, with src added in place starting at pos; dst must be long enough.
+// The overlap-add of an STFT is O(total) with this and O(frames x total) with copies.
+inline vptr sig_add_at_inplace(vlist& a, Interp& i) {
+    varr& dst = a[0]->t == Value::NUM ? a[0]->num : (i.num(a[0]), a[0]->num);
+    long pos = i.index(a[1]); const varr& src = i.num(a[2]);
+    if (pos < 0 || (size_t)pos + src.size() > dst.size()) i.bad("does not fit: " + std::to_string(src.size()) + " samples at " + std::to_string(pos) + " into " + std::to_string(dst.size()));
+    for (size_t k = 0; k < src.size(); k++) dst[pos + k] += src[k];
+    return a[0];
+}
+// (comb x d g) => feedback comb y[n] = x[n] + g y[n-d]; (allpass x d g) => Schroeder allpass
+// y[n] = -g x[n] + x[n-d] + g y[n-d]. Both are a delay line, not a dense IIR: O(n) whatever d is.
+struct comb_state { std::vector<double> ring; size_t w = 0; };
+// y[n] = x[n] + g y[n-d]
+inline void comb_run(const double* x, double* y, size_t n, size_t d, double g, comb_state& st) {
+    if (st.ring.size() != d) { st.ring.assign(d, 0.0); st.w = 0; }
+    for (size_t k = 0; k < n; k++) { double out = x[k] + g * st.ring[st.w]; st.ring[st.w] = out; st.w = (st.w + 1) % d; y[k] = out; }
+}
+struct allpass_state { std::vector<double> xin, yout; size_t w = 0; };
+// y[n] = -g x[n] + x[n-d] + g y[n-d]
+inline void allpass_run(const double* x, double* y, size_t n, size_t d, double g, allpass_state& st) {
+    if (st.xin.size() != d) { st.xin.assign(d, 0.0); st.yout.assign(d, 0.0); st.w = 0; }
+    for (size_t k = 0; k < n; k++) { double out = -g * x[k] + st.xin[st.w] + g * st.yout[st.w]; st.xin[st.w] = x[k]; st.yout[st.w] = out; st.w = (st.w + 1) % d; y[k] = out; }
+}
+inline vptr sig_comb(vlist& a, Interp& i) {
+    const varr& x = i.num(a[0]); long d = i.index(a[1]); double g = i.scalar(a[2]);
+    if (d < 1) i.bad("delay must be >= 1");
+    varr y(0.0, x.size()); comb_state st;
+    if (x.size()) comb_run(&x[0], &y[0], x.size(), (size_t)d, g, st);
+    return v_arr(std::move(y));
+}
+inline vptr sig_allpass(vlist& a, Interp& i) {
+    const varr& x = i.num(a[0]); long d = i.index(a[1]); double g = i.scalar(a[2]);
+    if (d < 1) i.bad("delay must be >= 1");
+    varr y(0.0, x.size()); allpass_state st;
+    if (x.size()) allpass_run(&x[0], &y[0], x.size(), (size_t)d, g, st);
+    return v_arr(std::move(y));
+}
+
+// --- the phase vocoder engine ---------------------------------------------------------
+// (pvoc x opts) after sparkle: fixed synthesis hop I = window/overlap, analysis hop D = I/stretch
+// (so the synthesis overlap never thins out), zero-phase windowing in a zero-padded frame,
+// peak-locked phases (Laroche-Dolson), pitch shift and formant move by spectral resampling,
+// formant preservation through the cepstral (true) envelope, denoising, three cross-synthesis
+// modes and two phase effects. Parameters may ramp: a value given as (list start end).
+// It is C++ because a frame is sixty vector operations on 4096 bins, ten thousand times a
+// minute: the interpreter's per-operation cost dominated (25x slower than this loop).
+struct pvoc_opts { double stretch0 = 1, stretch1 = 1, pitch0 = 1, pitch1 = 1, form0 = 1, form1 = 1, thr0 = 0, thr1 = 0, xa0 = 0, xa1 = 0;
+                   int window = 2048, overlap = 8, pad = 1, env = 0, xmode = 0; std::string phase; const varr* other = nullptr; };
+inline void pvoc_ramp(Interp& i, const vptr& v, double& a, double& b) {
+    if (v->t == Value::LIST) { if (v->l.size() != 2) i.bad("a ramp is (list start end)"); a = i.scalar(v->l[0]); b = i.scalar(v->l[1]); }
+    else a = b = i.scalar(v);
+}
+// cepstral smoothing of a full N-bin log spectrum: keep the first `order` cepstral coefficients
+// (one pass, two FFTs, as sparkle's cepstralEnvelope; the iterated "true envelope" of signals.mu is
+// better for analysis but twenty times the work, too much for ten thousand frames)
+inline void pvoc_lifter(std::vector<double>& logspec, int order, std::vector<double>& buf) {
+    size_t n = logspec.size();
+    buf.assign(2 * n, 0.0); for (size_t k = 0; k < n; k++) buf[2 * k] = logspec[k];
+    fft_inplace(buf.data(), n, 1);
+    for (size_t k = 0; k < n; k++) { bool keep = k <= (size_t)order || k >= n - (size_t)order; buf[2 * k] = keep ? buf[2 * k] / n : 0; buf[2 * k + 1] = 0; }
+    fft_inplace(buf.data(), n, -1);
+    for (size_t k = 0; k < n; k++) logspec[k] = buf[2 * k];
+}
+inline vptr sig_pvoc(vlist& a, Interp& i) {
+    const varr& x = i.num(a[0]); vlist& opts = i.list(a[1]);
+    pvoc_opts o;
+    for (auto& e : opts) {
+        vlist& kv = i.list(e); if (kv.size() != 2 || kv[0]->t != Value::STR) i.bad("an option is (list \"key\" value)");
+        const std::string& k = kv[0]->s; const vptr& v = kv[1];
+        if (k == "stretch") pvoc_ramp(i, v, o.stretch0, o.stretch1);
+        else if (k == "pitch") pvoc_ramp(i, v, o.pitch0, o.pitch1);
+        else if (k == "formants") pvoc_ramp(i, v, o.form0, o.form1);
+        else if (k == "threshold") pvoc_ramp(i, v, o.thr0, o.thr1);
+        else if (k == "window") o.window = (int)i.scalar(v);
+        else if (k == "overlap") o.overlap = (int)i.scalar(v);
+        else if (k == "pad") o.pad = (int)i.scalar(v);
+        else if (k == "envelope") o.env = (int)i.scalar(v);
+        else if (k == "phase") o.phase = i.str(v);
+        else if (k == "cross") {
+            vlist& c = i.list(v); if (c.size() != 3 && c.size() != 4) i.bad("cross is (list mode amount other) or (list mode start end other)");
+            o.xmode = (int)i.scalar(c[0]); o.xa0 = i.scalar(c[1]); o.xa1 = c.size() == 4 ? i.scalar(c[2]) : o.xa0; o.other = &i.num(c.back());
+            if (o.xmode < 1 || o.xmode > 3) i.bad("cross mode is 1, 2 or 3");
+        } else i.bad("unknown option " + k);
+    }
+    if (o.window < 8 || o.overlap < 1 || o.pad < 0 || o.env < 0 || o.stretch0 <= 0 || o.stretch1 <= 0 || o.pitch0 <= 0 || o.pitch1 <= 0 || o.form0 <= 0 || o.form1 <= 0) i.bad("invalid parameters");
+    if (o.xmode == 2 && o.env == 0) i.bad("cross mode 2 needs an envelope order");
+    size_t tot = x.size(); if (tot == 0) return v_arr(varr());
+    size_t Wn = (size_t)o.window, N = next_pow2(Wn) << o.pad, N2 = N / 2;
+    size_t I = std::max<size_t>(1, Wn / (size_t)o.overlap);
+    double D0 = (double)I / o.stretch0, D1 = (double)I / o.stretch1;
+    size_t frames = (size_t)std::ceil((double)tot / ((D0 + D1) / 2)), offset = (N - Wn) / 2;
+    std::vector<double> w(Wn); double gain = 0;
+    for (size_t k = 0; k < Wn; k++) { w[k] = 0.5 - 0.5 * std::cos(2 * 3.14159265358979323846 * k / Wn); gain += w[k] * w[k]; }
+    gain /= I;
+    double peak = 0; for (double v : x) peak = std::max(peak, std::fabs(v));
+    double wsum = 0; for (double v : w) wsum += v;
+    double peak_mag = peak * wsum / 2;          // the magnitude a full-scale sine at the signal's peak would have: the threshold's unit
+    std::vector<double> out(I * frames + N, 0.0), buf(2 * N), buf2(2 * N), mags(N2), phase(N2), mags2(N2), phase2(N2), psi(N2, 0.0),
+                        oldan(N2, 0.0), oldsyn(N2, 0.0), inc(N2), env1, env2, tmp, newm(N2), newp(N2);
+    std::vector<size_t> peaks; peaks.reserve(N2); std::vector<size_t> owner(N2);
+    const double tau = 2 * 3.14159265358979323846;
+    auto analyse = [&](const varr& sig, double read, bool wrap, std::vector<double>& m, std::vector<double>& ph) {
+        std::fill(buf.begin(), buf.end(), 0.0);
+        long p = (long)std::floor(read); if (wrap && sig.size()) p %= (long)sig.size();
+        for (size_t k = 0; k < Wn; k++) { long idx = p + (long)k; double v = (idx >= 0 && (size_t)idx < sig.size()) ? sig[idx] : 0.0; buf[2 * ((offset + k + N2) % N)] = v * w[k]; }   // centred, then fftshift
+        fft_inplace(buf.data(), N, -1);
+        for (size_t k = 0; k < N2; k++) { double re = buf[2 * k], im = buf[2 * k + 1]; m[k] = std::sqrt(re * re + im * im); ph[k] = std::atan2(im, re); }
+    };
+    // smoothed log envelope (half spectrum in, half out), on the symmetric full spectrum
+    // The envelope must ride the harmonic peaks, not average peaks and valleys: the log magnitudes
+    // are first replaced by their peak-to-peak interpolation (a one-pass stand-in for the iterated
+    // "true envelope"), then smoothed once by the lifter.
+    auto log_envelope = [&](const std::vector<double>& half, std::vector<double>& env) {
+        double mx = 1e-12; for (double v : half) mx = std::max(mx, v);
+        double fl = 1e-4 * mx;
+        std::vector<double>& lg = env; lg.resize(N2); for (size_t k = 0; k < N2; k++) lg[k] = std::log(std::max(half[k], fl));
+        size_t last = 0; bool have = false;
+        for (size_t k = 1; k + 1 < N2; k++) if (lg[k] > lg[k - 1] && lg[k] > lg[k + 1]) {
+            if (!have) { for (size_t j = 0; j < k; j++) lg[j] = lg[k]; have = true; }
+            else for (size_t j = last + 1; j < k; j++) lg[j] = lg[last] + (lg[k] - lg[last]) * (double)(j - last) / (k - last);
+            last = k;
+        }
+        if (have) for (size_t j = last + 1; j < N2; j++) lg[j] = lg[last];
+        tmp.assign(N, 0.0); for (size_t k = 0; k < N2; k++) { tmp[k] = lg[k]; if (k) tmp[N - k] = lg[k]; } tmp[N2] = lg[N2 - 1];
+        pvoc_lifter(tmp, o.env, buf2); env.assign(tmp.begin(), tmp.begin() + N2);
+    };
+    auto princarg = [&](double v) { return v - tau * std::round(v / tau); };
+    double read = 0;
+    for (size_t f = 0; f < frames; f++) {
+        double t = frames > 1 ? (double)f / (frames - 1) : 0;
+        double D = D0 + (D1 - D0) * t, P = o.pitch0 + (o.pitch1 - o.pitch0) * t, K = o.form0 + (o.form1 - o.form0) * t;
+        double T = o.thr0 + (o.thr1 - o.thr0) * t, A = o.xa0 + (o.xa1 - o.xa0) * t;
+        analyse(x, read, false, mags, phase);
+        if (T > 0) for (size_t k = 0; k < N2; k++) if (mags[k] < T * peak_mag) mags[k] = 0;
+        if (o.xmode) {
+            analyse(*o.other, read, true, mags2, phase2);
+            if (o.xmode == 1) for (size_t k = 0; k < N2; k++) { mags[k] = std::sqrt(mags[k] * mags2[k]); phase[k] = (1 - A) * phase[k] + A * phase2[k]; }
+            else if (o.xmode == 2) { log_envelope(mags, env1); log_envelope(mags2, env2); for (size_t k = 0; k < N2; k++) mags[k] *= (1 - A) + A * std::exp(env2[k] - env1[k]); }
+            else for (size_t k = 0; k < N2; k++) { mags[k] += (mags2[k] - mags[k]) * A; if (A >= 0.5) phase[k] = phase2[k]; }
+        }
+        // phase sync
+        for (size_t k = 0; k < N2; k++) { double omega = tau * k * D / N; inc[k] = P * (omega + princarg(phase[k] - oldan[k] - omega)) / D; }
+        peaks.clear(); for (size_t k = 1; k + 1 < N2; k++) if (mags[k] > mags[k - 1] && mags[k] > mags[k + 1]) peaks.push_back(k);
+        if (peaks.empty()) peaks.push_back(0);
+        { size_t r = 0, next_start = peaks.size() > 1 ? (peaks[0] + peaks[1]) / 2 + 1 : N2;
+          for (size_t k = 0; k < N2; k++) { while (k >= next_start && r + 1 < peaks.size()) { r++; next_start = r + 1 < peaks.size() ? (peaks[r] + peaks[r + 1]) / 2 + 1 : N2; } owner[k] = peaks[r]; } }
+        for (size_t k = 0; k < N2; k++) { size_t pk = owner[k]; psi[k] = oldsyn[pk] + I * inc[pk] + (phase[k] - phase[pk]); }
+        oldan = phase; oldsyn = psi;
+        // formant preservation
+        if (o.env > 0 && (P != 1 || K != 1)) {
+            double r = K / P;
+            // the envelope of the spectrum moved by K/P is the moved envelope: one smoothing per frame,
+            // and the correction is the log difference between the two
+            log_envelope(mags, env1);
+            for (size_t k = 0; k < N2; k++) { double src = k / r; double e = src < N2 ? env1[(size_t)src] : env1[N2 - 1]; mags[k] *= std::exp(e - env1[k]); }
+        }
+        // pitch shift by spectral resampling
+        if (P != 1) {
+            for (size_t k = 0; k < N2; k++) { double src = k / P; bool keep = src < N2; size_t idx = keep ? (size_t)src : 0; newm[k] = keep ? mags[idx] : 0; newp[k] = keep ? psi[idx] : 0; }
+            mags.swap(newm); psi.swap(newp);
+        }
+        if (o.phase == "robot") std::fill(psi.begin(), psi.end(), 0.0);
+        else if (o.phase == "whisper") { std::uniform_real_distribution<double> d(0, tau); for (auto& p : psi) p = d(i.rng); }
+        // synthesis
+        std::fill(buf.begin(), buf.end(), 0.0);
+        for (size_t k = 0; k < N2; k++) { double re = mags[k] * std::cos(psi[k]), im = mags[k] * std::sin(psi[k]); buf[2 * k] = re; buf[2 * k + 1] = im; if (k) { buf[2 * (N - k)] = re; buf[2 * (N - k) + 1] = -im; } }
+        fft_inplace(buf.data(), N, 1);
+        for (size_t k = 0; k < Wn; k++) out[f * I + k] += buf[2 * ((offset + k + N2) % N)] / N * w[k];   // unshift, centre, window, overlap-add
+        read += D;
+    }
+    varr y(I * frames); for (size_t k = 0; k < y.size(); k++) y[k] = out[k] / gain;
+    return v_arr(std::move(y));
+}
+
+// (adsr sr gate a d s r) => an envelope following a gate signal (1 = on, 0 = off): attack a and
+// decay d seconds towards the sustain level s while the gate is on, release r seconds when it goes off;
+// exponential segments, so it sounds even; the same code runs in the live engine's adsr node.
+struct adsr_state { double level = 0; int stage = 0; };   // stages: 0 idle, 1 attack, 2 decay/sustain, 3 release
+inline void adsr_run(const double* gate, double* out, size_t n, double a, double d, double s, double r, double sr, adsr_state& st) {
+    auto coef = [&](double secs) { return secs <= 0 ? 0.0 : std::exp(-1.0 / (std::max(secs, 1e-4) * sr)); };
+    double ca = coef(a), cd = coef(d), cr = coef(r);
+    for (size_t k = 0; k < n; k++) {
+        bool on = gate[k] > 0.5;
+        if (on && (st.stage == 0 || st.stage == 3)) st.stage = 1;
+        if (!on && (st.stage == 1 || st.stage == 2)) st.stage = 3;
+        if (st.stage == 1) { st.level = 1.2 - (1.2 - st.level) * ca; if (st.level >= 1) { st.level = 1; st.stage = 2; } }
+        else if (st.stage == 2) st.level = s + (st.level - s) * cd;
+        else if (st.stage == 3) { st.level *= cr; if (st.level < 1e-5) { st.level = 0; st.stage = 0; } }
+        out[k] = st.level;
+    }
+}
+inline vptr sig_adsr(vlist& a, Interp& i) {
+    double sr = i.scalar(a[0]); const varr& g = i.num(a[1]);
+    double at = i.scalar(a[2]), de = i.scalar(a[3]), su = i.scalar(a[4]), re = i.scalar(a[5]);
+    if (sr <= 0 || at < 0 || de < 0 || re < 0 || su < 0 || su > 1) i.bad("times must be >= 0 and sustain in [0, 1]");
+    varr out(0.0, g.size()); adsr_state st;
+    if (g.size()) adsr_run(&g[0], &out[0], g.size(), at, de, su, re, sr, st);
+    return v_arr(std::move(out));
+}
+// (lag x sr seconds) => x smoothed by a one-pole lowpass with the given time constant (parameter
+// smoothing, envelope following); the live engine's lag node
+struct lag_state { double y = 0; };
+inline void lag_run(const double* x, double* out, size_t n, double coef, lag_state& st) {
+    for (size_t k = 0; k < n; k++) { st.y += (x[k] - st.y) * (1 - coef); out[k] = st.y; }
+}
+inline vptr sig_lag(vlist& a, Interp& i) {
+    const varr& x = i.num(a[0]); double sr = i.scalar(a[1]), secs = i.scalar(a[2]);
+    if (sr <= 0 || secs < 0) i.bad("sr must be > 0 and seconds >= 0");
+    double coef = secs <= 0 ? 0.0 : std::exp(-1.0 / (secs * sr));
+    varr out(0.0, x.size()); lag_state st;
+    if (x.size()) lag_run(&x[0], &out[0], x.size(), coef, st);
+    return v_arr(std::move(out));
+}
+
+// --- harmonic / percussive separation (HPSS, Fitzgerald 2010) -------------------------------
+// (hpss x n hop kernel) => (list harmonic percussive): STFT with a periodic Hann window of n and
+// hop; the magnitude spectrogram is median-filtered along time (harmonic sounds are horizontal
+// lines) and along frequency (percussive sounds are vertical ones); soft masks from the two
+// filtered spectrograms weight the original spectra, which are inverted and overlap-added. kernel
+// is the filter length in frames and bins (odd, ~17). C++: a median per bin per frame.
+inline double median_of(std::vector<double>& v) { size_t m = v.size() / 2; std::nth_element(v.begin(), v.begin() + m, v.end()); return v[m]; }
+inline vptr sig_hpss(vlist& a, Interp& i) {
+    const varr& x = i.num(a[0]); size_t n = (size_t)i.index(a[1]), hop = (size_t)i.index(a[2]); int kernel = (int)i.scalar(a[3]);
+    if (n < 16 || (n & (n - 1))) i.bad("n must be a power of 2 >= 16");
+    if (hop < 1 || hop > n) i.bad("hop must be in 1..n");
+    if (kernel < 3) i.bad("kernel must be >= 3"); if (kernel % 2 == 0) kernel++;
+    // the signal is padded with n zeros on both sides, so its edges are covered by full overlaps
+    std::vector<double> xp(x.size() + 2 * n, 0.0); for (size_t k = 0; k < x.size(); k++) xp[n + k] = x[k];
+    size_t half = kernel / 2, bins = n / 2 + 1, frames = (xp.size() - n) / hop + 1;
+    std::vector<double> w(n); for (size_t k = 0; k < n; k++) w[k] = 0.5 - 0.5 * std::cos(2 * 3.14159265358979323846 * k / n);
+    // analysis
+    std::vector<std::vector<double>> spec(frames, std::vector<double>(2 * n)), mag(frames, std::vector<double>(bins));
+    for (size_t f = 0; f < frames; f++) {
+        for (size_t k = 0; k < n; k++) { size_t idx = f * hop + k; spec[f][2 * k] = idx < xp.size() ? xp[idx] * w[k] : 0; spec[f][2 * k + 1] = 0; }
+        fft_inplace(spec[f].data(), n, -1);
+        for (size_t b = 0; b < bins; b++) mag[f][b] = std::hypot(spec[f][2 * b], spec[f][2 * b + 1]);
+    }
+    // medians along time (harmonic) and along frequency (percussive)
+    std::vector<std::vector<double>> H(frames, std::vector<double>(bins)), P(frames, std::vector<double>(bins));
+    std::vector<double> buf; buf.reserve(kernel);
+    for (size_t b = 0; b < bins; b++) for (size_t f = 0; f < frames; f++) {
+        buf.clear(); for (long t = (long)f - (long)half; t <= (long)f + (long)half; t++) buf.push_back(t >= 0 && t < (long)frames ? mag[t][b] : 0.0);
+        H[f][b] = median_of(buf);
+    }
+    for (size_t f = 0; f < frames; f++) for (size_t b = 0; b < bins; b++) {
+        buf.clear(); for (long q = (long)b - (long)half; q <= (long)b + (long)half; q++) buf.push_back(q >= 0 && q < (long)bins ? mag[f][q] : 0.0);
+        P[f][b] = median_of(buf);
+    }
+    // soft masks, synthesis
+    size_t out_len = (frames - 1) * hop + n; varr harm(0.0, out_len), perc(0.0, out_len);
+    std::vector<double> wsum(out_len, 0.0);          // the overlap-added squared window: the exact gain at every sample, edges included
+    for (size_t f = 0; f < frames; f++) for (size_t k = 0; k < n; k++) wsum[f * hop + k] += w[k] * w[k];
+    std::vector<double> fh(2 * n), fp(2 * n);
+    for (size_t f = 0; f < frames; f++) {
+        for (size_t k = 0; k < n; k++) {
+            size_t b = k <= n / 2 ? k : n - k; double h2 = H[f][b] * H[f][b], p2 = P[f][b] * P[f][b], d = h2 + p2 + 1e-12;
+            double mh = h2 / d, mp = p2 / d;
+            fh[2 * k] = spec[f][2 * k] * mh; fh[2 * k + 1] = spec[f][2 * k + 1] * mh; fp[2 * k] = spec[f][2 * k] * mp; fp[2 * k + 1] = spec[f][2 * k + 1] * mp;
+        }
+        fft_inplace(fh.data(), n, 1); fft_inplace(fp.data(), n, 1);
+        for (size_t k = 0; k < n; k++) { harm[f * hop + k] += fh[2 * k] / n * w[k]; perc[f * hop + k] += fp[2 * k] / n * w[k]; }
+    }
+    varr ho(0.0, x.size()), po(0.0, x.size());       // the padding removed: as long as the input
+    for (size_t k = 0; k < x.size() && n + k < out_len; k++) { double g = std::max(wsum[n + k], 1e-3); ho[k] = harm[n + k] / g; po[k] = perc[n + k] / g; }
+    return v_list({ v_arr(std::move(ho)), v_arr(std::move(po)) });
+}
+
+// --- spatial: spherical harmonics, rotation, a spherical-head HRIR --------------------------
+// Conventions (AmbiX): azimuth in degrees, 0 in front, positive to the LEFT (counter-clockwise seen
+// from above); elevation in degrees, positive up. Channels in ACN order with SN3D normalisation.
+inline double deg2rad(double d) { return d * 3.14159265358979323846 / 180.0; }
+// the real spherical harmonics up to `order` at (az, el): (order+1)^2 gains, ACN order, SN3D
+inline std::vector<double> sh_gains(int order, double az, double el) {
+    double a = deg2rad(az), e = deg2rad(el); double x = std::cos(e) * std::cos(a), y = std::cos(e) * std::sin(a), z = std::sin(e);
+    std::vector<double> g((size_t)(order + 1) * (order + 1));
+    // associated Legendre P_n^m(z) without Condon-Shortley phase, then SN3D: sqrt((2-d_m0) (n-|m|)!/(n+|m|)!)
+    auto fact = [](int n) { double f = 1; for (int k = 2; k <= n; k++) f *= k; return f; };
+    double r = std::sqrt(x * x + y * y);          // cos(elevation)
+    for (int n = 0; n <= order; n++) for (int m = -n; m <= n; m++) {
+        int am = std::abs(m);
+        // P_n^|m|(z) by recurrence
+        double pmm = 1; for (int k = 1; k <= am; k++) pmm *= (2 * k - 1) * r;      // P_m^m = (2m-1)!! (1-z^2)^(m/2)
+        double p;
+        if (n == am) p = pmm;
+        else { double p1 = z * (2 * am + 1) * pmm; if (n == am + 1) p = p1; else { double pk2 = pmm, pk1 = p1; for (int k = am + 2; k <= n; k++) { p = ((2 * k - 1) * z * pk1 - (k + am - 1) * pk2) / (k - am); pk2 = pk1; pk1 = p; } } }
+        double norm = std::sqrt((m == 0 ? 1.0 : 2.0) * fact(n - am) / fact(n + am));
+        double azf = m > 0 ? std::cos(m * a) : m < 0 ? std::sin(am * a) : 1.0;
+        g[(size_t)(n * n + n + m)] = norm * p * azf;
+    }
+    return g;
+}
+// (ambi-gains order az el) => the (order+1)^2 encoding gains (SN3D, ACN) of a direction
+inline vptr sig_ambi_gains(vlist& a, Interp& i) {
+    int order = (int)i.scalar(a[0]); if (order < 0 || order > 7) i.bad("order must be 0..7");
+    auto g = sh_gains(order, i.scalar(a[1]), i.scalar(a[2])); varr v(g.size()); for (size_t k = 0; k < g.size(); k++) v[k] = g[k]; return v_arr(std::move(v));
+}
+// The decoding matrix of ambi-decode (and of its streaming node in live.h): one row of gains per speaker.
+// Speakers all at ear height form a ring, which hears only the horizontal (sectoral) channels: the decoder is
+// the exact mode-matching one for an even ring of at least 2N+1 speakers (each order scaled by 2 over the
+// speaker count and the SN3D factor of its cos term), with 2D max-rE weights cos(n pi / (2N + 2)); the energy
+// vector of a source then reaches its theoretical 0.71 at order 1 and 0.87 at order 2. Speakers with elevations
+// sample the sphere: every channel of order n scaled by 2n+1 (SN3D to a sampling decoder) and weighted by the
+// 3D max-rE weights P_n(rE), rE = cos(137.9 degrees / (N + 1.51)), all over the speaker count.
+inline std::vector<std::vector<double>> ambi_decoder(int order, const std::vector<std::pair<double, double>>& dirs) {
+    const double pi = 3.14159265358979323846; size_t nch = (size_t)(order + 1) * (order + 1); double ns = (double)std::max<size_t>(1, dirs.size());
+    bool ring = true; for (auto& d : dirs) if (std::fabs(d.second) > 1e-9) ring = false;
+    std::vector<std::vector<double>> M;
+    if (ring) {
+        auto front = sh_gains(order, 0, 0);
+        for (auto& d : dirs) {
+            std::vector<double> row(nch, 0.0); double a = deg2rad(d.first);
+            row[0] = 1.0 / ns;
+            for (int n = 1; n <= order; n++) {
+                double wn = std::cos(n * pi / (2 * order + 2)), c = front[(size_t)(n * n + 2 * n)], scale = 2.0 * wn / (ns * c);
+                row[(size_t)(n * n + 2 * n)] = scale * std::cos(n * a);       // m = +n
+                row[(size_t)(n * n)] = scale * std::sin(n * a);               // m = -n
+            }
+            M.push_back(std::move(row));
+        }
+        return M;
+    }
+    double rE = std::cos(137.9 * pi / 180.0 / (order + 1.51)); std::vector<double> w((size_t)order + 1);
+    double p0 = 1, p1 = rE;
+    for (int n = 0; n <= order; n++) { double pn = n == 0 ? 1.0 : n == 1 ? rE : ((2 * n - 1) * rE * p1 - (n - 1) * p0) / n; if (n >= 2) { p0 = p1; p1 = pn; } w[(size_t)n] = pn * (2 * n + 1); }
+    for (auto& d : dirs) {
+        auto g = sh_gains(order, d.first, d.second); std::vector<double> row(nch);
+        for (int n = 0; n <= order; n++) for (int m = -n; m <= n; m++) { size_t k = (size_t)(n * n + n + m); row[k] = g[k] * w[(size_t)n] / ns; }
+        M.push_back(std::move(row));
+    }
+    return M;
+}
+// the directions of a list of speakers: each (list az el) or a bare azimuth (a vector of azimuths too)
+inline std::vector<std::pair<double, double>> speaker_dirs(const vptr& spk, Interp& i) {
+    std::vector<std::pair<double, double>> dirs;
+    if (spk->t == Value::NUM) { for (double v : spk->num) dirs.push_back({ v, 0 }); return dirs; }
+    if (spk->t != Value::LIST) i.bad("speakers is a list of (list az el) or azimuths");
+    for (auto& e : spk->l) {
+        if (e->t == Value::LIST && e->l.size() >= 2) dirs.push_back({ i.scalar(e->l[0]), i.scalar(e->l[1]) });
+        else dirs.push_back({ i.scalar(e), 0 });
+    }
+    return dirs;
+}
+// (ambi-decoder order speakers) => the decoding matrix ambi-decode uses: a row of (order+1)^2 gains per speaker
+//   (speakers: (list az el) or azimuths). All at ear height: a ring, the exact horizontal decoder with 2D max-rE
+//   weights; with elevations: sampling of the sphere, SN3D-corrected (2n+1) with 3D max-rE weights
+inline vptr sig_ambi_decoder(vlist& a, Interp& i) {
+    int order = (int)i.scalar(a[0]); if (order < 0 || order > 7) i.bad("order must be 0..7");
+    auto M = ambi_decoder(order, speaker_dirs(a[1], i));
+    vlist out; for (auto& r : M) { varr v(r.size()); for (size_t k = 0; k < r.size(); k++) v[k] = r[k]; out.push_back(v_arr(std::move(v))); }
+    return v_list(std::move(out));
+}
+// (ambi-rotate B yaw) => B turned by yaw degrees about the vertical axis (positive to the left):
+//   within each order, the pair (m, -m) rotates by m yaw, exactly; B is a list of (order+1)^2 channel vectors
+inline vptr sig_ambi_rotate(vlist& a, Interp& i) {
+    vlist& B = i.list(a[0]); double yaw = deg2rad(i.scalar(a[1]));
+    size_t n = B.size(); int order = (int)std::lround(std::sqrt((double)n)) - 1;
+    if ((size_t)(order + 1) * (order + 1) != n) i.bad("a B-format signal has (order+1)^2 channels");
+    vlist out(n);
+    for (int l = 0; l <= order; l++) {
+        out[(size_t)(l * l + l)] = B[(size_t)(l * l + l)];
+        for (int m = 1; m <= l; m++) {
+            const varr& cp = i.num(B[(size_t)(l * l + l + m)]); const varr& cm = i.num(B[(size_t)(l * l + l - m)]);
+            if (cp.size() != cm.size()) i.bad("channels must have the same length");
+            double c = std::cos(m * yaw), s2 = std::sin(m * yaw);
+            varr rp(cp.size()), rm(cp.size());
+            for (size_t k = 0; k < cp.size(); k++) { rp[k] = c * cp[k] - s2 * cm[k]; rm[k] = s2 * cp[k] + c * cm[k]; }
+            out[(size_t)(l * l + l + m)] = v_arr(std::move(rp)); out[(size_t)(l * l + l - m)] = v_arr(std::move(rm));
+        }
+    }
+    return v_list(std::move(out));
+}
+// (conv-fast x h) => the linear convolution of x and h (length n + m - 1), by overlap-add over blocks the size
+//   of h: the same result as conv, faster on long inputs, and the interpreter breathes between blocks (the
+//   windows stay responsive while a long score goes through the hall)
+inline vptr sig_conv_fast(vlist& a, Interp& i) {
+    const varr& x = i.num(a[0]); const varr& h = i.num(a[1]);
+    size_t n = x.size(), m = h.size(); if (n == 0 || m == 0) return v_arr(varr());
+    size_t B = 1; while (B < m) B <<= 1; size_t N = 2 * B;
+    std::vector<double> H(2 * N, 0.0); for (size_t k = 0; k < m; k++) H[2 * k] = h[k]; fft_inplace(H.data(), N, -1);
+    varr out(n + m - 1); std::fill(std::begin(out), std::end(out), 0.0);
+    std::vector<double> X(2 * N);
+    for (size_t start = 0; start < n; start += B) {
+        size_t len = std::min(B, n - start);
+        std::fill(X.begin(), X.end(), 0.0); for (size_t k = 0; k < len; k++) X[2 * k] = x[start + k];
+        fft_inplace(X.data(), N, -1);
+        for (size_t k = 0; k < N; k++) { double ar = X[2 * k], ai = X[2 * k + 1], br = H[2 * k], bi = H[2 * k + 1]; X[2 * k] = ar * br - ai * bi; X[2 * k + 1] = ar * bi + ai * br; }
+        fft_inplace(X.data(), N, 1);
+        size_t take = std::min(len + m - 1, out.size() - start);
+        for (size_t k = 0; k < take; k++) out[start + k] += X[2 * k] / N;
+        i.yield_check(); i.idle();                              // the UI, the scheduler, between blocks
+    }
+    return v_arr(std::move(out));
+}
+// --- measured HRTFs: a table of directions with the two ears' impulse responses ---
+// (hrtf-load path) load a set from a CSV: each row azimuth, elevation, then the left ear's samples and the right's
+//   (as src/hrtf_kemar.csv, the MIT KEMAR compact set at 44100 Hz, found on the load path); => the number of directions.
+//   Once a set is loaded, hrir takes the nearest measured direction (resampled to the requested rate);
+//   (hrtf-unload) goes back to the spherical-head model; (hrtf-loaded) => directions loaded, 0 for the model.
+struct hrtf_set { std::vector<double> az, el; std::vector<varr> left, right; double sr = 44100; };
+inline bool& hrtf_unloaded_by_user() { static bool b = false; return b; }
+inline hrtf_set& hrtf() { static hrtf_set h; return h; }
+inline vptr sig_hrtf_load(vlist& a, Interp& i) {
+    std::string path = i.find_file(i.str(a[0])); if (path.empty()) path = i.read_path(i.str(a[0]));
+    std::ifstream f(path); if (!f) i.bad("cannot open " + i.str(a[0]));
+    hrtf_set h; std::string line;
+    while (std::getline(f, line)) {
+        if (line.empty() || line[0] == '#') continue;
+        std::vector<double> v; std::stringstream ss(line); std::string cell; while (std::getline(ss, cell, ',')) v.push_back(std::atof(cell.c_str()));
+        if (v.size() < 4 || (v.size() - 2) % 2) continue;
+        size_t n = (v.size() - 2) / 2; varr L(n), R(n); for (size_t k = 0; k < n; k++) { L[k] = v[2 + k]; R[k] = v[2 + n + k]; }
+        h.az.push_back(v[0]); h.el.push_back(v[1]); h.left.push_back(std::move(L)); h.right.push_back(std::move(R));
+    }
+    if (h.az.empty()) i.bad("no directions in " + path);
+    // normalised so that a source in front has unit energy at each ear (the set's overall level is arbitrary)
+    size_t front = 0; double bd = 1e9; for (size_t k = 0; k < h.az.size(); k++) { double d = std::fabs(h.az[k]) + std::fabs(h.el[k]); if (d < bd) { bd = d; front = k; } }
+    double e = 0; for (double v : h.left[front]) e += v * v; for (double v : h.right[front]) e += v * v; e = std::sqrt(e / 2); if (e <= 0) e = 1;
+    for (auto& v : h.left) v /= e; for (auto& v : h.right) v /= e;
+    hrtf() = std::move(h); hrtf_unloaded_by_user() = false; return v_num((double)hrtf().az.size());
+}
+inline vptr sig_hrtf_unload(vlist&, Interp&) { hrtf() = hrtf_set(); hrtf_unloaded_by_user() = true; return v_nil(); }
+inline bool hrtf_try_default(Interp& i);
+inline vptr sig_hrtf_loaded(vlist&, Interp& i) { hrtf_try_default(i); return v_num((double)hrtf().az.size()); }
+inline bool hrtf_try_default(Interp& i) {         // the first request loads the bundled set if it is on the load path
+    static bool tried = false; if (!hrtf().az.empty()) return true;
+    if (tried || hrtf_unloaded_by_user()) return false;
+    tried = true; std::string p = i.find_file("hrtf_kemar.csv"); if (p.empty()) return false;
+    vlist a = { v_str("hrtf_kemar.csv") }; try { sig_hrtf_load(a, i); } catch (...) { return false; } return true;
+}
+// (hrir-model az el sr) => the spherical-head model, whatever is loaded (below)
+// (hrir az el sr) => (list left right): the nearest measured direction of the loaded set (the MIT KEMAR set is loaded
+//   from the load path on first use), resampled to sr; the spherical-head model when no set is available
+//   for each ear a head-shadow filter, whose high-frequency roll-off grows with the angle from that ear, and the
+//   interaural delay (Woodworth). No measured data: the model externalises and lateralises well enough to work with;
+//   real HRTFs can replace it (a WAV pair per direction convolved the same way).
+inline vptr sig_hrir_model(vlist& a, Interp& i) {
+    double az = deg2rad(i.scalar(a[0])), el = deg2rad(i.scalar(a[1])), sr = i.scalar(a[2]);
+    const double head = 0.0875, c = 343.0, w0 = c / head, len_s = 0.003; size_t len = (size_t)(len_s * sr) + 16;
+    double x = std::cos(el) * std::cos(az), y = std::cos(el) * std::sin(az);
+    vlist ears;
+    for (int ear = 0; ear < 2; ear++) {
+        double ey = ear == 0 ? 1.0 : -1.0;                 // left ear at +y
+        double cos_theta = std::max(-1.0, std::min(1.0, y * ey)); double theta = std::acos(cos_theta);   // angle from the ear axis
+        double alpha = 1.05 + 0.95 * std::cos(std::min(theta / deg2rad(150.0), 1.0) * 3.14159265358979323846);   // 2 at the near ear, 0.1 at the far one
+        double delay = theta < 3.14159265358979323846 / 2 ? -head / c * std::cos(theta) : head / c * (theta - 3.14159265358979323846 / 2);
+        delay += head / c;                                  // shifted so every delay is positive
+        // the shadow filter H(s) = (alpha s + 2 w0) / (s + 2 w0), bilinear transform at fs = sr
+        double K = 2 * sr, b0 = (alpha * K + 2 * w0), b1 = (2 * w0 - alpha * K), a0 = (K + 2 * w0), a1 = (2 * w0 - K);
+        b0 /= a0; b1 /= a0; a1 /= a0;
+        varr ir(0.0, len); double d = delay * sr; size_t i0 = (size_t)d; double fr = d - i0;
+        std::vector<double> imp(len, 0.0); if (i0 < len) imp[i0] += 1 - fr; if (i0 + 1 < len) imp[i0 + 1] += fr;
+        double x1 = 0, y1 = 0; for (size_t k = 0; k < len; k++) { double yk = b0 * imp[k] + b1 * x1 - a1 * y1; x1 = imp[k]; y1 = yk; ir[k] = yk; }
+        double e = 0; for (double v : ir) e += v * v; e = std::sqrt(e); if (e > 0) for (auto& v : ir) v /= e;   // unit energy per ear, like a loaded set
+        ears.push_back(v_arr(std::move(ir)));
+    }
+    (void)x; return v_list(std::move(ears));
+}
+inline vptr sig_hrir(vlist& a, Interp& i) {
+    if (!hrtf_try_default(i)) return sig_hrir_model(a, i);
+    double az = i.scalar(a[0]), el = i.scalar(a[1]), sr = i.scalar(a[2]); hrtf_set& h = hrtf();
+    // nearest direction on the sphere
+    double ca = deg2rad(az), ce = deg2rad(el); double x = std::cos(ce) * std::cos(ca), y = std::cos(ce) * std::sin(ca), z = std::sin(ce);
+    size_t best = 0; double bd = -2;
+    for (size_t k = 0; k < h.az.size(); k++) { double a2 = deg2rad(h.az[k]), e2 = deg2rad(h.el[k]); double d = x * std::cos(e2) * std::cos(a2) + y * std::cos(e2) * std::sin(a2) + z * std::sin(e2); if (d > bd) { bd = d; best = k; } }
+    varr L = h.left[best], R = h.right[best];
+    if (std::fabs(sr - h.sr) > 1) {
+        double f = sr / h.sr; L = resample_sinc(L, f); R = resample_sinc(R, f);
+        // resampling to a lower rate drops the band above its Nyquist and with it energy: renormalise so that
+        // the front direction keeps unit energy at this rate (computed once per rate)
+        static std::map<long, double> scale; long key = (long)sr;
+        if (!scale.count(key)) { size_t fr = 0; double bd = 1e9; for (size_t k = 0; k < h.az.size(); k++) { double d = std::fabs(h.az[k]) + std::fabs(h.el[k]); if (d < bd) { bd = d; fr = k; } }
+            varr fl = resample_sinc(h.left[fr], f), frr = resample_sinc(h.right[fr], f); double e = 0; for (double v : fl) e += v * v; for (double v : frr) e += v * v; scale[key] = std::sqrt(e / 2); }
+        double sc = scale[key] > 0 ? scale[key] : 1; L /= sc; R /= sc;
+    }
+    return v_list({ v_arr(std::move(L)), v_arr(std::move(R)) });
+}
+
+// (binaural-level sr speakers) => the gain that gives a front source, decoded at order 1 to these virtual speakers
+//   (ambi-decoder) and rendered with their head responses (hrir), the energy of the front head response itself;
+//   binaural-decode uses it (it depends on the rate and on the set of responses loaded)
+inline vptr sig_binaural_level(vlist& a, Interp& i) {
+    double sr = i.scalar(a[0]); auto dirs = speaker_dirs(a[1], i);
+    auto M = ambi_decoder(1, dirs); auto src = sh_gains(1, 0, 0);
+    auto resp = [&](double az, double el) { vlist args = { v_num(az), v_num(el), v_num(sr) }; vptr h = sig_hrir(args, i); return std::make_pair(i.num(h->l[0]), i.num(h->l[1])); };
+    std::vector<double> L, R;
+    for (size_t d = 0; d < dirs.size(); d++) {
+        double g = 0; for (size_t k = 0; k < src.size(); k++) g += M[d][k] * src[k];
+        auto h = resp(dirs[d].first, dirs[d].second);
+        if (L.size() < h.first.size()) L.resize(h.first.size(), 0.0);
+        if (R.size() < h.second.size()) R.resize(h.second.size(), 0.0);
+        for (size_t k = 0; k < h.first.size(); k++) L[k] += g * h.first[k];
+        for (size_t k = 0; k < h.second.size(); k++) R[k] += g * h.second[k];
+    }
+    auto f = resp(0, 0); double ef = 0, ed = 0;
+    for (double v : f.first) ef += v * v; for (double v : f.second) ef += v * v;
+    for (double v : L) ed += v * v; for (double v : R) ed += v * v;
+    return v_num(std::sqrt(ef / std::max(ed, 1e-12)));
+}
+
+// --- music information retrieval: chroma, self-similarity, tempo, beats --------------------------
+// the magnitude spectrogram shared by the analyses below: a periodic Hann window of n, hop, the signal
+// padded with n/2 zeros on both sides so a frame is centred on its hop; => frames x (n/2 + 1)
+inline std::vector<std::vector<double>> mag_spectrogram(const varr& x, size_t n, size_t hop) {
+    std::vector<double> xp(x.size() + n, 0.0); for (size_t k = 0; k < x.size(); k++) xp[n / 2 + k] = x[k];
+    size_t bins = n / 2 + 1, frames = (xp.size() - n) / hop + 1;
+    std::vector<double> w(n); for (size_t k = 0; k < n; k++) w[k] = 0.5 - 0.5 * std::cos(2 * 3.14159265358979323846 * k / n);
+    std::vector<std::vector<double>> mag(frames, std::vector<double>(bins)); std::vector<double> spec(2 * n);
+    for (size_t f = 0; f < frames; f++) {
+        for (size_t k = 0; k < n; k++) { size_t idx = f * hop + k; spec[2 * k] = idx < xp.size() ? xp[idx] * w[k] : 0; spec[2 * k + 1] = 0; }
+        fft_inplace(spec.data(), n, -1);
+        for (size_t b = 0; b < bins; b++) mag[f][b] = std::hypot(spec[2 * b], spec[2 * b + 1]);
+    }
+    return mag;
+}
+// (chromagram x sr n hop) => a 12 x frames matrix (rows C C# D ... B), a frame every hop samples, the first at 0.
+//   Read from the spectral peaks (as HPCP) of the magnitude spectrogram (Hann n): the local maxima above -80 dB and
+//   above 1/1000 of the frame's strongest, their frequency refined by a parabola through the peak and its
+//   neighbours (on the log magnitudes), each given to the pitch class of its nearest note between C2 and B6, so a
+//   tone counts once; a peak that is probably the 3rd, 5th, 6th or 7th partial of a lower one (at that fraction of
+//   its frequency within a third of a semitone, and at least 0.3 as loud) counts a tenth, so overtones do not pull
+//   the harmony a fifth or a third up. Every frame scaled to a maximum of 1 (a silent frame stays 0)
+inline vptr sig_chromagram(vlist& a, Interp& i) {
+    const varr& x = i.num(a[0]); double sr = i.scalar(a[1]); size_t n = (size_t)i.index(a[2]), hop = (size_t)i.index(a[3]);
+    if (n < 16 || (n & (n - 1))) i.bad("n must be a power of 2 >= 16");
+    if (hop < 1 || hop > n) i.bad("hop must be in 1..n");
+    auto mag = mag_spectrogram(x, n, hop); size_t frames = mag.size(), bins = n / 2 + 1;
+    const double scale = 4.0 / n;                                  // a full-scale sine = 1
+    std::vector<varr> rows(12, varr(0.0, frames));
+    std::vector<std::pair<double, double>> peaks;
+    for (size_t f = 0; f < frames; f++) {
+        std::vector<double> m(bins); double mx = 0;
+        for (size_t b = 0; b < bins; b++) { m[b] = mag[f][b] * scale; mx = std::max(mx, m[b]); }
+        if (mx < 1e-4) continue;                                   // below -80 dB: silence
+        double floor = std::max(1e-4, mx * 1e-3); peaks.clear();
+        for (size_t b = 2; b + 1 < bins; b++) {
+            if (m[b] < floor || m[b] <= m[b - 1] || m[b] < m[b + 1]) continue;
+            double l = std::log(m[b - 1] + 1e-12), c = std::log(m[b] + 1e-12), r = std::log(m[b + 1] + 1e-12);
+            double d = l - 2 * c + r, off = d < 0 ? std::clamp(0.5 * (l - r) / d, -0.5, 0.5) : 0.0;
+            peaks.push_back({ (b + off) * sr / n, m[b] });
+        }
+        double c[12] = {0};
+        for (size_t p = 0; p < peaks.size(); p++) {
+            double fr = peaks[p].first, mg = peaks[p].second;
+            int note = (int)std::lround(69 + 12 * std::log2(fr / 440.0));
+            if (note < 36 || note > 95) continue;
+            double w = 1.0;
+            for (int h : { 3, 5, 6, 7 }) { double f0 = fr / h;
+                for (size_t q = 0; q < p && w == 1.0; q++) if (std::fabs(12 * std::log2(peaks[q].first / f0)) < 0.33 && peaks[q].second >= 0.3 * mg) w = 0.1; }
+            c[note % 12] += w * mg;
+        }
+        double top = 0; for (int k = 0; k < 12; k++) top = std::max(top, c[k]);
+        if (top > 0) for (int k = 0; k < 12; k++) rows[k][f] = c[k] / top;
+    }
+    vlist out; for (int k = 0; k < 12; k++) out.push_back(v_arr(std::move(rows[k])));
+    return v_list(std::move(out));
+}
+// (self-similarity F) => the frames x frames matrix of the cosine similarity between the columns of a feature
+//   matrix F (rows are features, columns frames: a chromagram, a spectrogram); 1 on the diagonal, 0 for frames
+//   with nothing in common (Foote 1999: the structure of a piece as a picture, repeats as stripes off the diagonal)
+inline vptr sig_self_similarity(vlist& a, Interp& i) {
+    if (a[0]->t != Value::LIST || a[0]->l.empty()) i.bad("a matrix (a list of row vectors)");
+    size_t rows = a[0]->l.size(), frames = i.num(a[0]->l[0]).size();
+    std::vector<const varr*> R(rows); for (size_t r = 0; r < rows; r++) { R[r] = &i.num(a[0]->l[r]); if (R[r]->size() != frames) i.bad("rows of different lengths"); }
+    std::vector<double> norm(frames, 0.0);
+    for (size_t f = 0; f < frames; f++) { double s = 0; for (size_t r = 0; r < rows; r++) s += (*R[r])[f] * (*R[r])[f]; norm[f] = std::sqrt(s); }
+    std::vector<varr> S(frames, varr(0.0, frames));
+    for (size_t p = 0; p < frames; p++) for (size_t q = p; q < frames; q++) {
+        double s = 0; for (size_t r = 0; r < rows; r++) s += (*R[r])[p] * (*R[r])[q];
+        double d = norm[p] * norm[q]; double v = d > 0 ? s / d : 0; S[p][q] = v; S[q][p] = v;
+    }
+    vlist out; for (size_t p = 0; p < frames; p++) out.push_back(v_arr(std::move(S[p])));
+    return v_list(std::move(out));
+}
+// (foote-novelty S width) => a vector, one value per frame: the self-similarity matrix correlated along its
+//   diagonal with a checkerboard kernel of width x width (Gaussian-tapered; width even, ~16-64 frames): the mean
+//   similarity within the past and within the future minus the mean similarity between them, each weighted by the
+//   kernel and taken only over what lies inside the matrix (0 near the ends, where less than half of the kernel
+//   fits). High where what comes before is unlike what comes after, the boundaries of the sections (Foote 2000)
+inline vptr sig_foote_novelty(vlist& a, Interp& i) {
+    if (a[0]->t != Value::LIST || a[0]->l.empty()) i.bad("a matrix (a list of row vectors)");
+    size_t frames = a[0]->l.size(); int width = (int)i.scalar(a[1]); if (width < 2) i.bad("width must be >= 2"); if (width % 2) width++;
+    std::vector<const varr*> S(frames); for (size_t r = 0; r < frames; r++) { S[r] = &i.num(a[0]->l[r]); if (S[r]->size() != frames) i.bad("not square"); }
+    int h = width / 2; std::vector<double> g(width); double sigma = h / 2.0;
+    for (int k = 0; k < width; k++) { double d = k - h + 0.5; g[k] = std::exp(-0.5 * d * d / (sigma * sigma)); }
+    double full = 0; for (int u = 0; u < width; u++) for (int v = 0; v < width; v++) if ((u < h) == (v < h)) full += g[u] * g[v];
+    varr nov(0.0, frames);
+    for (size_t f = 0; f < frames; f++) {
+        double same = 0, ws = 0, cross = 0, wc = 0;
+        for (int u = -h; u < h; u++) for (int v = -h; v < h; v++) {
+            long p = (long)f + u, q = (long)f + v; if (p < 0 || q < 0 || p >= (long)frames || q >= (long)frames) continue;
+            double w = g[u + h] * g[v + h], x = (*S[p])[q];
+            if ((u < 0) == (v < 0)) { same += w * x; ws += w; } else { cross += w * x; wc += w; }
+        }
+        bool enough = ws > 0.5 * full && wc > 0.5 * full;          // too little of the kernel inside: unreliable
+        nov[f] = enough ? std::max(0.0, same / ws - cross / wc) : 0.0;
+    }
+    return v_arr(std::move(nov));
+}
+// (tempogram flux fps window [step]) => a matrix bpm x columns: every step frames (1 by default: a column per frame;
+//   (/ fps 4) gives four columns a second, much faster on a long piece), the autocorrelation of the onset strength
+//   (a vector, fps values a second) over a Hann window of window frames around the frame, read at the lags of the
+//   tempi 30..300 bpm (one row per bpm; a lag between two frames interpolated; only the lags of that range are
+//   computed). The strength is first taken above its local mean (0.3 s) and rectified: its peaks, without the slow
+//   decay of a big hit, which would look periodic at every tempo. Every column is divided by the autocorrelation at
+//   lag 0 (the window's energy), so 1 is a perfectly periodic pulse and a passage without one stays dark
+inline vptr sig_tempogram(vlist& a, Interp& i) {
+    const varr& flux = i.num(a[0]); double fps = i.scalar(a[1]); int win = (int)i.index(a[2]);
+    int step = a.size() > 3 ? (int)std::lround(i.scalar(a[3])) : 1; if (step < 1) step = 1;
+    if (win < 8) i.bad("window must be >= 8"); if (win % 2) win++;
+    if (fps <= 0) i.bad("fps must be > 0");
+    int frames = (int)flux.size(), h = win / 2, cols = (frames + step - 1) / step;
+    std::vector<double> o(frames, 0.0);
+    { int r = std::max(1, (int)std::lround(fps * 0.15));
+      for (int k = 0; k < frames; k++) { double m = 0; int cnt = 0; for (int j = k - r; j <= k + r; j++) if (j >= 0 && j < frames) { m += flux[j]; cnt++; } o[k] = std::max(0.0, flux[k] - m / cnt); } }
+    int maxLag = std::min(h - 1, (int)std::ceil(fps * 60 / 30) + 1);
+    std::vector<double> w(win), seg(win), ac((size_t)std::max(1, maxLag + 1));
+    for (int k = 0; k < win; k++) w[k] = 0.5 - 0.5 * std::cos(2 * 3.14159265358979323846 * k / win);
+    std::vector<varr> rows(271, varr(0.0, (size_t)cols));
+    for (int col = 0; col < cols; col++) {
+        int f = col * step; double m = 0; int cnt = 0;
+        for (int k = 0; k < win; k++) { long idx = (long)f - h + k; if (idx >= 0 && idx < frames) { m += o[idx]; cnt++; } } m = cnt ? m / cnt : 0;
+        for (int k = 0; k < win; k++) { long idx = (long)f - h + k; seg[k] = (idx >= 0 && idx < frames) ? (o[idx] - m) * w[k] : 0; }
+        for (int lag = 0; lag <= maxLag; lag++) { double s = 0; for (int k = 0; k + lag < win; k++) s += seg[k] * seg[k + lag]; ac[lag] = std::max(0.0, s); }
+        double e = ac[0] > 1e-12 ? ac[0] : 1.0;
+        for (int bpm = 30; bpm <= 300; bpm++) {
+            double lag = fps * 60.0 / bpm; int l0 = (int)lag; double t = lag - l0, v = 0;
+            if (l0 + 1 <= maxLag) v = ac[l0] * (1 - t) + ac[l0 + 1] * t; else if (l0 <= maxLag) v = ac[l0];
+            rows[bpm - 30][col] = v / e;
+        }
+    }
+    vlist out; for (int b = 0; b < 271; b++) out.push_back(v_arr(std::move(rows[b])));
+    return v_list(std::move(out));
+}
+// (beat-track flux fps bpm tightness) => the frames of the beats (a vector): dynamic programming over the onset
+//   strength (fps values a second) for the sequence of beats that is strong and keeps near the period of bpm
+//   (tightness, ~100: how much a deviation from the period costs, on a log scale; Ellis 2007)
+inline vptr sig_beat_track(vlist& a, Interp& i) {
+    const varr& o = i.num(a[0]); double fps = i.scalar(a[1]), bpm = i.scalar(a[2]), tight = i.scalar(a[3]);
+    size_t n = o.size(); if (n < 2 || bpm <= 0) return v_arr(varr(0.0, 0));
+    double period = fps * 60.0 / bpm; int lo = std::max(1, (int)std::lround(period / 2)), hi = (int)std::lround(period * 2);
+    std::vector<double> score(n, 0.0); std::vector<long> from(n, -1);
+    double mx = 0; for (size_t k = 0; k < n; k++) mx = std::max(mx, o[k]); double scale = mx > 0 ? 1.0 / mx : 1.0;
+    for (size_t t = 0; t < n; t++) {
+        double best = 0; long arg = -1;
+        for (int lag = lo; lag <= hi && lag <= (long)t; lag++) {
+            double d = std::log((double)lag / period); double c = score[t - lag] - tight * d * d;
+            if (c > best || arg < 0) { best = c; arg = (long)t - lag; }
+        }
+        score[t] = o[t] * scale + (arg >= 0 ? best : 0); from[t] = arg;
+    }
+    // the last beat: the best score in the final period, then back along the links
+    size_t last = n - 1; double bs = -1e300; for (size_t t = n > (size_t)hi ? n - hi : 0; t < n; t++) if (score[t] > bs) { bs = score[t]; last = t; }
+    std::vector<double> beats; for (long t = (long)last; t >= 0; t = from[t]) { beats.push_back((double)t); if (from[t] < 0) break; }
+    std::reverse(beats.begin(), beats.end());
+    varr out(0.0, beats.size()); for (size_t k = 0; k < beats.size(); k++) out[k] = beats[k];
+    return v_arr(std::move(out));
+}
+
+
+// (mel-spectrogram x sr n hop nmel) => an nmel x frames matrix: the energy in dB of the magnitude spectrogram (Hann
+//   n, hop, a frame every hop samples, scaled so that a full-scale sine is 0 dB) through nmel triangular filters
+//   evenly spaced on the mel scale from 0 to sr/2 (a band narrower than a bin takes its nearest bin), floored at
+//   -100 dB for silence: a spectrogram at the ear's resolution, the timbre of every frame
+inline std::vector<std::vector<double>> mel_filters(double sr, size_t n, int nmel) {
+    auto mel = [](double f) { return 2595.0 * std::log10(1 + f / 700.0); };
+    auto hz = [](double m) { return 700.0 * (std::pow(10.0, m / 2595.0) - 1); };
+    size_t bins = n / 2 + 1; double lo = 0, hi = mel(sr / 2);
+    std::vector<double> edges(nmel + 2); for (int k = 0; k < nmel + 2; k++) edges[k] = hz(lo + (hi - lo) * k / (nmel + 1));
+    std::vector<std::vector<double>> F(nmel, std::vector<double>(bins, 0.0));
+    for (int m = 0; m < nmel; m++) for (size_t b = 0; b < bins; b++) {
+        double f = b * sr / n, l = edges[m], c = edges[m + 1], r = edges[m + 2];
+        if (f > l && f < c) F[m][b] = (f - l) / (c - l); else if (f >= c && f < r) F[m][b] = (r - f) / (r - c);
+    }
+    for (int m = 0; m < nmel; m++) {                     // a band narrower than a bin: its nearest bin
+        bool any = false; for (double v : F[m]) if (v > 0) { any = true; break; }
+        if (!any) { long b = std::lround(edges[m + 1] * n / sr); F[m][(size_t)std::clamp(b, 0L, (long)bins - 1)] = 1.0; }
+    }
+    return F;
+}
+inline std::vector<varr> log_mel(const varr& x, double sr, size_t n, size_t hop, int nmel) {
+    auto mag = mag_spectrogram(x, n, hop); size_t frames = mag.size(), bins = n / 2 + 1;
+    auto F = mel_filters(sr, n, nmel);
+    std::vector<varr> rows(nmel, varr(0.0, frames));
+    const double s2 = (4.0 / n) * (4.0 / n);             // magnitudes scaled: a full-scale sine = 1
+    for (size_t f = 0; f < frames; f++) for (int m = 0; m < nmel; m++) {
+        double e = 0; for (size_t b = 0; b < bins; b++) e += F[m][b] * mag[f][b] * mag[f][b];
+        rows[m][f] = std::max(-100.0, 10 * std::log10(e * s2 + 1e-30));
+    }
+    return rows;
+}
+inline vptr sig_mel_spectrogram(vlist& a, Interp& i) {
+    const varr& x = i.num(a[0]); double sr = i.scalar(a[1]); size_t n = (size_t)i.index(a[2]), hop = (size_t)i.index(a[3]); int nmel = (int)i.index(a[4]);
+    if (n < 16 || (n & (n - 1))) i.bad("n must be a power of 2 >= 16"); if (hop < 1 || hop > n) i.bad("hop must be in 1..n"); if (nmel < 2) i.bad("nmel must be >= 2");
+    auto rows = log_mel(x, sr, n, hop, nmel);
+    vlist out; for (auto& r : rows) out.push_back(v_arr(std::move(r)));
+    return v_list(std::move(out));
+}
+// (mfcc-gram x sr n hop nmel ncoeff) => an ncoeff x frames matrix: the mel-frequency cepstral coefficients of every
+//   frame (the DCT-II of the mel spectrogram in dB, nmel filters, the first ncoeff coefficients: a smooth description of
+//   the spectral envelope, the timbre; coefficient 0 is the overall level)
+inline vptr sig_mfcc_gram(vlist& a, Interp& i) {
+    const varr& x = i.num(a[0]); double sr = i.scalar(a[1]); size_t n = (size_t)i.index(a[2]), hop = (size_t)i.index(a[3]); int nmel = (int)i.index(a[4]), nc = (int)i.index(a[5]);
+    if (n < 16 || (n & (n - 1))) i.bad("n must be a power of 2 >= 16"); if (hop < 1 || hop > n) i.bad("hop must be in 1..n");
+    if (nmel < 2 || nc < 1 || nc > nmel) i.bad("need 2 <= ncoeff <= nmel");
+    auto mel = log_mel(x, sr, n, hop, nmel); size_t frames = mel[0].size();
+    std::vector<varr> rows(nc, varr(0.0, frames));
+    for (size_t f = 0; f < frames; f++) for (int c = 0; c < nc; c++) {
+        double s = 0; for (int m = 0; m < nmel; m++) s += mel[m][f] * std::cos(3.14159265358979323846 * c * (m + 0.5) / nmel);
+        rows[c][f] = s * std::sqrt(2.0 / nmel) * (c == 0 ? std::sqrt(0.5) : 1.0);
+    }
+    vlist out; for (auto& r : rows) out.push_back(v_arr(std::move(r)));
+    return v_list(std::move(out));
+}
+
+inline void add_signals(Interp& i) {
+    i.def("fft", sig_fft, 1, 1); i.def("ifft", sig_ifft, 1, 1);
+    i.def("osc", sig_osc, 3, 3); i.def("iir", sig_iir, 3, 3); i.def("delay", sig_delay, 2, 2);
+    i.def("resample", sig_resample, 2, 2); i.def("autocorr", sig_autocorr, 1, 1);
+    i.def("interleave", sig_interleave, 1, 1); i.def("deinterleave", sig_deinterleave, 2, 2);
+    i.def("local-maxima", sig_local_maxima, 1, 1); i.def("gather", sig_gather, 2, 2);
+    i.def("add-at!", sig_add_at_inplace, 3, 3); i.def("comb", sig_comb, 3, 3); i.def("allpass", sig_allpass, 3, 3);
+    i.def("pvoc", sig_pvoc, 2, 2);
+    i.def("adsr", sig_adsr, 6, 6); i.def("lag", sig_lag, 3, 3); i.def("hpss", sig_hpss, 4, 4);
+    i.def("chromagram", sig_chromagram, 4, 4); i.def("self-similarity", sig_self_similarity, 1, 1); i.def("foote-novelty", sig_foote_novelty, 2, 2);
+    i.def("tempogram", sig_tempogram, 3, 4); i.def("beat-track", sig_beat_track, 4, 4);
+    i.def("mel-spectrogram", sig_mel_spectrogram, 5, 5); i.def("mfcc-gram", sig_mfcc_gram, 6, 6);
+    i.def("conv-fast", sig_conv_fast, 2, 2); i.def("ambi-gains", sig_ambi_gains, 3, 3); i.def("ambi-decoder", sig_ambi_decoder, 2, 2); i.def("binaural-level", sig_binaural_level, 2, 2); i.def("ambi-rotate", sig_ambi_rotate, 2, 2); i.def("hrir", sig_hrir, 3, 3); i.def("hrir-model", sig_hrir_model, 3, 3);
+    i.def("hrtf-load", sig_hrtf_load, 1, 1); i.def("hrtf-unload", sig_hrtf_unload, 0, 0); i.def("hrtf-loaded", sig_hrtf_loaded, 0, 0);
+}
+
+} // namespace musil

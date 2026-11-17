@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Carmine-Emanuele Cella. SPDX-License-Identifier: BSD-2-Clause
-// code.cpp — the Moritz language in the application: the code editor (codewindow.h) and the
-// Console's prompt. Both send code to a context (session.h): "session", or an open patch's.
+// code.cpp — Musil in the application: the code editor (codewindow.h) and the Console's prompt.
+// Both send code to the session (session.h).
 
 #include "codewindow.h"
 
@@ -27,10 +27,6 @@
 #include <fstream>
 #include <set>
 #include <sstream>
-
-#ifdef OPAQUE      // Windows (wingdi.h) defines it; the language has a value type of that name
-#undef OPAQUE
-#endif
 
 namespace moritz {
 
@@ -233,7 +229,7 @@ std::string wordAt(Fl_Text_Buffer* b, int pos) {
 std::string helpText(const std::string& name) {
     auto* e = languageHelp(name);
     if (!e) {
-        if (keywords().count(name)) return name + "\n\na form of the language (see the manual)";
+        if (keywords().count(name)) return name + "\n\na form of Musil (see the Musil manual)";
         return "";
     }
     std::string t = e->signature + "\n\n";
@@ -273,22 +269,6 @@ public:
 
 }  // namespace
 
-// ---- is it code or a patch?
-
-bool isCodeText(const std::string& text) {
-    size_t i = 0, n = text.size();
-    while (i < n) {
-        if (std::isspace((unsigned char)text[i])) { ++i; continue; }
-        if (text[i] == ';') { while (i < n && text[i] != '\n') ++i; continue; }
-        break;
-    }
-    if (i >= n) return false;                       // empty: a new patch
-    if (text[i] != '(') return true;
-    ++i;
-    while (i < n && std::isspace((unsigned char)text[i])) ++i;
-    return text.compare(i, 5, "patch") != 0 || (i + 5 < n && identChar(text[i + 5]));
-}
-
 // ---- the window
 
 CodeWindow::CodeWindow() : Fl_Double_Window(1060, 680, "Untitled — code") {
@@ -320,15 +300,6 @@ CodeWindow::CodeWindow() : Fl_Double_Window(1060, 680, "Untitled — code") {
            "Comment or uncomment the lines (Cmd-/)");
     button(352, 76, "Console", [](Fl_Widget*, void*) { App::get().showConsole(); },
            "The Console: what the code prints, and a prompt");
-    auto* cl = new Fl_Box(440, 6, 64, 24, "Context:");
-    cl->labelsize(12);
-    cl->labelcolor(kDim);
-    cl->align(FL_ALIGN_RIGHT | FL_ALIGN_INSIDE);
-    context_ = new Fl_Choice(508, 6, 240, 24);
-    context_->textsize(12);
-    context_->labelsize(12);
-    context_->tooltip("Whose interpreter runs the code: the session, or an open patch");
-    context_->clear_visible_focus();
     bar->end();
     // the outline, the editor, the variables and the help, side by side
     auto* tile = new Fl_Tile(0, tb, W, H - tb - sb);
@@ -404,13 +375,13 @@ CodeWindow::CodeWindow() : Fl_Double_Window(1060, 680, "Untitled — code") {
         if (ins || del) static_cast<CodeWindow*>(d)->textChanged();
     }, this);
     callback([](Fl_Widget* w, void*) {
+        auto* cw = static_cast<CodeWindow*>(w);
         if (Fl::event() == FL_SHORTCUT && Fl::event_key() == FL_Escape) return;   // Esc stops, it does not close
-        static_cast<CodeWindow*>(w)->closeRequested();
+        if (cw->confirmDiscard()) App::get().closeCode(cw);
     });
-    fillContexts();
     refreshVariables();
     setStatus("Cmd-Enter runs the block · Shift-Cmd-Enter the file · Esc stops · Tab completes · Cmd-/ comments");
-    helpBuf_->text("Move the cursor onto a name to read its help here.\n\nAbove: what the context defines, after each run.");
+    helpBuf_->text("Move the cursor onto a name to read its help here.\n\nAbove: what the session defines, after each run.");
     refreshTitle();
 }
 
@@ -458,12 +429,12 @@ bool CodeWindow::saveAs() {
     Fl_Native_File_Chooser fc;
     fc.title("Save Code");
     fc.type(Fl_Native_File_Chooser::BROWSE_SAVE_FILE);
-    fc.filter("Moritz file\t*.moritz");
+    fc.filter("Musil script\t*.mu");
     fc.options(Fl_Native_File_Chooser::SAVEAS_CONFIRM);
-    fc.preset_file(path_.empty() ? "untitled.moritz" : path_.substr(path_.find_last_of("/\\") + 1).c_str());
+    fc.preset_file(path_.empty() ? "untitled.mu" : path_.substr(path_.find_last_of("/\\") + 1).c_str());
     if (fc.show() != 0) return false;
     std::string p = portablePath(fc.filename());
-    if (p.size() < 7 || p.compare(p.size() - 7, 7, ".moritz") != 0) p += ".moritz";
+    if (p.size() < 3 || p.compare(p.size() - 3, 3, ".mu") != 0) p += ".mu";
     path_ = p;
     return save();
 }
@@ -488,57 +459,9 @@ void CodeWindow::setStatus(const std::string& s) {
     status_->redraw();
 }
 
-void CodeWindow::fillContexts() {
-    std::string current = context_->text() ? context_->text() : "";
-    context_->clear();
-    contextKeys_.clear();
-    context_->add("session");
-    contextKeys_.push_back(nullptr);
-    for (auto* d : App::get().docs) {
-        std::string t = d->label() ? d->label() : "Untitled";
-        std::string esc;
-        for (char c : t) { if (c == '/' || c == '\\' || c == '&' || c == '_') esc += '\\'; esc += c; }
-        context_->add(esc.c_str());
-        contextKeys_.push_back(d);
-    }
-    int pick = 0;
-    for (int k = 0; k < context_->size() - 1; ++k)
-        if (context_->text(k) && current == context_->text(k)) pick = k;
-    context_->value(pick);
-}
+std::shared_ptr<LangContext> CodeWindow::context() { return sessionContext(); }
 
-std::shared_ptr<LangContext> CodeWindow::context() {
-    fillContexts();
-    int i = context_->value();
-    const void* key = i >= 0 && i < (int)contextKeys_.size() ? contextKeys_[(size_t)i] : nullptr;
-    if (!key) return sessionContext();
-    return patchContext(key, context_->text() ? context_->text() : "patch");
-}
-
-void CodeWindow::patchesMade(const std::vector<std::string>& patches, const std::string& file) {
-    App::get().showPatches(patches, file);
-}
-
-void CodeWindow::closeRequested() {
-    if (confirmDiscard()) App::get().closeCode(this);
-}
-
-void CodeWindow::setText(const std::string& t) {
-    syncing_ = true;
-    text_->text(t.c_str());
-    syncing_ = false;
-    restyle();
-    refreshOutline();
-}
-
-std::string CodeWindow::text() const {
-    char* all = text_->text();
-    std::string t = all;
-    std::free(all);
-    return t;
-}
-
-void CodeWindow::run(const std::string& code, int firstLine, int lastLine, const std::string& fileName) {
+void CodeWindow::run(const std::string& code, int firstLine, int lastLine) {
     auto ctx = context();
     if (ctx->busy()) { setStatus("busy: " + ctx->label + " is still running (Stop to end it)"); return; }
     errorLine_ = 0;
@@ -547,7 +470,7 @@ void CodeWindow::run(const std::string& code, int firstLine, int lastLine, const
     restyle();
     Fl::remove_timeout(flashTimer, this);
     Fl::add_timeout(0.35, flashTimer, this);
-    std::string file = fileName;
+    std::string file = path_.empty() ? "untitled.mu" : path_;
     setStatus("running in " + ctx->label + "...");
     App::get().ensureConsole();
     show();
@@ -568,7 +491,6 @@ void CodeWindow::run(const std::string& code, int firstLine, int lastLine, const
                 editor_->scroll(std::max(1, r.line - 5), 0);
             }
         }
-        if (r.ok && !r.patches.empty()) patchesMade(r.patches, file);
         refreshVariables();
     });
 }
@@ -600,14 +522,14 @@ void CodeWindow::runBlock() {
     }
     std::string code;
     for (int k = first - 1; k < last && k < (int)lines.size(); ++k) code += lines[(size_t)k] + "\n";
-    run(code, first, last, path_.empty() ? "untitled.moritz" : path_);
+    run(code, first, last);
 }
 
 void CodeWindow::runFile() {
     char* all = text_->text();
     std::string t = all;
     std::free(all);
-    run(t, 1, text_->count_lines(0, text_->length()) + 1, path_.empty() ? "untitled.moritz" : path_);
+    run(t, 1, text_->count_lines(0, text_->length()) + 1);
 }
 
 void CodeWindow::stop() {
@@ -673,7 +595,6 @@ void CodeWindow::cursorMoved() {
 }
 
 void CodeWindow::textChanged() {
-    if (syncing_) return;
     if (!dirty_) {
         dirty_ = true;
         refreshTitle();
@@ -709,14 +630,6 @@ void CodeWindow::refreshOutline() {
     outlineLines_.clear();
     for (size_t k = 0; k < lines.size(); ++k) {
         const std::string& l = lines[k];
-        if (size_t o = l.find("(obj "); o != std::string::npos && l.find_first_not_of(" \t") == o) {   // a box
-            std::istringstream ss(l.substr(o + 5));
-            std::string id, cls;
-            ss >> id >> cls;
-            outline_->add(("▫ " + id + "  " + cls).c_str());
-            outlineLines_.push_back((int)k + 1);
-            continue;
-        }
         for (const char* kw : {"function ", "var ", "object "}) {
             size_t n = std::strlen(kw);
             if (l.compare(0, n, kw) != 0) continue;
@@ -752,8 +665,6 @@ void CodeWindow::flashTimer(void* data) {
 namespace {
 
 struct Prompt {
-    Fl_Choice* context = nullptr;
-    std::vector<const void*> keys;
     std::vector<std::string> history;
     int historyAt = 0;
     std::string pending;                 // lines of a form not closed yet
@@ -763,14 +674,7 @@ Prompt& prompt() {
     return p;
 }
 
-std::shared_ptr<LangContext> promptContext() {
-    refreshConsoleContexts();
-    auto& p = prompt();
-    int i = p.context ? p.context->value() : 0;
-    const void* key = i >= 0 && i < (int)p.keys.size() ? p.keys[(size_t)i] : nullptr;
-    if (!key) return sessionContext();
-    return patchContext(key, p.context->text() ? p.context->text() : "patch");
-}
+std::shared_ptr<LangContext> promptContext() { return sessionContext(); }
 
 class PromptInput : public Fl_Input {
 public:
@@ -809,16 +713,14 @@ public:
         if (line.empty() && p.pending.empty()) return;
         if (!line.empty()) { p.history.push_back(line); p.historyAt = (int)p.history.size(); }
         auto ctx = promptContext();
-        App::get().log((p.pending.empty() ? "moritz> " : "    ... ") + line);
+        App::get().log((p.pending.empty() ? "musil> " : "   ... ") + line);
         p.pending += line + "\n";
         if (bracketBalance(p.pending) > 0) return;          // the form goes on, on the next line
         std::string code = p.pending;
         p.pending.clear();
         if (!ctx->eval(code, "<console>", 1, [](const EvalResult& r) {
-                if (r.ok) {
-                    if (!r.value.empty()) App::get().log("→ " + r.value);
-                    if (!r.patches.empty()) App::get().showPatches(r.patches, "<console>");
-                } else App::get().log(r.stopped ? "stopped" : "error: " + r.error);
+                if (r.ok) { if (!r.value.empty()) App::get().log("→ " + r.value); }
+                else App::get().log(r.stopped ? "stopped" : "error: " + r.error);
             }))
             App::get().log(ctx->label + " is busy: Esc stops it");
     }
@@ -826,47 +728,19 @@ public:
 
 }  // namespace
 
-void refreshConsoleContexts() {
-    auto& p = prompt();
-    if (!p.context) return;
-    std::string current = p.context->text() ? p.context->text() : "session";
-    p.context->clear();
-    p.keys.clear();
-    p.context->add("session");
-    p.keys.push_back(nullptr);
-    for (auto* d : App::get().docs) {
-        std::string t = d->label() ? d->label() : "Untitled";
-        std::string esc;
-        for (char c : t) { if (c == '/' || c == '\\' || c == '&' || c == '_') esc += '\\'; esc += c; }
-        p.context->add(esc.c_str());
-        p.keys.push_back(d);
-    }
-    int pick = 0;
-    for (int k = 0; k < p.context->size() - 1; ++k)
-        if (p.context->text(k) && current == p.context->text(k)) pick = k;
-    p.context->value(pick);
-}
-
 void buildConsolePrompt(Fl_Double_Window* win, int x, int y, int w, int h) {
-    auto& p = prompt();
-    p.context = new Fl_Choice(x, y, 150, h);
-    p.context->textsize(11);
-    p.context->tooltip("Whose interpreter runs what you type: the session, or an open patch");
-    p.context->clear_visible_focus();
-    p.context->callback([](Fl_Widget*, void*) {}, nullptr);
-    auto* in = new PromptInput(x + 156, y, w - 156 - 66, h);
+    auto* in = new PromptInput(x, y, w - 66, h);
     in->textfont(codeFont());
     in->textsize(12);
     in->color(fl_rgb_color(16, 17, 19));
     in->textcolor(kText);
     in->cursor_color(kText);
     in->box(FL_FLAT_BOX);
-    in->tooltip("The Moritz language: Enter runs, Up/Down history, Tab completes, Esc stops");
+    in->tooltip("Musil: Enter runs, Up/Down history, Tab completes, Esc stops");
     auto* stopB = new Fl_Button(x + w - 60, y, 60, h, "Stop");
     stopB->labelsize(11);
     stopB->callback([](Fl_Widget*, void*) { promptContext()->stop(); });
     stopB->clear_visible_focus();
-    refreshConsoleContexts();
     (void)win;
     in->take_focus();
 }

@@ -1,2 +1,0 @@
-; bad.moritz — contains an error on line 2
-(+ 1 "x")

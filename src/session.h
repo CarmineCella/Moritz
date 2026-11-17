@@ -1,9 +1,9 @@
 // Copyright (c) 2026 Carmine-Emanuele Cella. SPDX-License-Identifier: BSD-2-Clause
-// session.h — where code of the Moritz language runs inside the application: a context is an
-// interpreter (with std loaded) that the Console's prompt and the code editors send code to. There
-// is one called "session", and one for each open patch. Code runs on a thread of its own, one piece
-// at a time per context, so the windows stay alive and Stop works; what it prints goes to the
-// Console, and the result comes back on the main thread.
+// session.h — where Musil, the scripting language of Moritz, runs inside the application: a context is
+// an interpreter (with std.mu loaded) that the Console's prompt and the code editor send code to. There
+// is one, the session. Code runs on a thread of its own, one piece at a time, so the windows stay alive
+// and Stop works; what it prints goes to the Console, and the result comes back on the main thread.
+// Besides its libraries, the session's Musil reaches Moritz: send, buffer, buffer-rate, set-buffer!.
 #pragma once
 
 #include <atomic>
@@ -16,7 +16,9 @@
 
 namespace moritz {
 
-namespace lang { struct Interp; }
+}  // namespace moritz
+namespace musil { struct Interp; }
+namespace moritz {
 
 struct EvalResult {
     bool ok = true;
@@ -25,7 +27,6 @@ struct EvalResult {
     std::string error;          // the message, with the call stack
     std::string file;           // where the error is
     int line = 0;
-    std::vector<std::string> patches;   // the patches the run's top-level forms made (their text)
 };
 
 struct Variable {
@@ -34,8 +35,7 @@ struct Variable {
 
 class LangContext : public std::enable_shared_from_this<LangContext> {
 public:
-    // doc: the patch whose context this is (its MainWindow), nullptr for the session
-    LangContext(std::string label, const void* doc);
+    explicit LangContext(std::string label);
     ~LangContext();
     std::string label;
     bool busy() const { return busy_; }
@@ -48,7 +48,7 @@ public:
     std::vector<std::string> names();              // every name it knows (as of the last run)
 
 private:
-    std::unique_ptr<lang::Interp> interp_;
+    std::unique_ptr<musil::Interp> interp_;
     std::atomic<bool> busy_{false}, stop_{false};
     std::mutex mu_;
     std::vector<Variable> vars_;
@@ -57,12 +57,10 @@ private:
     void snapshot();                               // on the context's thread, after a run
 };
 
-// the contexts: "session", and one per open patch (keyed by the patch's document)
+// the session's context
 std::shared_ptr<LangContext> sessionContext();
-std::shared_ptr<LangContext> patchContext(const void* doc, const std::string& title);
-void dropPatchContext(const void* doc);
 
-// the documentation of the language's functions (language/help.txt)
+// the documentation of Musil's functions (musil/help.txt)
 struct HelpEntry {
     std::vector<std::string> names;
     std::string signature;

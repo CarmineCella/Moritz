@@ -46,20 +46,52 @@ and the signal processing, analysis and learning of *Musil*.
 - **MIDI**: keyboards, controllers, notes in and out, polyphonic voices.
 - **Max patches**: File > Import from Max opens `.maxpat` files, converting
   what Moritz knows and reporting the rest.
-- **A language**: Moritz has a language of its own, a Lisp with vectors for
-  numbers, in which patches are written and in which you can program what is
-  easier to write than to draw: algorithmic composition, orchestration with
-  sample databases (Orchidea), scores and MusicXML, offline signal processing
-  and analysis, statistics and learning. Write it in the code editor (File >
-  New Code; Cmd-Enter runs the paragraph at the cursor, Tab completes, the
-  help of the name under the cursor is beside it) or at the Console's
-  prompt. A patch file is a program of the language, so a loop or a
-  function can write a patch (`examples/12-code`), and code can reach the
-  open patch: its boxes, its buffers, sending messages, adding boxes. A
-  patch's Code view is the same editor. Its libraries are in `language/`;
-  `moritz --run` and `moritz --repl` run it from a terminal (see below).
+- **Programming with Musil**: what is easier to write than to draw, you
+  write in Musil, the scripting language of Moritz (see
+  [Programming inside Moritz](#programming-inside-moritz-with-musil)).
 
 The complete list of objects is in [OBJECTS.md](OBJECTS.md).
+
+## Programming inside Moritz with Musil
+
+Some things are easier to write than to draw: loops, lists of lists,
+matrices, a search through a thousand sounds. For those, Moritz has a
+scripting language, **Musil**: a small Lisp whose numbers are vectors, with
+libraries for offline signal processing and analysis (STFT, phase vocoder,
+filters, onsets, spectral descriptors, convolution, ambisonics), statistics
+and learning (matrices, PCA, k-means, kNN, NMF), and music (notes, chords,
+rhythms, scores, MIDI files, MusicXML, orchestration with sample databases).
+
+- **Where you write it**: in the code editor (File > New Code, or open any
+  `.mu` file): Cmd-Enter runs the paragraph at the cursor, Shift-Cmd-Enter
+  the whole script, Tab completes, and the help of the name under the cursor
+  is beside the text. Or at the Console's prompt, one line at a time. What a
+  script prints goes to the Console.
+- **How it talks to your patches**: `buffer "name"` gives the channels of a
+  `buffer~` as vectors, `set-buffer! "name" channels [rate]` fills it (a
+  `waveform~` shows it at once, a `play~` plays it), and `send "name" values`
+  reaches every `receive name`.
+- **Files**: a patch is a `.moritz` file, a script a `.mu` file. A script
+  loads the libraries it uses: `load "signals.mu"`.
+
+For example, with a patch open that holds `buffer~ demo drums.wav`:
+
+```lisp
+; reverse the drums, darken them, fade out, and put them back
+load "signals.mu"
+var x (head (buffer "demo"))              ; the first channel, as a vector
+var sr (buffer-rate "demo")
+var y (normalize-peak (fade-out (lowpass (reverse x) sr 800 0.7) 4410))
+set-buffer! "demo" y sr
+send "done" 1                             ; tell the patch
+```
+
+Musil is the language its author wrote before Moritz; its code is in
+[`musil/`](musil/), exactly as Musil 0.9.1 was released (CI checks it), and
+it needs nothing of Moritz. Moritz leaves out Musil's own audio engine and
+plot windows, since Moritz plays and draws, so a score's synth events are
+silent in a script. Coming next: the `code` box, to put a Musil script inside
+a patch.
 
 ## The name
 
@@ -204,9 +236,9 @@ test runs locally: `tools/test-patches.sh ./moritz`.
 
 ## Command line
 
-- `moritz --run file.moritz [-- args...]` evaluates a file of the Moritz
-  language without opening a window; `moritz --repl` gives a prompt. A file
-  names the libraries it needs: `load "music"` loads `language/music.moritz`.
+- `moritz --run script.mu [-- args...]` runs a Musil script without opening
+  a window; `moritz --repl` gives a Musil prompt in the terminal. A script
+  names the libraries it needs: `load "music.mu"` loads `musil/src/music.mu`.
 - `moritz --no-audio [patch...]` opens with audio off, for a machine whose
   audio device misbehaves.
 - `moritz --import patch.maxpat [out.moritz]` converts a Max patch, as File >

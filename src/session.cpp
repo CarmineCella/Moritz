@@ -1,11 +1,11 @@
 // Copyright (c) 2026 Carmine-Emanuele Cella. SPDX-License-Identifier: BSD-2-Clause
-// session.cpp — contexts of the Moritz language inside the application (session.h)
+// session.cpp — where Musil runs inside the application (session.h)
 
 #include "session.h"
 
+#include "musil_cli.h"
+#include "musil_host.h"
 #include "gui.h"
-#include "lang/lang.h"
-#include "langpatch.h"
 #include "objects.h"
 
 #include <FL/Fl.H>
@@ -17,13 +17,12 @@
 #include <set>
 #include <sstream>
 
+#include <thread>
 #ifndef _WIN32
 #include <pthread.h>
-#else
-#include <thread>
 #endif
 
-#ifdef OPAQUE      // Windows (wingdi.h) defines it; the language has a value type of that name
+#ifdef OPAQUE      // Windows (wingdi.h) defines it; Musil has a value type of that name
 #undef OPAQUE
 #endif
 
@@ -41,7 +40,7 @@ void onMain(std::function<void()> f) {
     }, p);
 }
 
-// a detached thread with a large stack: the language's recursion is measured against it
+// a detached thread with a large stack: Musil's recursion is measured against it
 void startThread(std::function<void()> f) {
 #ifdef _WIN32
     std::thread(std::move(f)).detach();          // the executable's stack size (8 MB)
@@ -93,10 +92,10 @@ private:
 };
 
 // a value printed, cut at max characters without printing all of it first (a database is large)
-void preview(const lang::vptr& v, std::string& out, size_t max, int depth = 0) {
+void preview(const musil::vptr& v, std::string& out, size_t max, int depth = 0) {
     if (out.size() >= max) return;
-    if (!v || v->t == lang::Value::NIL) { out += "nil"; return; }
-    if (v->t == lang::Value::LIST) {
+    if (!v || v->t == musil::Value::NIL) { out += "nil"; return; }
+    if (v->t == musil::Value::LIST) {
         if (depth > 20) { out += "(...)"; return; }
         out += "(";
         for (size_t k = 0; k < v->l.size(); ++k) {
@@ -107,26 +106,25 @@ void preview(const lang::vptr& v, std::string& out, size_t max, int depth = 0) {
         out += ")";
         return;
     }
-    if (v->t == lang::Value::NUM && v->num.size() > 16) {
-        lang::vptr head = lang::v_arr(std::valarray<double>(v->num[std::slice(0, 8, 1)]));
-        out += lang::str_of(head);
+    if (v->t == musil::Value::NUM && v->num.size() > 16) {
+        musil::vptr head = musil::v_arr(std::valarray<double>(v->num[std::slice(0, 8, 1)]));
+        out += musil::str_of(head);
         out += " ... (" + std::to_string(v->num.size()) + " values)";
         return;
     }
-    if (v->t == lang::Value::STR) { out += "\"" + v->s.substr(0, max) + "\""; return; }
-    out += lang::str_of(v);
+    if (v->t == musil::Value::STR) { out += "\"" + v->s.substr(0, max) + "\""; return; }
+    out += musil::str_of(v);
 }
 
-std::string preview(const lang::vptr& v, size_t max) {
+std::string preview(const musil::vptr& v, size_t max) {
     std::string out;
     preview(v, out, max);
     if (out.size() > max + 20) out = out.substr(0, max) + " ...";
     return out;
 }
 
-std::string languageDir() { return resourceDir("language"); }
 
-// ---- the live patches: code on its thread reaches them through the main thread
+// ---- Moritz, from Musil: code on its thread reaches the patches through the main thread
 
 std::thread::id& mainThread() {
     static std::thread::id id = std::this_thread::get_id();   // first used on the main thread (a context is made there)
@@ -151,88 +149,30 @@ void onMainWait(const std::function<void()>& f) {
     if (ex) std::rethrow_exception(ex);
 }
 
-struct LiveRef { const void* doc; };
-
-lang::vptr liveValue(const void* doc) { return lang::v_opaque("live-patch", std::make_shared<LiveRef>(LiveRef{doc})); }
-
-// the open patch a live value names (main thread), or nullptr when it was closed
-MainWindow* liveDoc(const lang::vptr& v) {
-    if (!v || v->t != lang::Value::OPAQUE || v->opaque_tag != "live-patch") return nullptr;
-    const void* d = std::static_pointer_cast<LiveRef>(v->opaque)->doc;
-    for (auto* w : App::get().docs) if (w == d) return w;
-    return nullptr;
-}
-
-bool isLive(const lang::vptr& v) { return v && v->t == lang::Value::OPAQUE && v->opaque_tag == "live-patch"; }
-
-// the text of a patch value or of an open patch
-std::string anyPatchText(lang::Interp& I, const lang::vptr& v) {
-    std::string t;
-    if (patchValueText(v, t)) return t;
-    if (!isLive(v)) I.bad("expected a patch, got " + std::string(lang::type_name(v)));
-    bool open = false;
-    onMainWait([&] { if (auto* d = liveDoc(v)) { t = d->patch.serialize(); open = true; } });
-    if (!open) I.bad("that patch is closed");
-    return t;
-}
-
-// language values as a message: numbers, strings and symbols, lists spliced
-void toMessage(const lang::vptr& v, Message& m) {
-    if (!v || v->t == lang::Value::NIL) return;
-    if (v->t == lang::Value::NUM) {
-        for (double d : v->num) {
-            if (v->num.size() == 1 && !v->s.empty()) m.push_back(parseAtom(v->s));
-            else m.push_back(Atom(d));
-        }
-    } else if (v->t == lang::Value::LIST) {
+// Musil values as a message: numbers, strings and symbols, lists spliced
+void toMessage(const musil::vptr& v, Message& m) {
+    if (!v || v->t == musil::Value::NIL) return;
+    if (v->t == musil::Value::NUM) {
+        for (double d : v->num) m.push_back(Atom(d));
+    } else if (v->t == musil::Value::LIST) {
         for (auto& x : v->l) toMessage(x, m);
     } else {
         m.push_back(Atom(v->s));
     }
 }
 
-// (this-patch) the patch of this context
-lang::vptr fnThisPatch(lang::vlist&, lang::Interp& I) {
-    auto v = I.global->find("*patch*");
-    if (!v || !isLive(v)) I.bad("the session has no patch: choose a patch's context");
-    return v;
-}
-
-// (patch-text p) (patch-boxes p): of a patch value or an open patch
-lang::vptr fnAnyPatchText(lang::vlist& a, lang::Interp& I) { return lang::v_str(anyPatchText(I, a[0]) + "\n"); }
-lang::vptr fnAnyPatchBoxes(lang::vlist& a, lang::Interp& I) { return patchBoxes(anyPatchText(I, a[0])); }
-
 // (send name values...) to every receive name (as a send box, or a ; message)
-lang::vptr fnSend(lang::vlist& a, lang::Interp& I) {
+musil::vptr fnSend(musil::vlist& a, musil::Interp& I) {
     std::string name = I.str(a[0]);
     Message m;
     for (size_t k = 1; k < a.size(); ++k) toMessage(a[k], m);
     if (m.empty()) m.push_back(Atom("bang"));
     onMainWait([&] { App::get().host.sendTo(name, m); });
-    return lang::v_nil();
-}
-
-// (box-send p id values...) a message into the left inlet of a box of an open patch
-lang::vptr fnBoxSend(lang::vlist& a, lang::Interp& I) {
-    std::string id = I.str(a[1]);
-    Message m;
-    for (size_t k = 2; k < a.size(); ++k) toMessage(a[k], m);
-    if (m.empty()) m.push_back(Atom("bang"));
-    bool found = false, open = false;
-    onMainWait([&] {
-        auto* d = liveDoc(a[0]);
-        if (!d) return;
-        open = true;
-        for (auto& b : d->patch.boxes)
-            if (b->id == id) { found = true; b->message(0, m); break; }
-    });
-    if (!open) I.bad("that patch is closed");
-    if (!found) I.bad("no box " + id);
-    return lang::v_nil();
+    return musil::v_nil();
 }
 
 // (buffer name) the channels of a buffer~ as vectors; (buffer-rate name) its sample rate
-lang::vptr fnBuffer(lang::vlist& a, lang::Interp& I) {
+musil::vptr fnBuffer(musil::vlist& a, musil::Interp& I) {
     std::string name = I.str(a[0]);
     SampleBuffer copy;
     bool found = false;
@@ -244,28 +184,28 @@ lang::vptr fnBuffer(lang::vlist& a, lang::Interp& I) {
         }
     });
     if (!found) I.bad("no buffer~ " + name);
-    lang::vlist chans;
+    musil::vlist chans;
     for (int c = 0; c < copy.channels; ++c) {
         std::valarray<double> v((size_t)copy.frames);
         for (long f = 0; f < copy.frames; ++f) v[(size_t)f] = copy.data[(size_t)f * copy.channels + c];
-        chans.push_back(lang::v_arr(std::move(v)));
+        chans.push_back(musil::v_arr(std::move(v)));
     }
-    return lang::v_list(std::move(chans));
+    return musil::v_list(std::move(chans));
 }
 
-lang::vptr fnBufferRate(lang::vlist& a, lang::Interp& I) {
+musil::vptr fnBufferRate(musil::vlist& a, musil::Interp& I) {
     std::string name = I.str(a[0]);
     double sr = 0;
     onMainWait([&] { if (auto* b = findBuffer(&App::get().host, name)) sr = b->buf.sr; });
     if (sr <= 0) I.bad("no buffer~ " + name);
-    return lang::v_num(sr);
+    return musil::v_num(sr);
 }
 
 // (set-buffer! name channels [rate]) fills a buffer~: a vector, or a list of channels
-lang::vptr fnSetBuffer(lang::vlist& a, lang::Interp& I) {
+musil::vptr fnSetBuffer(musil::vlist& a, musil::Interp& I) {
     std::string name = I.str(a[0]);
     std::vector<std::valarray<double>> ch;
-    if (a[1]->t == lang::Value::NUM) ch.push_back(a[1]->num);
+    if (a[1]->t == musil::Value::NUM) ch.push_back(a[1]->num);
     else for (auto& c : I.list(a[1])) ch.push_back(I.num(c));
     if (ch.empty() || ch.size() > 8) I.bad("1 to 8 channels");
     size_t frames = 0;
@@ -292,72 +232,15 @@ lang::vptr fnSetBuffer(lang::vlist& a, lang::Interp& I) {
     return a[1];
 }
 
-// (insert! p patch [dx dy]) adds the boxes of a patch value to an open patch (ids already used are renamed)
-lang::vptr fnInsert(lang::vlist& a, lang::Interp& I) {
-    std::string text;
-    if (!patchValueText(a[1], text)) I.bad("expected a patch to insert, got " + std::string(lang::type_name(a[1])));
-    int dx = a.size() > 2 ? (int)I.scalar(a[2]) : 0, dy = a.size() > 3 ? (int)I.scalar(a[3]) : 0;
-    std::string err;
-    bool open = false, ok = false;
-    int n = 0;
-    onMainWait([&] {
-        auto* d = liveDoc(a[0]);
-        if (!d) return;
-        open = true;
-        d->pushUndo();
-        std::vector<Box*> added;
-        ok = d->patch.merge(text, dx, dy, added, err);
-        if (!ok) { d->dropUndo(); return; }
-        n = (int)added.size();
-        d->markDirty();
-        d->redraw();
-    });
-    if (!open) I.bad("that patch is closed");
-    if (!ok) I.bad(err);
-    return lang::v_num(n);
-}
-
-// (replace! p patch) an open patch becomes the patch value; boxes that did not change go on running
-lang::vptr fnReplace(lang::vlist& a, lang::Interp& I) {
-    std::string text;
-    if (!patchValueText(a[1], text)) I.bad("expected a patch, got " + std::string(lang::type_name(a[1])));
-    std::string err;
-    bool open = false, ok = false;
-    onMainWait([&] {
-        auto* d = liveDoc(a[0]);
-        if (!d) return;
-        open = true;
-        d->pushUndo();
-        ok = d->patch.applyText(text, err);
-        if (!ok) { d->dropUndo(); return; }
-        d->markDirty();
-        d->redraw();
-    });
-    if (!open) I.bad("that patch is closed");
-    if (!ok) I.bad(err);
-    return a[0];
-}
-
-// (open-patch p [title]) a patch value in a window of its own; => the open patch
-lang::vptr fnOpenPatch(lang::vlist& a, lang::Interp& I) {
-    std::string text;
-    if (!patchValueText(a[0], text)) I.bad("expected a patch, got " + std::string(lang::type_name(a[0])));
-    std::string title = a.size() > 1 ? I.str(a[1]) : "made by code";
-    const void* doc = nullptr;
-    onMainWait([&] { doc = App::get().openPatchText(text, title, ""); });
-    if (!doc) I.bad("the patch could not be opened");
-    return liveValue(doc);
-}
-
 // the names the libraries define at their top level: their variables (var) and, with functions = true,
 // their functions; neither is shown among the user's variables
 const std::set<std::string>& languageLibraryNames(bool functions) {
     static std::set<std::string> vars, fns;
     static bool read = [] {
         auto& s = vars;
-        std::string dir = languageDir();
-        for (const char* lib : {"std", "system", "scientific", "signals", "music", "plot"}) {
-            std::ifstream f(dir + "/" + lib + ".moritz");
+        std::string dir = musilLibraryDir();
+        for (const char* lib : {"std", "system", "scientific", "signals", "music", "live", "plot"}) {
+            std::ifstream f(dir + "/" + lib + ".mu");
             std::string line;
             while (std::getline(f, line))
                 for (const char* kw : {"var ", "function "}) {
@@ -375,36 +258,29 @@ const std::set<std::string>& languageLibraryNames(bool functions) {
 
 }  // namespace
 
-LangContext::LangContext(std::string l, const void* doc)
-    : label(std::move(l)), interp_(std::make_unique<lang::Interp>()) {
+LangContext::LangContext(std::string l) : label(std::move(l)), interp_(std::make_unique<musil::Interp>()) {
     mainThread();
     auto& I = *interp_;
-    lang::make_env(I);
-    addPatchLanguage(I);
-    // the live patches
-    I.def("this-patch", fnThisPatch, 0, 0);
-    I.def("patch-text", fnAnyPatchText, 1, 1);
-    I.def("patch-boxes", fnAnyPatchBoxes, 1, 1);
+    musilLibraries(I);
+    // Moritz, from Musil
     I.def("send", fnSend, 1, -1);
-    I.def("box-send", fnBoxSend, 2, -1);
     I.def("buffer", fnBuffer, 1, 1);
     I.def("buffer-rate", fnBufferRate, 1, 1);
     I.def("set-buffer!", fnSetBuffer, 2, 3);
-    I.def("insert!", fnInsert, 2, 4);
-    I.def("replace!", fnReplace, 2, 2);
-    I.def("open-patch", fnOpenPatch, 1, 2);
-    if (doc) I.def("*patch*", liveValue(doc));
-    if (std::string d = languageDir(); !d.empty()) I.load_path.push_back(d);
+    if (std::string d = musilLibraryDir(); !d.empty()) I.load_path.push_back(d);
+#ifndef _WIN32
+    I.stack_budget = (64u << 20) / 4 * 3;          // code runs on a thread of 64 MB (startThread)
+#endif
     auto* buf = new ConsoleStream();
     I.out = new std::ostream(buf);
     I.yield_fn = [this] {
         if (stop_) {
             stop_ = false;
-            throw lang::Error("", 0, "stopped");
+            throw musil::Error("", 0, "stopped");
         }
     };
     for (auto& kv : I.global->vars) baseline_.push_back(kv.first);
-    try { I.load("std"); } catch (const std::exception& e) { App::get().log(std::string("language: ") + e.what()); }
+    try { I.load("std.mu"); } catch (const std::exception& e) { App::get().log(std::string("musil: ") + e.what()); }
     snapshot();
 }
 
@@ -429,16 +305,11 @@ bool LangContext::eval(const std::string& code, const std::string& file, int fir
     startThread([self, src, file, done] {
         auto& I = *self->interp_;
         EvalResult r;
-        I.toplevel_fn = [&r](const lang::vptr& v) {
-            std::string t;
-            if (patchValueText(v, t)) r.patches.push_back(t);
-        };
         try {
-            lang::vptr v = I.run(src, file);
-            if (std::string t; patchValueText(v, t)) v = nullptr;   // shown as a window, not as text
-            if (v && v->t != lang::Value::NIL) r.value = preview(v, 400);
-        } catch (lang::Exit_signal&) {
-        } catch (const lang::Error& e) {
+            musil::vptr v = I.run(src, file);
+            if (v && v->t != musil::Value::NIL) r.value = preview(v, 400);
+        } catch (musil::Exit_signal&) {
+        } catch (const musil::Error& e) {
             r.ok = false;
             r.error = e.what();
             r.file = e.file;
@@ -448,7 +319,6 @@ bool LangContext::eval(const std::string& code, const std::string& file, int fir
             r.ok = false;
             r.error = e.what();
         }
-        I.toplevel_fn = nullptr;
         I.call_stack.clear();
         I.function_depth = 0;
         I.loop_depth = 0;
@@ -469,21 +339,21 @@ void LangContext::snapshot() {
     std::vector<Variable> vars;
     std::vector<std::string> names;
     std::set<std::string> base(baseline_.begin(), baseline_.end());
-    std::string lib = languageDir();
+    std::string lib = musilLibraryDir();
     for (auto& kv : interp_->global->vars) {
         names.push_back(kv.first);
         const auto& v0 = kv.second;
-        bool fn = v0 && v0->t == lang::Value::FN;
+        bool fn = v0 && v0->t == musil::Value::FN;
         if (base.count(kv.first) || languageLibraryNames(false).count(kv.first)) continue;
         if (fn && (languageLibraryNames(true).count(kv.first) || languageHelp(kv.first))) continue;   // still the library's
         const auto& v = kv.second;
-        if (v && v->t == lang::Value::FN && v->body && v->body->file && !lib.empty() &&
+        if (v && v->t == musil::Value::FN && v->body && v->body->file && !lib.empty() &&
             v->body->file->rfind(lib, 0) == 0)
             continue;                                   // a function of the libraries
         Variable var;
         var.name = kv.first;
-        var.kind = lang::type_name(v);
-        var.preview = v && v->t == lang::Value::FN ? "(" + [&] {
+        var.kind = musil::type_name(v);
+        var.preview = v && v->t == musil::Value::FN ? "(" + [&] {
             std::string p;
             for (auto& s : v->params) p += (p.empty() ? "" : " ") + s;
             return p;
@@ -510,33 +380,18 @@ std::vector<std::string> LangContext::names() {
 // ---- the contexts
 
 namespace {
-std::map<const void*, std::shared_ptr<LangContext>>& contexts() {
-    static std::map<const void*, std::shared_ptr<LangContext>> m;
-    return m;
+std::shared_ptr<LangContext>& theSession() {
+    static std::shared_ptr<LangContext> c;
+    return c;
 }
 }  // namespace
 
 std::shared_ptr<LangContext> sessionContext() {
-    auto& c = contexts()[nullptr];
-    if (!c) c = std::make_shared<LangContext>("session", nullptr);
+    auto& c = theSession();
+    if (!c) c = std::make_shared<LangContext>("session");
     return c;
 }
 
-std::shared_ptr<LangContext> patchContext(const void* doc, const std::string& t) {
-    std::string title = t;
-    if (size_t k = title.find(" — Moritz"); k != std::string::npos) title.resize(k);
-    auto& c = contexts()[doc];
-    if (!c) c = std::make_shared<LangContext>(title, doc);
-    c->label = title;
-    return c;
-}
-
-void dropPatchContext(const void* doc) {
-    auto it = contexts().find(doc);
-    if (it == contexts().end()) return;
-    it->second->stop();                 // a running piece keeps the context alive until it ends
-    contexts().erase(it);
-}
 
 // ---- the documentation
 
@@ -549,7 +404,7 @@ struct HelpIndex {
 const HelpIndex& helpIndex() {
     static HelpIndex h = [] {
         HelpIndex x;
-        std::ifstream f(languageDir() + "/help.txt");
+        std::ifstream f(musilHelpFile());
         std::string line;
         HelpEntry* e = nullptr;
         while (std::getline(f, line)) {

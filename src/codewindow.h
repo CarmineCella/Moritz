@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Carmine-Emanuele Cella. SPDX-License-Identifier: BSD-2-Clause
-// codewindow.h — the code editor (code.cpp): a file of the Moritz language, coloured, with
-// completion, help on the name under the cursor, an outline, the context's variables, and Run.
+// codewindow.h — the code editor (code.cpp): a Musil script, coloured, with completion, help on the
+// name under the cursor, an outline, the session's variables, and Run.
 #pragma once
 
 #include "session.h"
@@ -26,29 +26,21 @@ public:
     CodeWindow();
     ~CodeWindow() override;
     bool load(const std::string& path);
-    virtual bool save();
-    virtual bool saveAs();
-    virtual bool confirmDiscard();                // asks to save when edited; false: cancel
-    virtual void closeRequested();                // the window's close button, Cmd-W
+    bool save();
+    bool saveAs();
+    bool confirmDiscard();                        // asks to save when edited; false: cancel
     const std::string& path() const { return path_; }
     Fl_Text_Editor* editor() { return editor_; }
 
     void runBlock();                              // the selection, or the paragraph at the cursor
-    virtual void runFile();
+    void runFile();
     void stop();
     void toggleComment();
     void complete();                              // Tab after a name: the names that start like it
     void cursorMoved();                           // help on the name under the cursor
-    virtual void textChanged();
+    void textChanged();
 
-protected:
-    virtual std::shared_ptr<LangContext> context();   // the one chosen
-    // the patches a run's top-level forms made: windows of their own, kept per source (a later run updates them)
-    virtual void patchesMade(const std::vector<std::string>& patches, const std::string& file);
-    void run(const std::string& code, int firstLine, int lastLine, const std::string& file);
-    void setText(const std::string& t);           // without marking the window edited
-    std::string text() const;
-    bool syncing_ = false;                        // setting the text: not an edit
+private:
     std::string path_;
     bool dirty_ = false;
     int errorLine_ = 0;                           // highlighted until the next edit
@@ -61,17 +53,16 @@ protected:
     Fl_Browser* vars_ = nullptr;
     Fl_Text_Display* help_ = nullptr;
     Fl_Text_Buffer* helpBuf_ = nullptr;
-    Fl_Choice* context_ = nullptr;
-    std::vector<const void*> contextKeys_;       // nullptr: the session; else an open patch
     Fl_Box* status_ = nullptr;
     std::string helpName_;
     std::string statusText_;
 
-    void fillContexts();
+    std::shared_ptr<LangContext> context();       // the one chosen
+    void run(const std::string& code, int firstLine, int lastLine);
     void restyle();
     void refreshTitle();
     void refreshOutline();
-    void refreshVariables();          // the context's variables (after a run)
+    void refreshVariables();
     void setStatus(const std::string& s);
     static void outlineTimer(void* data);
     static void flashTimer(void* data);
@@ -79,9 +70,5 @@ protected:
 
 // the Console's prompt (code.cpp): built into the console window, below its text
 void buildConsolePrompt(Fl_Double_Window* win, int x, int y, int w, int h);
-void refreshConsoleContexts();
-
-// a file of the language that is not a patch (no (patch ...) at its top level) opens as code
-bool isCodeText(const std::string& text);
 
 }  // namespace moritz

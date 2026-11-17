@@ -1,4 +1,0 @@
-; a.moritz — loaded by test_load.moritz; loads b.moritz, which loads a.moritz back (cycle)
-var loads (append loads "a")
-load "b.moritz"
-function from-a () "a"

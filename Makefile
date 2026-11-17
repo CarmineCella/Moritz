@@ -87,7 +87,7 @@ ARCHFLAGS  := $(addprefix -arch ,$(ARCHS)) -mmacosx-version-min=$(MACOS_MIN)
 CXX        := clang++
 CC         := clang
 CXXFLAGS   := -std=c++17 -O2 -Wall -Wextra -Wno-unused-parameter $(ARCHFLAGS) \
-              -I$(FLTK_INST)/include -I$(MA_DIR) -I$(RTMIDI_DIR) -Isrc -DMORITZ_VERSION=\"$(VERSION)\"
+              -I$(FLTK_INST)/include -I$(MA_DIR) -I$(RTMIDI_DIR) -Isrc -isystem musil/src -DMORITZ_VERSION=\"$(VERSION)\"
 MAFLAGS    := -O2 $(ARCHFLAGS) -DMA_NO_RUNTIME_LINKING
 FRAMEWORKS := -framework Cocoa -framework CoreAudio -framework AudioToolbox -framework CoreMIDI \
               -framework CoreFoundation -weak_framework UniformTypeIdentifiers
@@ -157,12 +157,15 @@ $(BUILD)/RtMidi.o: $(RTMIDI_HDR)
 	@mkdir -p $(BUILD)
 	$(CXX) -std=c++17 -O2 $(ARCHFLAGS) -D__MACOSX_CORE__ -w -c $(RTMIDI_SRC) -o $@
 
+# Musil's libraries (the halves written in Musil, and their data) and its help, without its C++ sources
+copy_musil = mkdir -p "$(1)/musil/src" && cp musil/src/*.mu musil/src/*.csv musil/src/*.wav "$(1)/musil/src/" && cp musil/help.txt "$(1)/musil/"
+
 # the PDFs of docs/ (their LaTeX sources stay in the repository), keeping their folders
 copy_docs = for f in $$(find docs -name '*.pdf'); do mkdir -p "$(1)/$$(dirname $$f)"; cp "$$f" "$(1)/$$f"; done
 
 SOURCES    := $(wildcard src/*.cpp)
 OBJECTS    := $(patsubst src/%.cpp,$(BUILD)/%.o,$(SOURCES))
-HEADERS    := $(wildcard src/*.h src/lang/*.h src/lang/*/*.h)
+HEADERS    := $(wildcard src/*.h musil/src/*.h musil/src/*/*.h)
 
 $(BUILD)/%.o: src/%.cpp $(HEADERS) $(FLTK_LIB) $(MA_HDR) $(RTMIDI_HDR)
 	@mkdir -p $(BUILD)
@@ -203,12 +206,13 @@ define INFO_PLIST
 endef
 export INFO_PLIST
 
-$(BUNDLE): $(APP) $(wildcard examples/*/*.moritz examples/sounds/* library/* language/* help/* tutorials/* resources/* docs/*/*.pdf) LICENSE
+$(BUNDLE): $(APP) $(wildcard examples/*/*.moritz examples/sounds/* library/* musil/src/*.mu musil/help.txt help/* tutorials/* resources/* docs/*/*.pdf) LICENSE
 	@echo "==> creating $(BUNDLE)"
 	rm -rf $(BUNDLE)
 	mkdir -p $(BUNDLE)/Contents/MacOS $(BUNDLE)/Contents/Resources
 	cp $(APP) $(BUNDLE)/Contents/MacOS/$(APP)
-	cp -R examples library language help tutorials $(BUNDLE)/Contents/Resources/ 2>/dev/null || true
+	cp -R examples library help tutorials $(BUNDLE)/Contents/Resources/ 2>/dev/null || true
+	$(call copy_musil,$(BUNDLE)/Contents/Resources)
 	$(call copy_docs,$(BUNDLE)/Contents/Resources)
 	cp resources/moritz.icns resources/about.png resources/maxundmoritz.png LICENSE $(BUNDLE)/Contents/Resources/
 	echo "$$INFO_PLIST" > $(BUNDLE)/Contents/Info.plist
@@ -230,7 +234,7 @@ LX_FLTK_LIB := $(LX_FLTK)/lib/libfltk.a
 LX_CXX      ?= g++
 LX_CC       ?= gcc
 LX_CXXFLAGS := -std=c++17 -O2 -Wall -Wextra -Wno-unused-parameter -I$(LX_FLTK)/include \
-               -I$(MA_DIR) -I$(RTMIDI_DIR) -Isrc -DMORITZ_VERSION=\"$(VERSION)\" -D__LINUX_ALSA__
+               -I$(MA_DIR) -I$(RTMIDI_DIR) -Isrc -isystem musil/src -DMORITZ_VERSION=\"$(VERSION)\" -D__LINUX_ALSA__
 LX_OBJECTS  := $(patsubst src/%.cpp,$(LX_BUILD)/%.o,$(SOURCES))
 
 $(LX_FLTK_LIB): $(FLTK_TGZ)
@@ -273,10 +277,11 @@ $(LX_DIR)/$(APP): $(LX_OBJECTS) $(LX_BUILD)/miniaudio.o $(LX_BUILD)/RtMidi.o
 	$(LX_CXX) $^ $$($(LX_FLTK)/bin/fltk-config --use-images --ldstaticflags) \
 	  -static-libstdc++ -static-libgcc -lasound -lpthread -ldl -lm -o $@
 
-linux: $(LX_DIR)/$(APP) $(wildcard examples/*/*.moritz examples/sounds/* library/* language/* help/* tutorials/* docs/*/*.pdf)
-	rm -rf $(LX_DIR)/examples $(LX_DIR)/library $(LX_DIR)/language $(LX_DIR)/help $(LX_DIR)/tutorials $(LX_DIR)/resources
+linux: $(LX_DIR)/$(APP) $(wildcard examples/*/*.moritz examples/sounds/* library/* musil/src/*.mu musil/help.txt help/* tutorials/* docs/*/*.pdf)
+	rm -rf $(LX_DIR)/examples $(LX_DIR)/library $(LX_DIR)/musil $(LX_DIR)/help $(LX_DIR)/tutorials $(LX_DIR)/resources
 	rm -rf $(LX_DIR)/docs
-	cp -R examples library language help tutorials LICENSE README.md OBJECTS.md $(LX_DIR)/
+	cp -R examples library help tutorials LICENSE README.md OBJECTS.md $(LX_DIR)/
+	$(call copy_musil,$(LX_DIR))
 	$(call copy_docs,$(LX_DIR))
 	mkdir -p $(LX_DIR)/resources && cp resources/about.png resources/maxundmoritz.png $(LX_DIR)/resources/
 	@echo "==> built $(LX_DIR)/$(APP)"
@@ -307,7 +312,7 @@ WIN_CXX      := $(WIN_PREFIX)g++
 WIN_CC       := $(WIN_PREFIX)gcc
 WIN_RC       := $(WIN_PREFIX)windres
 WIN_CXXFLAGS := -std=c++17 -O2 -Wall -Wextra -Wno-unused-parameter -I$(WIN_FLTK)/include \
-                -I$(MA_DIR) -I$(RTMIDI_DIR) -Isrc -DMORITZ_VERSION=\"$(VERSION)\" -D__WINDOWS_MM__ -DNOMINMAX \
+                -I$(MA_DIR) -I$(RTMIDI_DIR) -Isrc -isystem musil/src -DMORITZ_VERSION=\"$(VERSION)\" -D__WINDOWS_MM__ -DNOMINMAX \
                 -DWIN32 -DUNICODE -D_UNICODE
 WIN_OBJECTS  := $(patsubst src/%.cpp,$(WIN_BUILD)/%.o,$(SOURCES))
 WIN_ZIP      := $(BUILD)/$(DIST_NAME)-windows-x86_64.zip
@@ -356,10 +361,11 @@ $(WIN_DIR)/$(APP).exe: $(WIN_OBJECTS) $(WIN_BUILD)/miniaudio.o $(WIN_BUILD)/RtMi
 	  $(WIN_FLTK)/lib/libfltk_z.a $(WIN_FLTK_LIB) -lwinmm -lole32 -luuid -lcomctl32 -lcomdlg32 \
 	  -lgdi32 -lgdiplus -lwinspool -lws2_32 -lshell32 -ladvapi32 -limm32 -loleaut32 -o $@
 
-windows: $(WIN_DIR)/$(APP).exe $(wildcard examples/*/*.moritz examples/sounds/* library/* language/* help/* tutorials/* docs/*/*.pdf)
-	rm -rf $(WIN_DIR)/examples $(WIN_DIR)/library $(WIN_DIR)/language $(WIN_DIR)/help $(WIN_DIR)/tutorials $(WIN_DIR)/resources
+windows: $(WIN_DIR)/$(APP).exe $(wildcard examples/*/*.moritz examples/sounds/* library/* musil/src/*.mu musil/help.txt help/* tutorials/* docs/*/*.pdf)
+	rm -rf $(WIN_DIR)/examples $(WIN_DIR)/library $(WIN_DIR)/musil $(WIN_DIR)/help $(WIN_DIR)/tutorials $(WIN_DIR)/resources
 	rm -rf $(WIN_DIR)/docs
-	cp -R examples library language help tutorials LICENSE README.md OBJECTS.md $(WIN_DIR)/
+	cp -R examples library help tutorials LICENSE README.md OBJECTS.md $(WIN_DIR)/
+	$(call copy_musil,$(WIN_DIR))
 	$(call copy_docs,$(WIN_DIR))
 	mkdir -p $(WIN_DIR)/resources && cp resources/about.png resources/maxundmoritz.png $(WIN_DIR)/resources/
 	@echo "==> built $(WIN_DIR)/$(APP).exe"
@@ -411,7 +417,8 @@ run: $(BUNDLE)
 	open $(BUNDLE)
 endif
 
-# the language inside another program: interpreters on threads, nothing left alive afterwards
+# Musil inside another program: interpreters on threads, nothing left alive afterwards. Built from
+# musil/src alone, so it also proves that Musil needs nothing of Moritz.
 EMBED_CXX := $(CXX)
 ifeq ($(UNAME),Linux)
 EMBED_LIBS := -pthread
@@ -421,8 +428,8 @@ EMBED_LIBS := -static -lws2_32
 endif
 embed-test:
 	mkdir -p $(BUILD)
-	$(EMBED_CXX) -std=c++17 -O2 -Isrc tests/language/embed.cpp -o $(BUILD)/embed-test $(EMBED_LIBS)
-	MORITZ_PATH=language $(BUILD)/embed-test
+	$(EMBED_CXX) -std=c++17 -O2 -Wall -Wextra -Wno-unused-parameter -Imusil/src musil/tests/embed.cpp -o $(BUILD)/embed-test $(EMBED_LIBS)
+	MUSIL_PATH=musil/src $(BUILD)/embed-test
 
 clean:
 	rm -rf $(BUILD) $(APP) $(BUNDLE)
