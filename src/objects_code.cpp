@@ -99,6 +99,7 @@ public:
             ContextHooks h;
             h.patch = patch;
             h.restricted = true;
+            h.preload = {"signals.mu"};                  // a box is about sound: the signals library is there
             h.outlet = [this](int k, const Message& m) {
                 if (k >= 1 && k <= nOut_) outlet(k - 1, m);
                 else patch->print("code: no outlet " + std::to_string(k) + " (the box has " + std::to_string(nOut_) + ")");

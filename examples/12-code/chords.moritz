@@ -1,0 +1,23 @@
+; chords.moritz - a code box whose script is a file, chords.mu, next to the
+; patch: the harmonic field above a root, a chord from it and a melody through
+; it, played by sines into a buffer~. Send a root (a pitch name or a MIDI
+; number) and it starts again. Double-click the box to edit chords.mu.
+(patch
+  (obj title comment "code chords.mu: a script in a file next to the patch" (pos 20 12))
+  (obj out buffer~ chout (pos 20 45))
+  (obj r1 message C2 (pos 20 85))
+  (obj r2 message A1 (pos 75 85))
+  (obj r3 message D2 (pos 130 85))
+  (obj r4 message 40 (pos 190 85))
+  (obj c code 1 1 chords.mu (pos 20 120))
+  (obj pr print melody (pos 20 160))
+  (obj pl play~ chout (pos 200 160))
+  (obj d dac~ (pos 200 195))
+  (connect r1 0 c 0)
+  (connect r2 0 c 0)
+  (connect r3 0 c 0)
+  (connect r4 0 c 0)
+  (connect c 0 pr 0)
+  (connect c 1 pl 0)
+  (connect pl 0 d 0)
+  (connect pl 0 d 1))

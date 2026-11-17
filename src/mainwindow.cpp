@@ -406,7 +406,7 @@ void App::buildMenu(Fl_Menu_Bar* m) {
             fl_filename_free_list(&list, n);
         }
     m->add("Help/Browser...", FL_COMMAND + FL_SHIFT + 'b', APP_CB(showBrowser), nullptr, FL_MENU_DIVIDER);
-    // Help > Documents: the PDFs in the docs folder (and its folders)
+    // Help > Documents: the PDFs in the docs folder (and its folders), and Musil's manual
     static std::vector<std::string> documents;
     if (documents.empty())
         if (std::string dir = resourceDir("docs"); !dir.empty()) {
@@ -426,6 +426,11 @@ void App::buildMenu(Fl_Menu_Bar* m) {
             };
             scan(dir, 0);
         }
+    if (static bool musil = false; !musil) {            // and Musil's manual, from Musil's own folder
+        musil = true;
+        if (std::string d = resourceDir("musil"); !d.empty())
+            if (std::string f = d + "/docs/musil_manual.pdf"; fl_access(f.c_str(), 0) == 0) documents.push_back(f);
+    }
     for (auto& path : documents) {
         std::string name = baseName(path);
         name = name.substr(0, name.size() - 4);

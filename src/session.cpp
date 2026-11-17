@@ -346,7 +346,13 @@ LangContext::LangContext(std::string l, ContextHooks h)
         }
     };
     for (auto& kv : I.global->vars) baseline_.push_back(kv.first);
-    try { I.load("std.mu"); } catch (const std::exception& e) { App::get().log(std::string("musil: ") + e.what()); }
+    try {
+        I.load("std.mu");
+        for (auto& f : hooks.preload) I.load(f);
+    } catch (const std::exception& e) {
+        if (hooks.print) hooks.print(std::string("musil: ") + e.what());
+        else App::get().log(std::string("musil: ") + e.what());
+    }
     snapshot();
 }
 
@@ -448,6 +454,7 @@ void LangContext::detach() {
 std::vector<std::string> codeBoxNames() {
     ContextHooks h;
     h.restricted = true;
+    h.preload = {"signals.mu"};
     auto c = std::make_shared<LangContext>("code", h);
     c->snapshot();
     std::vector<std::string> out;

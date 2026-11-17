@@ -1,0 +1,41 @@
+; texture.moritz - a code box makes a sound: a cloud of short sine grains on
+; the partials of a chord, written into a buffer~ and played when ready. The
+; numbers set how long the cloud lasts (in1, the left inlet: it also runs the
+; script) and how many grains (in2: stored until the next run).
+(patch
+  (obj title comment "code: a texture written by a script into a buffer~" (pos 20 12))
+  (obj out buffer~ txout (pos 20 45))
+  (obj c1 comment "grains (set first)" (pos 160 45))
+  (obj grains number (pos 160 70))
+  (obj c2 comment "seconds (runs)" (pos 20 70))
+  (obj secs number (pos 20 95))
+  (obj lb loadbang (pos 300 70))
+  (obj init message "6" (pos 300 95))
+  (obj c code 2 1 (pos 20 130)
+    (script
+      "; in1: how long (s); in2: how many grains. A cloud of sine grains on the"
+      "; partials of a chord, each with a Hann envelope, placed at random"
+      "var dur (if (equal? in1 nil) 6 in1)"
+      "var n (if (equal? in2 nil) 300 in2)"
+      "var sr 44100"
+      "var partials (list 110 165 220 275 330 440 550 660 880)"
+      "var y (zeros (floor (* dur sr)))"
+      "for (var k 0) (< k n) (var k (+ k 1)) {"
+      "    var f (* (getidx partials (floor (* (rand) (length partials)))) (+ 1 (* 0.004 (- (rand) 0.5))))"
+      "    var len (+ 0.05 (* 0.4 (rand)))"
+      "    var g (* (sine sr f len) (hann (floor (* len sr))))"
+      "    add-at! y (floor (* (rand) (- (length y) (length g)))) (* (+ 0.2 (rand)) g)"
+      "}"
+      "set-buffer! \"txout\" (* 0.9 (normalize-peak y)) sr"
+      "out 1 n \"grains in\" dur \"s\""))
+  (obj pr print texture (pos 20 170))
+  (obj pl play~ txout (pos 200 170))
+  (obj d dac~ (pos 200 205))
+  (connect grains 0 c 1)
+  (connect secs 0 c 0)
+  (connect lb 0 init 0)
+  (connect init 0 c 0)
+  (connect c 0 pr 0)
+  (connect c 1 pl 0)
+  (connect pl 0 d 0)
+  (connect pl 0 d 1))

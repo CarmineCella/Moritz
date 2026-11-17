@@ -1,0 +1,37 @@
+; atoms.moritz - Maple and SoundTypes from a code box: the drums rebuilt with
+; pieces of a voice (matching pursuit), or a new drum loop from the drums'
+; own types (a factor oracle). The same code runs in the atoms, pursuit and
+; soundtypes boxes (examples/08-atoms-and-types); from Musil it is a few lines.
+(patch
+  (obj title comment "code: Maple and SoundTypes in a script" (pos 20 12))
+  (obj b1 buffer~ atdrums drums.wav (pos 20 45))
+  (obj b2 buffer~ atvoice Vox.wav (pos 150 45))
+  (obj b3 buffer~ atout (pos 280 45))
+  (obj m1 message hybrid (pos 20 85))
+  (obj m2 message types (pos 100 85))
+  (obj c code (pos 20 120)
+    (script
+      "load \"music.mu\""
+      "; in1 chooses: hybrid (the drums made of the voice), or types (a new drum loop)"
+      "var drums (head (buffer \"atdrums\"))"
+      "var sr (buffer-rate \"atdrums\")"
+      "if (equal? in1 \"hybrid\") {"
+      "    var voice (head (buffer \"atvoice\"))"
+      "    set-buffer! \"atout\" (maple-hybrid drums sr voice (buffer-rate \"atvoice\") (list 'components 4)) sr"
+      "    out 1 \"the drums' rhythm, the voice's sound\""
+      "}"
+      "if (equal? in1 \"types\") {"
+      "    var m (soundtypes-analyse drums sr (list 'types (list 10 5)))"
+      "    var g (soundtypes-generate m 1 6 (list 'method 'oracle 'continuity 0.6 'seed (floor (* 1000 (rand)))))"
+      "    set-buffer! \"atout\" (head g) sr"
+      "    out 1 (length (last g)) \"units of\" (head (soundtypes-levels m)) \"types\""
+      "}"))
+  (obj pr print atoms (pos 20 160))
+  (obj pl play~ atout (pos 200 160))
+  (obj d dac~ (pos 200 195))
+  (connect m1 0 c 0)
+  (connect m2 0 c 0)
+  (connect c 0 pr 0)
+  (connect c 1 pl 0)
+  (connect pl 0 d 0)
+  (connect pl 0 d 1))

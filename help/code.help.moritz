@@ -1,0 +1,43 @@
+; code.help.moritz - help for code
+(patch
+  (obj title comment "code [inlets] [outlets] [file.mu]: a script in Musil, the scripting language of Moritz" (pos 20 12))
+  (obj sub comment "Double-click the box (Cmd-double-click when editing) to read the script in the code editor; Cmd-S puts it back into the box." (pos 20 34))
+  (obj sub2 comment "A bang runs it, off the audio thread; the last outlet bangs when it has run. It keeps its variables from one run to the next." (pos 20 52))
+  (obj s1 comment "1. Inlets and outlets: a message to the left inlet becomes in1 and runs the script; inlet 2 is in2 (stored). (out k ...) sends out of outlet k." (pos 20 85))
+  (obj n1 number (pos 20 110))
+  (obj n2 number (pos 120 110))
+  (obj c1 code 2 2 (pos 20 145)
+    (script
+      "; in1 from the left inlet (it runs the script), in2 from the right one (stored)"
+      "var a (if (equal? in1 nil) 0 in1)"
+      "var b (if (equal? in2 nil) 1 in2)"
+      "out 1 (* a b)"
+      "out 2 a b (+ a b) (- a b)"))
+  (obj r1 number (pos 20 185))
+  (obj p1 print list (pos 120 185))
+  (obj s2 comment "2. Buffers: (buffer name) reads a buffer~ (a vector per channel), (set-buffer! name x rate) writes one; then play it." (pos 20 230))
+  (obj b1 buffer~ hcsrc drums.wav (pos 20 255))
+  (obj b2 buffer~ hcout (pos 180 255))
+  (obj go button (pos 20 285))
+  (obj c2 code (pos 20 315)
+    (script
+      "; the drums, backwards and softer at the end, into hcout"
+      "var x (head (buffer \"hcsrc\"))"
+      "var n (length x)"
+      "set-buffer! \"hcout\" (* (reverse x) (- 1 (/ (range 0 n) n))) (buffer-rate \"hcsrc\")"
+      "print \"code: wrote\" n \"samples into hcout\""))
+  (obj pl play~ hcout (pos 20 355))
+  (obj d dac~ (pos 20 390))
+  (obj s3 comment "3. The script can be a file next to the patch: code 1 1 myscript.mu (read again at every run; double-click to edit it)." (pos 20 435))
+  (obj s4 comment "Messages: bang, set name values, stop, reset (a fresh interpreter), open, read file.mu. In the script: (send name values) to receive boxes." (pos 20 453))
+  (obj s5 comment "A box may read and write files, as a patch does; it may not run programs, delete files, use the network, wait or quit." (pos 20 471))
+  (obj s6 comment "The Console and moritz --run have all of Musil. The std and signals libraries are loaded; load music.mu or scientific.mu for more." (pos 20 489))
+  (obj man link "The Musil manual (PDF)" ../musil/docs/musil_manual.pdf (pos 20 515))
+  (connect n1 0 c1 0)
+  (connect n2 0 c1 1)
+  (connect c1 0 r1 0)
+  (connect c1 1 p1 0)
+  (connect go 0 c2 0)
+  (connect c2 1 pl 0)
+  (connect pl 0 d 0)
+  (connect pl 0 d 1))

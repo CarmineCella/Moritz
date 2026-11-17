@@ -1,0 +1,51 @@
+; process.moritz - a code box transforms a sound. Each button sends a word and
+; numbers to the box: in its script, in1 is that message; the script reads the
+; buffer~ pbsrc, transforms the samples with Musil (reverse, a lowpass filter,
+; fades, an echo, a time stretch, a bit crusher) and writes the result into the
+; buffer~ pbout, then the box bangs its last outlet and play~ plays it. Double-
+; click the code box to read or change the script; Cmd-S puts it back into the
+; box.
+(patch
+  (obj title comment "code: a sound transformed by a script (double-click the code box to read it)" (pos 20 12))
+  (obj src buffer~ pbsrc drums.wav (pos 20 45))
+  (obj dst buffer~ pbout (pos 160 45))
+  (obj m1 message reverse (pos 20 85))
+  (obj m2 message "lowpass 600" (pos 95 85))
+  (obj m3 message "fade 0.8" (pos 195 85))
+  (obj m4 message "echo 0.25 0.6" (pos 275 85))
+  (obj m5 message "stretch 2" (pos 390 85))
+  (obj m6 message "crush 6" (pos 480 85))
+  (obj c code (pos 20 125)
+    (script
+      "; in1 is what the buttons send: a word, then numbers"
+      "var what (if (equal? (type in1) \"list\") (head in1) in1)"
+      "var a (if (equal? (type in1) \"list\") (getidx in1 1) 0)"
+      "var b (if (> (length in1) 2) (getidx in1 2) 0)"
+      "var x (head (buffer \"pbsrc\"))"
+      "var sr (buffer-rate \"pbsrc\")"
+      "var y x"
+      "if (equal? what \"reverse\") { set y (reverse x) }"
+      "if (equal? what \"lowpass\") { set y (lowpass x sr a 0.7) }"
+      "if (equal? what \"fade\") { set y (fade-out (fade-in x (floor (* a sr))) (floor (* a sr))) }"
+      "if (equal? what \"echo\") {"
+      "    var d (floor (* a sr))"
+      "    set y (+ (vec x (zeros d)) (* b (vec (zeros d) x)))"
+      "}"
+      "if (equal? what \"stretch\") { set y (pvoc-stretch x a) }"
+      "if (equal? what \"crush\") { set y (/ (round (* x a)) a) }"
+      "set-buffer! \"pbout\" (* 0.95 (normalize-peak y)) sr"
+      "out 1 what (fixed (/ (length y) sr) 2) \"s\""))
+  (obj pr print process (pos 20 165))
+  (obj pl play~ pbout 2 (pos 300 165))
+  (obj d dac~ (pos 300 200))
+  (obj w waveform~ pbout 520 110 (pos 20 240))
+  (connect m1 0 c 0)
+  (connect m2 0 c 0)
+  (connect m3 0 c 0)
+  (connect m4 0 c 0)
+  (connect m5 0 c 0)
+  (connect m6 0 c 0)
+  (connect c 0 pr 0)
+  (connect c 1 pl 0)
+  (connect pl 0 d 0)
+  (connect pl 0 d 1))

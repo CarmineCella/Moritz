@@ -4,8 +4,9 @@
 syntax: code [inlets] [outlets] [file.mu]
 A script in Musil inside the patch, as js is in Max. It runs off the audio
 thread when it gets a bang, in an interpreter of its own that keeps its
-variables from one run to the next, and the last outlet bangs when it has
-run. Its inlets set the variables in1, in2... (a number, a vector for a list
+variables from one run to the next (with the std and signals libraries
+loaded; load "music.mu" or "scientific.mu" for the others), and the last
+outlet bangs when it has run. Its inlets set the variables in1, in2... (a number, a vector for a list
 of numbers, a string, or a list; nil until a value comes): a message to the
 left inlet sets in1 and runs the script, the other inlets only store. In the
 script, (out k values...) sends out of outlet k; (buffer name) reads a

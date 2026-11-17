@@ -45,6 +45,7 @@ struct ContextHooks {
     std::function<void(int, const Message&)> outlet;          // (out k values...): outlet k (from 1)
     std::function<void(const std::string&)> print;
     bool restricted = false;
+    std::vector<std::string> preload;                          // libraries loaded after std.mu
 };
 
 class LangContext : public std::enable_shared_from_this<LangContext> {

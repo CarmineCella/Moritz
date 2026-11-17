@@ -1,0 +1,29 @@
+; analysis.moritz - a code box analyses a sound and sends the results to a
+; plot: the loudness curve (a list, drawn as a curve) out of its first outlet,
+; the onset times out of its second, drawn as marks. Change the
+; threshold of onsets in the script (double-click the box) and bang it again.
+(patch
+  (obj title comment "code: a sound analysed by a script, the results drawn by plot" (pos 20 12))
+  (obj src buffer~ ansrc Gambale_cut.wav (pos 20 45))
+  (obj lb loadbang (pos 260 45))
+  (obj go button (pos 20 80))
+  (obj c code 1 2 (pos 20 115)
+    (script
+      "; the loudness of the sound, every 512 samples, as a list for the plot; the onsets as marks"
+      "; (peaks of the spectral flux above 0.1 of its largest: try 0.05 or 0.3)"
+      "var x (head (buffer \"ansrc\"))"
+      "var sr (buffer-rate \"ansrc\")"
+      "var curve (loudness-curve x sr 512)"
+      "var times (onsets x sr 1024 256 0.2)"
+      "print (length times) \"onsets, the first at\" (fixed (take times 6) 2) \"s\""
+      "; the plot's x axis counts the curve's values: the onsets in the same units (one every 512 samples)"
+      "out 2 (/ (* times sr) 512)"
+      "out 1 curve"))
+  (obj m message "title the loudness (dB) and the onsets" (pos 260 80))
+  (obj pl plot 600 220 (pos 20 160))
+  (connect lb 0 c 0)
+  (connect go 0 c 0)
+  (connect lb 0 m 0)
+  (connect m 0 pl 0)
+  (connect c 0 pl 0)
+  (connect c 1 pl 1))

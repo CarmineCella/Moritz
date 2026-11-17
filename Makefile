@@ -162,11 +162,11 @@ $(BUILD)/RtMidi.o: $(RTMIDI_HDR)
 	$(CXX) -std=c++17 -O2 $(ARCHFLAGS) -D__MACOSX_CORE__ -w -c $(RTMIDI_SRC) -o $@
 
 # Musil's libraries (the halves written in Musil, their data and its help) and its examples, without its
-# C++ sources; the sounds and data shared by Moritz and Musil; Musil's manual among the documents.
+# C++ sources; the sounds and data shared by Moritz and Musil; Musil's manual (in Help > Documents too).
 # The destination is a fresh folder (data/ is copied into it).
-copy_musil = mkdir -p "$(1)/musil/src" "$(1)/musil/examples" "$(1)/docs/musil" && \
+copy_musil = mkdir -p "$(1)/musil/src" "$(1)/musil/examples" "$(1)/musil/docs" && \
 	cp musil/src/*.mu musil/src/*.csv musil/src/*.wav musil/src/help.txt "$(1)/musil/src/" && \
-	cp musil/examples/*.mu "$(1)/musil/examples/" && cp musil/docs/musil_manual.pdf "$(1)/docs/musil/" && \
+	cp musil/examples/*.mu "$(1)/musil/examples/" && cp musil/docs/musil_manual.pdf "$(1)/musil/docs/" && \
 	cp -R data "$(1)/" && find "$(1)/data" -name .DS_Store -delete
 
 # the PDFs of docs/ (their LaTeX sources stay in the repository), keeping their folders
