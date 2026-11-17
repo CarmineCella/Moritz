@@ -1,0 +1,1792 @@
+% musil_manual.tex — Musil user manual; the version comes from src/core.h through docs/generated/version.tex
+%
+% Build:  cd docs && pdflatex musil_manual.tex && pdflatex musil_manual.tex
+% The function references in generated/*.tex come from the doc comments in src/:
+% run  python3 tools/gendoc.py  after changing a library, then rebuild.
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[margin=2.5cm]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{parskip}
+\usepackage{titlesec}
+\usepackage{hyperref}
+\usepackage{enumitem}
+\usepackage{fancyhdr}
+\usepackage{mdframed}
+\usepackage{amsmath}
+\usepackage{graphicx}
+
+% ── Colours ──────────────────────────────────────────────────────────────────
+\definecolor{musilblue}{RGB}{25,80,140}
+\definecolor{musilgray}{RGB}{245,245,245}
+\definecolor{musilred}{RGB}{160,30,30}
+\definecolor{musilcomment}{RGB}{100,100,100}
+
+% ── Listings ─────────────────────────────────────────────────────────────────
+\lstdefinelanguage{Musil}{
+  morekeywords={var,set,function,return,if,while,for,break,continue,try,catch,expr,eval,apply,quote,do,load,print,help,and,or,not},
+  morestring=[b]",
+  morecomment=[l]{;},
+  sensitive=true,
+  alsoletter={-?>!},
+}
+\lstdefinestyle{musil}{
+  language=Musil, backgroundcolor=\color{musilgray}, basicstyle=\ttfamily\small,
+  keywordstyle=\color{musilblue}\bfseries, stringstyle=\color{musilred},
+  commentstyle=\color{musilcomment}\itshape, frame=single, framerule=0.4pt,
+  rulecolor=\color{gray!40}, xleftmargin=1em, breaklines=true, showstringspaces=false, tabsize=4,
+}
+\lstdefinestyle{musilinline}{language=Musil, basicstyle=\ttfamily, keywordstyle=\color{musilblue}\bfseries,
+  stringstyle=\color{musilred}, commentstyle=\color{musilcomment}, showstringspaces=false}
+\lstset{style=musil}
+\newcommand{\musil}[1]{\lstinline[style=musilinline]{#1}}
+
+% ── Section formatting ────────────────────────────────────────────────────────
+\titleformat{\section}{\large\bfseries\color{musilblue}}{{\thesection}}{1em}{}[\vspace{-0.3em}\rule{\linewidth}{0.5pt}]
+\titleformat{\subsection}{\normalsize\bfseries\color{musilblue!80}}{{\thesubsection}}{1em}{}
+
+\newenvironment{note}{\begin{mdframed}[backgroundcolor=blue!6,linecolor=musilblue,linewidth=0.8pt]\textbf{Note:}\ }{\end{mdframed}}
+\newenvironment{warn}{\begin{mdframed}[backgroundcolor=red!6,linecolor=musilred,linewidth=0.8pt]\textbf{Warning:}\ }{\end{mdframed}}
+
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\small\textit{Musil \musilversion{} User Manual}}
+\fancyhead[R]{\small\thepage}
+\renewcommand{\headrulewidth}{0.3pt}
+
+% ── Function reference entry (used by docs/generated/*.tex) ───────────────────
+% \fn{signature}{description}
+\newcommand{\fn}[2]{{\sloppy\noindent\texttt{\textbf{#1}}\par}\hspace*{1.5em}\begin{minipage}[t]{0.92\linewidth}\small#2\end{minipage}\par\vspace{0.45em}}
+
+\newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
+
+\input{generated/version}
+\begin{document}
+
+\begin{titlepage}
+\centering
+\vspace*{2.5cm}
+\includegraphics[width=0.9\textwidth]{musil_logo.png}\par
+\vspace{0.5cm}
+{\large\color{gray} User Manual \quad version \musilversion}\par
+\vspace{2.5cm}
+\rule{0.5\linewidth}{0.5pt}\par
+\vspace{1.5cm}
+{\normalsize
+Musil is a small scripting language for sound and music computing: Scheme underneath,
+Tcl on the surface. Numbers are vectors, functions are values, code is data. The
+language is one C++ header with no dependencies; the libraries add the operating
+system, linear algebra and machine learning, signal processing, real-time sound and
+plotting, and the IDE puts all of it in a window.
+}\par
+\vfill
+{\small\color{gray} (c) 2026 by Carmine-Emanuele Cella}
+\end{titlepage}
+
+\tableofcontents
+\newpage
+
+% ═════════════════════════════════════════════════════════════════════════════
+\section{Overview}
+
+Musil is a programming language for people who make music with computation: composers,
+researchers and students. It is deliberately small. The core language fits in one C++
+file of under a thousand lines, and every feature described in this manual, from
+convolution to live coding to orchestral scores, is reached from that core by loading a
+library written partly in C++ and partly in Musil itself. Three commitments shape the
+design:
+
+\begin{itemize}[nosep]
+  \item \textbf{Numbers are vectors.} A scalar is a vector of size one; \musil{(+ v 10)}
+        adds ten to every element; \musil{(sin v)} is elementwise. Signal processing and
+        numerical work are written as arithmetic, and run at C++ speed.
+  \item \textbf{Functions are values.} They are created anywhere, stored in lists, passed
+        to \musil{map}, applied to too few arguments to make partial applications, and
+        called in tail position without growing the stack.
+  \item \textbf{Code is data.} A program is a list; \musil{'(+ 1 2)} is a list you can
+        build, inspect and \musil{eval}.
+\end{itemize}
+
+What makes it comfortable to use is the surface: each line is a command, so
+\musil{print "x =" x} needs no parentheses around it; \musil{( )} encloses a list or a
+nested call; \musil{\{ \}} encloses a block of lines; and \musil{(expr (a + b * 2))} gives
+you infix arithmetic when a formula reads better that way. If you know a Lisp you will
+find the evaluation rule familiar; if you know a shell, the command lines.
+
+\subsection{Two ways to run Musil}
+
+\textbf{The command line.} \texttt{musil file.mu} runs a file; \texttt{musil} alone is a
+REPL; \texttt{musil a.mu b.mu -- x y} runs several files in one interpreter with
+\musil{args} bound to \musil{(x y)}; \texttt{musil -e "print 42"} evaluates a string.
+
+\textbf{The IDE.} \textit{Musil} the application is an editor with syntax colouring
+where Cmd-Enter runs the block under the cursor, a console with an input line, the
+list of your variables, a documentation search, and plots and controls in windows of
+their own. It runs the same interpreter. See section~\ref{sec:ide}.
+
+\subsection{Building and installing}
+
+\begin{lstlisting}[numbers=none]
+cmake -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build
+ctest --test-dir build          ; every library has a test and a reference
+cmake --install build           ; musil -> /usr/local/bin,  *.mu and help.txt -> ~/.musil
+./deploy_macos.sh               ; macOS: dist/Musil.app
+\end{lstlisting}
+
+The build fetches FLTK~1.4, the one external dependency, used by the plot library, the
+controls window and the IDE; \texttt{-DMUSIL\_FLTK=OFF} builds everything else with no
+dependency at all. Libraries are found by \musil{load} in \texttt{\textasciitilde/.musil}
+after installing, in any directory listed in the \texttt{MUSIL\_PATH} environment
+variable, or next to the file that loads them; during development
+\texttt{MUSIL\_PATH=src} points at the source tree.
+
+\subsection{Getting help}
+
+\musil{(help name)} prints the signature and description of any builtin or library
+function, taken from the same comments this manual is generated from:
+
+\begin{lstlisting}[numbers=none]
+> help range
+  (range n)  (range a b)  (range a b step)
+  a vector of evenly spaced numbers, end excluded
+\end{lstlisting}
+
+The files \texttt{examples/reference\_*.mu} are runnable tours of the core and of each
+library; \texttt{examples/reference.mu} is the best place to start.
+
+% ═════════════════════════════════════════════════════════════════════════════
+\section{The language}
+\label{sec:language}
+
+\subsection{Reading a program}
+
+A program is a sequence of lines. Each line is a command: its first word is a function
+and the rest are its arguments.
+
+\begin{lstlisting}
+print "hello"                  ; (print "hello")
+var x 10                       ; (var x 10)
+print "x + 1 =" (+ x 1)        ; a parenthesised form is a sub-expression
+\end{lstlisting}
+
+Inside parentheses, newlines are ordinary whitespace, so a long call can span lines.
+Braces group lines into a block, which is what \musil{if}, \musil{while} and
+function bodies take:
+
+\begin{lstlisting}
+if (> x 5) {
+    print "big"
+    var y (* x 2)
+}
+\end{lstlisting}
+
+A line holding a single parenthesised form is that form; a line holding a single
+literal is that value; a line holding a single \emph{symbol} calls it
+(\musil{ctr} calls the function \musil{ctr}, as in Tcl). A comment runs from
+\musil{;} to the end of the line, as in Lisp and in Moritz's patches (\musil{\#} is an ordinary
+character: \musil{'C\#4} is a symbol); a backslash at the end of a line continues it, and
+so does \textbf{indentation}: at the top level, a line that starts with spaces continues
+the command above it, which is how a function's body goes on the next line:
+
+\begin{lstlisting}
+function lead (gate freq cutoff)
+    (pan (* (adsr sr gate 0.01 0.2 0.5 0.4) (lowpass (osc sr freq saw-table) sr cutoff 2)) 0)
+\end{lstlisting}
+
+Inside \musil{\{ \}} lines are separate commands whatever their indentation.
+\musil{'x} is short for \musil{(quote x)}.
+
+\subsection{Values}
+
+\begin{center}
+\begin{tabular}{@{}lll@{}}
+\toprule
+\textbf{Type} & \textbf{Literal or constructor} & \textbf{\musil{(type x)}} \\
+\midrule
+number, vector & \musil{42}, \musil{3.14}, \musil{(vec 1 2 3)}, \musil{(range 8)} & \texttt{scalar}, \texttt{vec} \\
+string & \musil{"text\\n"} & \texttt{string} \\
+symbol & \musil{'name}, \musil{(sym "name")} & \texttt{symbol} \\
+list & \musil{(list 1 "two" (vec 3 4))} & \texttt{list} \\
+function & \musil{(function (x) (* x x))} & \texttt{function} \\
+nil & \musil{nil} & \texttt{nil} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+All numbers are IEEE double vectors; there is no integer type, and \musil{floor},
+\musil{round} and \musil{mod} do integer work. A scalar is a vector of size one, so
+every arithmetic and math builtin is elementwise, with size-one broadcasting:
+
+\begin{lstlisting}
+var v (vec 1 2 3)
+(+ v 10)                ; (11 12 13)
+(* v v)                 ; (1 4 9)
+(sin (/ (range 8) 8))   ; elementwise
+(+ (vec 1 2) (vec 1 2 3))   ; error: +: size mismatch (2 vs 3)
+\end{lstlisting}
+
+Lists hold anything, including other lists and vectors; that is also how matrices
+(a list of row vectors) and spectra (\musil{(list re im)}) are represented.
+Strings are immutable; \musil{getidx} on a string gives a one-character string.
+
+Truth: everything is true except \musil{0}, \musil{nil}, an empty string, an empty
+list, and a vector with a zero in it. Comparisons return 1 or 0, elementwise on
+vectors; \musil{==} and \musil{equal?} compare structure on non-numbers, and
+\musil{<} orders two strings lexicographically. Constants: \musil{nil}, \musil{true},
+\musil{false}, \musil{pi}, \musil{inf}, \musil{version}.
+
+\subsection{Variables: \texttt{var} and \texttt{set}}
+
+\musil{var} defines a variable in the \emph{current} environment: at top level a
+global, inside a function a local of that call. It never touches a variable of the
+same name further out, so a library's locals cannot clobber yours. \musil{set}
+assigns to the nearest existing variable, however far out, and is an error if there is
+none.
+
+\begin{lstlisting}
+var counter 0
+function bump () (set counter (+ counter 1))
+function shadow () {
+    var counter 99          ; a different, local counter
+    return counter
+}
+bump
+print counter (shadow) counter    ; 1 99 1
+\end{lstlisting}
+
+Blocks (\musil{\{ \}}, loop bodies, \musil{if} branches) do not open a scope: a
+\musil{var} in a \musil{while} body inside a function is the function's local.
+
+\subsection{Control flow}
+
+\begin{lstlisting}
+if (< x 0) { print "negative" } { print "not negative" }    ; then-block, optional else-block
+while (< i 10) { var i (+ i 1) }
+for (var k 0) (< k 10) (var k (+ k 1)) { print k }           ; init, condition, step, body
+if (== k 7) { break }        ; break and continue are calls, so inside a block or in parens
+\end{lstlisting}
+
+There is no \texttt{else if}; a chain of \musil{if}s with early \musil{return}s reads
+the same way inside a function. \musil{do} evaluates forms in order and returns the
+last; it is what a block is.
+
+\subsection{Functions}
+
+\begin{lstlisting}
+function square (n) (* n n)          ; named, one-expression body
+function fact (n) {                  ; block body; return leaves early
+    if (< n 2) { return 1 }
+    return (* n (fact (- n 1)))
+}
+var inc (function (n) (+ n 1))       ; anonymous function in a variable
+(map (vec 1 2 3) square)             ; functions are values
+\end{lstlisting}
+
+\textbf{Closures} capture the environment they were created in; a stateful closure
+updates a captured variable with \musil{set}:
+
+\begin{lstlisting}
+function make-counter () {
+    var c 0
+    return (function () { set c (+ c 1) })
+}
+var ctr (make-counter)
+ctr                                  ; 1
+print (ctr)                          ; 2
+\end{lstlisting}
+
+\textbf{Currying.} A function called with fewer arguments than it takes returns a
+partial application; with more, the result is applied to the rest:
+
+\begin{lstlisting}
+function add3 (a b c) (+ a b c)
+var add1 (add3 1)
+(add1 2 3)                           ; 6
+(map (vec 1 2 3) (add3 10 100))      ; (111 112 113)
+function twice (f) (function (x) (f (f x)))
+(twice inc 5)                        ; 7: (twice inc) applied to 5
+\end{lstlisting}
+
+\begin{warn}
+Because of currying, calling a library function with one argument too few returns a
+function instead of failing: \musil{(mat-str M)} is a partial application, not a
+string. Functions have no optional arguments for this reason; where a default makes
+sense there are two functions (\musil{dist} and \musil{dist-p}, \musil{mat-print}
+and \musil{mat-print-with}). Builtins do check their arity.
+\end{warn}
+
+\textbf{Tail calls} run in constant space: a recursive function whose recursive call is
+the last thing it does can loop a million times. An early \musil{return} inside a
+block is rewritten to a tail call at definition time, so the natural style costs
+nothing; only a \musil{return} from inside a loop unwinds.
+
+\subsection{Infix arithmetic: \texttt{expr}}
+
+\begin{lstlisting}
+(expr (x + y * 2))                   ; precedence as usual: 16 for x=10, y=3
+(expr ((x + y) * 2))                 ; parentheses group
+(expr ((sqrt x) + 1))                ; a form without an operator in second position is a call
+(expr (a > 1 && b < 2))              ; comparisons and logic: < > <= >= == != && ||
+\end{lstlisting}
+
+\subsection{Errors}
+
+\begin{lstlisting}
+var r (try (num "abc") catch e (concat "caught: " e))
+error "negative not allowed: " n     ; raise; the arguments become the message
+assert (== (+ 2 2) 4) "arithmetic"   ; std: stop unless true
+\end{lstlisting}
+
+Every error carries the file, the line and the call stack, innermost first:
+
+\begin{lstlisting}[numbers=none]
+reference.mu:426: from inner
+  1> inner() at reference.mu:428
+  2> outer() at reference.mu:431
+\end{lstlisting}
+
+Builtins check the number and types of their arguments
+(\texttt{sqrt: expected 1 argument, got 0}; \texttt{+: expected number, got string}).
+Deep recursion stops with \texttt{stack overflow} rather than crashing.
+
+\subsection{Code as data}
+
+\begin{lstlisting}
+var code '(+ 1 2)                    ; a list, not a call
+(eval code)                          ; 3
+(eval (list '* 2 (+ 1 2)))           ; code built at run time: 6
+(apply add3 (list 1 2 3))            ; a list spread as arguments
+(eval (parse "var z (* 6 7)"))       ; text read into a form, then evaluated: a REPL in two calls
+\end{lstlisting}
+
+\subsection{Loading files}
+
+\musil{(load "file.mu")} runs a file once in the global environment. A relative name
+is searched next to the loading file, in the current directory, in each entry of
+\texttt{MUSIL\_PATH}, then in \texttt{\textasciitilde/.musil}. Reading functions
+(\musil{read}, \musil{read-wav}, \musil{read-csv}, \musil{exists?}, \musil{stat})
+apply a similar rule to their data: a relative path that does not exist in the current
+directory is looked for next to the file being run, so a script finds its data from
+wherever it was started, on the command line or from the IDE. A file that ran is not
+run again (so mutual loads are safe); a file that failed is not cached. Nothing is
+loaded automatically: a program that wants the standard library says
+\musil{load "std.mu"}; each library loads what it needs (\musil{signals.mu} loads
+\musil{scientific.mu}, which loads \musil{std.mu}).
+
+\subsection{Sharing and copying}
+
+Lists and vectors are shared by reference: \musil{(var alias orig)} makes two names
+for one object, and \musil{push} or \musil{setidx} through either is visible through
+both. \musil{(copy x)} makes a new list or vector with the same elements (a shallow
+copy). Strings and numbers behave as values.
+
+% ═════════════════════════════════════════════════════════════════════════════
+\section{The IDE}
+\label{sec:ide}
+
+\textit{Musil} the application is the interpreter with an editor around it.
+
+\begin{itemize}[nosep]
+  \item \textbf{Editor} (top left): \texttt{.mu} files with syntax colouring (keywords,
+        the documented builtins, strings, numbers, comments). \textbf{Cmd-Enter} runs the
+        block around the cursor (the lines between blank lines) or the selection;
+        \textbf{Cmd-Shift-Enter} the whole file; \textbf{Cmd-Alt-Enter} the current line.
+        The lines sent flash. A toolbar has Run file, Run block, Run line, Stop, Clear,
+        Controls and Settings. Undo, find (Cmd-F, Cmd-G), comment/uncomment (Cmd-/), text
+        size (Cmd-+, Cmd--, for every panel), go to line (Cmd-L), clear the console (Cmd-K),
+        files by drag and drop; Settings (Cmd-,) chooses the font (one fixed-width font for
+        everything, colours only mark syntax), the size, line numbers, the current-line
+        highlight, the margin guide and the evaluation port (0 turns it off), and remembers them.
+  \item \textbf{Console} (bottom left): everything printed, and a line to type Musil into:
+        Enter runs it, Up/Down recall history, Tab completes a name. Esc or Cmd-. stops a
+        running program (the interpreter checks at safe points, so the session survives).
+  \item \textbf{Variables} (top right): the globals with a preview of their values, coloured
+        by kind (numbers, strings, lists, functions); double-click prints one.
+  \item \textbf{Help} (bottom right): type a name or a word to search the documentation of
+        every function. \musil{(manual)} or the Help menu opens this PDF; Help~$\to$~Examples
+        copies any bundled example into an untitled buffer (the original stays untouched; its
+        data is still found), to run and edit.
+  \item \textbf{Plots and controls} open in windows of their own, from the IDE exactly as
+        from the command line; several plots can be open at once.
+  \item \textbf{From another editor}: the IDE listens on port 7770; code sent from VS Code
+        (the extension in \texttt{editors/vscode/musil}) or from \texttt{nc} is evaluated in
+        the same session.
+\end{itemize}
+
+The interpreter runs on its own thread; the window stays responsive while a program
+runs. Libraries are found inside the app bundle, so nothing needs to be installed. On
+macOS, \texttt{./deploy\_macos.sh} builds \texttt{dist/Musil.app}.
+
+
+% ═════════════════════════════════════════════════════════════════════════════
+\section{Tutorial}
+\label{sec:tutorial}
+
+This chapter teaches Musil from nothing, by doing. Every fragment in it can be typed into
+the IDE's console, sent from the editor with Cmd-Enter, or saved and run with
+\texttt{musil file.mu}; all of them were run as written. Chapter~\ref{sec:language} is the
+precise account of the syntax and the evaluation rule, chapter~\ref{sec:practices} the
+style that experience has shown to work, and chapter~\ref{sec:libraries} the reference of
+every function; at the console, \musil{(help name)} prints a function's entry.
+
+\subsection{The language}
+
+\paragraph{Commands and expressions.} A program is a list of commands, one per line. A
+command is a name followed by its arguments; parentheses are only needed to nest a call
+inside another.
+
+\begin{lstlisting}
+print "hello"                 ; a command: the function print with one argument
+print (+ 1 2) (* 3 4)         ; two nested calls: prints 3 12
+var x 10                      ; a variable
+print (* x 2)
+\end{lstlisting}
+
+Inside parentheses the operator comes first, Lisp-style: \musil{(+ 1 2)}, \musil{(< x 5)},
+\musil{(max 3 7)}. Comments start with \texttt{\#}.
+
+\paragraph{Values.} Numbers are vectors: a scalar is a vector of length one, and arithmetic
+works on whole vectors at once, element by element, a scalar spreading over a vector.
+
+\begin{lstlisting}
+var v (vec 1 2 3)             ; a vector
+print (* v 2)                 ; (2 4 6)
+print (+ v (vec 10 20 30))    ; (11 22 33)
+print (sum v) (mean v) (max v) (length v)
+print (range 5)               ; (0 1 2 3 4)
+print (getidx v 1)            ; 2: indices start at 0
+print (take v 2) (drop v 1)   ; (1 2) (2 3)
+\end{lstlisting}
+
+Strings are in double quotes; \musil{concat} joins, \musil{str} converts to text,
+\musil{num} back to a number. Symbols are names used as values, written with a quote:
+\musil{'mf}, \musil{'freq}; they name keys, kinds and parameters. Lists hold anything, in
+order: \musil{(list 1 "two" 'three (vec 4 5))}; \musil{head}, \musil{last}, \musil{getidx},
+\musil{length}, \musil{push} work on them. \musil{nil} is the absence of a value; the
+truth values are \musil{1} and \musil{0}, and \musil{type} tells what something is.
+
+\paragraph{Functions.} \musil{function name (parameters) body}, the body one expression, or
+several in braces with \musil{return}.
+
+\begin{lstlisting}
+function square (x) (* x x)
+function rms-db (x) (amp->db (rms x))
+
+function clamp (x lo hi) {
+    if (< x lo) { return lo }
+    if (> x hi) { return hi }
+    return x
+}
+print (square 4) (clamp 12 0 10)
+\end{lstlisting}
+
+A function's body may also start on the next line, indented. Functions are values: you can
+pass them, return them, keep them in lists. \musil{(function (x) (* x x))} is one without a
+name. Giving fewer arguments than parameters gives back a function waiting for the rest
+(currying), so a function has one arity: there are no optional arguments.
+
+\paragraph{Flow.} \musil{if} takes a condition, a then-branch and an optional else-branch;
+\musil{and}/\musil{or} short-circuit; \musil{while} and \musil{for} loop, with
+\musil{break} and \musil{continue}.
+
+\begin{lstlisting}
+if (> x 5) { print "big" } { print "small" }
+for (var k 0) (< k 3) (var k (+ k 1)) { print k }
+var n 0
+while (< n 100) { set n (* 2 (+ n 1)) }
+\end{lstlisting}
+
+\musil{var} declares, \musil{set} changes an existing variable (also one of an enclosing
+scope, from inside a function). The everyday loop, though, is not \musil{for} but
+\musil{each}, and most of what looks like a loop is a whole-vector operation:
+
+\begin{lstlisting}
+each (list "a" "b" "c") (function (s) (print s))
+each (range 3) (function (k) (print k (square k)))
+var t (/ (range 44100) 44100)                 ; a second of time, no loop
+var y (* (exp (* -3 t)) (sin (* tau 440 t)))  ; a decaying sine, no loop
+\end{lstlisting}
+
+\paragraph{map, filter, reduce.} They build new collections from old ones and are the
+functional heart of the language; use them when the function fits on the line.
+
+\begin{lstlisting}
+print (map (list 1 2 3) square)                          ; (1 4 9)
+print (filter (range 10) odd?)                           ; (1 3 5 7 9)
+print (reduce (list 1 2 3 4) + 0)                        ; 10
+print (map (list "a" "bb") length)                       ; (1 2)
+print (sort-by (list "pear" "fig" "apple") length)       ; (fig pear apple)
+\end{lstlisting}
+
+\paragraph{Records.} Structured data is a list of \musil{(list key value)} pairs, made with
+\musil{record}, read with \musil{get} (an error when absent) or \musil{opt} (a default),
+changed with \musil{put!}. Keys are symbols. Events, options and database entries are all
+records.
+
+\begin{lstlisting}
+var e (record (list 'pitch 60 'dur 0.5 'amp 0.8))
+print (get e 'pitch) (opt e 'pan 0)
+put! e 'amp 0.6
+print (keys e) (values e)
+\end{lstlisting}
+
+\paragraph{Errors.} \musil{error} raises with a message; \musil{try ... catch} handles it.
+
+\begin{lstlisting}
+function safe-div (a b) { if (== b 0) { error "safe-div: division by zero" }
+                          return (/ a b) }
+var r (try (safe-div 1 0) catch err (concat "caught: " err))
+print r
+\end{lstlisting}
+
+\paragraph{Code as data.} \musil{'(+ 1 2)} is a list of three elements, \musil{eval} runs a
+form, \musil{parse} turns text into forms, \musil{apply} calls a function on a list of
+arguments. Patterns, scores and instruments are data because of this; in ordinary programs
+you will rarely need it.
+
+\subsection{Files and input}
+
+\begin{lstlisting}
+load "system.mu"
+write "/tmp/notes.txt" "a line of text"       ; a string, or anything printed
+var text (read "/tmp/notes.txt")
+var rows (read-csv "data/iris.csv")            ; a list of rows (vectors of numbers)
+write-csv "/tmp/out.csv" (list (vec 1 2) (vec 3 4))
+var w (read-wav "data/drums.wav")             ; (list sample-rate channels)
+var sr (head w)
+var x (head (getidx w 1))                     ; the first channel
+write-wav "/tmp/out.wav" sr x                 ; 16-bit; 24, 32, "float" as a fourth argument
+write-wav "/tmp/stereo.wav" sr (list x x)     ; a list of channels
+print (ls ".") (exists? "/tmp/out.wav")
+var answer (input "your name? ")              ; a line from the console
+\end{lstlisting}
+
+A relative path is looked for in the current directory, then next to the file being run,
+then next to the program that was started, so an example in \texttt{examples/} reads
+\texttt{data/drums.wav} from anywhere. \musil{load} runs a file once (the libraries, or your
+own), searching the load path too (\texttt{MUSIL\_PATH}, \texttt{\textasciitilde/.musil},
+the installed libraries). Nothing is loaded by itself: a program that uses \texttt{signals}
+starts with \musil{load "signals.mu"}, which loads \texttt{std} as well.
+
+\subsection{The standard library}
+
+\texttt{std} is loaded by every other library. What you will use daily:
+
+\begin{lstlisting}
+load "std.mu"
+print (zip (list 1 2) (list "a" "b"))          ; ((1 a) (2 b))
+print (concat-list (list 1) (list 2 3))         ; (1 2 3)
+print (unique (list 1 1 2)) (reverse (list 1 2 3)) (sort-list (list 3 1 2))
+print (split "a,b,c" ",") (join (list "a" "b") "-") (replace "hello" "l" "L")
+print (starts-with? "musil" "mu") (contains? "musil" "si") (trim "  x  ")
+print (find-first (list 1 4 9) (function (x) (> x 3)))   ; 4
+print (group-by (list 1 2 3 4) odd?)            ; ((1 (1 3)) (0 (2 4)))
+print (fixed 3.14159 2) (round 2.5) (floor 2.7) (mod 7 3)
+print (rand) (seed 3)                           ; random numbers, and a seed for repeatable ones
+print (clock) (now)                             ; seconds since the start, and the date
+\end{lstlisting}
+
+Vectors have their own family: \musil{zeros}, \musil{ones}, \musil{vec} (concatenation),
+\musil{slice}, \musil{argmax}, \musil{cumsum}, \musil{dot}, \musil{norm}, \musil{clip},
+\musil{abs}, \musil{sqrt}, \musil{exp}, \musil{log}, \musil{sin} \ldots\ all element-wise.
+
+\subsection{Signals}
+
+Load a sound, look at it, filter it, convolve it, write it.
+
+\begin{lstlisting}
+load "signals.mu"
+load "plot.mu"
+var w (read-wav "data/drums.wav")
+var sr (head w)
+var x (head (getidx w 1))
+print (length x) "samples," (fixed (/ (length x) sr) 2) "s, rms" (fixed (rms x) 3)
+show (waveform x sr)
+var dull (lowpass x sr 800 0.7)                          ; a biquad: cutoff, Q
+var bright (highpass x sr 2000 0.7)
+var hall (concerthall x sr 0.7 0.3)                      ; the shipped concert hall (stereo)
+write-wav "/tmp/drums_hall.wav" sr hall
+var ir (head (getidx (read-wav "data/Concertgebouw-s.wav") 1))
+var wet (conv x (resample-to ir 44100 sr))                ; any impulse response, by FFT
+\end{lstlisting}
+
+\paragraph{Synthesis as functions.} A sound is a function of time; write it as vector
+algebra.
+
+\begin{lstlisting}
+function tone (sr freq dur)
+    (* (sine sr freq dur) (exp (* -4 (/ (range (* sr dur)) sr))))
+function fm (sr carrier ratio index dur) {
+    var t (/ (range (* sr dur)) sr)
+    return (sin (+ (* tau carrier t) (* index (sin (* tau carrier ratio t)))))
+}
+write-wav "/tmp/fm.wav" 44100 (* 0.5 (fm 44100 220 1.5 3 2))
+\end{lstlisting}
+
+The same function can be an instrument for the live engine when it is written with a
+gate: \musil{(function (gate freq) (* (adsr sr gate 0.01 0.1 0.5 0.3) (osc sr (sig gate freq) saw-table)))}
+renders offline with \musil{synth-render} and streams with \musil{synth} (section~\ref{tut:live}).
+
+\paragraph{Spectra.} \musil{fft} gives real and imaginary parts, \musil{magnitude-spectrum}
+the magnitudes of the positive frequencies, \musil{stft} the frames of a short-time
+transform; the descriptors summarise them.
+
+\begin{lstlisting}
+var mags (magnitude-spectrum (take x 4096))
+var freqs (spectrum-freqs 4096 sr)
+print "centroid" (fixed (spectral-centroid mags freqs) 0) "Hz"
+show (spectrogram x sr 1024 256)
+var frames (stft x 1024 256)                               ; complex frames, for your own analysis
+\end{lstlisting}
+
+\paragraph{Further.} Time stretching keeps the pitch (\musil{pvoc-stretch x 2}), onsets
+find the attacks (\musil{onsets x sr 1024 256 0.25}), and harmonic/percussive separation
+splits a recording into its sustained and its struck parts:
+
+\begin{lstlisting}
+var parts (hpss x 2048 512 31)
+write-wav "/tmp/harmonic.wav" sr (head parts)
+write-wav "/tmp/percussive.wav" sr (last parts)
+\end{lstlisting}
+
+\musil{nmf-separate} goes further, into any number of sources; \musil{binaural} and
+\musil{ambi-encode} place a sound in space. Chapter~\ref{sec:libraries} lists them all.
+
+\subsection{Scientific}
+
+A matrix is a list of row vectors; the C++ half does the products and decompositions, the
+Musil half the construction and the statistics.
+
+\begin{lstlisting}
+load "scientific.mu"
+var A (list->mat (list (list 2 1) (list 1 3)))
+var b (vec 3 5)
+print (mat-mul A A) (transpose A) (det A) (inv A)
+print (solve A b)                                       ; A x = b
+print (eig-sym A)                                       ; eigenvalues and vectors of a symmetric matrix
+var X (list->mat (list (list 1 2) (list 2 4.1) (list 3 6.2)))
+var P (pca X)
+print (pca-explained P)                                 ; how much variance each direction carries
+var groups (kmeans X 2)
+print (kmeans-labels groups)
+var W-H (nmf (mat-map X abs) 1 50)                      ; non-negative factorisation
+\end{lstlisting}
+
+In music these are the tools behind feature spaces (a database's spectra as rows: PCA maps
+them, k-means groups them, \musil{knn} classifies a new sound), behind NMF separation, and
+behind the regressions of \texttt{examples/regression.mu}. \musil{mat-map},
+\musil{mat-add}, \musil{hadamard}, \musil{mat-sum} and friends are the element-wise
+algebra; \musil{cov}, \musil{mat-mean}, \musil{mat-std} the statistics.
+
+\subsection{Live}
+\label{tut:live}
+
+A live session is: open the device, define an instrument, play it, then keep redefining
+things while the clock runs.
+
+\begin{lstlisting}
+load "live.mu"
+audio-init                                              ; 44100 Hz, stereo
+var sr (audio-sr)
+function pluck (gate freq cutoff)
+    (* (adsr sr gate 0.005 0.2 0.3 0.2) (lowpass (osc sr (sig gate freq) saw-table) sr cutoff 2))
+var p (synth pluck)                                     ; compiled into the engine
+set-param p 'freq 220
+set-param p 'cutoff 1500
+note p 0.5                                              ; gate on for half a second
+\end{lstlisting}
+
+\paragraph{The clock and loops.} \musil{tempo} sets the beat; a \musil{live-loop} calls a
+function of that name every so many beats, and the function returns the events of that
+turn: \musil{synth-ev} (a note on a synth at a beat, with parameters), \musil{drums} (a kit
+and a step pattern), \musil{melody} (pitches on a synth), or \musil{stack} of several.
+Redefining the function changes the music at the next turn.
+
+\begin{lstlisting}
+tempo 120
+function bass (cycle) (list (synth-ev 0 0.25 p (list (list 'freq 110)))
+                            (synth-ev 2 0.25 p (list (list 'freq (if (odd? cycle) 165 110)))))
+live-loop 'bass 4
+var kit (house-kit)
+function beat-loop (cycle) (drums kit "bd ~ sn ~ bd bd sn ~" 4)
+live-loop 'beat-loop 4
+stop-loop 'bass
+\end{lstlisting}
+
+\musil{pat} turns a step string into events, \musil{melody} plays pitches on an instrument,
+the kits (house, techno, trance) give drums and synths ready to play; \texttt{live\_house.mu}
+and its siblings are complete sessions.
+
+\paragraph{Controls.} A control is a slider in a window, bound to a synth parameter; it
+can also be driven from code, or by OSC from another program.
+
+\begin{lstlisting}
+control 'cutoff 200 5000 1500
+bind-control 'cutoff p 'cutoff
+controls                                                ; the window
+osc-listen 9000
+osc-map "/cutoff" 'cutoff                               ; /cutoff 800 from anywhere sets it
+osc-send "127.0.0.1" 9001 "/hello" 1 2.5 "three"        ; and the other way
+\end{lstlisting}
+
+The IDE keeps the interpreter running while the loops turn, so you edit the file, send a
+block with Cmd-Enter, and hear the change on the next cycle. From the command line,
+\texttt{musil --serve 7770 -i} does the same for an editor that sends code to the port.
+
+\subsection{Music}
+
+The \texttt{music} library holds the score: things placed in time, and the sample
+databases that notes are drawn from.
+
+\begin{lstlisting}
+load "music.mu"
+var db (db-load "data/microsol/microsol.spectrum.db")
+print (db-instruments db) (db-range db 'Vn)
+var s (score "first" 44100)
+event s 0 1 (note db 'Vn "C4" 'mf 'ord)                 ; instrument, pitch, dynamics, technique
+event s 0.5 1 (note db 'Ob "F#4" 'p 'ord)
+event-at s 1 2 (chord db 'Hn 'mf 'ord (list "D4" "G#4")) -30 0   ; placed at the right
+event s 2 3 "data/gong_c_sharp.wav"                     ; a file
+event s 3 1 (* 0.3 (sine 44100 660 1))                  ; a buffer
+render s "/tmp/first.wav" "stereo"
+display s                                               ; the roll: Play, Render, a double-click on a note
+play-score s 0.8                                        ; in the concert hall
+\end{lstlisting}
+
+\paragraph{Pitches, rhythms, lines.} Pitches are strings (\musil{"F\#4"}) or MIDI numbers,
+\musil{nil} a rest; a rhythm is a list of durations, negative for a pause. Elements make
+fragments, lists of \musil{(at dur payload)}, that \musil{add!} places.
+
+\begin{lstlisting}
+var line (list "C4" "F#4" "D4" "G#4" "E4")
+var r (rhythm (list 0.5 0.25 0.25 1 -0.5))
+add! s 4 (notes db 'Ob 'mf 'ord line r)
+add! s 8 (notes db 'Ob 'mf 'ord (invert line "C4") (retrograde r))
+add! s 12 (chords db 'Vn 'p 'ord (list (list "C4" "F#4") (list "D4" "G#4")) (rhythm (list 1 1)))
+add! s 14 (texture db (list 'Vn 'Vc) 'pp 'ord line (rhythm (list 0.25 0.25 0.5)) (list 1 1.2 1.5))
+add! s 18 (pivots db (list 'Ob 'Hn) 'mf 'ord (list "D5" "A3") 3 (rhythm (list 0.5 0.5 1)))
+add! s 22 (chordinterp db 'Vn 'p 'ord (list "C4" "E4" "G4") (list "C#4" "F#4" "A#4") (tuplet 6 6))
+\end{lstlisting}
+
+Because fragments and pitches are lists, the language composes them: \musil{map} a
+fragment to transpose it (\musil{fragment-map}), \musil{reverse} a rhythm,
+\musil{fragment-scale} for an augmentation, \musil{each} to place an ostinato three times,
+\musil{fragment->score} to make a section that another score holds as one event.
+\texttt{algorithmic\_comp.mu} and \texttt{score\_in\_score.mu} go through all of it.
+
+\paragraph{A convention.} Pitches are written as strings (\musil{"A3"}, \musil{"D\#5"}); symbols
+(\musil{'A3}, \musil{'D\#5}) work too, but one spelling is better than two. Symbols name things: instruments, dynamics, techniques, keys and parameters
+(\musil{'Vn}, \musil{'mf}, \musil{'ord}, \musil{'freq}). Numbers are for computed pitches
+(\musil{(+ 7 60)}), and every element accepts them.
+
+% ═════════════════════════════════════════════════════════════════════════════
+\section{Programming practices}
+\label{sec:practices}
+
+This chapter is about writing Musil that reads well and runs fast, and about extending
+the language with a library of your own. The language is a Scheme in its bones
+(everything is an expression, functions are values, code is data) with a Tcl surface (one
+command per line, no parentheses around a top-level call). The style that fits it best is
+\emph{imperative at the top, functional in the small}: a program is a sequence of steps
+that build and transform vectors and lists, and the functional tools (\musil{map},
+\musil{filter}, \musil{reduce}) are used inside those steps where they are shorter than a
+loop, never as an end in themselves.
+
+\subsection{The shape of a program}
+
+A program is a list of steps. Name the intermediate results; do not nest what can be
+sequenced.
+
+\begin{lstlisting}
+load "signals.mu"
+var w (read-wav "data/drums.wav")
+var sr (head w)
+var x (head (getidx w 1))
+var flux (onset-strength x 1024 256)
+var t-on (onsets x sr 1024 256 0.25)
+print (length t-on) "onsets:" (fixed t-on 3)
+write-wav "/tmp/out.wav" sr (normalize-peak x)
+\end{lstlisting}
+
+\begin{itemize}[nosep]
+  \item One idea per line. A nesting deeper than three parentheses is asking to be split
+        with a \musil{var}.
+  \item Top-level calls need no parentheses: \musil{print x}, \musil{write-wav path sr x},
+        \musil{audio-init}. Parentheses are for calls that are arguments:
+        \musil{var y (fixed x 2)}.
+  \item A function's body goes on the next line, indented: indentation continues a
+        top-level command. Braces for several statements. No backslashes are needed.
+  \item \musil{return} ends a function early; the last expression is the value otherwise.
+        Inside \musil{\{ \}}, use \musil{return} when the body has steps, so the reader
+        sees where the value comes from.
+  \item \musil{and} and \musil{or} short-circuit, left to right, and return the deciding
+        value, so \musil{(and (> k 0) (getidx v k))} is safe and \musil{(or x default)}
+        reads as it should.
+\end{itemize}
+
+\begin{lstlisting}
+function rms-db (x)
+    (amp->db (rms x))
+
+function normalise-to (x target) {
+    var g (/ target (rms x))
+    return (* x g)
+}
+\end{lstlisting}
+
+\subsection{Vectors first}
+
+Numbers are vectors. Anything that can be written as an operation on whole vectors is
+faster (the loop runs in C++) and shorter than a loop in Musil.
+
+\begin{lstlisting}
+var t (/ (range n) sr)                            ; a time axis
+var y (* (exp (* -3 t)) (sin (* tau 440 t)))      ; a decaying sine, no loop
+var peak (max (abs y))
+var clipped (clip y -0.5 0.5)
+\end{lstlisting}
+
+Broadcasting: a scalar with a vector applies to every element; two vectors must have the
+same length (a mismatch is an error, on purpose). \musil{vec} concatenates; \musil{slice},
+\musil{take}, \musil{drop} cut; \musil{add-at!} adds into a buffer in place; \musil{mix}
+builds a buffer from placed pieces. Reach for a loop over samples only when each sample
+depends on the previous one and no builtin does it (\musil{osc}, \musil{lag}, \musil{iir},
+\musil{delay}, \musil{comb}, \musil{adsr} are there); such a loop usually belongs in C++
+(section~\ref{sec:adding-library}).
+
+\subsection{Rules of thumb}
+
+The tutorial (chapter~\ref{sec:tutorial}) shows how loops, records, files and errors
+work; this is how to choose between them when writing something that will last.
+
+\begin{itemize}[nosep]
+  \item \textbf{Loops.} \musil{each} for doing something with every element (printing,
+        pushing, writing files); \musil{for} when an index and a step are the point or the
+        loop must stop early; \musil{while} for a condition that is not a count. Prefer
+        \musil{map}, \musil{filter} and \musil{reduce} when the result is a new collection
+        and the function fits on the line; name the function first otherwise.
+  \item \textbf{Recursion} is for trees and for algorithms that are recursive by nature (a
+        nested pattern, an evaluator). A tail call costs nothing, but a loop written as a
+        recursive function reads worse than \musil{for} to most people, and a non-tail
+        recursion over a long list will overflow the evaluation depth: use a loop or
+        \musil{reduce}.
+  \item \textbf{Building.} Lists grow with \musil{push} or come out of \musil{map}; do not
+        \musil{concat-list} inside a loop over long lists, every call copies. Vectors are
+        preallocated with \musil{zeros} and filled with \musil{add-at!} or \musil{setidx}.
+  \item \textbf{Records} are the shape of every option list, event and database entry;
+        keys are symbols, and a string key is a different key, so pick one and keep it.
+        \musil{get} when the key must be there, \musil{opt} when it may not.
+  \item \textbf{Symbols and quoting.} \musil{'x} names a thing (a parameter, a kind, a
+        key); quoting a whole form (\musil{'(+ 1 2)}) and \musil{eval} are for programs
+        that build programs, patterns and instruments, and rarely for anything else.
+  \item \textbf{Files.} Relative paths are looked for in the current directory, next to
+        the file being run, then next to the program that was started; examples write
+        into \texttt{/tmp/} with a \texttt{musil\_} prefix so that running them never
+        litters the tree; sample rates travel in a variable and are never hard-coded.
+        Data an example shares lives in \texttt{examples/data/}; data a library needs (the
+        HRTFs, the hall) in \texttt{src/} next to the \texttt{.mu} files.
+  \item \textbf{Errors.} Check arguments at the top of a function and fail early with a
+        message that names it: \musil{if (<= n 0) \{ error "hann: n must be > 0" \}}.
+        \musil{error-of} gives a failing thunk's message, which is how tests check errors.
+        A program should be silent when it succeeds and precise when it fails.
+\end{itemize}
+
+\subsection{Adding a library}
+\label{sec:adding-library}
+
+A library is four files plus registration; \texttt{signals} is the model.
+
+\begin{enumerate}[nosep]
+  \item \texttt{src/name.h}: the C++ half, for anything needing an element loop,
+        per-sample state, the OS, or a callback. One \texttt{inline vptr sig\_thing(vlist\&
+        a, Interp\& i)} per builtin, arguments checked with \texttt{i.num}, \texttt{i.scalar},
+        \texttt{i.str}, \texttt{i.list}, \texttt{i.index}, errors with \texttt{i.bad("thing:
+        what was wrong")}; then \texttt{inline void add\_name(Interp\& i)} registering them
+        with \texttt{i.def("thing", sig\_thing, min, max)}. Everything is \texttt{inline} in
+        \texttt{namespace musil} (header-only).
+  \item \texttt{src/name.mu}: the Musil half, for anything expressible as vector
+        operations. It starts with \musil{load "std.mu"} (and whatever it builds on).
+        Loading is explicit: a program does \musil{load "name.mu"}.
+  \item \texttt{tests/test\_name.mu}: self-checking. \musil{load "test.mu"}, then
+        \musil{check} lines with a message each, then \musil{report "test\_name"}. Cover the
+        normal case, an edge (empty, one element), and the errors. Register it in
+        \texttt{CMakeLists.txt}.
+  \item \texttt{examples/reference\_name.mu}: a tour that prints every function once, in
+        the order a reader would want to meet them; its output is a golden file in
+        \texttt{tests/golden/}, refreshed with \texttt{tests/golden.cmake -DUPDATE=1}
+        whenever the printed text changes on purpose.
+\end{enumerate}
+
+Then \texttt{\#include "name.h"} and \texttt{add\_name(i)} in \texttt{src/musil.h}; the
+library in \texttt{LIBS} of \texttt{tools/gendoc.py}; \texttt{\textbackslash
+input\{generated/name.tex\}} and a paragraph in this manual.
+
+Rules that keep the libraries coherent:
+
+\begin{itemize}[nosep]
+  \item \textbf{Doc comments are the documentation.} \texttt{// (thing args) what it does}
+        above a builtin in the \texttt{.h}, \texttt{\# (thing args) what it does} above a
+        function in the \texttt{.mu}; several forms on one line share the text; indented
+        continuation lines extend it. \musil{help}, this manual and the VS Code grammar are
+        generated from these; a function without one is a bug.
+  \item \textbf{No optional arguments.} Currying makes a missing argument a partial
+        application, so a function has one arity; variants get names (\musil{onsets} /
+        \musil{onsets-adaptive}).
+  \item \textbf{Names} are lowercase with hyphens; predicates end in \texttt{?}; in-place
+        mutation ends in \texttt{!} (\musil{add-at!}, \musil{put!}); a function returning a
+        new value has no mark.
+  \item \textbf{Element loops in C++, vector algebra in Musil.} A Musil function that loops
+        over samples is a sign the loop belongs in the \texttt{.h}.
+  \item \textbf{Offline and streaming are one definition.} A signal function that should
+        also run in a synth takes a state struct in C++ (\texttt{osc\_run}, \texttt{iir\_run}
+        \ldots), is listed in the ugen table in \texttt{live.h}, and must satisfy
+        \musil{synth-render} equals the direct call (a test in \texttt{test\_live.mu}).
+        Constants inside instruments are signals (\musil{(sig gate 190)}), so they work in
+        both executions.
+  \item \textbf{Environment variables the tests rely on}: \texttt{MUSIL\_NOSHOW} (no
+        windows), \texttt{MUSIL\_NULL\_AUDIO} (the silent device). A library that opens
+        windows or devices honours them.
+  \item \textbf{The version} is set once, in \texttt{src/core.h}; CMake, the deploy
+        scripts, the VS Code extension and this manual read it from there.
+\end{itemize}
+
+Adding a builtin to an existing library is the same, smaller: the function and its doc
+comment, a \musil{check} in the test, a line in the reference, a regenerated golden;
+\texttt{./build.sh --test} before sending.
+
+\subsection{Style at a glance}
+
+\begin{lstlisting}
+; a comment says why, the code says what
+load "live.mu"
+audio-init
+var sr (audio-sr)
+
+function pluck-note (gate freq)                   ; instrument: a function of its parameters
+    (* (adsr sr gate 0.005 0.1 0.3 0.2) (osc sr (sig gate freq) saw-table))
+
+var p (synth pluck-note)                          ; streamed
+var buffer (pluck-note (vec (ones 400) (zeros 8000)) 220)   ; or rendered: the same function
+
+function bassline (cycle)                         ; a pattern: events from data
+    (melody p "a1 ~ a1 c2" 4 (list))
+live-loop 'bassline 4
+\end{lstlisting}
+
+Prefer this to cleverness: named steps, vectors over loops, \musil{each} over recursion,
+records for structured data, one arity per function, a doc line on every definition.
+
+% ═════════════════════════════════════════════════════════════════════════════
+\section{Libraries}
+\label{sec:libraries}
+
+A library is a pair of files: \texttt{name.h} holds the functions that need C++, an
+element-by-element loop or the operating system; \texttt{name.mu} holds everything
+that is a composition of vector operations, which runs at the same speed in Musil.
+The C++ halves are registered when the interpreter starts; the Musil half is loaded
+with \musil{load "name.mu"}. Each library has a test (\texttt{tests/test\_name.mu})
+and a runnable reference (\texttt{examples/reference\_name.mu}).
+
+\begin{center}
+\begin{tabular}{@{}lll@{}}
+\toprule
+\textbf{Library} & \textbf{Load} & \textbf{Contents} \\
+\midrule
+core & built in & the language, arithmetic, lists, vectors, strings, errors, load \\
+std & \musil{load "std.mu"} & vector constructors and statistics, sequences, strings, files, map/filter/reduce \\
+system & \musil{load "system.mu"} & processes, directories, CSV, WAV, UDP/OSC \\
+scientific & \musil{load "scientific.mu"} & matrices, decompositions, regression, PCA, k-means, KNN \\
+signals & \musil{load "signals.mu"} & generators, FFT, STFT, phase vocoder, features, filters, reverb \\
+live & \musil{load "live.mu"} & the audio device, a sample-accurate clock, voices playing buffers and files \\
+plot & \musil{load "plot.mu"} & figures of lines, points, bars, images and surfaces; windows and PNGs \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The function references that follow are generated from the doc comment above each
+function in the source, the same text that \musil{help} prints.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\subsection{core}
+
+Always available, no \musil{load} needed. Special forms are listed first.
+
+\input{generated/core.tex}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\subsection{std}
+
+The general-purpose standard library. Vectors: \musil{range} is the constructor
+everything else is built on (\musil{zeros}, \musil{ones}, \musil{linspace}),
+then statistics (\musil{mean}, \musil{stdev}, \musil{median}, \musil{quantile},
+\musil{histogram}), and \musil{interp1} for table lookup. Sequences: \musil{slice},
+\musil{take}, \musil{drop}, \musil{find}, \musil{zip}, \musil{unique}. Strings:
+\musil{split}, \musil{join}, \musil{format}, \musil{fmt-fixed}. Files: \musil{read},
+\musil{write}. Higher-order: \musil{map}, \musil{filter}, \musil{reduce},
+\musil{each}, all of them on lists and vectors alike.
+
+\begin{lstlisting}
+load "std.mu"
+var v (range 0 10 0.5)
+print (mean v) (stdev v) (quantile v 0.9)
+print (map (list "a" "b") upper) (filter v (function (x) (> x 7)))
+print (format "{} of {}" (count v even?) (length v))
+\end{lstlisting}
+
+\input{generated/std.tex}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\subsection{system}
+
+Access to the operating system. \musil{read-wav} returns
+\musil{(list sample-rate (list channel ...))}, each channel a vector, which is the
+representation every signal function uses; \musil{write-wav} takes a vector (mono) or
+a list of vectors. CSV tables are lists of rows, numeric cells become numbers.
+
+\begin{lstlisting}
+load "system.mu"
+var w (read-wav "sound.wav")
+var sr (head w)
+var left (head (getidx w 1))
+write-wav "/tmp/out.wav" sr (* 0.5 left)
+print (file-lines "notes.txt") (ls ".") (getenv "HOME")
+\end{lstlisting}
+
+\input{generated/system.tex}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\subsection{scientific}
+
+Linear algebra, statistics and machine learning. A matrix is a list of row vectors:
+\musil{(list (vec 1 2) (vec 3 4))} is $2\times2$; \musil{(getidx M i)} is a row.
+Products, transposition, elimination (\musil{det}, \musil{inv}, \musil{solve}), the
+symmetric eigensolver, k-means and KNN are C++; construction, elementwise arithmetic,
+statistics along an axis, covariance, PCA, regression, NMF and the model helpers are Musil;
+\musil{mp}, matching pursuit over a dictionary (greedy, optionally non-negative or
+orthogonal), is C++ and serves the orchestrators.
+
+\begin{lstlisting}
+load "scientific.mu"
+var A (list (vec 2 1) (vec 1 3))
+print (mat-mul A (inv A)) (solve A (vec 3 5)) (eig-sym A)
+var P (pca X)                          ; rows: direction then eigenvalue, largest first
+var km (kmeans X 3)                    ; (list labels centroids)
+var model (knn-model training 3)
+print (accuracy (knn-test model test) test)
+\end{lstlisting}
+
+\input{generated/scientific.tex}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\subsection{signals}
+
+Offline signal processing on vectors. A signal is a vector of samples; a complex
+spectrum is \musil{(list re im)}; a polar spectrum is \musil{(list mag phase)}. The FFT,
+the table oscillator, the IIR filter, delay, resampling, autocorrelation, peak
+picking and gather are C++; generators, windows, convolution, the STFT and its
+inverse, cepstral envelopes, the phase vocoder, the spectral and temporal descriptors,
+the RBJ biquads, comb and allpass sections and the Schroeder reverb are Musil, as
+compositions of vector operations; so are \musil{converb} (a convolution reverb through
+any response, dry and wet, per channel) and \musil{concerthall} (the Concertgebouw's
+response, \texttt{hall\_concertgebouw.wav}, shipped with the libraries; every
+\musil{play-score} goes through it), both on \musil{conv-fast}, a C++ overlap-add over
+blocks that gives \musil{conv}'s result and lets the interpreter breathe between blocks. \musil{hpss} (harmonic/percussive separation by median
+filters over the spectrogram) is C++; \musil{onset-strength}, \musil{onsets} (a global
+threshold), \musil{onsets-adaptive} (a threshold on the flux's moving median, for
+material whose loudness drifts) and \musil{segments} build onset detection from the
+spectral flux in Musil; onsets always start with 0 and are placed at the sample where
+the energy rises.
+
+\textbf{Separation by NMF.} \musil{nmf V k iterations} (in \texttt{scientific}, fifteen
+lines of Musil on the C++ matrix product: Lee and Seung's multiplicative updates for the
+KL divergence) factors a non-negative matrix into k parts; \musil{nmf-separate x n hop k
+iterations} applies it to the magnitude spectrogram and splits the sound into k sources by
+Wiener masks that add up to the input. Supervised separation, when examples of each source
+exist: \musil{nmf-learn-parts} learns a few parts from each example alone,
+\musil{nmf-separate-with} learns only the activations on the mix (\musil{nmf-with-parts})
+and returns one source per instrument; \texttt{examples/nmf.mu} does both on a four-stem
+mix (drums, bass, chords, melody, with each stem alone to score against; made, like every
+synthetic demo sound, by \texttt{make\_audio\_demos.mu}).
+
+\textbf{Music information retrieval.} The classic analyses of a recording, each a feature
+over frames, a picture and a decision read from it. \musil{chromagram x sr n hop} folds
+the magnitude spectrogram onto the twelve pitch classes (a 12 x frames matrix, every frame
+scaled to its maximum); \musil{chroma-mean} is the piece's pitch-class profile and
+\musil{key-scores} rates it against the Krumhansl-Kessler profiles of the 24 keys
+(\musil{key-estimate} the best). \musil{tempo-estimate flux fps} reads the autocorrelation
+of the onset strength at the lags of 30--300 bpm under a log-normal prior on the tempo a
+listener taps (centred on 100 bpm, 0.6 octaves wide: the eighths or the half-bar are often
+as periodic as the beat, and the prior decides the octave; \musil{tempo-estimate-with}
+takes another prior); \musil{tempogram} is the same locally, a bpm x time matrix;
+\musil{beat-track} finds the beats by Ellis's dynamic programming (strong, and near the
+period), \musil{beats x sr n hop} does the three steps, \musil{clicks} makes a click
+track to check them by ear. \musil{mel-spectrogram} and \musil{mfcc-gram} describe the
+timbre of every frame; \musil{beat-sync} averages any feature matrix between the beats.
+\musil{self-similarity F} is Foote's matrix, every frame (or beat) against every other by
+cosine similarity, \musil{foote-novelty S width} its correlation with a checkerboard kernel
+along the diagonal and \musil{novelty-peaks} the boundaries of the sections.
+\texttt{examples/classic\_mir.mu} runs all of it on a song.
+
+\textbf{Spatial.} Conventions as in AmbiX: azimuth in degrees, 0 in front, positive to
+the left; elevation up; a multichannel signal is a list of channel vectors, which
+\musil{write-wav} and \musil{play} take. \musil{pan-azimuth} is stereo from a direction;
+\musil{pan-n} feeds a ring of speakers (amplitude panning between the two nearest);
+\musil{ambi-encode} places a mono signal as B-format ((order+1)$^2$ channels, ACN/SN3D,
+orders 0--7) with \musil{ambi-gains} the spherical harmonics behind it; \musil{ambi-rotate}
+turns a whole field exactly; \musil{ambi-decode} samples the field at a speaker layout
+(max-rE weighted); \musil{ambi-render} places several sources, \musil{moving-source} one
+that moves. For headphones, \musil{hrir} gives the two ears' impulse responses of a direction from
+the measured MIT KEMAR set (710 directions, full sphere, 128 taps; shipped as
+\texttt{hrtf\_kemar.csv} with the libraries, loaded on first use, resampled to the
+session's rate) or, with \musil{hrtf-unload} or when the file is absent, from a
+spherical-head model (\musil{hrir-model}: interaural delay and head shadow only, so left
+and right but no front/back or height, which are cues of the pinna that only measured
+responses carry); \musil{hrtf-load} takes another set in the same CSV layout.
+\musil{binaural} renders a source through it, \musil{binaural-decode} renders B-format
+through ten virtual speakers. Every one of these streams in a synth as well (\musil{live});
+\musil{binaural} as a node crossfades its responses when the direction moves, so a sound
+can be flown around the listener from two sliders. \texttt{examples/spatial.mu},
+\texttt{flyby.mu} (a helicopter in front, overhead, behind and around, also as third-order
+B-format for an external decoder such as the IEM BinauralDecoder in a DAW),
+\texttt{flyby\_controls.mu} and \texttt{live\_spatial.mu} do all of it.
+
+\begin{lstlisting}
+load "signals.mu"
+var x (sine 44100 440 1)
+var frames (stft x 2048 512)
+var y (istft frames 2048 512)               ; exact reconstruction
+var slow (pvoc-stretch x 2)                  ; twice as long, same pitch
+var up (pvoc-pitch-formant x 1.5 400)        ; a fifth up, formants kept
+var any (pvoc x (list (list "stretch" (list 1 3)) (list "pitch" 0.75) (list "envelope" 400)))
+var lp (lowpass x 44100 500 0.707)
+print (spectral-centroid (magnitude-spectrum x) (spectrum-freqs 65536 44100))
+\end{lstlisting}
+
+The phase vocoder is one engine, \musil{pvoc}, in C++ (a frame is sixty vector
+operations on 4096 bins, ten thousand times a minute): a fixed synthesis hop with the
+analysis hop derived from the stretch, zero-phase windowing, phases locked to the
+nearest spectral peak, pitch shift and formant move in the spectrum, envelope
+preservation through the cepstral envelope, denoising, three cross-synthesis modes and
+two phase effects, every parameter able to ramp over the file. \musil{pvoc-stretch},
+\musil{pvoc-pitch}, \musil{pvoc-pitch-formant}, \musil{pvoc-formants},
+\musil{pvoc-cross}, \musil{denoise}, \musil{robotize} and \musil{whisperize} are
+one-line wrappers around it.
+
+\input{generated/signals.tex}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\subsection{live}
+
+Real-time sound. The interpreter never runs on the audio thread: it posts commands
+(play this buffer at this time, stop that voice, set the gain) into a lock-free queue,
+and the audio callback drains the queue, advances a sample clock and mixes the voices
+into an N-channel bus. A voice plays a buffer (mono, or a list of channels) at its own
+sample rate, with amplitude, pan, rate and loop, from a start time on the clock, so
+sounds asked for slightly ahead land exactly where asked however late the program is.
+The device is miniaudio, with no window needed; a silent ``null'' device (the option
+\musil{(list (list "device" "null"))}, or the environment variable
+\texttt{MUSIL\_NULL\_AUDIO}) runs the same callback from a timer, which is how the test
+suite exercises everything but the ears.
+
+\begin{lstlisting}
+load "live.mu"
+audio-init                                   ; 44100 Hz, 256 samples, stereo, started
+var v (play-file "data/drums.wav")           ; a voice
+wait-for v
+var lp (loop-buffer x sr)
+set-rate lp 0.5
+stop lp
+var t (audio-time)
+each (range 8) (function (k) (play-at (+ t (* k 0.25)) hit sr))   ; sample-accurate, ahead of time
+audio-quit
+\end{lstlisting}
+
+\textbf{Synths.} An instrument is an ordinary Musil function of its parameters whose
+body combines the \emph{streamable} builtins: \musil{osc}, \musil{noise}, \musil{adsr},
+\musil{lag}, the biquads (\musil{lowpass} \ldots\ \musil{highshelf}), \musil{iir},
+\musil{dc-block}, \musil{delay}, \musil{comb}, \musil{allpass}, \musil{conv} (partitioned
+when streaming), \musil{pan}, \musil{list}, arithmetic and elementwise math (the list is
+\musil{(streamable)}). Called normally it returns a buffer, because every one of those is
+a vector function in \texttt{signals}. Handed to \musil{(synth f)} its body is compiled
+into a graph of nodes that run \emph{the same loops} from \texttt{signals.h} one block at
+a time, and its parameters become hot: \musil{(set-param id 'cutoff 200 0.5)} ramps the
+running sound; a parameter named \musil{gate} is what \musil{note-on}/\musil{note-off}
+set. \musil{synth-render} runs the graph offline with parameter curves, and the test suite
+checks it equals the direct call to float precision. Anything not streamable
+(\musil{pvoc}, \musil{resample}, \ldots) is refused by name; it is still a fine offline
+instrument.
+
+\begin{lstlisting}
+function lead (gate freq cutoff) \
+    (pan (* (adsr sr gate 0.01 0.2 0.5 0.4) (lowpass (osc sr freq saw-table) sr cutoff 2)) 0)
+var a (synth lead)                               ; compiled, silent
+set-params a (list (list 'freq 110) (list 'cutoff 1200))
+note a 0.5                                       ; gate on, off after half a second (scheduled)
+set-param a 'cutoff 300 1.5                      ; ramp while it plays
+var y (lead gate-vector freq-vector 1200)        ; the same function, offline: a buffer
+\end{lstlisting}
+
+\textbf{Loops.} A loop is a function of the cycle number returning events, each
+\musil{(list beat dur thunk)}; \musil{(live-loop 'bass 4)} calls the function \emph{named}
+\musil{bass} every four beats, slightly ahead of the clock (\musil{lookahead}), and the
+thunks schedule sounds sample-accurately (\musil{synth-ev}, \musil{play-ev}, or your own
+\musil{note-at}/\musil{play-at}). Because the function is looked up by name at each cycle,
+redefining it while the loop runs is the live coding: the next cycle plays the new
+definition. \musil{tempo}, \musil{beat}, \musil{stop-loop}; and the transformations of
+event lists, \musil{fast}, \musil{slow}, \musil{shift}, \musil{rev}, \musil{every},
+\musil{degrade}, \musil{cat}, \musil{stack}, \musil{steps}, are plain list functions.
+The scheduler runs in the interpreter's idle time (while the REPL or the IDE waits,
+and inside \musil{sleep}), on one thread with everything else.
+
+\begin{lstlisting}
+tempo 110
+function drums (cycle) (stack (list
+    (steps 1 (list 1 nil 1 nil) (function (x) (function (t d) (note-at t k 0.1))))
+    (every 4 cycle (function (e) (fast e 2)) (steps 0.5 (list nil 1) (function (x) (function (t d) (note-at t h 0.05)))))))
+live-loop 'drums 4
+function drums (cycle) ...          ; redefine: next cycle it changes
+\end{lstlisting}
+
+\textbf{Notes, patterns, a kit.} \musil{hz}, \musil{note->midi}, \musil{midi->hz},
+\musil{chord-midi} for pitch names and chords; \musil{pat} is a compact notation for steps,
+one string per cycle (\musil{"bd ~ sn ~"}: spaces are steps, \texttt{\textasciitilde} a rest,
+\texttt{[a b]} a subdivision, \texttt{a*n} a repeat), turned into events by
+\musil{pat-events}, \musil{drums} (a kit) and \musil{melody} (a synth); \musil{euclid},
+\musil{swing}, \musil{humanize}, \musil{sometimes}, \musil{chance} shape rhythms;
+\musil{poly} and \musil{chord-ev} play chords on several instances. \musil{kick},
+\musil{snare}, \musil{clap}, \musil{hat}, \musil{ohat}, \musil{acid}, \musil{stab},
+\musil{pad} are ordinary instrument functions (\musil{house-kit} makes the drums), so
+they render offline too; \musil{tkick}, \musil{rumble}, \musil{that}, \musil{tohat},
+\musil{tclap}, \musil{perc}, \musil{sub}, \musil{hoover} (portamento through \musil{lag}),
+\musil{tstab}, \musil{tpad}, \musil{zap} and \musil{techno-kit} are the harder set, with
+\musil{duck} (a pad pumping under the kick), \musil{sweep} and \musil{accents}. A synth
+function may call your own helper functions (\musil{sig} makes a constant as long as a
+signal, so \musil{(osc sr (sig gate 190) table)} is a fixed pitch offline and streamed):
+the compiler inlines them. \texttt{examples/live\_house.mu}, \texttt{live\_techno.mu} and \texttt{live\_trance.mu} are
+tracks meant to be edited while they play; \texttt{live\_emptyset.mu} defines its own instruments in the file
+(saturated sub-bass impacts, struck iron in combs, a wall of clipped noise) to show that a style is a few functions.
+
+\textbf{Controls and OSC.} \musil{(control 'cutoff 100 5000 800)} declares a named value
+with a range, \musil{(toggle 'on 1)} an on/off one; \musil{bind-control} makes synth
+parameters follow it, \musil{set-control} and \musil{control-value} read and write it from
+code, \musil{(controls)} opens the window of sliders and check boxes and returns. \musil{osc-listen} and
+\musil{osc-map} let an incoming OSC message move a control; \musil{osc-send} sends one;
+\musil{osc-encode} and \musil{osc-decode} are OSC in the language, over \musil{udp-send}
+and \musil{udp-receive}, for anything the conveniences do not cover. None of this is the
+evaluation port below: OSC carries numbers to controls over UDP, the port carries code
+over TCP.
+
+\textbf{Editors.} \musil{(serve 7770)} (in \texttt{system}; the IDE does it at start-up; the command line
+with \texttt{--serve 7770 -i}) opens a local port that evaluates the text it receives, in
+the session, as if typed. The VS Code extension in \texttt{editors/vscode/musil} sends the
+block around the cursor with Cmd-Enter (the file with Cmd-Shift-Enter) and gives
+\texttt{.mu} files syntax colouring, from a grammar generated with \texttt{help}. From a
+shell, \texttt{musil --send 7770 block.mu} (or with the code on stdin) sends and prints the
+reply, and any editor that can run a command can do the same; the two Musil processes
+stay separate sessions, the port only lets one hand code to the other.
+
+\input{generated/live.tex}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\subsection{music}
+
+The score: things placed in time. A score is a record (name, sample rate, events, layout);
+an event has an onset, a duration, a kind, a source, a gain and a position (azimuth and
+elevation, for the spatial layouts). What an event holds is decided by what is placed:
+
+\begin{lstlisting}
+var s (score "study" 44100)
+event s 0 3.5 "bells.wav"                                  ; a sound file, read when rendered, cached
+event s 2 3.6 buffer                                       ; a vector, or a list of channel vectors
+event s 4 1 (note db 'Vn 'C5 'mf 'ord)                     ; a sound from a database (nearest pitch, shifted)
+event s 5 2 (instrument pluck (list (list 'freq 440)))     ; a synth: an instrument function and its parameters
+event s 6 1 (call my-function (list 1 2 'dur))             ; any function, called when rendered ('dur = the duration)
+event-at s 7 1 my-function 90 0                            ; a bare function is called with the duration; placed at the left
+event s 8 0 other-score                                    ; a score inside a score (0: its whole length); any depth
+render s "study.wav" "stereo"                              ; layouts: "mono" "stereo" "binaural" "ambi N", a ring, or N channels
+play-score s 0.8                                           ; through live, ahead of the clock, scaled
+display s                                                  ; the roll, drawn like music
+\end{lstlisting}
+
+A sound longer than its event is faded out at the end; a shorter one is left as it is; a
+synth's gate is the duration and its release plays on. A mono sound is spatialised at its
+position; a sound with as many channels as the layout goes in as it is. \musil{play-score}
+(with a gain for the whole; \musil{play-score-from} from a time) hands the score to the
+engine and returns: nothing is rendered in advance and the interpreter is not involved
+while it plays. Every event becomes a \emph{cue} at a clock time (a file to read, or a
+buffer already made; a synth is compiled and gated), the list goes to the engine's cue
+player (\musil{play-cues} of \texttt{live}), and a loader thread reads each sound a few
+seconds before it is due (\musil{cue-lookahead}; a cache of decoded files, 2\,GB by
+default, \musil{cue-cache-limit}), cuts it to its duration at its own rate and queues it as
+a voice that the audio thread plays at the note's pitch shift (a linear interpolation; the
+offline render keeps the windowed sinc). The concert hall sits on the output bus as a
+convolution on a thread of its own (\musil{bus-reverb}: partitioned, a latency of 93\,ms
+that the playhead allows for; \musil{score-reverb!} sets the dry and wet amounts,
+\musil{(score-reverb! s 1 0)} plays dry), and a peak limiter (\musil{bus-limiter}) ducks a
+tutti at $fff$ rather than clipping it; a score's \musil{'level} (0.5 by default) scales it
+before that. So Play starts within a second whatever the score's length, Stop stops at
+once, and neither the windows nor the interpreter can stall the music, nor the music them;
+\musil{cues-status} says how the loader is doing. \musil{render-buffer s layout} is the
+offline way: the whole score as channels, in the hall exactly as the roll plays it (the
+score's dry and wet amounts; dry when the wet is 0), scaled down when it would clip, a
+buffer to keep working on; \musil{render s path layout} writes it as a WAV and
+\musil{render-hall} is the same in stereo (the roll's Render...); \musil{score-render} is
+the dry mix itself. \musil{score-schedule} is the older live way, every event on the clock
+at once; \musil{play} and \musil{play-file} of \texttt{live} still play a buffer or a
+file.
+
+\textbf{The roll} (\musil{display}) draws the score like music: one staff per instrument
+for the notes, in orchestral order, with a drawn treble or bass clef chosen by the
+instrument's range, ledger lines, sharps, and the dynamics under the staff where they
+change and there is room for them; then a line per kind (files, buffers, synths, calls);
+every event is a head at its onset and a thin line of the same colour for its duration
+(a line stops short of a following note's sharp); above a note, in a small script, its
+playing technique where it changes and its tuning in cents when it is not zero
+(\musil{note-cents!} sets it; the orchestrators that know a target's exact frequencies
+will), written where there is room. A D pan and \texttt{+} \texttt{-} zoom in
+time, W S scroll and Z X zoom the rows, R resets; the wheel scrolls rows (sideways, or with
+Shift, time; with Ctrl it zooms), and scrollbars show the visible part once zoomed;
+hovering shows an event's data and the time; a double-click plays that event alone; a
+click in the background places the cursor, \textbf{Play} (or Space) plays the score from
+it, in the hall, \textbf{Stop} stops, and the red playhead follows (any \musil{play-score}
+too, through \musil{playhead}); the roll's picture is drawn once and kept, only the
+playhead and the hovered event are drawn at each frame, so a score of thousands of notes
+plays without the drawing taking the machine; \textbf{Render...} asks for a file name and writes the
+score in the hall (\musil{render-hall}), scaled so that it never clips (the window is slow
+to answer meanwhile: a render is the whole score at once); \textbf{Save...} writes the
+score's notes as an Orchidea connection (below). It is a player of the code's score, not an editor: the
+score lives in the code, and a change is a line of Musil. \musil{score-shift!}, \musil{score-scale!},
+\musil{score-select}, \musil{score-sort!}, \musil{score-remove!}, \musil{score-merge} are the
+transformations; \musil{event-move!}, \musil{event-length!}, \musil{event-gain!},
+\musil{event-place!} edit one event. A score placed as an event renders into the parent's
+layout with its own positions kept, cut to the event's duration with a fade (0 means its
+whole length), at any depth; a score cannot contain itself, and the roll opens a score
+inside on a double-click.
+
+\textbf{Saving and loading.} \musil{score-save} writes a score's notes as an Orchidea
+\emph{connection}, the text Orchidea exports and its Max patches read: an orchestra line,
+then one segment per onset (in ms) holding one solution whose lines are \musil{[ note
+duration instrument style pitch dynamics other file cents ]}. Only notes travel: a file, a
+buffer, a synth, a call or a score inside has no place in the format and is left out
+(the count is printed), and a note's gain is not kept (the sample's dynamics are).
+\musil{score-load db path name} reads one back into a score, each note's sound found in
+the database by its file name under any of the database's folders, or by instrument,
+pitch, dynamics and style when that file is not there; an unpitched sound becomes a file
+event. So an orchestration made by a script can be kept, reloaded, displayed and played
+later, and a connection exported by Orchidea can be played and shown here.
+
+\textbf{Notation.} A score's times are seconds; a part is written in beats and bars, so
+\musil{score-musicxml s path params} quantizes before it writes. The tempo is the score's
+(\musil{score-tempo!}) and the meter \musil{score-meter!} (4/4 by default; the beat is the
+denominator's note). \musil{score-notate} does the quantization and returns the notation
+as data: for every part --- one per player where the notes say who played them, as the
+orchestrators' do (\emph{Violin 1}, \emph{Violin 2}, a doubling as \emph{Flute / Piccolo}
+with the instrument written where it changes), else one per instrument, in orchestral
+order, then one-line staves for files, buffers, synths and calls --- and every beat it
+chooses one division of the beat among
+\musil{'divisions} (by default 1 2 3 4 5 6 8 16: binary values to 64ths, triplets, quintuplets,
+sextuplets) --- the one that moves the onsets and ends in that beat least, each division
+carrying a small cost so that a displacement about \musil{'tolerance} (a 16th of a beat by
+default) is accepted to keep the simpler one; \musil{'tolerance 0} takes the finest grid
+that fits. The notes then go into voices (a note with the start and end of another joins
+it as a chord; in one player's part a note still sounding at the next is cut there), are
+split at the bars and into written values --- the largest that start
+where they may, a value off the beat never crossing it, rests by the beat (or a half or
+whole bar), tuplet notes under a bracket in a beat divided in three, five or six --- and
+tied. Every note carries its instrument, its pitch with quarter tones as accidentals, its
+dynamics and the database's technique tag written as it is (\texttt{ord}, \texttt{pizz-lv},
+\texttt{trem}...) where it changes; a file or a synth is an unpitched note with its label.
+\musil{notation-report} says what the quantization did (the divisions used, how far the
+onsets moved), and \musil{score-quantize!} moves the score's own times to the grid, to hear
+it and see it in the roll. The file is MusicXML 4.0 (Dorico, Sibelius, Finale, MuseScore).
+
+\textbf{Elements.} Pitches are names (\musil{"C4"}, \musil{"F\#3"}) or MIDI numbers, nil a
+rest; a \musil{rhythm} is a list of durations in seconds, negative for a pause
+(\musil{beats} converts from beats at a tempo). \musil{chord} is a payload: several pitches
+sounding together on one instrument, one event. The other elements make a
+\emph{fragment}, a list of \musil{(at dur payload)} from time 0: \musil{notes} (a line
+on a rhythm, the shorter of the two repeating), \musil{chords} (chords on a rhythm),
+\musil{texture} (one line at several speeds on cycled instruments, the faster voices
+repeating until the slowest has played once: micropolyphony), \musil{pivots} (one line per
+pitch of a chord, wandering at random within an interval of it), \musil{chordinterp} (from
+one chord to another in as many steps as the rhythm has). \musil{add!} and
+\musil{add-placed!} put a fragment into a score, \musil{fragment->score} makes it a score,
+\musil{fragment-shift}, \musil{fragment-scale}, \musil{fragment-repeat},
+\musil{fragment-until}, \musil{fragment-map} transform it, and \musil{transpose-pitches},
+\musil{invert}, \musil{scale-pitches} work on the pitches, so the list functions
+(\musil{map}, \musil{each}, \musil{reverse} \ldots) compose everything. Around them: a
+tempo on the score (\musil{score-tempo!}, \musil{add-beats!}); gains and dynamics along a
+fragment (\musil{fragment-gain}, \musil{fragment-dynamics}), articulation, thinning by a
+probability or a density curve, placing, snapping to a pitch field; voicings
+(\musil{chord-voicing}), series (\musil{rotate}, \musil{retrograde}, \musil{cycle},
+\musil{interleave}), the harmonic series and the partials of a sound as pitches
+(\musil{harmonic-series}, \musil{pitches-from-spectrum}); rhythms from patterns, augmented,
+tuplets, polyrhythms; random walks, staggered textures, arpeggios, eased and set-wise chord
+interpolation, textures running through chords or around them
+(\musil{texture-on-chords}, \musil{texture-on-pivots}), a line orchestrated by register,
+\musil{score-map!}. \texttt{algorithmic\_comp.mu} (a row and its forms, Ligeti-like
+micropolyphony, spectral pivots after Grisey, moving textures) and
+\texttt{score\_in\_score.mu} show it.
+
+\textbf{MIDI files.} \musil{midi-read} parses a standard MIDI file (formats 0 and 1, the
+tempo map applied) into notes with times in seconds; \musil{midi->fragment} puts them on
+an instrument, velocities becoming dynamics, \musil{midi->fragment-by-channel} an
+instrument per channel, \musil{midi->score} a score. Material from a sequencer, or a
+target for an orchestration.
+
+\textbf{Orchestrations.} Every orchestrator returns a \emph{result}: a record with its
+method and parameters and a list of segments, each covering a span of the target and
+holding solutions, every solution a fragment (at the segment's time) with a cost.
+\musil{solutions} and \musil{solution} read them; \musil{connection} joins one chosen
+solution per segment into a fragment (a note continued across a boundary on the same
+instrument and pitch becomes one longer note), \musil{best-connection} takes the first
+of each, \musil{connect!} places a connection in a score. Three orchestrators share this:
+\musil{orchestrate-granular} (below), \musil{orchestrate-morphological} (the granulator driven by a target's analysis, below) and
+\musil{orchestrate-mimetic} (Orchidea, below).
+
+\textbf{The orchestral granulator.} Orchestration as granular synthesis: a stochastic
+process, described by envelopes over time, realised by the players of an orchestra with
+never more sounding at once than there are players: \musil{(orchestra (list 'Vn 'Vn 'Fl
+'Fl))} is two violins and two flutes, each holding one note at a time, and a player busy
+with a note is not given another until it ends. \musil{orchestra} takes a list where a
+symbol is a player, a string \musil{"Fl|Picc"} a player with an ossia (one instrument or
+the other, by the pitch), and a list a paired group scheduled together. Playability is a
+property of the samples: an event's constraints (the register, the set of styles of the
+moment) select the samples of the database, and the event goes to a free player whose
+instrument has samples in that set (\musil{player-styles}, \musil{player-pitches},
+\musil{db-pitches-of}); the player takes a style of the set it has samples of there (a
+\musil{trem} never goes to a flute; the flute takes the set's \musil{ord} or
+\musil{flatt}) and one of those samples at its own pitch, at the dynamics asked for or
+the nearest recorded. Nothing is relaxed and nothing transposed: a player without samples
+for the event is not given it; when no free player has any, the event is a rest; when no
+player of the orchestra could ever have any (a register, or a whole style set, none of
+its instruments was recorded with), the granulator prints that the request is unplayable
+and writes nothing for it. An ossia player takes the
+instrument that has the pitch with the technique. \musil{orchestra-octaves} (and
+\musil{orchestra-range}, in MIDI) is what an orchestra can play at all, to clip a band taken
+from a recording or a diagram to it, as the Atmosphères examples do.
+\musil{env} is a value changing with time: at each breakpoint a number, a range
+\musil{(list lo hi)} or a set (techniques, dynamics, chords); between breakpoints numbers
+and ranges are interpolated and sets crossfaded by chance, so a process moves from one
+state to another rather than switching. \musil{orchestrate-granular db orch secs params}
+takes a record of parameters, each an envelope or a fixed value: \musil{'density} (events
+per second), \musil{'register} (octaves), \musil{'duration}, \musil{'styles},
+\musil{'dynamics}, \musil{'chords}, and \musil{'method}: \musil{'random} among the player's
+pitches in the register (or those of the chord's pitch classes), \musil{'pivots} (each player around a pitch of the chord within
+\musil{'interval}), \musil{'chordinterp} (the chord itself moving between two chords over
+time, \musil{chordinterp-env}), \musil{'markov} (transitions learnt from a score,
+\musil{'markov-score}), \musil{'harmonic} (partials of a \musil{'fundamental} with
+probability \musil{'harmonicity}); \musil{'dynamics} may also be a level from 0 (ppp) to 1 (fff), interpolated, which
+picks the nearest recorded dynamics and sets a gain between them for a truly continuous
+crescendo; \musil{'chord-weight} says how often a pitch comes from the chord rather than the
+register, so a chord dissolves into a cloud gradually; \musil{'coupling} says how often a paired group actually
+sounds together (an envelope from 1 to 0 makes an orchestra synchronised at first and free
+later); \musil{'solutions} asks for several realisations.
+
+\textbf{The players as people.} The rest of the parameters make the output a part a real
+player can sit down and play, and check it. A player has a memory: with \musil{'seat} (seconds)
+an ossia player keeps the instrument it took for at least that long, and meanwhile is only
+eligible for what that instrument can play (a person plays one instrument, not one per note; a
+large value is a fixed seating); \musil{'inertia} (0..1) is how often it keeps the technique
+of its last note when the set still holds it; \musil{'leap} (semitones) keeps its next pitch
+within that interval of its last one when it has samples there (2: chromatic lines, a
+micropolyphony). The dynamics can be a constraint like the technique: with
+\musil{'dynamics-strict} a player must have a sample at the dynamics asked for
+(\musil{player-styles}, \musil{player-pitches} and \musil{db-pitches-at} take the dynamics
+too); without it the nearest recorded dynamics is taken and the substitution counted.
+\musil{'balance} is a record from instrument codes or families (\musil{'strings},
+\musil{'winds}, \musil{'brass}, \musil{'percussion}, \musil{'keyboard}, \musil{'plucked};
+\musil{instrument-family}) to decibels added to their notes, to keep the brass under the
+strings at the same marking (\musil{balance-gain}). Where the pitches fall in the band:
+\musil{'method 'cluster} gives every pitch of the band once before any is repeated, the
+counts shared by the players (a chromatic saturation, a Ligeti cluster, where random draws
+repeat and leave holes); \musil{'weight} ($-1$..1) draws the middle of the band more often
+(towards 1) or its edges (towards $-1$) and \musil{'tilt} its bottom or its top. A signed
+\musil{'leap}, \musil{(list -2 -1)}, is a direction: each next pitch one or two semitones
+below the last, a descending line that starts again (at the top, with \musil{'tilt}) when it
+runs out of band; and \musil{'just 1} tunes the \musil{'harmonic} method's partials in just
+intonation, each note carrying its cents (\musil{just-cents}: the 7th partial 31 low, the
+11th 49 low, the 13th 41 high), an overtone chord. Every note the granulator writes says which
+player played it (\musil{'player}), and a connection merges continuations only within a
+player. Time:
+\musil{'spread} (seconds) scatters the players of a group struck together within that time
+(an orchestra's attack rather than a sampler's); \musil{'duration-law} draws the duration
+in its range uniformly, log-uniformly (\musil{'log}: as many short as long by ratio, a
+granular texture) or by an exponent (2: mostly short); \musil{'group-density} gives each
+paired group its own rate (the event's rate is their sum, the event goes to a group with a
+probability proportional to its rate). One orchestra for a whole piece: with
+\musil{'continue} the orchestra's own player records carry the state (every note booked so
+far, last pitches, seats) into the call and out of it, \musil{'start} being the time in the
+piece the call begins at, so a run of granulators placed one after another, or overlapping,
+in any order, share the same people and never book one twice (a note is cut where the
+player's next booking begins; \musil{orchestra-rest!} clears the state). Every run returns a
+report (\musil{(get result 'report)}, printed by \musil{granulation-report}): the events due,
+played and skipped because every able player was busy (the saturation: the number to tune
+the density against the orchestra's size), the unplayable ones, the dynamics substituted, and
+each player's notes and busy fraction. And \musil{score-validate s orch} checks any score
+against an orchestra as a copyist would: at every moment each sounding note must have a
+player of its own able to play its instrument (an ossia player counts for either, so it is
+a matching, not a count), and every note must be at a pitch the instrument was recorded at;
+the record it returns (\musil{'ok}, \musil{'overbooked}, \musil{'transposed}, the
+\musil{'peak} per instrument) is printed by \musil{validation-print}.
+\texttt{gran\_orchestration3.mu} teaches these one section at a time. The database is indexed once
+(\musil{db-index!}: the available pitched sounds of every instrument by dynamics and
+technique), so a note costs nothing on a large set; \musil{db-techniques-of} and
+\musil{db-dynamics-of} say what an instrument was recorded with, which is how an example
+builds its orchestra and its palette from whatever database is loaded.
+\textbf{Morphological orchestration.} \musil{target-analyse} turns a sound into curves
+over time, computed once (the descriptors of \texttt{signals}): the frame spectra in the
+database's feature space, and a second set with a long window (5\,Hz bins) that the peaks
+are read from; the attacks as the peaks of the spectral flux (\musil{flux-peaks}: those
+standing above the local median, 50\,ms apart at least) and their density in events a
+second (\musil{peak-density}); the register (\musil{register-curve}: the centroid in pitch,
+the spread around it in octaves, the lowest strong partial); and the loudness
+(\musil{loudness-curve}); the estimates smoothed by a moving median.
+\musil{orchestrate-morphological db orch target params} is the granulator driven by those
+curves (\musil{target-envelopes}: the density from the flux peaks a second, times
+\musil{'density-scale}, at least \musil{'min-density}; the register as the centroid $\pm$ \musil{'width} spreads, extended down
+to the lowest partial, since a bass note lies under the centroid of its own spectrum; the
+dynamics as a level from the loudness, from $fff$ at the target's loudest point to $ppp$
+\musil{'range} dB under it; any parameter of your own overrides, \musil{'styles} restricts
+the techniques). At every event the note is chosen by a matching pursuit (\musil{mp} of
+\texttt{scientific}, non-negative, on the square roots of the magnitudes: between the
+linear, where one strong partial decides everything, and the log, where the noise between
+partials does): the dictionary is the free players' sounds whose pitch is one of the
+target's spectral peaks at that instant (\musil{target-peaks}, \musil{target-dictionary}:
+the partials of a sound are the pitches an orchestra can double it with, and the register
+and the dynamics of the moment narrow the choice), the signal is the target's spectrum
+over the next 100\,ms less what already sounds (\musil{target-residual}: the sounding
+notes refitted to the frame together), and each atom is a note with its instrument, pitch
+and technique (\musil{target-notes}: the best atom always, more up to \musil{'voices} when
+each accounts for \musil{'min-gain} of the residual; when the sounding notes explain the
+frame the pursuit doubles it instead). A note lasts as long as the target keeps its sound
+(\musil{atom-persistence}: the projection of the frames ahead on the sound's spectrum stays
+above \musil{'persist} of its peak, 6\,dB by default, up to \musil{'max-length}); a life
+shorter than \musil{'short} takes a short technique of the same sound when the database
+has one (\musil{technique-short?}, a table of names); the tuning in cents is the target's
+nearest peak against the sound's own frequency (\musil{entry-f0}). When every player is
+busy and an event is due the oldest note gives way (\musil{'steal}). Nothing is segmented:
+a long sound under short ones comes out as a long note under short ones, which is what
+granulating rather than cutting is for. \texttt{morph\_orchestration.mu} orchestrates a
+recording this way and places the target after it to compare.
+
+\textbf{Mimetic orchestration (Orchidea).} \musil{orchestrate-mimetic db orch x sr params}
+is assisted orchestration: the target is imitated as a whole. Its search core is Orchidea's
+(\texttt{src/music/orchidea.h}: the genetic search, the additive forecast, the asymmetric
+fitness, the connection between segments and the continuity model, ported as they are);
+what Orchidea did with files, Musil's database, score and roll do. The target, a vector at
+a rate (or a target already analysed), is cut at its onsets: the peaks of the spectral flux
+above \musil{'threshold} (2 by default: above 1 nothing passes and the target is one
+segment, static; 0.1 cuts a piano phrase at every chord) and at least \musil{'timegate}
+seconds apart, or \musil{'segmentation 'frames}, \musil{'none}, or a list of onsets.
+Each segment is analysed into the database's features, standardised, and into the pitches
+of its partials with their cents (\musil{'partials}, the threshold on the partials, 0..1;
+0 turns the pitch filter off, for noisy targets where timbre matters more than pitch;
+\musil{'partials-window} the window they are read with, 32768, large for a low target;
+\musil{'extra-pitches} adds some). \musil{mimetic-target} does this alone and
+\musil{mimetic-print} shows it, to tune the segmentation before a long search. The search
+space of a segment is the sounds of the orchestra at the segment's pitches (and with the
+\musil{'styles}, \musil{'dynamics}, \musil{'others} asked for, when given); a genetic
+search of \musil{'population} individuals (300) over \musil{'epochs} (300), each individual
+one sound per player or a rest (a player is dropped with probability \musil{'sparsity} at
+every generation: 0.001 for symphonic targets, 0.1 for a single instrument as target), with
+\musil{'crossover} (0.8), \musil{'mutation} (0.01) and \musil{'pursuit} (0: a random first
+population; $k$: from the $k$ sounds nearest the target per player), looks for the
+combination whose summed features are nearest the target's by an asymmetric distance: a
+partial the solution has and the target lacks costs \musil{'positive} (0.5), the reverse
+\musil{'negative} (10); \musil{'regularization} ($>0$) sponsors sparse solutions.
+The memory between segments goes further than Orchidea's: the segments are searched and
+connected one after the other, so that each search knows the solution chosen for the
+segment before; \musil{'hysteresis} ($>0$) makes it lean, in timbre, towards the previous
+choices (the standardised forecasts, fading by that factor a segment back: the original
+compared a standardised candidate with unstandardised forecasts, which no weight could make
+meaningful); \musil{'dovetail} ($>0$) raises a candidate's cost by that fraction of the
+previous choice's pitches it drops, on any player, which is what dovetailing is: pivot notes
+passed from one instrument to another; \musil{'octaves} widens the pitch filter by octaves
+(\musil{(list 0 -1)}: the partials' pitches and the octave below); \musil{'hold} caps a
+note continued across segments at that many seconds (the player starts it again). The
+\musil{'solutions} best unique individuals (10) are kept per segment, ranked by cost, and a
+\musil{'connection} chooses one per segment: \musil{'closest} (Orchidea's), each segment's
+solution nearest in timbre to the one chosen before; \musil{'best}; or \musil{'path}, the
+shortest path through the solutions, each costing its distance from its segment's best in
+percent plus \musil{'movement} (1) per semitone a player moves or per player that starts or
+stops: the least melodic movement, the continuity of lines. The segmentation can also be
+\musil{'adaptive}: the flux peaks against their local median (\musil{'ratio}, 2), so the
+sensitivity follows the sound rather than its loudest attack. The players are the same
+people from one segment to the next: with \musil{'sustain} (1) a player whose pitch the
+target still has holds its very sound on into the next segment, fixed in every chromosome,
+so the search fills only what changed and a held chord comes out as long notes, for at
+most \musil{'hold} seconds; the result carries a report (\musil{mimetic-report}: per
+segment the cost, the players sounding and holding on, the sounds in the search space and
+the target's pitches no instrument of the orchestra covers, which says why a segment sounds
+thin). A fitness cache spares the chromosomes seen before (most of a population, after the
+first epochs) and \musil{'patience} (150) stops a search that stalls. The same search can
+also make the decisions of the morphological orchestrator: \musil{'decision 'genetic}
+replaces its greedy pursuit at each event by a genetic search over the free players' sounds
+at the target's peaks for the combination nearest what still lacks, in the morphological
+clock, with the durations from persistence: the copy of the mimetic without the
+segmentation. The result is an
+orchestration like the others: its segments hold the ranked solutions as fragments, each
+note the very sound chosen, at the target's cents, with its \musil{'player} and, with
+\musil{'seating} (1), the azimuth of Orchidea's seating (violins left, cellos right);
+\musil{'choices} is the connection, \musil{mimetic-connection} that connection as a
+fragment, \musil{best-connection} the best of each segment, \musil{solution-print} the
+solutions of a segment with their costs. \musil{connect!} places a connection in a score, a
+note continued across a boundary on the same player and pitch becoming one longer note
+(Orchidea's continuity model), and the score remembers the orchestration: in the roll a
+dashed line marks every segment, and clicking in one fills the \emph{solution} menu with its
+solutions by cost; choosing one replaces the segment's notes (\musil{score-choose!},
+\musil{score-solutions}) and the playback follows. The search prints its progress
+(\musil{'quiet} 1 silences it), Esc interrupts it in the IDE, \musil{'seed} fixes its draws.
+\texttt{static\_orchidea.mu} orchestrates a bell, \texttt{dynamic\_orchidea.mu} a piano
+phrase cut at its chords, \texttt{orchfest.mu} puts the three orchestrators one after the
+other on the same sound. The names are Musil's; Orchidea's (\texttt{pop\_size},
+\texttt{max\_epochs}, \texttt{xover\_rate}, \texttt{onsets\_threshold},
+\texttt{partials\_filtering}...) are in the function's documentation. One difference from
+Orchidea's own analysis: the target's pitches are named as the database's files name theirs,
+C4 = 261.6\,Hz, so the pitch filter keeps the sounds at the target's pitch.
+
+\texttt{gran\_orchestration.mu} realises a unison that accelerates into a storm of every
+style over five octaves and then slows down towards the harmonic series of E2;
+\texttt{modulations.mu} follows the analysis of Grisey's \emph{Modulations}, section by
+section, with the harmonicity, density, duration, dynamics, register and coupling envelopes
+of each process on the spectrum of E.
+
+\textbf{Databases.} A database in the *SOL layout (TinySOL, OrchideaSOL, FullSOL) is a
+feature file next to a folder of the same name holding the sounds by family and instrument
+(\texttt{TinySOL.spectrum.db} and \texttt{TinySOL/}); the file's first line gives the type,
+block, hop and number of coefficients, then one line per sound: its path relative to the
+sounds' folder and its features. The sounds' folder is found by content, whatever its name
+(\texttt{TinySOL/}, \texttt{tinysol/}, a copy called otherwise): the folder next to the
+feature file that holds its sounds; and each sound is found by its file name anywhere under
+that folder, so a copy whose folders are named otherwise than the feature file says
+(\texttt{Strings/Vn/} for \texttt{Strings/Violin/}) or spells sharps as \texttt{\_} loads
+too. \musil{db-load} reads the metadata (the
+file names carry instrument, technique, pitch, dynamics; a technique may be several tokens,
+\texttt{pizz-lv}, so the pitch is the first token that reads as one, and an unpitched sound
+has none) and the features, in C++, and never the sounds: those are opened when a note is rendered or played, and cached.
+\musil{db-query} (nil matches anything, a list matches any of its members), \musil{db-grep}
+(a regular expression on the file name), \musil{db-find} (a substring), \musil{db-between}
+(a pitch range), \musil{db-nearest} (the closest features), \musil{db-instruments} (in
+orchestral order), \musil{db-techniques}, \musil{db-dynamics}, \musil{db-pitches},
+\musil{db-range}, \musil{db-features}, \musil{db-path}, \musil{db-available?},
+\musil{db-available}, \musil{db-instruments-available}. \musil{db-gen} makes a feature file
+from a folder of sounds (Orchidea's dbgen, in C++: the energy-weighted average spectrum at
+44100~Hz, as \texttt{spectrum}, \texttt{logspec}, \texttt{specpeaks}, \texttt{specenv},
+\texttt{mfcc} or \texttt{moments}; the bundled TinySOL features are reproduced exactly);
+\musil{db-make} generates and loads. Several databases whose features agree load as one:
+\musil{(db-load (list "a.db" "b.db"))} or \musil{db-merge}; every entry keeps its own
+sounds' folder, and \musil{note} draws on all of them. \musil{db-load-first} loads the first
+of a list of feature files that is on disk: the examples name TinySOL (or FullSOL) first and
+the bundled MicroSOL last, and run with what is there. \musil{note} finds the entry
+for an instrument, pitch, dynamics and technique, or the nearest available pitch of that
+instrument, and shifts it by resampling; only sounds present on disk are candidates, so a
+feature file describing more than is present still works. A sharp in a pitch is written as
+a string (\musil{"D\#5"}) or a symbol (\musil{'D\#5}). The bundled
+\texttt{examples/data/microsol} (MicroSOL: oboe, horn, violin, cello, C4--G4, 32 sounds)
+makes every example run from a fresh clone; the full TinySOL is fetched into
+\texttt{datasets/} (ignored by git) with \texttt{./fetch\_tinysol.sh}, and each example has
+a commented line to switch to it.
+
+\input{generated/music.tex}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\subsection{plot}
+
+A figure is \musil{(list title layers options)}; \musil{plot.mu} builds it and
+\musil{show} opens it in a window of its own and returns, from the command line and from
+the IDE alike; the interpreter keeps the windows alive while it waits or sleeps, so
+several plots can be open while a program goes on, and a script that ends with windows
+open stays until they are closed. \musil{save-png} writes a file. \musil{subplots} puts
+several figures in one grid. Keys in a window: \texttt{+}/\texttt{-} zoom, W A S D pan,
+arrows orbit a surface, \texttt{0} or \texttt{r} reset, \texttt{e} exports a PNG under an
+automatic name, Esc or \texttt{q} closes; the mouse drags to pan or orbit, the wheel zooms;
+the \textbf{Export...} button asks for a file name and writes the figure as shown. Layers are lines, points, bars, an image (a matrix as
+a heat map) or a surface (a matrix in 3D). The one-call helpers build and show in one
+go; the ready-made figures know about signals and data.
+
+\begin{lstlisting}
+load "plot.mu"
+var fig (figure "two sines")
+add-line fig nil (sin (/ (range 100) 8)) "sin"
+add-line fig nil (cos (/ (range 100) 8)) "cos"
+set-labels fig "sample" "value"
+show fig
+save-png (spectrogram x sr 1024 256) "/tmp/spec.png"
+show (scatter-clusters petals (kmeans-labels km) 3)
+\end{lstlisting}
+
+\input{generated/plot.tex}
+
+% ═════════════════════════════════════════════════════════════════════════════
+\section{Extending Musil from C++}
+
+The interpreter is one header. A host includes it, registers functions, and runs
+code:
+
+\begin{lstlisting}[language=C++]
+;include "musil.h"
+musil::Interp I;
+musil::make_env(I);                       // the C++ halves of the libraries
+I.def("hello", [](musil::vlist& a, musil::Interp& i) -> musil::vptr {
+    return musil::v_str("hello, " + i.str(a[0]));
+}, 1, 1);                                 // name, function, min and max arguments
+I.run("print (hello \"world\")");
+\end{lstlisting}
+
+A builtin receives its evaluated arguments as a \texttt{vlist} and the interpreter.
+\texttt{eval} has already checked the argument count. Inside, \texttt{i.num(v)},
+\texttt{i.scalar(v)}, \texttt{i.index(v)}, \texttt{i.str(v)}, \texttt{i.list(v)}
+and \texttt{i.fn(v)} return the payload or raise a Musil error naming the builtin;
+\texttt{i.bad("message")} raises one with your text. Values are made with
+\texttt{v\_num}, \texttt{v\_arr}, \texttt{v\_str}, \texttt{v\_list};
+\texttt{i.call\_fn(f, args)} calls a Musil function; \texttt{i.yield\_fn} is called
+every 1024 evaluations for hosts that service an event loop.
+
+Document a builtin with a comment above it in the form
+\texttt{// (name args) description}; \texttt{tools/gendoc.py} turns those comments
+into \texttt{help.txt} and into this manual. A library is complete when it has
+\texttt{name.h}, \texttt{name.mu}, \texttt{tests/test\_name.mu} and
+\texttt{examples/reference\_name.mu}.
+
+% ═════════════════════════════════════════════════════════════════════════════
+\section{Examples}
+
+All in \texttt{examples/}, all run by \texttt{ctest}. Run them from that directory.
+
+\begin{center}
+\begin{tabular}{@{}ll@{}}
+\toprule
+\texttt{reference*.mu} & one runnable tour per library \\
+\texttt{hello, if, while, procs, math, strings, arrays, files} & the language, one topic each \\
+\texttt{music\_demo.mu} & temperament, scales, pitch-class sets, a sound written to a WAV \\
+\texttt{chords.mu} & pitch-class sets as vectors: distances, clustering, a PCA chord map \\
+\texttt{matrices.mu}, \texttt{iris.mu} & linear algebra; PCA, k-means and KNN on the Iris data \\
+\texttt{stft, filters, reverb, cross\_synth, additive, features} & signal processing on recordings \\
+\texttt{phase\_vocoder.mu} & time stretching, pitch shifting with and without formants, robot, whisper \\
+\texttt{plots.mu}, \texttt{iris\_plot.mu} & waveforms, spectrograms, responses, clusters, surfaces \\
+\texttt{live\_play.mu}, \texttt{live\_chorale.mu}, \texttt{live\_probe.mu} & sounds through the device; a four-voice chorale scheduled with \musil{sequence}; a device check \\
+\texttt{live\_synth.mu}, \texttt{live\_offline.mu} & instruments as functions, played and changed live; the same rendered offline with parameter curves \\
+\texttt{live\_loops.mu}, \texttt{live\_controls.mu}, \texttt{live\_session.mu} & patterns redefined while they run; controls and OSC; a file to open in the IDE and play with \\
+\texttt{live\_house.mu}, \texttt{live\_techno.mu}, \texttt{live\_trance.mu} & tracks from the kits, the step notation and loops, to live-code in the IDE \\
+\texttt{live\_emptyset.mu} & a style from its own instruments (impacts, iron, a wall of noise), Euclidean rhythms and silence as form \\
+\texttt{notation.mu} & a written line, an Orchidea chord and a granular cloud quantized and exported as MusicXML, with and without tuplets; the report; the grid heard \\
+\texttt{onsets.mu}, \texttt{transients.mu} & onset detection by spectral flux; harmonic/percussive separation (HPSS) on a file made for it \\
+\texttt{spatial.mu}, \texttt{flyby.mu}, \texttt{flyby\_controls.mu}, \texttt{live\_spatial.mu} & sounds placed and moved in 3D: binaural files for headphones (a helicopter in front, overhead, behind, around), B-format and speaker rings; the helicopter on sliders, live \\
+\texttt{nmf.mu}, \texttt{make\_audio\_demos.mu} & source separation of a four-stem mix by NMF, unsupervised and supervised; how every synthetic demo sound was made \\
+\texttt{classic\_mir.mu} & the classic MIR analyses of a song (Tom's Diner): tempo and tempogram, beats with a click track, chromagram and key, self-similarity matrices on harmony and timbre, novelty and the sections \\
+\texttt{simple\_score.mu}, \texttt{loaddb.mu}, \texttt{random\_music.mu}, \texttt{random\_collage.mu} & a score written by hand (a Bach chorale and one event of every kind); a sample database loaded and questioned; a random score of notes; a random collage of recordings, processing, notes, synths and functions \\
+\texttt{score\_in\_score.mu}, \texttt{algorithmic\_comp.mu} & phrases as scores inside sections inside a piece; the musical elements combined with the language \\
+\texttt{gran\_orchestration.mu}, \texttt{gran\_orchestration2.mu}, \texttt{gran\_orchestration3.mu}, \texttt{haas.mu}, \texttt{static\_orchidea.mu}, \texttt{dynamic\_orchidea.mu}, \texttt{orchfest.mu}, \texttt{modulations.mu}, \texttt{atmospheres.mu}, \texttt{atmospheres2.mu}, \texttt{morph\_orchestration.mu}, \texttt{dbgen.mu} & orchestration as granular synthesis: two processes from a unison to a storm and to a spectrum; one process, a parameter at a time (a pulse together that quickens, widens, comes apart, and ends in long loud sounds); the players as people (seats, lines, clusters, a strike scattered, strict dynamics, two granulators on the same people, and the score validated against the orchestra); Haas's processes after \emph{in vain} (cascades of tempered scales, an overtone chord in just intonation swelling in waves, a beating near-unison, the return), its parts written as MusicXML; Orchidea on a bell (static) and on a piano phrase cut at its chords (dynamic), the solutions chosen in the roll; the three orchestrators one after the other on the same bell; Grisey's \emph{Modulations} simulated section by section; Ligeti's \emph{Atmosphères} as clusters in bands read off its register diagram, the dynamics off the measured loudness of a recording, and again with every envelope taken from the recording's curves; a recording orchestrated by its morphology; a feature file made from a folder of sounds \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\end{document}

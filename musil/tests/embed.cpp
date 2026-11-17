@@ -4,16 +4,7 @@
 //
 // Copyright (c) 2026 Carmine-Emanuele Cella. SPDX-License-Identifier: BSD-2-Clause
 
-// Moritz has no musil.h: it leaves out the live library (Moritz plays) and the plots (Moritz draws)
-#include "core.h"
-#include "std.h"
-#include "system.h"
-#include "scientific.h"
-#include "signals.h"
-#include "music.h"
-namespace musil {
-inline void make_env(Interp& i) { add_std(i); add_system(i); add_scientific(i); add_signals(i); add_music(i); }
-}
+#include "musil.h"
 
 #include <thread>
 

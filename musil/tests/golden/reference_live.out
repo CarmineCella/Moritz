@@ -1,0 +1,82 @@
+================================================================
+  musil: library reference (live)
+================================================================
+
+--- device ---
+audio-devices    : 1 (a list of the playback devices' names)
+audio-open       : opened; 44100 Hz, block 256 , 2 channels, device null
+audio-start      : running 1
+audio-time       : 1 (the clock advances, in seconds)
+audio-report     : prints every field of audio-status (open, running, sr, block, channels, device, time, voices, load, peak)
+
+--- voices ---
+play             : voice 1 ; playing: 1
+play-with        : amp, pan, rate, loop, at: 2
+stereo           : 3 (a list of channels)
+loop-buffer, set-amp/pan/rate: voice 4
+stop, stop-all   : voices left 0
+wait-for         : waited for voice 1 to end
+
+--- time: sample-accurate scheduling on the clock ---
+play-at t+0.2    : voice 5 waits for its time
+wait-until       : now 1
+sequence         : 2 voices scheduled at once
+
+--- files ---
+play-file        : voice 8 (any sample rate: the voice resamples)
+play-file-with   : voice 9
+
+--- synths ---
+streamable       : (* + - / abs adsr allpass ambi-decode ambi-encode ambi-rotate bandpass binaural channel clip comb conv cos dc-block delay exp floor highpass highshelf iir lag list lowpass lowshelf max min noise notch osc pan pan-azimuth peak-eq pow sin sqrt tanh)
+offline call     : 2 channels of 8820 samples
+synth            : id 10 , parameters (gate freq cutoff)
+note-on          : sounding 1
+set-param        : cutoff ramped to 200 over 0.2 s
+note-off         : released 1
+note             : gate on now, off in 0.1 s (scheduled)
+free             : synths 0
+play-synth       : id 11 (compile, set, gate on)
+synth-render     : the graph offline; equals the call within 1
+not streamable   : reference_live.mu:99: synth: not streamable: pvoc (see (streamable))
+tables           : sine-table saw-table square-table triangle-table, for osc
+
+--- loops ---
+tempo, bpm, beat : 120 bpm; beat 1 ; beat-time of beat 2 minus beat 0: 1 s
+live-loop        : loops (bassline) ; the function named bassline runs every 2 beats
+redefine         : function bassline ... again; the next cycle uses the new one
+stop-loop        : loops ()
+ev, ev-beat      : (0 2) (an event is (list beat dur thunk); the thunk gets the time and duration)
+fast, slow, shift: (0 1) (0 4) (1 3)
+rev, every       : (3 1) (0 1)
+cat, stack       : (0 2 4 6) 4
+steps            : (0 1 1.5) (nil is a rest)
+synth-ev, play-ev: events on a synth (parameters + gate) or a buffer
+
+--- notes, patterns, the kit ---
+hz, note->midi   : 440 261.63 78 ; chord A3 min7: (57 60 64 67)
+pat              : ((0 1 bd) (2 1 sn))   bd [hh hh] sn: (0 1 1.5 2)   hh*4: (0 0.5 1 1.5)
+euclid 3 8       : (1 nil nil 1 nil nil 1 nil)
+swing 0.3        : (0 0.65) (off-beat eighths later)
+kit              : kick snare clap hat ohat acid stab pad are synth functions; (house-kit) makes the drums
+techno kit       : tkick rumble that tohat tclap perc sub hoover tstab tpad zap; (techno-kit); duck, sweep, accents
+trance kit       : supersaw pluck offbass riser; (trance-kit); arp / arp-events, gater, roll
+arp              : (60 64 67 64 60 64 67 64)
+sig              : 100 (a constant as a signal, so an instrument works offline and streamed)
+user helpers     : a synth function may call your own functions; they are inlined into the graph
+drums, melody    : 5 drum events; 3 notes
+poly, chord-ev   : 3 voices for chords
+
+--- controls and osc ---
+control, toggle  : ((cutoff 100 5000 1200 0) (on 0 1 0 1))
+set-control      : cutoff now 300 (the bound synth followed, ramped)
+controls         : opens the controls window (sliders and check boxes) and returns; (controls-open?) tells if it is
+osc-send/listen  : after a message to /cutoff, the control is 2000
+serve            : (serve 7770) opens the evaluation port editors send code to; (serving) tells which
+
+--- closing ---
+audio-stop       : running 0
+audio-quit       : open 0
+
+================================================================
+  end of live reference
+================================================================

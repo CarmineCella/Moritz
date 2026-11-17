@@ -9,7 +9,7 @@ print "score           :" (get s 'name) "at" (score-sr s) "Hz," (length (score-e
 var tone (sine 8000 440 0.5)
 var e1 (event s 0 0.4 tone)
 print "event (buffer)  :" (get e1 'kind) (get e1 'label) "at" (get e1 'at) "for" (get e1 'dur)
-var e2 (event s 0.5 0.3 "../../examples/sounds/drums.wav")
+var e2 (event s 0.5 0.3 "data/drums.wav")
 print "event (file)    :" (get e2 'kind) (get e2 'label)
 function blip (d) (* (sine 8000 880 d) 0.3)
 var e3 (event s 1 0.2 (call blip (list 'dur)))
@@ -68,7 +68,7 @@ print "score-merge     :" (length (score-events (score-merge s s))) "events in t
 ; --- 5. A database and notes ---------------------------------------------------------------------
 print ""
 print "--- database ---"
-var db (db-load "../../examples/sounds/microsol/microsol.spectrum.db")
+var db (db-load "data/microsol/microsol.spectrum.db")
 print "db-load         :" (db-size db) "entries;" (get db 'type) "features," (get db 'ncoeff) "coefficients; root" (filename (get db 'root))
 print "db-instruments  :" (db-instruments db)
 print "db-techniques   :" (db-techniques db) " db-dynamics:" (db-dynamics db) " db-pitches:" (length (db-pitches db))
@@ -116,9 +116,9 @@ print "a score inside  : kind" (get e-in 'kind) "for" (fixed (get e-in 'dur) 2) 
 ; --- 5c. MIDI files, envelopes, the orchestra, the granulator -------------------------------------------------
 print ""
 print "--- midi, granular orchestration ---"
-var mid (midi-read "../../examples/sounds/test.mid")
+var mid (midi-read "data/test.mid")
 print "midi-read       :" (length (get mid 'notes)) "notes in" (get mid 'tracks) "," (get mid 'seconds) "s"
-print "midi->fragment  :" (length (midi->fragment "../../examples/sounds/test.mid" db 'Vn 'ord)) "events; midi->score: an instrument per channel; velocity->dynamics" (velocity->dynamics 100)
+print "midi->fragment  :" (length (midi->fragment "data/test.mid" db 'Vn 'ord)) "events; midi->score: an instrument per channel; velocity->dynamics" (velocity->dynamics 100)
 print "env, env-at     :" (env-at (env (list 0 (list 4 6) 10 (list 0.5 1))) 5) "(ranges interpolated; sets crossfaded by chance)"
 var orch (orchestra (list 'Ob 'Hn "Vn|Vc" (list 'Vn 'Vc)))
 print "orchestra       :" (orchestra-size orch) "players," (orchestra-instruments orch) "; an ossia Vn|Vc, a paired (Vn Vc)"

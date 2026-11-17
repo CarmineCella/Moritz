@@ -21,6 +21,7 @@ fit-duration    : 100 (shorter sounds are left alone)
 layout-channels : mono 1 stereo 2 binaural 2 ambi 2 9 ring of 6 6 8 channels 8
 place           : a mono sound at the left, stereo levels (0.707 0)
 score-render    : 2 channels, 23200 samples
+render: the mix peaked at 1.23 and was scaled to 0.98
 render          : written to /tmp/musil_reference_score.wav
 
 --- the roll ---

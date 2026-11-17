@@ -1,0 +1,20 @@
+build/
+build-*
+dist
+docs/generated
+docs/*.aux
+docs/*.fdb_latexmk
+docs/*.fls
+docs/*.log
+docs/*.out
+docs/*.gz
+docs/*.toc
+src/help.txt
+*.o
+*.a
+.DS_Store
+.vscode/
+.idea/
+data/examples/microsol/example.spectrum.db
+# full sample databases fetched by fetch_tinysol.sh, or placed there by hand (see examples/data/microsol/README.md)
+datasets/
