@@ -14,8 +14,10 @@
 #include <condition_variable>
 #include <cstring>
 #include <fstream>
+#include <map>
 #include <set>
 #include <sstream>
+#include "jobs.h"
 
 #include <thread>
 #ifndef _WIN32
@@ -30,8 +32,13 @@ namespace moritz {
 
 namespace {
 
+// the thread of a synchronous run (moritz --render): the main thread waits for it, so what it would send
+// to the main thread runs at once
+thread_local bool inlineMain = false;
+
 // runs f on the main thread, from any thread
 void onMain(std::function<void()> f) {
+    if (inlineMain) { f(); return; }
     auto* p = new std::function<void()>(std::move(f));
     Fl::awake([](void* d) {
         auto* g = static_cast<std::function<void()>*>(d);
@@ -64,9 +71,11 @@ void startThread(std::function<void()> f) {
 #endif
 }
 
-// the printed output of a context: whole lines go to the Console, on the main thread
+// the printed output of a context: whole lines go to the Console (or where the context's hooks say), on
+// the main thread
 class ConsoleStream : public std::streambuf {
 public:
+    std::function<void(const std::string&)> sink;     // main thread; empty: the Console
     void finish() {
         if (!line_.empty()) send();
     }
@@ -87,7 +96,8 @@ private:
     void send() {
         std::string l = std::move(line_);
         line_.clear();
-        onMain([l] { App::get().log(l); });
+        auto s = sink;
+        onMain([l, s] { if (s) s(l); else App::get().log(l); });
     }
 };
 
@@ -133,7 +143,7 @@ std::thread::id& mainThread() {
 
 // runs f on the main thread and waits for it (at once when already there)
 void onMainWait(const std::function<void()>& f) {
-    if (std::this_thread::get_id() == mainThread()) { f(); return; }
+    if (inlineMain || std::this_thread::get_id() == mainThread()) { f(); return; }
     std::mutex m;
     std::condition_variable cv;
     bool done = false;
@@ -161,14 +171,52 @@ void toMessage(const musil::vptr& v, Message& m) {
     }
 }
 
+// the context of an interpreter, for the functions that reach Moritz
+std::mutex& contextsMutex() { static std::mutex m; return m; }
+std::map<musil::Interp*, LangContext*>& contexts() { static std::map<musil::Interp*, LangContext*> m; return m; }
+LangContext* contextOf(musil::Interp& I) {
+    std::lock_guard<std::mutex> g(contextsMutex());
+    auto it = contexts().find(&I);
+    return it == contexts().end() ? nullptr : it->second;
+}
+// where a context's buffers and receives are looked up (main thread): its box's patch, or every open one
+Patch* patchOf(musil::Interp& I) {
+    LangContext* c = contextOf(I);
+    if (c && c->hooks.patch) return c->hooks.patch;
+    if (c && c->hooks.restricted) return nullptr;        // a box that is gone
+    return &App::get().host;
+}
+
 // (send name values...) to every receive name (as a send box, or a ; message)
 musil::vptr fnSend(musil::vlist& a, musil::Interp& I) {
     std::string name = I.str(a[0]);
     Message m;
     for (size_t k = 1; k < a.size(); ++k) toMessage(a[k], m);
     if (m.empty()) m.push_back(Atom("bang"));
-    onMainWait([&] { App::get().host.sendTo(name, m); });
+    onMainWait([&] { if (Patch* p = patchOf(I)) p->sendTo(name, m); });
     return musil::v_nil();
+}
+
+// (out k values...) out of outlet k of the code box (from 1); a list is sent as one message
+musil::vptr fnOut(musil::vlist& a, musil::Interp& I) {
+    int k = (int)I.scalar(a[0]);
+    Message m;
+    for (size_t j = 1; j < a.size(); ++j) toMessage(a[j], m);
+    if (m.empty()) m.push_back(Atom("bang"));
+    bool ok = true;
+    onMainWait([&] {
+        LangContext* c = contextOf(I);
+        if (c && c->hooks.outlet) c->hooks.outlet(k, m); else ok = false;
+    });
+    if (!ok) I.bad("not in a code box");
+    return musil::v_nil();
+}
+
+// what a code box refuses: what a patch cannot do either (run programs, delete files, the network), and
+// what would block or end Moritz
+musil::vptr fnRefused(musil::vlist&, musil::Interp& I) {
+    I.bad("not in a code box (a box may read and write files, but not run programs, delete files, use the "
+          "network, wait or quit); the Console and moritz --run can");
 }
 
 // (buffer name) the channels of a buffer~ as vectors; (buffer-rate name) its sample rate
@@ -177,7 +225,8 @@ musil::vptr fnBuffer(musil::vlist& a, musil::Interp& I) {
     SampleBuffer copy;
     bool found = false;
     onMainWait([&] {
-        if (auto* b = findBuffer(&App::get().host, name)) {
+        Patch* p = patchOf(I);
+        if (auto* b = p ? findBuffer(p, name) : nullptr) {
             std::lock_guard<std::mutex> lk(b->patch->mutex());
             copy = b->buf;
             found = true;
@@ -196,7 +245,7 @@ musil::vptr fnBuffer(musil::vlist& a, musil::Interp& I) {
 musil::vptr fnBufferRate(musil::vlist& a, musil::Interp& I) {
     std::string name = I.str(a[0]);
     double sr = 0;
-    onMainWait([&] { if (auto* b = findBuffer(&App::get().host, name)) sr = b->buf.sr; });
+    onMainWait([&] { Patch* p = patchOf(I); if (auto* b = p ? findBuffer(p, name) : nullptr) sr = b->buf.sr; });
     if (sr <= 0) I.bad("no buffer~ " + name);
     return musil::v_num(sr);
 }
@@ -213,7 +262,8 @@ musil::vptr fnSetBuffer(musil::vlist& a, musil::Interp& I) {
     double sr = a.size() > 2 ? I.scalar(a[2]) : 0;
     bool found = false;
     onMainWait([&] {
-        auto* b = findBuffer(&App::get().host, name);
+        Patch* p = patchOf(I);
+        auto* b = p ? findBuffer(p, name) : nullptr;
         if (!b) return;
         found = true;
         {
@@ -258,8 +308,19 @@ const std::set<std::string>& languageLibraryNames(bool functions) {
 
 }  // namespace
 
-LangContext::LangContext(std::string l) : label(std::move(l)), interp_(std::make_unique<musil::Interp>()) {
+const std::vector<std::string>& refusedInCodeBox() {
+    static const std::vector<std::string> n = {"exec", "remove", "input", "exit", "sleep", "breathe",
+                                               "udp-send", "udp-receive", "serve", "serve-stop"};
+    return n;
+}
+
+LangContext::LangContext(std::string l, ContextHooks h)
+    : label(std::move(l)), hooks(std::move(h)), interp_(std::make_unique<musil::Interp>()) {
     mainThread();
+    {
+        std::lock_guard<std::mutex> g(contextsMutex());
+        contexts()[interp_.get()] = this;
+    }
     auto& I = *interp_;
     musilLibraries(I);
     // Moritz, from Musil
@@ -267,11 +328,16 @@ LangContext::LangContext(std::string l) : label(std::move(l)), interp_(std::make
     I.def("buffer", fnBuffer, 1, 1);
     I.def("buffer-rate", fnBufferRate, 1, 1);
     I.def("set-buffer!", fnSetBuffer, 2, 3);
+    if (hooks.restricted) {
+        I.def("out", fnOut, 1, -1);
+        for (auto& n : refusedInCodeBox()) I.def(n, fnRefused, 0, -1);
+    }
     musilPaths(I);
 #ifndef _WIN32
     I.stack_budget = (64u << 20) / 4 * 3;          // code runs on a thread of 64 MB (startThread)
 #endif
     auto* buf = new ConsoleStream();
+    buf->sink = hooks.print;
     I.out = new std::ostream(buf);
     I.yield_fn = [this] {
         if (stop_) {
@@ -285,6 +351,10 @@ LangContext::LangContext(std::string l) : label(std::move(l)), interp_(std::make
 }
 
 LangContext::~LangContext() {
+    {
+        std::lock_guard<std::mutex> g(contextsMutex());
+        contexts().erase(interp_.get());
+    }
     if (interp_) {
         auto* os = interp_->out;
         auto* buf = os ? os->rdbuf() : nullptr;
@@ -302,7 +372,9 @@ bool LangContext::eval(const std::string& code, const std::string& file, int fir
     // blank lines in front keep the line numbers of the file the code comes from
     std::string src = std::string((size_t)std::max(0, firstLine - 1), '\n') + code;
     auto self = shared_from_this();
-    startThread([self, src, file, done] {
+    bool sync = jobsSynchronous;                       // moritz --render: run now, and wait
+    auto work = [self, src, file, done, sync] {
+        if (sync) inlineMain = true;
         auto& I = *self->interp_;
         EvalResult r;
         try {
@@ -326,9 +398,63 @@ bool LangContext::eval(const std::string& code, const std::string& file, int fir
         static_cast<ConsoleStream*>(I.out->rdbuf())->finish();
         self->snapshot();
         self->busy_ = false;
+        if (sync) { inlineMain = false; if (done) done(r); return; }
         onMain([self, r, done] { if (done) done(r); });
+    };
+    if (!sync) { startThread(work); return true; }
+    // on a thread with the large stack, the main thread waiting for it
+    std::mutex m;
+    std::condition_variable cv;
+    bool finished = false;
+    startThread([&] {
+        work();
+        std::lock_guard<std::mutex> g(m);
+        finished = true;
+        cv.notify_one();
     });
+    std::unique_lock<std::mutex> g(m);
+    cv.wait(g, [&] { return finished; });
     return true;
+}
+
+void LangContext::define(const std::string& name, const Message& value) {
+    if (busy_) return;
+    musil::vptr v;
+    bool numbers = !value.empty();
+    for (auto& a : value) numbers = numbers && a.isFloat();
+    if (value.empty()) v = musil::v_nil();
+    else if (numbers && value.size() == 1) v = musil::v_num(value[0].f);
+    else if (numbers) {
+        std::valarray<double> x(value.size());
+        for (size_t k = 0; k < value.size(); ++k) x[k] = value[k].f;
+        v = musil::v_arr(std::move(x));
+    } else if (value.size() == 1) v = musil::v_str(value[0].s);
+    else {
+        musil::vlist l;
+        for (auto& a : value) l.push_back(a.isFloat() ? musil::v_num(a.f) : musil::v_str(a.s));
+        v = musil::v_list(std::move(l));
+    }
+    interp_->def(name, v);
+}
+
+void LangContext::detach() {
+    stop();
+    hooks.patch = nullptr;
+    hooks.outlet = nullptr;
+    hooks.print = nullptr;
+    if (interp_ && interp_->out) static_cast<ConsoleStream*>(interp_->out->rdbuf())->sink = nullptr;
+}
+
+std::vector<std::string> codeBoxNames() {
+    ContextHooks h;
+    h.restricted = true;
+    auto c = std::make_shared<LangContext>("code", h);
+    c->snapshot();
+    std::vector<std::string> out;
+    std::set<std::string> refused(refusedInCodeBox().begin(), refusedInCodeBox().end());
+    for (auto& n : c->names())
+        if (!refused.count(n)) out.push_back(n);
+    return out;
 }
 
 void LangContext::stop() {

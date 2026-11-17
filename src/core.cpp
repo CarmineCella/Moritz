@@ -218,6 +218,27 @@ static std::string writeAtom(const Atom& a) {
     return a.isFloat() ? numberText(a) : quoteSymbol(a.s);
 }
 
+// a box's script as (script "line" ...), one quoted line each, indented under the box
+static std::string scriptForm(const Box* b, const std::string& pad) {
+    std::string t = b->script();
+    if (t.empty()) return "";
+    std::string o = "\n" + pad + "    (script";
+    size_t s = 0;
+    while (s <= t.size()) {
+        size_t e = t.find('\n', s);
+        std::string line = t.substr(s, e == std::string::npos ? std::string::npos : e - s);
+        std::string q = "\"";
+        for (char c : line) {
+            if (c == '"' || c == '\\') q += '\\';
+            q += c;
+        }
+        o += "\n" + pad + "      " + q + "\"";
+        if (e == std::string::npos) break;
+        s = e + 1;
+    }
+    return o + ")";
+}
+
 
 // ============================================================================
 // 2. boxes
@@ -847,6 +868,7 @@ std::string Patch::serialize(int indent) const {
         o << " (pos " << b->x << ' ' << b->y << ")";
         if (b->savesInner() && b->inner())
             o << "\n" << pad << "    " << b->inner()->serialize(indent + 4);
+        o << scriptForm(b.get(), pad);
         o << ")";
     }
     for (auto& c : conns)
@@ -894,6 +916,7 @@ bool Patch::build(const SExpr& form, std::vector<std::unique_ptr<Box>>& nb,
             std::string id = e.items[1].text, cls = e.items[2].text;
             Message raw;                    // as written; create() substitutes #1..
             const SExpr* innerForm = nullptr;
+            const SExpr* scriptF = nullptr;
             int x = 20, y = -1;
             for (size_t j = 3; j < e.items.size(); ++j) {
                 const SExpr& a = e.items[j];
@@ -902,6 +925,8 @@ bool Patch::build(const SExpr& form, std::vector<std::unique_ptr<Box>>& nb,
                     y = (int)std::atof(a.items[2].text.c_str());
                 } else if (headIs(a, "patch")) {
                     innerForm = &a;
+                } else if (headIs(a, "script")) {
+                    scriptF = &a;
                 } else if (!a.isList) {
                     raw.push_back(sexprAtom(a));
                 }
@@ -922,6 +947,11 @@ bool Patch::build(const SExpr& form, std::vector<std::unique_ptr<Box>>& nb,
                 std::vector<std::string> w;
                 b->loadInner(*innerForm, w);
                 for (auto& s : w) warnings.push_back("in " + cls + " " + id + ": " + s);
+            }
+            if (scriptF) {
+                std::string t;
+                for (size_t j = 1; j < scriptF->items.size(); ++j) t += (j > 1 ? "\n" : "") + scriptF->items[j].text;
+                b->setScript(t);
             }
             if (b->kind == BoxKind::Broken)
                 warnings.push_back(where + "unknown object '" + cls + "'");
@@ -1023,6 +1053,7 @@ std::string Patch::serializeBoxes(const std::vector<Box*>& sel) const {
         for (auto& a : b->keepRaw ? b->rawArgs : b->saveArgs()) o << ' ' << writeAtom(a);
         o << " (pos " << b->x << ' ' << b->y << ")";
         if (b->savesInner() && b->inner()) o << "\n    " << b->inner()->serialize(4);
+        o << scriptForm(b.get(), "");
         o << ")";
     }
     for (auto& c : conns)
@@ -1050,6 +1081,7 @@ bool Patch::applyText(const std::string& src, std::string& err) {
         std::string t = b->cls;
         for (auto& a : b->keepRaw ? b->rawArgs : b->saveArgs()) t += ' ' + writeAtom(a);
         if (b->savesInner() && b->inner()) t += b->inner()->serialize(0);
+        t += b->script();
         return t;
     };
     std::map<std::string, Box*> oldById;

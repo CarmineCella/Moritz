@@ -31,4 +31,12 @@ if [ -n "$missing" ]; then
     printf '%s\n' "$missing" | head -20
     fails=$((fails + 1))
 fi
+# what a code box can call: exactly the list in tests/code-names.txt (a new name, or a refused one that
+# came back, shows here; after an intended change: moritz --code-names > tests/code-names.txt)
+HERE=$(cd "$(dirname "$0")/.." && pwd)
+if ! "$MORITZ" --code-names 2>/dev/null | tr -d '\r' | diff -q "$HERE/tests/code-names.txt" - > /dev/null; then
+    echo "FAIL the names a code box can call differ from tests/code-names.txt:"
+    "$MORITZ" --code-names 2>/dev/null | tr -d '\r' | diff "$HERE/tests/code-names.txt" - | head -10
+    fails=$((fails + 1))
+fi
 [ $count -gt 0 ] && [ $fails -eq 0 ]

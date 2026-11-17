@@ -149,6 +149,9 @@ public:
     virtual bool savesInner() const { return false; }   // written inline as (patch ...)
     virtual void syncPorts() {}        // during compile: ports follow the inner inlets/outlets
     virtual void loadInner(const SExpr& form, std::vector<std::string>& warnings) {}
+    // ---- boxes that keep a text (code): saved as (script "line" "line" ...) after the position
+    virtual std::string script() const { return ""; }
+    virtual void setScript(const std::string& text) {}
 
     // ---- interface objects (BoxKind::UI): drawn and clicked in locked mode
     virtual void uiSize(int& w, int& h) const {}

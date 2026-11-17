@@ -264,6 +264,12 @@ int main(int argc, char** argv) {
         std::fclose(f);
         return 0;
     }
+    // --code-names: every name a code box can call (tests/code-names.txt holds the expected list)
+    if (argc >= 2 && std::string(argv[1]) == "--code-names") {
+        moritz::setupSearchPaths();
+        for (auto& n : moritz::codeBoxNames()) std::printf("%s\n", n.c_str());
+        return 0;
+    }
     // --reference-md: OBJECTS.md from help/reference; --reference-missing: the
     // objects without a reference entry; --list-classes: name and group
     if (argc >= 2 && (std::string(argv[1]) == "--reference-md" || std::string(argv[1]) == "--reference-missing" ||
@@ -303,7 +309,8 @@ int main(int argc, char** argv) {
             app.openDocument(moritz::portablePath(argv[k]));
     // --window-png out.png [patch] [zoom=z]: draws the first document window
     // (toolbar, canvas, status bar) into an image, without showing it: for tests.
-    // With a code file: its editor; run: runs it first; console=out2.png: the Console too
+    // With a code file (or open=<id> of a code box): its editor; run: runs it first; console=out2.png: the
+    // Console too
     auto writePng = [](Fl_Window* w, const char* file) {
         Fl_Image_Surface surf(w->w(), w->h());
         Fl_Surface_Device::push_current(&surf);
@@ -314,6 +321,10 @@ int main(int argc, char** argv) {
         delete img;
         return r;
     };
+    // open=<id>: the box sent "open" (a code box: its editor, drawn instead of the patch)
+    for (int k = 1; k < argc; ++k)
+        if (std::string(argv[k]).rfind("open=", 0) == 0 && !app.docs.empty())
+            if (moritz::Box* b = app.docs.front()->patch.find(argv[k] + 5)) b->message(0, {moritz::Atom("open")});
     for (int k = 1; k + 1 < argc; ++k)
         if (std::string(argv[k]) == "--window-png" && !app.codeWindows().empty()) {
             moritz::CodeWindow* cw = app.codeWindows().front();

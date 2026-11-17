@@ -27,6 +27,7 @@ namespace moritz {
 
 class MainWindow;
 class CodeWindow;
+class CodeSource;
 
 // A folder bundled with the app ("examples", "library", "help"): inside the
 // .app's Resources, or next to the executable when run from the source tree.
@@ -270,6 +271,9 @@ public:
     // the code editors (code.cpp): Musil scripts (.mu)
     CodeWindow* newCode();
     CodeWindow* openCode(const std::string& path);
+    CodeWindow* openCodeFor(CodeSource* s);          // the script of a code box (double-click)
+    void codeSourceClosed(CodeSource* s);            // the box is gone: its editor closes
+    void markEdited(Patch* p);                       // the document showing p is now edited
     void closeCode(CodeWindow* w);      // already confirmed
     CodeWindow* frontCode();            // the code window in front, if one is
     const std::vector<CodeWindow*>& codeWindows() const { return codeWindows_; }

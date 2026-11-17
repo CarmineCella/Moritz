@@ -1042,6 +1042,10 @@ int Canvas::handle(int e) {
                     h.box->uiMouse(FL_PUSH, mx - h.box->x, my - h.box->y);
                 } else if (h.box && h.box->cls == "loadbang" && Fl::event_clicks()) {
                     h.box->loadbang();
+                } else if (h.box && h.box->cls == "code" && Fl::event_clicks()) {
+                    Fl::event_clicks(0);                            // double-click: the script
+                    h.box->message(0, {Atom("open")});
+                    return 1;
                 } else if (h.box && h.box->inner() && Fl::event_clicks()) {
                     Fl::event_clicks(0);
                     drag_ = Drag::None;
@@ -1056,6 +1060,11 @@ int Canvas::handle(int e) {
                 if (h.box && h.box->inner() && Fl::event_state(FL_COMMAND)) {
                     Fl::event_clicks(0);
                     if (auto* d = doc()) d->openSubpatch(h.box);   // Cmd+double-click opens in edit mode
+                    return 1;
+                }
+                if (h.box && h.box->cls == "code" && Fl::event_state(FL_COMMAND)) {
+                    Fl::event_clicks(0);
+                    h.box->message(0, {Atom("open")});             // Cmd+double-click: the script, in edit mode too
                     return 1;
                 }
                 if (h.box && h.what == Hit::Body && h.box->kind != BoxKind::Number) {

@@ -3,6 +3,7 @@
 // name under the cursor, an outline, the session's variables, and Run.
 #pragma once
 
+#include "codebox.h"
 #include "session.h"
 
 #include <FL/Fl_Double_Window.H>
@@ -30,6 +31,11 @@ public:
     bool saveAs();
     bool confirmDiscard();                        // asks to save when edited; false: cancel
     const std::string& path() const { return path_; }
+    // the script of a code box: Save puts it back into the box (or into the file the box names), and it
+    // runs in the box's interpreter
+    void bind(CodeSource* s);
+    CodeSource* source() const { return source_; }
+    void setText(const std::string& t);
     Fl_Text_Editor* editor() { return editor_; }
 
     void runBlock();                              // the selection, or the paragraph at the cursor
@@ -42,6 +48,7 @@ public:
 
 private:
     std::string path_;
+    CodeSource* source_ = nullptr;
     bool dirty_ = false;
     int errorLine_ = 0;                           // highlighted until the next edit
     int flashFrom_ = 0, flashTo_ = 0;             // lines just sent to run

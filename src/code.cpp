@@ -412,7 +412,35 @@ bool CodeWindow::load(const std::string& path) {
     return true;
 }
 
+void CodeWindow::bind(CodeSource* s) {
+    source_ = s;
+    helpBuf_->text(("Move the cursor onto a name to read its help here.\n\nAbove: what " + s->title() +
+                    " defines, after each run (in1, in2... are its inlets).").c_str());
+    refreshTitle();
+    refreshVariables();
+    setStatus(s->file().empty() ? "the script of " + s->title() + ": Cmd-S puts it back into the box · Cmd-Enter runs the block in the box"
+                                : "the file of " + s->title() + " · Cmd-Enter runs the block in the box");
+}
+
+void CodeWindow::setText(const std::string& t) {
+    text_->text(t.c_str());
+    dirty_ = false;
+    errorLine_ = 0;
+    restyle();
+    refreshOutline();
+    refreshTitle();
+}
+
 bool CodeWindow::save() {
+    if (source_ && path_.empty()) {                     // the script of a code box: into the box
+        char* t = text_->text();
+        source_->setScript(t);
+        std::free(t);
+        App::get().markEdited(source_->patchOf());
+        dirty_ = false;
+        refreshTitle();
+        return true;
+    }
     if (path_.empty()) return saveAs();
     char* t = text_->text();
     std::ofstream f(path_, std::ios::binary);
@@ -441,7 +469,7 @@ bool CodeWindow::saveAs() {
 
 bool CodeWindow::confirmDiscard() {
     if (!dirty_) return true;
-    std::string name = path_.empty() ? "Untitled" : path_.substr(path_.find_last_of("/\\") + 1);
+    std::string name = source_ && path_.empty() ? source_->title() : path_.empty() ? "Untitled" : path_.substr(path_.find_last_of("/\\") + 1);
     int r = fl_choice("Save the changes to %s?", "Cancel", "Save", "Don't Save", name.c_str());
     if (r == 0) return false;
     if (r == 1) return save();
@@ -449,7 +477,7 @@ bool CodeWindow::confirmDiscard() {
 }
 
 void CodeWindow::refreshTitle() {
-    std::string name = path_.empty() ? "Untitled" : path_.substr(path_.find_last_of("/\\") + 1);
+    std::string name = source_ && path_.empty() ? source_->title() : path_.empty() ? "Untitled" : path_.substr(path_.find_last_of("/\\") + 1);
     copy_label((name + (dirty_ ? " *" : "") + " — code").c_str());
 }
 
@@ -459,7 +487,7 @@ void CodeWindow::setStatus(const std::string& s) {
     status_->redraw();
 }
 
-std::shared_ptr<LangContext> CodeWindow::context() { return sessionContext(); }
+std::shared_ptr<LangContext> CodeWindow::context() { return source_ ? source_->context() : sessionContext(); }
 
 void CodeWindow::run(const std::string& code, int firstLine, int lastLine) {
     auto ctx = context();
@@ -470,7 +498,7 @@ void CodeWindow::run(const std::string& code, int firstLine, int lastLine) {
     restyle();
     Fl::remove_timeout(flashTimer, this);
     Fl::add_timeout(0.35, flashTimer, this);
-    std::string file = path_.empty() ? "untitled.mu" : path_;
+    std::string file = path_.empty() ? (source_ ? source_->title() : "untitled.mu") : path_;
     setStatus("running in " + ctx->label + "...");
     App::get().ensureConsole();
     show();

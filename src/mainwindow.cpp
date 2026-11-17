@@ -245,6 +245,8 @@ App& App::get() {
 
 void App::init() {
     Fl::keyboard_screen_scaling(0);      // Cmd +/- zoom the patch (View menu), not the whole interface
+    openCodeSource = [this](CodeSource* s) { openCodeFor(s); };
+    codeSourceGone = [this](CodeSource* s) { codeSourceClosed(s); };
     Fl::add_timeout(1.0 / 15, toolTimer);
     Patch::onDestroyed = [this](Patch* p) {
         for (auto* d : docs) d->closeSubpatchWindows(p);
@@ -722,6 +724,38 @@ CodeWindow* App::openCode(const std::string& path) {
     w->editor()->take_focus();
     addRecent(path);
     return w;
+}
+
+CodeWindow* App::openCodeFor(CodeSource* s) {
+    for (auto* w : codeWindows_)
+        if (w->source() == s) { w->show(); return w; }
+    auto* w = new CodeWindow();
+    std::string f = s->file();
+    if (!f.empty()) {
+        if (!w->load(f)) {                              // a file not written yet: it is made on Save
+            std::ofstream make(f, std::ios::app);
+            if (!make || !w->load(f)) { delete w; print("code: can't open " + f); return nullptr; }
+        }
+    } else {
+        w->setText(s->script());
+    }
+    w->bind(s);
+    codeWindows_.push_back(w);
+    centerOnScreen(w, frontDoc());
+    w->show();
+    w->editor()->take_focus();
+    return w;
+}
+
+void App::codeSourceClosed(CodeSource* s) {
+    for (auto* w : codeWindows_)
+        if (w->source() == s) { closeCode(w); return; }
+}
+
+void App::markEdited(Patch* p) {
+    for (auto* d : docs)
+        for (Patch* q = p; q; q = q->parent)
+            if (q == &d->patch) { d->markDirty(); return; }
 }
 
 void App::closeCode(CodeWindow* w) {

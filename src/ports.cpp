@@ -245,6 +245,9 @@ const std::map<std::string, PortDocs>& docs() {
         {"random", {{"bang: output a random integer; seed x: repeatable", "range (the next integers are 0 .. range-1)"}, {"random integer 0 .. range-1"}}},
         {"counter", {{"bang: output the count, then step", "next value"}, {"count"}}},
         // routing
+        {"code", {{"bang runs the script; anything else becomes in1 and runs it; set name values, stop, reset, open, read file.mu",
+                   "becomes in2, in3... (stored: nothing runs)"},
+                  {"what the script sends with (out k ...), k from 1; the last outlet: bang when the script has run"}}},
         {"pack", {{"first item: outputs the list", "item (stored)"}, {"the list"}}},
         {"prepend", {{"a message: output with the arguments before it", "new arguments"}, {"the message, prefixed"}}},
         {"append", {{"a message: output with the arguments after it", "new arguments"}, {"the message, extended"}}},

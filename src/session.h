@@ -1,9 +1,11 @@
 // Copyright (c) 2026 Carmine-Emanuele Cella. SPDX-License-Identifier: BSD-2-Clause
 // session.h — where Musil, the scripting language of Moritz, runs inside the application: a context is
-// an interpreter (with std.mu loaded) that the Console's prompt and the code editor send code to. There
-// is one, the session. Code runs on a thread of its own, one piece at a time, so the windows stay alive
-// and Stop works; what it prints goes to the Console, and the result comes back on the main thread.
-// Besides its libraries, the session's Musil reaches Moritz: send, buffer, buffer-rate, set-buffer!.
+// an interpreter (with std.mu loaded) that code is sent to. The session is the one of the Console's
+// prompt and the code editor; every code box has its own. Code runs on a thread of its own, one piece at
+// a time, so the windows stay alive and Stop works; what it prints goes to the Console, and the result
+// comes back on the main thread (at once, under moritz --render, where jobs are synchronous).
+// Besides its libraries, Musil in Moritz reaches the patches: send, buffer, buffer-rate, set-buffer!,
+// and in a code box out.
 #pragma once
 
 #include <atomic>
@@ -14,11 +16,12 @@
 #include <string>
 #include <vector>
 
-namespace moritz {
-
-}  // namespace moritz
 namespace musil { struct Interp; }
 namespace moritz {
+
+class Patch;
+struct Atom;
+using Message = std::vector<Atom>;
 
 struct EvalResult {
     bool ok = true;
@@ -33,9 +36,20 @@ struct Variable {
     std::string name, kind, preview;
 };
 
+// What a context reaches besides its libraries. The session's are empty: the buffers and receives of
+// every open patch, output to the Console. A code box gives its patch (buffers and receives are looked
+// up from it), its outlets (out), where it prints, and asks for the restrictions of a box: no exec,
+// remove, input, exit, sleep, breathe, nor the network (udp-send, udp-receive, serve, serve-stop).
+struct ContextHooks {
+    Patch* patch = nullptr;
+    std::function<void(int, const Message&)> outlet;          // (out k values...): outlet k (from 1)
+    std::function<void(const std::string&)> print;
+    bool restricted = false;
+};
+
 class LangContext : public std::enable_shared_from_this<LangContext> {
 public:
-    explicit LangContext(std::string label);
+    explicit LangContext(std::string label, ContextHooks hooks = {});
     ~LangContext();
     std::string label;
     bool busy() const { return busy_; }
@@ -46,6 +60,10 @@ public:
     void stop();                                   // the running code stops at its next step
     std::vector<Variable> variables();             // what the code defined (as of the last run)
     std::vector<std::string> names();              // every name it knows (as of the last run)
+    void define(const std::string& name, const Message& value);   // a global, set when not busy
+    void detach();                                 // the box is gone: its hooks are dropped (main thread)
+    void snapshot();                               // the variables and names, after a run (or before any)
+    ContextHooks hooks;
 
 private:
     std::unique_ptr<musil::Interp> interp_;
@@ -54,11 +72,13 @@ private:
     std::vector<Variable> vars_;
     std::vector<std::string> names_;
     std::vector<std::string> baseline_;            // the names before any code ran
-    void snapshot();                               // on the context's thread, after a run
 };
 
 // the session's context
 std::shared_ptr<LangContext> sessionContext();
+// the names refused in a code box, and every name a code box can use (sorted: moritz --code-names)
+const std::vector<std::string>& refusedInCodeBox();
+std::vector<std::string> codeBoxNames();
 
 // the documentation of Musil's functions (help/musil/help.txt)
 struct HelpEntry {
