@@ -1429,6 +1429,98 @@
   their sound on from the segment before ('sustain 1: a player whose pitch the target keeps is not searched again,
   for at most 'hold seconds); 'space the sounds in the search space), 'choices the connection's solution per
   segment, 'cache the fitness cache's hits and misses; 'patience (150) stops a search that stalls
+#maple-gabor
+  (maple-gabor sr [lo hi fmax])
+  a dictionary of Gabor atoms (Gaussian-windowed cosines) for sounds at rate sr: every
+  window length from lo to hi samples (powers of 2; 256 and 8192), every frequency up to fmax (16000), every position
+#maple-gammatone
+  (maple-gammatone sr [lo hi fmax])
+  the same with a gammatone envelope (sharp attack, slow decay): better on attacks
+#maple-cut
+  (maple-cut x sr mode [a b] [source])
+  a dictionary of atoms cut from a sound: mode 'frames (Hann frames a ms long,
+  every b ms; 100 100), 'onsets (the spans between onsets, threshold a, at most b ms; 2 1000) or 'whole (at most
+  a ms; 2000). Each atom has unit energy and remembers its source (a name) and where it was cut
+#maple-merge
+  (maple-merge d1 d2 ...)
+  one dictionary of the atoms of several (dictionaries of sounds at one rate)
+#maple-info
+  (maple-info d)
+  a dictionary as a record: kind (gabor, gammatone, sounds), sr, size (atoms, or scales), and the
+  windows (lo hi) and fmax of a parametric one
+#maple-atom
+  (maple-atom d k)
+  atom k of a dictionary of sounds, a vector (unit energy), to listen to or plot
+#maple-save
+  (maple-save d path)
+  a dictionary to a file; (maple-load path) one from a file (also those Moritz's atoms object writes)
+#maple-load
+  (maple-load path)
+  a dictionary saved with maple-save
+#maple-decompose
+  (maple-decompose x sr d [opts])
+  a sound explained by the atoms of d, the strongest first: a book. Options: 'atoms (2000)
+  and 'snr (30 dB: stop when the residual is that far under the sound) for Gabor and gammatone; for sounds 'components
+  (4 atoms a segment), 'candidates (16, by mel preselection), 'segments ('onsets or 'blocks), 'block (100 ms, the
+  blocks or the longest segment), 'threshold (2, onsets). A sound at another rate than a dictionary of sounds is resampled
+#maple-book
+  (maple-book b)
+  a book as 8 rows, one value per atom: time (s, the atom's centre), frequency (Hz), level (dB), atom
+  (-1: Gabor or gammatone), length (samples), amplitude, phase, start (samples). (add-scatter fig (head b) (getidx b 1) "")
+  draws the atom map
+#maple-residual
+  (maple-residual b)
+  what the atoms of a book leave unexplained, a vector at the book's rate
+#maple-snr
+  (maple-snr b)
+  how well a book explains its sound: the sound's energy over the residual's, in dB
+#maple-rate
+  (maple-rate b)
+  the rate of a book (its dictionary's, for sounds)
+#maple-synth
+  (maple-synth b [opts] [d])
+  the sound rebuilt from a book: options 'ratio (transposition, 1), 'stretch (time, 1), 'tails
+  (1: sound atoms ring on whole; 0: only what matched), 'keep (the share of atoms, strongest first, 1). With another
+  dictionary of sounds d, each atom is replaced by the closest of d: the sound made of the other's material (cross
+  synthesis). Never above 0.99: louder results are scaled down
+#soundtypes-analyse
+  (soundtypes-analyse x sr [opts])
+  a sound as types (SoundTypes): its frames (MFCCs, centroid, loudness) clustered into
+  types, runs of one type the units of level 1; where the next type is surprising a gesture ends, and the gestures
+  are clustered into the types of level 2, and so on. Options: 'types (list 12 6 4), 'levels (2, at most 3),
+  'threshold (1: surprise above the mean plus 1 sd), 'smooth (5 frames), 'seed, 'size (2048), 'hop (512), 'segment
+  ('frames, or 'onsets: level 1 the spans between onsets, 'onset-threshold 1.5 'onset-gap 0.08 s), 'pitch (1 adds
+  the chroma: types follow harmony too)
+#soundtypes-analyse-book
+  (soundtypes-analyse-book b [opts])
+  the same on the atoms of a pursuit book (maple-decompose): units are rebuilt
+  from their atoms (the frames are those of the atoms; 'segment 'onsets needs a sound)
+#soundtypes-levels
+  (soundtypes-levels m)
+  the number of units at each level, a list
+#soundtypes-units
+  (soundtypes-units m level)
+  the units of a level (1, 2, 3), each (list start end type), in seconds
+#soundtypes-labels
+  (soundtypes-labels m)
+  the type of every frame, a vector per level (one value per hop): plot them as images
+#soundtypes-transitions
+  (soundtypes-transitions m level)
+  how often each type follows each other at a level: a matrix (row: from, column: to)
+#soundtypes-generate
+  (soundtypes-generate m level seconds [opts])
+  a new sequence of the units of a level, made sound: (list sound units),
+  the units' numbers in the order played. Options: 'method ('oracle: a factor oracle, continue the original with
+  'continuity 0.8 or jump where the last 'context 1 units repeat; 'markov: the longest context seen 'min-count 2
+  times, up to 'order; 'classic: n-grams of 'order 2), 'seed, 'xfade (10 ms), 'inner (1; under 1, each gesture of
+  level 2 or 3 is played by new units of level 1 with that continuity, 'inner-context 1)
+#soundtypes-match
+  (soundtypes-match a b level [opts])
+  SoundTypes' rematch: sound a rebuilt with the material of b. Level 0: frame by
+  frame (b's frames overlap-added at a's); 1, 2...: unit by unit, each of a's replaced by the closest of b in its
+  closest type. Options: 'fit (1: at a's times and durations; 0: one after the other), 'contour (0..1: a's loudness
+  imposed on the result), 'space ('own: each sound's features in its own range; 'joint: one space), 'xfade (10 ms).
+  Both models analysed the same way (both sounds, or both books); the result is at b's rate
 #midi-read
   (midi-read path)
   => a record: ppq, seconds, tracks (names), and notes (records: track channel pitch velocity at dur),
@@ -2447,6 +2539,15 @@
   (score-quantize! s params)
   the score's onsets and durations moved to the grid score-notate chooses (to hear the
   quantization: the roll then shows it); => the notation record
+#maple-folder
+  (maple-folder folder sr mode a b)
+  a dictionary of the atoms of every WAV file of a folder, each at rate sr (resampled
+  if needed) and cut as maple-cut does: mode 'frames (a ms long, every b ms), 'onsets
+  (threshold a, at most b ms) or 'whole (at most a ms)
+#maple-hybrid
+  (maple-hybrid x sr y sry opts)
+  x rebuilt with the material of y: x explained by frames of y (100 ms, every 50 ms;
+  opts as maple-decompose's, nil for the defaults), then synthesized from them
 #audio-init
   (audio-init)
   open the default device at 44100 Hz, 256 samples, stereo, and start it

@@ -125,23 +125,39 @@ find the evaluation rule familiar; if you know a shell, the command lines.
 REPL; \texttt{musil a.mu b.mu -- x y} runs several files in one interpreter with
 \musil{args} bound to \musil{(x y)}; \texttt{musil -e "print 42"} evaluates a string.
 
-\textbf{The IDE.} \textit{Musil} the application is an editor with syntax colouring
-where Cmd-Enter runs the block under the cursor, a console with an input line, the
-list of your variables, a documentation search, and plots and controls in windows of
-their own. It runs the same interpreter. See section~\ref{sec:ide}.
+\textbf{Moritz.} Musil is the scripting language of Moritz, a patching environment for
+sound and music by the same author, and lives in Moritz's repository (\texttt{musil/}).
+In Moritz you write Musil in the code editor or at the Console, run a script with
+\texttt{moritz --run file.mu}, or put it in a \texttt{code} box of a patch; see
+section~\ref{sec:moritz}.
+
+\textbf{The IDE.} Up to version 0.9.1, \textit{Musil} the application was an editor with
+syntax colouring, a console, the list of your variables and a documentation search; it is
+in Musil's own repository (archived), and Moritz's code editor now plays its part. See
+section~\ref{sec:ide}.
 
 \subsection{Building and installing}
+
+From the root of Moritz's tree:
+
+\begin{lstlisting}[numbers=none]
+make musil                      ; build/musil/musil, with Moritz's FLTK
+make test-musil                 ; every test, reference and example, on Musil and on Musil in Moritz
+\end{lstlisting}
+
+\noindent or on its own, from \texttt{musil/}:
 
 \begin{lstlisting}[numbers=none]
 cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build
 ctest --test-dir build          ; every library has a test and a reference
 cmake --install build           ; musil -> /usr/local/bin,  *.mu and help.txt -> ~/.musil
-./deploy_macos.sh               ; macOS: dist/Musil.app
 \end{lstlisting}
 
-The build fetches FLTK~1.4, the one external dependency, used by the plot library, the
-controls window and the IDE; \texttt{-DMUSIL\_FLTK=OFF} builds everything else with no
+The \texttt{musil} program finds its libraries in a \texttt{src} folder next to it, as
+in Moritz's downloads (\texttt{musil/musil} beside \texttt{musil/src}). The CMake build
+fetches FLTK~1.4, the one external dependency, used by the plot library and the controls
+window; \texttt{-DMUSIL\_FLTK=OFF} builds everything else with no
 dependency at all. Libraries are found by \musil{load} in \texttt{\textasciitilde/.musil}
 after installing, in any directory listed in the \texttt{MUSIL\_PATH} environment
 variable, or next to the file that loads them; during development
@@ -388,10 +404,38 @@ both. \musil{(copy x)} makes a new list or vector with the same elements (a shal
 copy). Strings and numbers behave as values.
 
 % ═════════════════════════════════════════════════════════════════════════════
+\section{Musil in Moritz}
+\label{sec:moritz}
+
+Moritz hosts Musil: the same interpreter and libraries, with what a patching environment
+needs and without what it does itself.
+
+\begin{itemize}[nosep]
+  \item \textbf{Where you write it.} The code editor (File~$\to$~New Code, or a
+        \texttt{.mu} file opened) runs the selection or the line with Cmd-Enter and the
+        file with Cmd-R; the Console has a line that evaluates Musil. Both share one
+        session. \texttt{moritz --run file.mu} runs a script from the command line, and
+        \texttt{moritz --repl} is a REPL.
+  \item \textbf{What Moritz adds.} \musil{(buffer name)} reads a \texttt{buffer\textasciitilde}
+        of an open patch (a vector, or a list of channels), \musil{(buffer-rate name)} its
+        rate, \musil{(set-buffer! name x [rate])} writes one, \musil{(send name x ...)}
+        sends a message to the \texttt{receive} boxes of that name.
+  \item \textbf{What Moritz leaves out.} The live, plot and controls libraries: Moritz plays
+        and draws by itself, so a script renders into a buffer and a patch plays it, and a
+        result is sent to a \texttt{plot} box. In a score, synths render as silence.
+        \musil{display} returns without drawing.
+  \item \textbf{The \texttt{code} box.} A script inside a patch, run off the audio thread
+        when it receives a bang: its inlets set variables, its outlets send lists, and it
+        reads and writes buffers. It may do what a patch may do (read and write files) but
+        not run programs, delete files, use the network, wait or quit.
+\end{itemize}
+
 \section{The IDE}
 \label{sec:ide}
 
-\textit{Musil} the application is the interpreter with an editor around it.
+\textit{Musil} the application, up to version 0.9.1 (in Musil's own repository), was the
+interpreter with an editor around it. In Moritz, the code editor and the Console do the
+same work.
 
 \begin{itemize}[nosep]
   \item \textbf{Editor} (top left): \texttt{.mu} files with syntax colouring (keywords,
@@ -890,7 +934,7 @@ work; this is how to choose between them when writing something that will last.
         the file being run, then next to the program that was started; examples write
         into \texttt{/tmp/} with a \texttt{musil\_} prefix so that running them never
         litters the tree; sample rates travel in a variable and are never hard-coded.
-        Data an example shares lives in \texttt{examples/data/}; data a library needs (the
+        Data an example shares lives in \texttt{data/}, at the root of Moritz's tree (shared with Moritz's patches); data a library needs (the
         HRTFs, the hall) in \texttt{src/} next to the \texttt{.mu} files.
   \item \textbf{Errors.} Check arguments at the top of a function and fail early with a
         message that names it: \musil{if (<= n 0) \{ error "hann: n must be > 0" \}}.
@@ -1690,10 +1734,56 @@ for an instrument, pitch, dynamics and technique, or the nearest available pitch
 instrument, and shifts it by resampling; only sounds present on disk are candidates, so a
 feature file describing more than is present still works. A sharp in a pitch is written as
 a string (\musil{"D\#5"}) or a symbol (\musil{'D\#5}). The bundled
-\texttt{examples/data/microsol} (MicroSOL: oboe, horn, violin, cello, C4--G4, 32 sounds)
+\texttt{data/microsol} at the root of Moritz's tree (MicroSOL: oboe, horn, violin, cello, C4--G4, 32 sounds)
 makes every example run from a fresh clone; the full TinySOL is fetched into
 \texttt{datasets/} (ignored by git) with \texttt{./fetch\_tinysol.sh}, and each example has
 a commented line to switch to it.
+
+\textbf{Atoms: Maple.} Matching pursuit explains a sound as a sum of atoms taken from a
+dictionary, the strongest first; the list of atoms is a \emph{book}. A dictionary is of
+Gabor atoms (Gaussian-windowed cosines at every scale, position and frequency:
+\musil{maple-gabor}), of gammatone atoms (sharp attack, slow decay: \musil{maple-gammatone}),
+or of pieces of sounds (\musil{maple-cut}: frames, the spans between onsets, or whole
+sounds; \musil{maple-folder} for every WAV file of a folder). With atoms of sounds each
+segment of the target is explained by a few of them, every candidate sliding over it by
+FFT cross-correlation after a quick comparison of mel spectra. A book is rebuilt by
+\musil{maple-synth}, stretched or transposed, or from another dictionary (each atom
+replaced by the closest of the other: cross synthesis).
+
+\begin{lstlisting}
+; windows of 256 to 4096 samples, 600 atoms at most
+var g (maple-gabor sr 256 4096)
+var b (maple-decompose x sr g (list 'atoms 600 'snr 25))
+print (maple-snr b) "dB"
+; time, frequency, level, atom, length, amplitude, phase, start
+var rows (maple-book b)
+var slower (maple-synth b (list 'stretch 1.5 'ratio 0.8))
+; atoms of 100 ms every 50 ms: x's rhythm, the voice's sound
+var voice (maple-cut vox sr 'frames 100 50 "vox")
+var hybrid (maple-synth (maple-decompose x sr voice nil))
+\end{lstlisting}
+
+\textbf{Sound types: SoundTypes.} A sound becomes a sequence of symbols. Its frames (MFCCs,
+centroid, loudness, or the atoms of a book) are clustered into types; runs of one type are
+the units of level~1; where the next type is surprising a gesture ends, and the gestures are
+clustered into the types of level~2, and so on. New sequences of units at any level become
+new sounds (\musil{soundtypes-generate}: a factor oracle, a variable-order Markov model or
+the classic n-grams), and a sound is rebuilt with the material of another, frame by frame or
+unit by unit (\musil{soundtypes-match}, SoundTypes' rematch).
+
+\begin{lstlisting}
+var m (soundtypes-analyse x sr (list 'types (list 10 5) 'levels 2))
+print (soundtypes-levels m)
+; 8 s of level-1 units: (head g) the sound, (last g) the units played
+var g (soundtypes-generate m 1 8 (list 'method 'oracle 'continuity 0.7))
+write-wav "new.wav" sr (list (head g))
+; the voice made of x's units
+var mv (soundtypes-analyse voice sr nil)
+var rebuilt (soundtypes-match mv m 1 (list 'contour 0.8))
+\end{lstlisting}
+
+Moritz's \texttt{atoms}, \texttt{pursuit}, \texttt{soundtypes}, \texttt{typegen} and
+\texttt{typematch} boxes run this same code.
 
 \input{generated/music.tex}
 
@@ -1759,7 +1849,7 @@ into \texttt{help.txt} and into this manual. A library is complete when it has
 % ═════════════════════════════════════════════════════════════════════════════
 \section{Examples}
 
-All in \texttt{examples/}, all run by \texttt{ctest}. Run them from that directory.
+All in \texttt{musil/examples/}, all run by \texttt{ctest} and \texttt{make test-musil}. Run them from that directory.
 
 \begin{center}
 \begin{tabular}{@{}ll@{}}
@@ -1781,7 +1871,8 @@ All in \texttt{examples/}, all run by \texttt{ctest}. Run them from that directo
 \texttt{onsets.mu}, \texttt{transients.mu} & onset detection by spectral flux; harmonic/percussive separation (HPSS) on a file made for it \\
 \texttt{spatial.mu}, \texttt{flyby.mu}, \texttt{flyby\_controls.mu}, \texttt{live\_spatial.mu} & sounds placed and moved in 3D: binaural files for headphones (a helicopter in front, overhead, behind, around), B-format and speaker rings; the helicopter on sliders, live \\
 \texttt{nmf.mu}, \texttt{make\_audio\_demos.mu} & source separation of a four-stem mix by NMF, unsupervised and supervised; how every synthetic demo sound was made \\
-\texttt{classic\_mir.mu} & the classic MIR analyses of a song (Tom's Diner): tempo and tempogram, beats with a click track, chromagram and key, self-similarity matrices on harmony and timbre, novelty and the sections \\
+\texttt{classic\_mir.mu} & the classic MIR analyses of a song (24 seconds of pop): tempo and tempogram, beats with a click track, chromagram and key, self-similarity matrices on harmony and timbre, novelty and the sections \\
+\texttt{maple.mu}, \texttt{soundtypes.mu} & matching pursuit: the drums as Gabor atoms (the atom map, rebuilt slower and lower), as atoms of a voice, crossed with a gong; sound types: a drum loop analysed at two levels, new sequences by oracle, Markov and n-grams, a voice rebuilt with the drums' units \\
 \texttt{simple\_score.mu}, \texttt{loaddb.mu}, \texttt{random\_music.mu}, \texttt{random\_collage.mu} & a score written by hand (a Bach chorale and one event of every kind); a sample database loaded and questioned; a random score of notes; a random collage of recordings, processing, notes, synths and functions \\
 \texttt{score\_in\_score.mu}, \texttt{algorithmic\_comp.mu} & phrases as scores inside sections inside a piece; the musical elements combined with the language \\
 \texttt{gran\_orchestration.mu}, \texttt{gran\_orchestration2.mu}, \texttt{gran\_orchestration3.mu}, \texttt{haas.mu}, \texttt{static\_orchidea.mu}, \texttt{dynamic\_orchidea.mu}, \texttt{orchfest.mu}, \texttt{modulations.mu}, \texttt{atmospheres.mu}, \texttt{atmospheres2.mu}, \texttt{morph\_orchestration.mu}, \texttt{dbgen.mu} & orchestration as granular synthesis: two processes from a unison to a storm and to a spectrum; one process, a parameter at a time (a pulse together that quickens, widens, comes apart, and ends in long loud sounds); the players as people (seats, lines, clusters, a strike scattered, strict dynamics, two granulators on the same people, and the score validated against the orchestra); Haas's processes after \emph{in vain} (cascades of tempered scales, an overtone chord in just intonation swelling in waves, a beating near-unison, the return), its parts written as MusicXML; Orchidea on a bell (static) and on a piano phrase cut at its chords (dynamic), the solutions chosen in the roll; the three orchestrators one after the other on the same bell; Grisey's \emph{Modulations} simulated section by section; Ligeti's \emph{Atmosphères} as clusters in bands read off its register diagram, the dynamics off the measured loudness of a recording, and again with every envelope taken from the recording's curves; a recording orchestrated by its morphology; a feature file made from a folder of sounds \\

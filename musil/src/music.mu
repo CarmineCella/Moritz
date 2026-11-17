@@ -2915,3 +2915,28 @@ function score-quantize! (s params) {
     score-clear-cache! s
     return m
 }
+
+; --- Maple and SoundTypes: atoms and sound types (their C++ half in music.h) -----------------------------------------
+; (maple-folder folder sr mode a b)   a dictionary of the atoms of every WAV file of a folder, each at rate sr (resampled
+;                          if needed) and cut as maple-cut does: mode 'frames (a ms long, every b ms), 'onsets
+;                          (threshold a, at most b ms) or 'whole (at most a ms)
+function maple-folder (folder sr mode a b) {
+    var ds (list)
+    for (var names (ls folder)) (> (length names) 0) (var names (tail names)) {
+        var name (head names)
+        if (or (ends-with? name ".wav") (ends-with? name ".WAV")) {
+            var w (read-wav (concat folder "/" name))
+            var x (head (getidx w 1))
+            if (!= (head w) sr) { set x (resample-to x (head w) sr) }
+            push ds (maple-cut x sr mode a b name)
+        }
+    }
+    if (== (length ds) 0) { error "maple-folder: no WAV files in " folder }
+    return (apply maple-merge ds)
+}
+; (maple-hybrid x sr y sry opts)   x rebuilt with the material of y: x explained by frames of y (100 ms, every 50 ms;
+;                          opts as maple-decompose's, nil for the defaults), then synthesized from them
+function maple-hybrid (x sr y sry opts) {
+    var d (maple-cut (if (== sr sry) y (resample-to y sry sr)) sr 'frames 100 50 "source")
+    return (maple-synth (maple-decompose x sr d opts))
+}

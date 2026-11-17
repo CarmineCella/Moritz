@@ -1,4 +1,5 @@
-// music.h — music, C++ half: sample databases in the SOL/Orchidea layout, pitch names.
+// music.h — music, C++ half: sample databases in the SOL/Orchidea layout, pitch names, Orchidea's search, Maple's
+// matching pursuit (music/maple.h) and SoundTypes (music/soundtypes.h).
 // The Musil half (music.mu) holds the score: events in time, rendering, playback, the roll.
 //
 // Copyright (c) 2026 Carmine-Emanuele Cella. SPDX-License-Identifier: BSD-2-Clause
@@ -17,6 +18,8 @@
 #include "signals.h"
 #include "music/midi.h"
 #include "music/orchidea.h"
+#include "music/maple.h"
+#include "music/soundtypes.h"
 #include <cmath>
 #include <fstream>
 #include <sstream>
@@ -383,10 +386,321 @@ inline vptr mus_orchidea_search(vlist& a, Interp& i) {
                     v_list({ v_sym("cache"), v_list({ v_num((double)ga.cache_hits), v_num((double)ga.cache_misses) }) }) });
 }
 
+// --- Maple: matching pursuit (music/maple.h) ------------------------------------------------------------------------
+// A dictionary, a book (a decomposition) and a sound-types model are opaque values: (type d) is "opaque:maple-dictionary",
+// "opaque:maple-book" or "opaque:soundtypes-model". Options are a list of keys and values, (list 'atoms 500 'snr 20),
+// or a record of them.
+struct maple_book_value { maple::Book book; std::shared_ptr<const maple::Dictionary> dict; std::vector<float> residual; };
+
+inline std::vector<float> to_floats(const varr& x) { std::vector<float> y(x.size()); for (size_t k = 0; k < x.size(); ++k) y[k] = (float)x[k]; return y; }
+inline varr to_varr(const std::vector<float>& x) { varr y(x.size()); for (size_t k = 0; k < x.size(); ++k) y[k] = x[k]; return y; }
+// an option: from a record ((key value) pairs) or a plain list of keys and values ('atoms 500 'snr 20), or nullptr
+inline const vptr* opt_of(const vptr& rec, const char* key) {
+    if (!rec || rec->t != Value::LIST) return nullptr;
+    auto is_key = [&](const vptr& k) { return k && (k->t == Value::SYM || k->t == Value::STR) && k->s == key; };
+    if (!rec->l.empty() && rec->l[0] && rec->l[0]->t != Value::LIST) {
+        for (size_t k = 0; k + 1 < rec->l.size(); k += 2) if (is_key(rec->l[k])) return &rec->l[k + 1];
+        return nullptr;
+    }
+    for (auto& p : rec->l)
+        if (p && p->t == Value::LIST && p->l.size() == 2 && is_key(p->l[0])) return &p->l[1];
+    return nullptr;
+}
+inline double opt_num(Interp& i, const vptr& rec, const char* key, double dflt) { auto v = opt_of(rec, key); return v ? i.scalar(*v) : dflt; }
+inline std::string opt_word(Interp& i, const vptr& rec, const char* key, const std::string& dflt) {
+    auto v = opt_of(rec, key); if (!v) return dflt;
+    if ((*v)->t == Value::SYM || (*v)->t == Value::STR) return (*v)->s;
+    i.bad(std::string("option ") + key + ": a word"); return dflt;
+}
+inline std::string word_of(Interp& i, const vptr& v) {
+    if (v->t == Value::SYM || v->t == Value::STR) return v->s;
+    i.bad("a word"); return "";
+}
+template <class T> std::shared_ptr<T> opaque_of(Interp& i, const vptr& v, const char* tag, const char* who) {
+    if (v->t != Value::OPAQUE || v->opaque_tag != tag) i.bad(std::string(who) + ": not a " + tag);
+    return std::static_pointer_cast<T>(v->opaque);
+}
+// progress for the long computations: the host's yield (so that Stop stops them)
+inline maple::Tick musil_tick(Interp& i) { return [&i](double) { if (i.yield_fn) i.yield_fn(); return true; }; }
+inline vptr v_dict(std::shared_ptr<maple::Dictionary> d) { return v_opaque("maple-dictionary", std::move(d)); }
+
+// (maple-gabor sr [lo hi fmax]) a dictionary of Gabor atoms (Gaussian-windowed cosines) for sounds at rate sr: every
+//   window length from lo to hi samples (powers of 2; 256 and 8192), every frequency up to fmax (16000), every position
+inline vptr mus_maple_gabor(vlist& a, Interp& i) {
+    return v_dict(std::make_shared<maple::Dictionary>(maple::parametric(false, i.scalar(a[0]), a.size() > 1 ? (int)i.scalar(a[1]) : 256,
+        a.size() > 2 ? (int)i.scalar(a[2]) : 8192, a.size() > 3 ? i.scalar(a[3]) : 16000)));
+}
+// (maple-gammatone sr [lo hi fmax]) the same with a gammatone envelope (sharp attack, slow decay): better on attacks
+inline vptr mus_maple_gammatone(vlist& a, Interp& i) {
+    return v_dict(std::make_shared<maple::Dictionary>(maple::parametric(true, i.scalar(a[0]), a.size() > 1 ? (int)i.scalar(a[1]) : 256,
+        a.size() > 2 ? (int)i.scalar(a[2]) : 8192, a.size() > 3 ? i.scalar(a[3]) : 16000)));
+}
+// (maple-cut x sr mode [a b] [source]) a dictionary of atoms cut from a sound: mode 'frames (Hann frames a ms long,
+//   every b ms; 100 100), 'onsets (the spans between onsets, threshold a, at most b ms; 2 1000) or 'whole (at most
+//   a ms; 2000). Each atom has unit energy and remembers its source (a name) and where it was cut
+inline vptr mus_maple_cut(vlist& a, Interp& i) {
+    double sr = i.scalar(a[1]);
+    maple::CutOptions c;
+    c.mode = word_of(i, a[2]);
+    if (c.mode == "files") c.mode = "whole";
+    if (c.mode != "frames" && c.mode != "onsets" && c.mode != "whole") i.bad("maple-cut: mode frames, onsets or whole");
+    if (c.mode == "frames") { c.ms = a.size() > 3 ? i.scalar(a[3]) : 100; c.hop = a.size() > 4 ? i.scalar(a[4]) : c.ms; }
+    if (c.mode == "onsets") { c.threshold = a.size() > 3 ? i.scalar(a[3]) : 2; c.maxMs = a.size() > 4 ? i.scalar(a[4]) : 1000; }
+    if (c.mode == "whole") c.maxMs = a.size() > 3 ? i.scalar(a[3]) : 2000;
+    std::string src = a.size() > 5 ? i.str(a[5]) : "sound";
+    auto d = std::make_shared<maple::Dictionary>();
+    d->kind = "sounds"; d->sr = sr;
+    maple::MelDescriptor desc(sr);
+    maple::cutSound(to_floats(i.num(a[0])), sr, c, src, desc, d->atoms);
+    return v_dict(d);
+}
+// (maple-merge d1 d2 ...) one dictionary of the atoms of several (dictionaries of sounds at one rate)
+inline vptr mus_maple_merge(vlist& a, Interp& i) {
+    auto out = std::make_shared<maple::Dictionary>();
+    out->kind = "sounds";
+    for (size_t k = 0; k < a.size(); ++k) {
+        auto d = opaque_of<maple::Dictionary>(i, a[k], "maple-dictionary", "maple-merge");
+        if (d->parametric()) i.bad("maple-merge: dictionaries of sounds");
+        if (k == 0) out->sr = d->sr; else if (d->sr != out->sr) i.bad("maple-merge: dictionaries at different rates");
+        out->atoms.insert(out->atoms.end(), d->atoms.begin(), d->atoms.end());
+    }
+    return v_dict(out);
+}
+// (maple-info d) a dictionary as a record: kind (gabor, gammatone, sounds), sr, size (atoms, or scales), and the
+//   windows (lo hi) and fmax of a parametric one
+inline vptr mus_maple_info(vlist& a, Interp& i) {
+    auto d = opaque_of<maple::Dictionary>(i, a[0], "maple-dictionary", "maple-info");
+    vlist r = { v_list({ v_sym("kind"), v_str(d->kind) }), v_list({ v_sym("sr"), v_num(d->sr) }), v_list({ v_sym("size"), v_num((double)d->size()) }) };
+    if (d->parametric()) { r.push_back(v_list({ v_sym("lo"), v_num(d->minScale) })); r.push_back(v_list({ v_sym("hi"), v_num(d->maxScale) })); r.push_back(v_list({ v_sym("fmax"), v_num(d->fmax) })); }
+    return v_list(std::move(r));
+}
+// (maple-atom d k) atom k of a dictionary of sounds, a vector (unit energy), to listen to or plot
+inline vptr mus_maple_atom(vlist& a, Interp& i) {
+    auto d = opaque_of<maple::Dictionary>(i, a[0], "maple-dictionary", "maple-atom");
+    long k = i.index(a[1]);
+    if (d->parametric() || k < 0 || k >= (long)d->atoms.size()) i.bad("maple-atom: no atom " + std::to_string(k));
+    return v_arr(to_varr(d->atoms[(size_t)k].x));
+}
+// (maple-save d path) a dictionary to a file; (maple-load path) one from a file (also those Moritz's atoms object writes)
+inline vptr mus_maple_save(vlist& a, Interp& i) {
+    auto d = opaque_of<maple::Dictionary>(i, a[0], "maple-dictionary", "maple-save");
+    if (!maple::saveDictionary(*d, i.str(a[1]))) i.bad("maple-save: cannot write " + i.str(a[1]));
+    return v_nil();
+}
+// (maple-load path) a dictionary saved with maple-save
+inline vptr mus_maple_load(vlist& a, Interp& i) {
+    auto d = std::make_shared<maple::Dictionary>();
+    std::string path = i.read_path(i.str(a[0]));
+    if (!maple::loadDictionary(path, *d, musil_tick(i))) i.bad("maple-load: " + i.str(a[0]) + " is not a dictionary");
+    return v_dict(d);
+}
+// (maple-decompose x sr d [opts]) a sound explained by the atoms of d, the strongest first: a book. Options: 'atoms (2000)
+//   and 'snr (30 dB: stop when the residual is that far under the sound) for Gabor and gammatone; for sounds 'components
+//   (4 atoms a segment), 'candidates (16, by mel preselection), 'segments ('onsets or 'blocks), 'block (100 ms, the
+//   blocks or the longest segment), 'threshold (2, onsets). A sound at another rate than a dictionary of sounds is resampled
+inline vptr mus_maple_decompose(vlist& a, Interp& i) {
+    auto d = opaque_of<maple::Dictionary>(i, a[2], "maple-dictionary", "maple-decompose");
+    vptr o = a.size() > 3 ? a[3] : v_nil();
+    maple::SoundPursuitOptions so;
+    so.components = std::clamp((int)opt_num(i, o, "components", 4), 1, 64);
+    so.candidates = std::clamp((int)opt_num(i, o, "candidates", 16), 1, 100000);
+    so.onsets = opt_word(i, o, "segments", "onsets") != "blocks";
+    so.block = std::max(.005, opt_num(i, o, "block", 100) / 1000.0);
+    so.threshold = std::max(0.0, opt_num(i, o, "threshold", 2));
+    auto b = std::make_shared<maple_book_value>();
+    b->dict = d;
+    if (!maple::decompose(*d, to_floats(i.num(a[0])), i.scalar(a[1]), std::max(1, (int)opt_num(i, o, "atoms", 2000)),
+                          opt_num(i, o, "snr", 30), so, b->book, b->residual, musil_tick(i)))
+        i.bad("maple-decompose: stopped");
+    return v_opaque("maple-book", b);
+}
+// (maple-book b) a book as 8 rows, one value per atom: time (s, the atom's centre), frequency (Hz), level (dB), atom
+//   (-1: Gabor or gammatone), length (samples), amplitude, phase, start (samples). (add-scatter fig (head b) (getidx b 1) "")
+//   draws the atom map
+inline vptr mus_maple_book(vlist& a, Interp& i) {
+    auto b = opaque_of<maple_book_value>(i, a[0], "maple-book", "maple-book");
+    vlist rows;
+    for (auto& r : maple::bookRows(b->book, *b->dict)) rows.push_back(v_arr(varr(r.data(), r.size())));
+    return v_list(std::move(rows));
+}
+// (maple-residual b) what the atoms of a book leave unexplained, a vector at the book's rate
+inline vptr mus_maple_residual(vlist& a, Interp& i) { return v_arr(to_varr(opaque_of<maple_book_value>(i, a[0], "maple-book", "maple-residual")->residual)); }
+// (maple-snr b) how well a book explains its sound: the sound's energy over the residual's, in dB
+inline vptr mus_maple_snr(vlist& a, Interp& i) { return v_num(maple::snrOf(opaque_of<maple_book_value>(i, a[0], "maple-book", "maple-snr")->book)); }
+// (maple-rate b) the rate of a book (its dictionary's, for sounds)
+inline vptr mus_maple_rate(vlist& a, Interp& i) { return v_num(opaque_of<maple_book_value>(i, a[0], "maple-book", "maple-rate")->book.sr); }
+// (maple-synth b [opts] [d]) the sound rebuilt from a book: options 'ratio (transposition, 1), 'stretch (time, 1), 'tails
+//   (1: sound atoms ring on whole; 0: only what matched), 'keep (the share of atoms, strongest first, 1). With another
+//   dictionary of sounds d, each atom is replaced by the closest of d: the sound made of the other's material (cross
+//   synthesis). Never above 0.99: louder results are scaled down
+inline vptr mus_maple_synth(vlist& a, Interp& i) {
+    auto b = opaque_of<maple_book_value>(i, a[0], "maple-book", "maple-synth");
+    vptr o = a.size() > 1 ? a[1] : v_nil();
+    maple::SynthOptions so;
+    so.ratio = std::clamp(opt_num(i, o, "ratio", 1), .05, 20.0);
+    so.stretch = std::clamp(opt_num(i, o, "stretch", 1), .05, 50.0);
+    so.tails = opt_num(i, o, "tails", 1) != 0;
+    so.keep = std::clamp(opt_num(i, o, "keep", 1), 0.0, 1.0);
+    maple::Book book = b->book;
+    std::shared_ptr<const maple::Dictionary> to = b->dict;
+    if (a.size() > 2) {
+        to = opaque_of<maple::Dictionary>(i, a[2], "maple-dictionary", "maple-synth");
+        if (b->dict->parametric() || to->parametric()) i.bad("maple-synth: cross synthesis needs two dictionaries of sounds");
+        book = maple::crossBook(book, *b->dict, *to);
+    }
+    std::vector<float> y = maple::synthesize(book, *to, so);
+    float peak = 0;
+    for (float v : y) peak = std::max(peak, std::fabs(v));
+    if (peak > .99f) for (auto& v : y) v *= .99f / peak;
+    return v_arr(to_varr(y));
+}
+
+// --- SoundTypes: sounds as sequences of types (music/soundtypes.h) ---------------------------------------------------
+inline soundtypes::AnalyseOptions types_options(Interp& i, const vptr& o) {
+    soundtypes::AnalyseOptions ao;
+    if (auto t = opt_of(o, "types")) {
+        ao.types.k.clear();
+        if ((*t)->t == Value::LIST) for (auto& v : (*t)->l) ao.types.k.push_back(std::max(1, (int)i.scalar(v)));
+        else for (double v : i.num(*t)) ao.types.k.push_back(std::max(1, (int)v));
+        while (ao.types.k.size() < 3) ao.types.k.push_back(ao.types.k.empty() ? 12 : std::max(2, ao.types.k.back() / 2));
+    }
+    ao.types.levels = std::clamp((int)opt_num(i, o, "levels", 2), 1, 3);
+    ao.types.threshold = opt_num(i, o, "threshold", 1);
+    ao.types.smooth = std::clamp((int)opt_num(i, o, "smooth", 5), 1, 101) | 1;
+    ao.types.seed = (unsigned)opt_num(i, o, "seed", 1);
+    int n = 1; while (n < (int)opt_num(i, o, "size", 2048)) n <<= 1;
+    ao.size = std::clamp(n, 256, 16384);
+    ao.hop = std::clamp((int)opt_num(i, o, "hop", 512), 32, 8192);
+    ao.onsets = opt_word(i, o, "segment", "frames") == "onsets";
+    ao.onsetThreshold = opt_num(i, o, "onset-threshold", 1.5);
+    ao.onsetGap = opt_num(i, o, "onset-gap", .08);
+    ao.pitch = opt_num(i, o, "pitch", 0) != 0;
+    return ao;
+}
+inline vptr v_model(std::shared_ptr<soundtypes::Model> m) { return v_opaque("soundtypes-model", std::move(m)); }
+inline std::shared_ptr<soundtypes::Model> model_of(Interp& i, const vptr& v, const char* who) { return opaque_of<soundtypes::Model>(i, v, "soundtypes-model", who); }
+inline int level_of(Interp& i, const soundtypes::Model& m, const vptr& v, const char* who) {
+    int l = (int)i.scalar(v);
+    if (l < 1 || l > (int)m.levels.size()) i.bad(std::string(who) + ": level 1 to " + std::to_string(m.levels.size()));
+    return l - 1;
+}
+
+// (soundtypes-analyse x sr [opts]) a sound as types (SoundTypes): its frames (MFCCs, centroid, loudness) clustered into
+//   types, runs of one type the units of level 1; where the next type is surprising a gesture ends, and the gestures
+//   are clustered into the types of level 2, and so on. Options: 'types (list 12 6 4), 'levels (2, at most 3),
+//   'threshold (1: surprise above the mean plus 1 sd), 'smooth (5 frames), 'seed, 'size (2048), 'hop (512), 'segment
+//   ('frames, or 'onsets: level 1 the spans between onsets, 'onset-threshold 1.5 'onset-gap 0.08 s), 'pitch (1 adds
+//   the chroma: types follow harmony too)
+inline vptr mus_soundtypes_analyse(vlist& a, Interp& i) {
+    auto m = std::make_shared<soundtypes::Model>();
+    m->sound = to_floats(i.num(a[0]));
+    m->sr = i.scalar(a[1]);
+    if (!soundtypes::analyseModel(*m, types_options(i, a.size() > 2 ? a[2] : v_nil()), musil_tick(i))) i.bad("soundtypes-analyse: the analysis found nothing (too short?)");
+    return v_model(m);
+}
+// (soundtypes-analyse-book b [opts]) the same on the atoms of a pursuit book (maple-decompose): units are rebuilt
+//   from their atoms (the frames are those of the atoms; 'segment 'onsets needs a sound)
+inline vptr mus_soundtypes_analyse_book(vlist& a, Interp& i) {
+    auto b = opaque_of<maple_book_value>(i, a[0], "maple-book", "soundtypes-analyse-book");
+    auto m = std::make_shared<soundtypes::Model>();
+    m->book = std::make_shared<maple::Book>(b->book);
+    m->dict = b->dict;
+    m->sr = b->book.sr;
+    soundtypes::AnalyseOptions o = types_options(i, a.size() > 1 ? a[1] : v_nil());
+    o.onsets = false;
+    if (!soundtypes::analyseModel(*m, o, musil_tick(i))) i.bad("soundtypes-analyse-book: the analysis found nothing");
+    return v_model(m);
+}
+// (soundtypes-levels m) the number of units at each level, a list
+inline vptr mus_soundtypes_levels(vlist& a, Interp& i) {
+    auto m = model_of(i, a[0], "soundtypes-levels");
+    vlist r; for (auto& L : m->levels) r.push_back(v_num((double)L.units.size()));
+    return v_list(std::move(r));
+}
+// (soundtypes-units m level) the units of a level (1, 2, 3), each (list start end type), in seconds
+inline vptr mus_soundtypes_units(vlist& a, Interp& i) {
+    auto m = model_of(i, a[0], "soundtypes-units");
+    int l = level_of(i, *m, a[1], "soundtypes-units");
+    vlist r;
+    for (auto& u : m->levels[(size_t)l].units) r.push_back(v_list({ v_num(u.start / m->sr), v_num(u.end / m->sr), v_num(u.type) }));
+    return v_list(std::move(r));
+}
+// (soundtypes-labels m) the type of every frame, a vector per level (one value per hop): plot them as images
+inline vptr mus_soundtypes_labels(vlist& a, Interp& i) {
+    auto m = model_of(i, a[0], "soundtypes-labels");
+    vlist r; for (auto& s : soundtypes::typeStrips(*m)) r.push_back(v_arr(to_varr(s)));
+    return v_list(std::move(r));
+}
+// (soundtypes-transitions m level) how often each type follows each other at a level: a matrix (row: from, column: to)
+inline vptr mus_soundtypes_transitions(vlist& a, Interp& i) {
+    auto m = model_of(i, a[0], "soundtypes-transitions");
+    int l = level_of(i, *m, a[1], "soundtypes-transitions");
+    vlist r; for (auto& row : soundtypes::transitions(m->levels[(size_t)l])) r.push_back(v_arr(to_varr(row)));
+    return v_list(std::move(r));
+}
+// (soundtypes-generate m level seconds [opts]) a new sequence of the units of a level, made sound: (list sound units),
+//   the units' numbers in the order played. Options: 'method ('oracle: a factor oracle, continue the original with
+//   'continuity 0.8 or jump where the last 'context 1 units repeat; 'markov: the longest context seen 'min-count 2
+//   times, up to 'order; 'classic: n-grams of 'order 2), 'seed, 'xfade (10 ms), 'inner (1; under 1, each gesture of
+//   level 2 or 3 is played by new units of level 1 with that continuity, 'inner-context 1)
+inline vptr mus_soundtypes_generate(vlist& a, Interp& i) {
+    auto m = model_of(i, a[0], "soundtypes-generate");
+    int l = level_of(i, *m, a[1], "soundtypes-generate");
+    vptr o = a.size() > 3 ? a[3] : v_nil();
+    soundtypes::GenOptions go;
+    std::string method = opt_word(i, o, "method", "oracle");
+    go.method = method == "classic" ? soundtypes::Method::Classic : method == "markov" ? soundtypes::Method::Markov : soundtypes::Method::Oracle;
+    if (method != "classic" && method != "markov" && method != "oracle") i.bad("soundtypes-generate: method oracle, markov or classic");
+    go.order = std::clamp((int)opt_num(i, o, "order", 2), 1, 16);
+    go.minCount = std::max(1, (int)opt_num(i, o, "min-count", 2));
+    go.continuity = std::clamp(opt_num(i, o, "continuity", .8), 0.0, 1.0);
+    go.context = std::max(0, (int)opt_num(i, o, "context", 1));
+    go.seed = (unsigned)opt_num(i, o, "seed", 1);
+    std::vector<int> seq = soundtypes::generate(*m, l, std::max(.1, i.scalar(a[2])), go);
+    std::vector<float> y = soundtypes::realise(*m, l, seq, std::clamp(opt_num(i, o, "xfade", 10), .5, 500.0),
+                                               std::clamp(opt_num(i, o, "inner", 1), 0.0, 1.0), std::max(0, (int)opt_num(i, o, "inner-context", 1)), go.seed);
+    float peak = 0; for (float v : y) peak = std::max(peak, std::fabs(v));
+    if (peak > .99f) for (auto& v : y) v *= .99f / peak;
+    varr units(seq.size()); for (size_t k = 0; k < seq.size(); ++k) units[k] = seq[k];
+    return v_list({ v_arr(to_varr(y)), v_arr(units) });
+}
+// (soundtypes-match a b level [opts]) SoundTypes' rematch: sound a rebuilt with the material of b. Level 0: frame by
+//   frame (b's frames overlap-added at a's); 1, 2...: unit by unit, each of a's replaced by the closest of b in its
+//   closest type. Options: 'fit (1: at a's times and durations; 0: one after the other), 'contour (0..1: a's loudness
+//   imposed on the result), 'space ('own: each sound's features in its own range; 'joint: one space), 'xfade (10 ms).
+//   Both models analysed the same way (both sounds, or both books); the result is at b's rate
+inline vptr mus_soundtypes_match(vlist& a, Interp& i) {
+    auto A = model_of(i, a[0], "soundtypes-match"), B = model_of(i, a[1], "soundtypes-match");
+    if (A->frames.empty() || B->frames.empty() || A->frames[0].size() != B->frames[0].size())
+        i.bad("soundtypes-match: the two must be analysed the same way (both sounds, or both books)");
+    int level = std::max(0, (int)i.scalar(a[2]));
+    vptr o = a.size() > 3 ? a[3] : v_nil();
+    std::vector<float> y = soundtypes::rematch(*A, *B, level, opt_num(i, o, "fit", 1) != 0, opt_word(i, o, "space", "own") != "joint",
+                                               std::clamp(opt_num(i, o, "xfade", 10), .5, 500.0), std::clamp(opt_num(i, o, "contour", 0), 0.0, 1.0));
+    float peak = 0; for (float v : y) peak = std::max(peak, std::fabs(v));
+    if (peak > .99f) for (auto& v : y) v *= .99f / peak;
+    return v_arr(to_varr(y));
+}
+
+inline void add_atoms_and_types(Interp& i) {
+    i.def("maple-gabor", mus_maple_gabor, 1, 4); i.def("maple-gammatone", mus_maple_gammatone, 1, 4);
+    i.def("maple-cut", mus_maple_cut, 3, 6); i.def("maple-merge", mus_maple_merge, 1, -1);
+    i.def("maple-info", mus_maple_info, 1, 1); i.def("maple-atom", mus_maple_atom, 2, 2);
+    i.def("maple-save", mus_maple_save, 2, 2); i.def("maple-load", mus_maple_load, 1, 1);
+    i.def("maple-decompose", mus_maple_decompose, 3, 4); i.def("maple-book", mus_maple_book, 1, 1);
+    i.def("maple-residual", mus_maple_residual, 1, 1); i.def("maple-snr", mus_maple_snr, 1, 1); i.def("maple-rate", mus_maple_rate, 1, 1);
+    i.def("maple-synth", mus_maple_synth, 1, 3);
+    i.def("soundtypes-analyse", mus_soundtypes_analyse, 2, 3); i.def("soundtypes-analyse-book", mus_soundtypes_analyse_book, 1, 2);
+    i.def("soundtypes-levels", mus_soundtypes_levels, 1, 1); i.def("soundtypes-units", mus_soundtypes_units, 2, 2);
+    i.def("soundtypes-labels", mus_soundtypes_labels, 1, 1); i.def("soundtypes-transitions", mus_soundtypes_transitions, 2, 2);
+    i.def("soundtypes-generate", mus_soundtypes_generate, 3, 4); i.def("soundtypes-match", mus_soundtypes_match, 3, 4);
+}
+
 inline void add_music(Interp& i) {
     i.def("pitch->midi", mus_pitch_to_midi, 1, 1); i.def("midi->pitch", mus_midi_to_pitch, 1, 1);
     i.def("db-read", mus_db_read, 1, 1); i.def("db-gen", mus_db_gen, 6, 6); add_midi(i); i.def("db-locate", mus_db_locate, 2, 2); i.def("db-index-size", mus_db_index_size, 1, 1);
     i.def("orchidea-analyse", mus_orchidea_analyse, 7, 7); i.def("orchidea-search", mus_orchidea_search, 4, 4);
+    add_atoms_and_types(i);
 }
 
 } // namespace musil
