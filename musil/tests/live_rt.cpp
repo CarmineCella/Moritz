@@ -1,6 +1,7 @@
 // live_rt.cpp — the live engine's audio thread, driven by hand: it neither allocates nor frees (every allocation
 // and free during render is counted, with synths that use every kind of node, moving sources, voices that come
-// and go, synths freed).
+// and go, synths freed), a timed set-param lands on its very sample, and a voice's glide takes the same time
+// whatever the block size.
 //
 // Copyright (c) 2026 Carmine-Emanuele Cella. SPDX-License-Identifier: BSD-2-Clause
 
@@ -59,6 +60,34 @@ int main() {
     e.retired.drain();
     I.run("free s1\nfree s3\nstop-all\n", "<rt>"); render(64); e.retired.drain();
 
+    // a timed set-param lands on its sample, inside the block
+    e.forget(); e.clock = 0; e.limiter = false;
+    I.run("function level (x) x\nvar sl (synth level)\n", "<rt>");
+    render(64);                                        // the synth is in
+    long long when = 64 + 64 * 3 + 17;                 // sample 17 of the fourth block from here
+    I.run("set-param sl 'x 0.25 0 " + std::to_string((double)when / 44100.0) + "\n", "<rt>");
+    long long first = -1;
+    for (int b = 0; b < 8; b++) { long long t0 = e.clock.load(); render(64); for (int k = 0; k < 64 && first < 0; k++) if (buf[(size_t)k * 2] == 0.25f) first = t0 + k; }
+    expect(first == when, "set-param at a time: the change lands on its very sample (" + std::to_string(first) + ", wanted " + std::to_string(when) + ")");
+    I.run("free sl\n", "<rt>"); render(64); e.retired.drain();
+
+    // voice-set glides with the same time constant whatever the block size
+    auto glide = [&](int block) {
+        e.forget(); e.clock = 0; e.block = block;
+        I.run("var g (play-buffer (+ (zeros 88200) 1) 44100 1 0 1 0 0)\n", "<rt>");
+        render(block);
+        double start = buf[0];
+        I.run("voice-set g \"amp\" 0\n", "<rt>");
+        long long t0 = e.clock.load();
+        for (int b = 0; b < 4096 / block + 1; b++) {
+            long long tb = e.clock.load(); render(block);
+            for (int k = 0; k < block; k++) if (buf[(size_t)k * 2] < start * 0.36787944) return (double)(tb + k - t0);
+        }
+        return -1.0;
+    };
+    double g64 = glide(64), g512 = glide(512);
+    expect(g64 > 0 && std::fabs(g64 - g512) <= 1, "voice-set glides in the same time with blocks of 64 and 512 (" + std::to_string(g64) + " and " + std::to_string(g512) + " samples)");
+    expect(std::fabs(g64 - voice_glide * 44100) < 4, "...its time constant is voice_glide (" + std::to_string(g64) + " samples)");
     e.forget(); e.open = false;
     if (failures == 0) std::cout << "live_rt: all checks passed\n";
     return failures == 0 ? 0 : 1;

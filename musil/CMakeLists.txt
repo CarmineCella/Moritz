@@ -167,7 +167,7 @@ if(MUSIL_TESTS)
   add_executable(musil-engines-test ${T}/engines.cpp)
   target_link_libraries(musil-engines-test PRIVATE musil_base Threads::Threads)
   add_test(NAME engines COMMAND musil-engines-test WORKING_DIRECTORY ${T})
-  # the live engine's audio thread, driven by hand: it neither allocates nor frees
+  # the live engine's audio thread, driven by hand: no allocation, timed parameters on their sample
   add_executable(musil-live-rt-test ${T}/live_rt.cpp)
   target_link_libraries(musil-live-rt-test PRIVATE musil_base Threads::Threads)
   add_test(NAME live-rt COMMAND musil-live-rt-test)

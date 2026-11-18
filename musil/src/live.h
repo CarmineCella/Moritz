@@ -110,13 +110,15 @@ struct retire_ring {
 };
 
 // --- a sampler voice ---
+// amp, pan and rate move towards their targets with a time constant (voice_glide seconds), sample by sample
 struct voice {
     std::atomic<long> id{0}; std::atomic<bool> active{false};   // read by the interpreter (voices)
     std::shared_ptr<const std::vector<float>> buffer; int channels = 1; double buffer_sr = 44100;
     long long start = 0;                      // clock sample at which it begins
     double pos = 0, rate = 1, amp = 1, pan = 0; bool loop = false;
-    double target_amp = 1, target_pan = 0, target_rate = 1;     // ramped towards, per block (the audio thread's own)
+    double target_amp = 1, target_pan = 0, target_rate = 1;     // the audio thread's own
 };
+constexpr double voice_glide = 0.005;         // seconds: the time constant of voice-set's changes
 
 // --- the streaming graph -----------------------------------------------------------
 // A node has input nodes and one output per channel. Control arguments (a filter's cutoff, an
@@ -147,13 +149,28 @@ struct const_node : gnode {
 struct param_node : gnode {                               // a hot parameter with a linear ramp
     std::string name; std::atomic<double> target{0}; std::atomic<int> ramp{0}; double value = 0;
     const double* drive = nullptr;                        // offline rendering: a value per sample instead
+    // changes due inside the coming block, at their sample (set-param with a time): the engine puts them here
+    struct change { int offset; double value; int ramp; };
+    static const int MAX_CHANGES = 32;
+    change changes[MAX_CHANGES]; int nchanges = 0;
     param_node(std::string nm, double v) : name(std::move(nm)), value(v) { target = v; }
+    void at(int offset, double v, int r) {               // the audio thread, before process: kept in time order
+        if (nchanges == MAX_CHANGES) { target = v; ramp = r; return; }
+        int k = nchanges++;
+        while (k > 0 && changes[k - 1].offset > offset) { changes[k] = changes[k - 1]; k--; }
+        changes[k] = { offset, v, r };
+    }
     void process(std::vector<std::unique_ptr<gnode>>&, int n) override {
         size(n);
         if (drive) { for (int k = 0; k < n; k++) out[0][k] = (float)drive[k]; value = drive[n - 1]; target = value; return; }
-        double tg = target.load(); int r = ramp.load();
-        for (int k = 0; k < n; k++) { if (r > 0) { value += (tg - value) / r; r--; } else value = tg; out[0][k] = (float)value; }
-        ramp = r;
+        double tg = target.load(); int r = ramp.load(); int c = 0;
+        for (int k = 0; k < n; k++) {
+            while (c < nchanges && changes[c].offset <= k) { tg = changes[c].value; r = changes[c].ramp; c++; }
+            if (r > 0) { value += (tg - value) / r; r--; } else value = tg;
+            out[0][k] = (float)value;
+        }
+        for (; c < nchanges; c++) { tg = changes[c].value; r = changes[c].ramp; }
+        nchanges = 0; target = tg; ramp = r;
     }
 };
 struct arith_node : gnode {                               // + - * / over any number of inputs, mono broadcast
@@ -213,9 +230,9 @@ struct osc_node : gnode {                                 // (osc sr freq table)
         for (int k = 0; k < n; k++) out[0][k] = (float)obuf[k];
     }
 };
-struct noise_node : gnode {
-    std::mt19937_64 rng{12345}; std::uniform_real_distribution<double> d{-1.0, 1.0};
-    void process(std::vector<std::unique_ptr<gnode>>&, int n) override { size(n); for (int k = 0; k < n; k++) out[0][k] = (float)d(rng); }
+struct noise_node : gnode {                               // white noise in [-1, 1): raw mt19937_64 draws, the same on every system
+    std::mt19937_64 rng{12345};
+    void process(std::vector<std::unique_ptr<gnode>>&, int n) override { size(n); for (int k = 0; k < n; k++) out[0][k] = (float)((double)(rng() >> 11) * (2.0 / 9007199254740992.0) - 1.0); }
 };
 struct adsr_node : gnode {                                // (adsr sr gate a d s r): gate is a signal, times controls
     adsr_state st; double sr; std::vector<double> gbuf, obuf;
@@ -632,7 +649,8 @@ struct audio_engine {
     }
     void retire_command(audio_command& c) { retire(c.buffer); retire(c.synth); }
     synth_instance* find_synth(long id) { for (int k = 0; k < nsynths; k++) if (synths[k]->id == id) return synths[k].get(); return nullptr; }
-    void apply(audio_command& c) {
+    // a command, at `offset` samples into the coming block of n
+    void apply(audio_command& c, int offset) {
         switch (c.kind) {
         case audio_command::PLAY: {
             voice* v = nullptr; for (auto& w : voices) if (!w.active.load(std::memory_order_relaxed)) { v = &w; break; }
@@ -647,7 +665,7 @@ struct audio_engine {
         case audio_command::ADD_SYNTH: if (nsynths < MAX_SYNTHS) synths[nsynths++] = std::move(c.synth); break;
         case audio_command::FREE_SYNTH: if (synth_instance* sy = find_synth(c.id)) sy->active = false; break;
         case audio_command::SET_PARAM: if (synth_instance* sy = find_synth(c.id)) if (c.param_index < (int)sy->params.size()) {
-                auto* p = static_cast<param_node*>(sy->nodes[sy->params[c.param_index]].get()); p->target = c.value; p->ramp = c.ramp_samples; } break;
+                auto* p = static_cast<param_node*>(sy->nodes[sy->params[c.param_index]].get()); p->at(offset, c.value, c.ramp_samples); } break;
         case audio_command::SET_VOICE: for (auto& v : voices) if (v.active.load(std::memory_order_relaxed) && v.id.load(std::memory_order_relaxed) == c.id) { if (c.param == 0) v.target_amp = c.value; else if (c.param == 1) v.target_pan = c.value; else v.target_rate = c.value; } break;
         }
         retire_command(c);                    // what the command still holds (a sound no voice took)
@@ -662,34 +680,35 @@ struct audio_engine {
     }
     void render_block(float* out, int frames) {
         long long now = clock.load();
-        // commands: applied at the start of the block they fall in (timed ones wait in pending until then)
+        // commands: due in this block (a parameter change at its very sample), or kept until they are
         audio_command c;
         while (queue.pop(c)) {
-            if (c.kind != audio_command::PLAY && c.at > now + frames) {
+            if (c.kind != audio_command::PLAY && c.at >= now + frames) {
                 if (npending < MAX_PENDING) { pending[npending++] = std::move(c); continue; }
             }
-            apply(c);
+            apply(c, c.at > now ? (int)(c.at - now) : 0);
         }
         for (int k = 0; k < npending;) {
-            if (pending[k].at <= now + frames) {
-                apply(pending[k]);
+            if (pending[k].at < now + frames) {
+                apply(pending[k], pending[k].at > now ? (int)(pending[k].at - now) : 0);
                 if (k != npending - 1) pending[k] = std::move(pending[npending - 1]);
                 npending--;
             } else k++;
         }
         std::memset(out, 0, sizeof(float) * frames * channels);
         int active = 0; double pk = 0;
+        const double glide = 1.0 - std::exp(-1.0 / (voice_glide * sr));   // per sample: the same time whatever the block
         for (auto& v : voices) {
             if (!v.active.load(std::memory_order_relaxed)) continue;
             if (v.start > now + frames) { active++; continue; }         // scheduled later
             const std::vector<float>& b = *v.buffer; size_t len = b.size() / v.channels;
-            double step = v.rate * v.buffer_sr / sr;
-            // per-block ramps towards the targets (a few ms), so changes do not click
-            double k = 0.2; v.amp += (v.target_amp - v.amp) * k; v.pan += (v.target_pan - v.pan) * k; v.rate += (v.target_rate - v.rate) * k;
-            double gl = v.amp * (channels >= 2 ? std::sqrt(0.5 * (1 - v.pan)) : 1), gr = v.amp * std::sqrt(0.5 * (1 + v.pan));
             for (int f = 0; f < frames; f++) {
                 if (v.start > now + f) continue;
                 if (v.pos >= (double)len) { if (v.loop) v.pos -= len; else { v.active = false; break; } }
+                if (v.amp != v.target_amp) { v.amp += (v.target_amp - v.amp) * glide; if (std::fabs(v.amp - v.target_amp) < 1e-9) v.amp = v.target_amp; }
+                if (v.pan != v.target_pan) { v.pan += (v.target_pan - v.pan) * glide; if (std::fabs(v.pan - v.target_pan) < 1e-9) v.pan = v.target_pan; }
+                if (v.rate != v.target_rate) { v.rate += (v.target_rate - v.rate) * glide; if (std::fabs(v.rate - v.target_rate) < 1e-12) v.rate = v.target_rate; }
+                double gl = v.amp * (channels >= 2 ? std::sqrt(0.5 * (1 - v.pan)) : 1), gr = v.amp * std::sqrt(0.5 * (1 + v.pan));
                 size_t i0 = (size_t)v.pos; double fr = v.pos - i0; size_t i1 = (i0 + 1 < len) ? i0 + 1 : (v.loop ? 0 : i0);
                 for (int ch = 0; ch < channels; ch++) {
                     int src = v.channels == 1 ? 0 : std::min(ch, v.channels - 1);
@@ -697,7 +716,7 @@ struct audio_engine {
                     double g = v.channels == 1 && channels >= 2 ? (ch == 0 ? gl : ch == 1 ? gr : v.amp) : v.amp;
                     out[f * channels + ch] += (float)(s * g);
                 }
-                v.pos += step;
+                v.pos += v.rate * v.buffer_sr / sr;
             }
             if (v.active.load(std::memory_order_relaxed)) active++;
         }
@@ -970,7 +989,7 @@ inline vptr live_stop_voice(vlist& a, Interp& i) { audio_engine& e = need_open(i
 inline vptr live_stop_all(vlist&, Interp& i) { audio_engine& e = need_open(i); audio_command c; c.kind = audio_command::STOP_ALL; e.queue.push(c); return v_nil(); }
 // (master-gain g) the output gain, applied to the whole bus
 inline vptr live_master(vlist& a, Interp& i) { audio_engine& e = need_open(i); audio_command c; c.kind = audio_command::GAIN; c.value = i.scalar(a[0]); e.queue.push(c); return v_nil(); }
-// (voice-set voice "amp"|"pan"|"rate" value) change a playing voice, ramped over a few blocks
+// (voice-set voice "amp"|"pan"|"rate" value) change a playing voice, gliding there in a few milliseconds
 inline vptr live_voice_set(vlist& a, Interp& i) {
     audio_engine& e = need_open(i); const std::string& p = i.str(a[1]);
     audio_command c; c.kind = audio_command::SET_VOICE; c.id = (long)i.scalar(a[0]); c.value = i.scalar(a[2]);
@@ -1173,7 +1192,7 @@ inline vptr live_synth(vlist& a, Interp& i) {
     return v_num((double)inst->id);
 }
 // (set-param id name value [ramp-seconds [at-seconds]]) change a synth's parameter, immediately or ramped; with a time on
-//   the clock, at the start of the block it falls in
+//   the clock, at that very sample
 inline vptr live_set_param(vlist& a, Interp& i) {
     audio_engine& e = need_open(i); long id = (long)i.scalar(a[0]);
     std::string name = a[1]->t == Value::SYM || a[1]->t == Value::STR ? a[1]->s : str_of(a[1]);
