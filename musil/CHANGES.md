@@ -1,5 +1,21 @@
 # Changes
 
+## 0.10c
+
+### Libraries
+
+- **Linear algebra**: `det`, `rank`, `inv`, `solve` and `eig-sym` use tolerances relative to the
+  matrix's scale: a tiny (or huge) matrix is no longer called singular or diagonal for its size.
+- **`mp`**: plain matching pursuit may take an atom again (listed once, its weights summed) and
+  orthogonal pursuit takes each atom once (it was the other way round); with `'nonneg` the
+  orthogonal refit is a true non-negative least squares (Lawson-Hanson), not clamped weights.
+- **`midi-read`** checks every read (a truncated or corrupt file gives the notes before the
+  damage instead of reading past the data) and keeps overlapping notes of the same pitch.
+- Interpreters on several threads (as in Moritz) share the HRTF set, its responses at other rates,
+  the sample-folder index and `resample`'s table safely.
+- `svf`'s band output is documented as it is: its peak gain is `1/(2 - 1.98 q)` (up to +34 dB at
+  q 1), as `svf~`'s.
+
 ## 0.10b
 
 Musil is the reference of Moritz's signal processing: where Moritz has an object for what a Musil
