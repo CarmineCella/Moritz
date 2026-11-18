@@ -52,20 +52,13 @@ namespace {
 void openFromFinder(const char* path) { moritz::App::get().openLater(path); }
 #endif
 
+// 16-bit, through Moritz's one WAV writer (recorder.h)
 void writeWav(const char* path, const std::vector<float>& data, int ch, int sr) {
-    FILE* f = std::fopen(path, "wb");
-    if (!f) return;
-    auto u32 = [&](uint32_t v) { std::fwrite(&v, 4, 1, f); };
-    auto u16 = [&](uint16_t v) { std::fwrite(&v, 2, 1, f); };
-    uint32_t bytes = (uint32_t)data.size() * 2;
-    std::fwrite("RIFF", 1, 4, f); u32(36 + bytes); std::fwrite("WAVEfmt ", 1, 8, f);
-    u32(16); u16(1); u16((uint16_t)ch); u32(sr); u32(sr * ch * 2); u16((uint16_t)(ch * 2)); u16(16);
-    std::fwrite("data", 1, 4, f); u32(bytes);
-    for (float s : data) {
-        int16_t v = (int16_t)std::lrint(std::clamp(s, -1.f, 1.f) * 32767.f);
-        std::fwrite(&v, 2, 1, f);
-    }
-    std::fclose(f);
+    moritz::WavWriter w;
+    std::string err;
+    if (!w.open(path, ch, sr, 16, &err)) { std::fprintf(stderr, "%s\n", err.c_str()); return; }
+    w.write(data.data(), data.size() / (size_t)ch);
+    if (!w.finish(&err)) std::fprintf(stderr, "%s\n", err.c_str());
 }
 
 // Draws the patch into a PNG the size of its contents (or w x h).

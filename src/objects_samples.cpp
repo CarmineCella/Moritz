@@ -36,21 +36,12 @@ bool decodeAudioFile(const std::string& path, SampleBuffer& out, std::string& er
     return true;
 }
 
+// 16-bit WAV through Moritz's one writer (recorder.h): a temporary file renamed once complete
 bool writeWavFile(const std::string& path, const SampleBuffer& b, std::string& err) {
-    ma_encoder_config cfg =
-        ma_encoder_config_init(ma_encoding_format_wav, ma_format_s16, (ma_uint32)b.channels,
-                               (ma_uint32)b.sr);
-    ma_encoder enc;
-    if (ma_encoder_init_file(path.c_str(), &cfg, &enc) != MA_SUCCESS) {
-        err = "can't write " + path;
-        return false;
-    }
-    std::vector<int16_t> pcm(b.data.size());
-    for (size_t i = 0; i < pcm.size(); ++i)
-        pcm[i] = (int16_t)std::lrint(std::clamp(b.data[i], -1.f, 1.f) * 32767.f);
-    ma_encoder_write_pcm_frames(&enc, pcm.data(), (ma_uint64)b.frames, nullptr);
-    ma_encoder_uninit(&enc);
-    return true;
+    WavWriter w;
+    if (!w.open(path, b.channels, (int)std::lround(b.sr), 16, &err)) return false;
+    w.write(b.data.data(), (size_t)b.frames);
+    return w.finish(&err);
 }
 
 
@@ -476,9 +467,7 @@ private:
         if (recording_) return;
         if (path_.empty()) { patch->print("sfrecord~: no file; send \"open name.wav\" first"); return; }
         sr_ = patch->root()->sampleRate.load();
-        ma_encoder_config cfg = ma_encoder_config_init(ma_encoding_format_wav, ma_format_s24,
-                                                       (ma_uint32)ch_, (ma_uint32)sr_);
-        if (ma_encoder_init_file(path_.c_str(), &cfg, &enc_) != MA_SUCCESS) {
+        if (!file_.open(path_, ch_, (int)std::lround(sr_), 24)) {
             patch->print("sfrecord~: can't write " + path_);
             return;
         }
@@ -500,8 +489,10 @@ private:
         if (lock) { std::lock_guard<std::mutex> lk(patch->mutex()); }
         writing_ = false;
         writer_.join();
-        ma_encoder_uninit(&enc_);
+        std::string err;
+        bool ok = file_.finish(&err);           // the file appears complete, or not at all
         if (!report) return;
+        if (!ok) patch->print("sfrecord~: " + err);
         patch->cancel(this);
         outletFloat(0, ms());
         if (dropped_ > 0)
@@ -514,7 +505,7 @@ private:
     }
     float ms() const { return (float)(frames_.load() / sr_ * 1000.0); }
     void writeLoop() {
-        std::vector<uint8_t> pcm;
+        std::vector<float> chunkBuf;
         for (;;) {
             size_t r = r_.load(std::memory_order_relaxed), w = w_.load(std::memory_order_acquire);
             size_t avail = w - r;
@@ -525,15 +516,9 @@ private:
             }
             size_t chunk = std::min<size_t>(avail, 1 << 16);
             chunk -= chunk % (size_t)ch_;
-            pcm.resize(chunk * 3);
-            for (size_t i = 0; i < chunk; ++i) {
-                float x = ring_[(r + i) & (kRing - 1)];
-                int32_t v = (int32_t)std::lrint(std::clamp(std::isfinite(x) ? x : 0.f, -1.f, 1.f) * 8388607.f);
-                pcm[i * 3] = (uint8_t)(v & 0xff);
-                pcm[i * 3 + 1] = (uint8_t)((v >> 8) & 0xff);
-                pcm[i * 3 + 2] = (uint8_t)((v >> 16) & 0xff);
-            }
-            ma_encoder_write_pcm_frames(&enc_, pcm.data(), (ma_uint64)(chunk / (size_t)ch_), nullptr);
+            chunkBuf.resize(chunk);
+            for (size_t i = 0; i < chunk; ++i) chunkBuf[i] = ring_[(r + i) & (kRing - 1)];
+            file_.write(chunkBuf.data(), chunk / (size_t)ch_);
             r_.store(r + chunk, std::memory_order_release);
         }
     }
@@ -546,7 +531,7 @@ private:
     std::atomic<uint64_t> frames_{0}, dropped_{0};
     std::atomic<bool> recording_{false}, writing_{false};
     std::thread writer_;
-    ma_encoder enc_;
+    WavWriter file_;
 };
 
 // ---------------------------------------------------------------- waveform~
