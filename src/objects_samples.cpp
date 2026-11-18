@@ -236,8 +236,8 @@ public:
             auto b = std::make_unique<SampleBuffer>();
             std::string err;
             if (!decodeAudioFile(patch->resolvePath(m[1].str()), *b, err)) { patch->print("sfplay~: " + err); return; }
-            if (sounds_.send(std::move(b))) post(kOpen);       // the audio thread takes it, stopped
-            else patch->print("sfplay~: too many files opened at once (is audio on?)");
+            sounds_.send(std::move(b));      // the newest file: the audio thread takes it at its event, stopped
+            post(kOpen);
         } else if (m[0].is("loop") && m.size() > 1) {
             loop_.store(m[1].isFloat() && m[1].f != 0.f);
         } else if (m[0].is("speed") && m.size() > 1 && m[1].isFloat()) {
@@ -273,7 +273,10 @@ public:
                 else if (pos_ >= sb->frames || pos_ < 0) playing_ = false;
             }
         }, [&](const Event& e) {
-            if (e.kind == kOpen) { sounds_.take(); playing_ = false; }
+            if (e.kind == kOpen) {
+                sounds_.take();              // nothing when an earlier event took it already
+                playing_ = false;
+            }
             const SampleBuffer* sb = sounds_.current();
             if (e.kind == kPlay && sb) { pos_ = speed < 0.f ? sb->frames - 1.0 : 0.0; playing_ = sb->frames > 0; }
             else if (e.kind == kStop) playing_ = false;
@@ -286,7 +289,7 @@ public:
 
 private:
     enum : uint8_t { kOpen = kEvUser, kPlay, kStop };
-    Mailbox<SampleBuffer, 8> sounds_;          // the files opened, handed to the audio thread
+    Latest<SampleBuffer> sounds_;              // the file opened last, handed to the audio thread
     std::atomic<bool> loop_{false};
     std::atomic<float> speed_{1.f};
     double pos_ = 0.0;                         // audio side

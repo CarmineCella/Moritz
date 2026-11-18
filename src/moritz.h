@@ -23,8 +23,10 @@
 //   * State a box prepares for the audio thread (delay lines sized for the
 //     rate, head responses, prepared impulse responses...) is built on the GUI
 //     thread and published the same way (Published<T>, objects.h); objects
-//     handed over and back (a click~ shape, a line~ list) go through a
-//     Mailbox<T>, which returns the old one to the GUI thread to be freed.
+//     handed over and back go through a Mailbox<T> when each counts, in
+//     order (a line~ list), or a Latest<T> when only the newest does (a
+//     click~ shape, sfplay~'s file); both return the old one to the GUI
+//     thread to be freed.
 //   * Buffer~ storage: record~ and poke~ write it, play~ & co. read it. The
 //     audio thread try_locks the patch's mutex at the start of each callback;
 //     the GUI holds it only to swap a buffer~'s storage (O(1)), or briefly in

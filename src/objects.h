@@ -242,6 +242,47 @@ private:
     T* cur_ = nullptr;
 };
 
+// Latest<T>: an object of which only the newest counts (a click~ shape, the file sfplay~ plays). send()
+// on the GUI thread puts it in a slot, freeing the one it replaces there (the audio thread never saw it);
+// take() on the audio thread, at the box's event, empties the slot: what it held becomes current, and
+// the one it replaces goes back to be freed by the next send() (or by the destructor, when the box goes).
+// Nothing is refused, and however many are sent while audio is off, one waits.
+template <class T>
+class Latest {
+public:
+    Latest() = default;
+    Latest(const Latest&) = delete;
+    Latest& operator=(const Latest&) = delete;
+    ~Latest() {
+        delete slot_.exchange(nullptr, std::memory_order_acq_rel);
+        collect();
+        delete cur_;
+    }
+    void send(std::unique_ptr<T> v) {                     // GUI thread
+        collect();
+        delete slot_.exchange(v.release(), std::memory_order_acq_rel);
+    }
+    bool pending() const { return slot_.load(std::memory_order_acquire) != nullptr; }   // GUI thread
+    void collect() {                                      // GUI thread: frees what came back
+        T* p;
+        while (back_.pop(p)) delete p;
+    }
+    T* take() {                                           // audio thread: the newest, if one came
+        T* p = slot_.exchange(nullptr, std::memory_order_acq_rel);
+        if (!p) return nullptr;
+        // never full: one take per send at most, and send() empties it first
+        if (cur_) back_.push(cur_);
+        cur_ = p;
+        return p;
+    }
+    T* current() const { return cur_; }                   // audio thread
+
+private:
+    std::atomic<T*> slot_{nullptr};
+    dsp::Spsc<T*, 4> back_;
+    T* cur_ = nullptr;
+};
+
 // Runs a block in pieces cut at the box's own timed events (not the values of
 // its inlets): piece(from, to) for the samples before each event, then
 // event(e); then the rest. Audio thread, inside dsp().

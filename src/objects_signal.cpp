@@ -122,14 +122,16 @@ public:
 
 private:
     enum : uint8_t { kBang = kEvUser, kShape };
-    // the shape goes to the audio thread through a mailbox (the old one comes back to be freed)
+    // the shape goes to the audio thread, which takes the newest at its event (the old one comes back
+    // to be freed)
     void setShape(const Message& m) {
         auto s = std::make_unique<std::vector<float>>();
         for (auto& a : m) if (a.isFloat()) s->push_back(a.f);
         if (s->empty()) s->push_back(1.f);
-        if (shapes_.send(std::move(s))) post(kShape);
+        shapes_.send(std::move(s));
+        post(kShape);
     }
-    Mailbox<std::vector<float>, 16> shapes_;
+    Latest<std::vector<float>> shapes_;
     const float one_ = 1.f;
     size_t pos_ = SIZE_MAX;                    // audio side
 };

@@ -176,3 +176,40 @@ TEST(line_keeps_long_lists_and_reports_what_it_drops) {
     for (int k = 0; k < 70; ++k) r.box("l")->message(0, {Atom(0.5f)});   // nothing takes them meanwhile
     CHECK(r.printedSomething("line~: a ramp dropped"));
 }
+
+// click~ and sfplay~ hand the newest shape or file to the audio thread: with audio off, a mailbox of 16
+// shapes (8 files) filled up; then click~ dropped the newer shapes without a word and played an old one,
+// sfplay~ refused files and kept all it had decoded
+TEST(click_plays_the_newest_shape_sent_with_audio_off) {
+    Rig r("(patch (obj c click~) (obj o dac~ 1) (connect c 0 o 0))");
+    r.p.dspRunning = false;
+    for (int k = 1; k <= 40; ++k) r.box("c")->message(0, {Atom("set"), Atom(k * 0.01f), Atom(0.5f)});
+    r.box("c")->message(0, {Atom("bang")});
+    r.p.dspRunning = true;
+    auto y = etest::channel(r.run(256), 2, 0);
+    CHECK(std::fabs(y[0] - 0.40f) < 1e-6f && std::fabs(y[1] - 0.5f) < 1e-6f);
+}
+
+TEST(sfplay_plays_the_newest_file_opened_with_audio_off) {
+    const char* t = std::getenv("TMPDIR");
+    std::string dir = t && *t ? t : "/tmp";
+    if (dir.back() != '/') dir += '/';
+    Rig r("(patch (obj s sfplay~) (obj o dac~ 1) (connect s 0 o 0))");
+    r.p.dspRunning = false;
+    std::vector<std::string> files;
+    for (int k = 1; k <= 12; ++k) {
+        SampleBuffer b;
+        b.frames = 4410;
+        b.data.assign((size_t)b.frames, k * 0.05f);
+        files.push_back(dir + "moritz-engine-sfplay-" + std::to_string(k) + ".wav");
+        std::string err;
+        CHECK(writeWavFile(files.back(), b, err));
+        r.box("s")->message(0, {Atom("open"), Atom(files.back())});
+    }
+    r.box("s")->message(0, {Atom(1.f)});
+    r.p.dspRunning = true;
+    auto y = etest::channel(r.run(1024), 2, 0);
+    CHECK(!r.printedSomething("sfplay~"));
+    CHECK(std::fabs(y[100] - 0.6f) < 1e-3f);
+    for (auto& f : files) std::remove(f.c_str());
+}
