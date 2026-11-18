@@ -270,7 +270,8 @@ int main(int argc, char** argv) {
     if (argc >= 2 && std::string(argv[1]) == "--code-names") {
         moritz::setupSearchPaths();
         for (auto& n : moritz::codeBoxNames()) std::printf("%s\n", n.c_str());
-        return 0;
+        std::fflush(nullptr);
+        std::_Exit(0);         // a one-shot answer: no static destructors (on Windows one could wait forever)
     }
     // --reference-md: OBJECTS.md from help/reference; --reference-missing: the
     // objects without a reference entry; --list-classes: name and group
@@ -283,7 +284,8 @@ int main(int argc, char** argv) {
             for (auto& n : moritz::classesWithoutReference()) std::printf("%s\n", n.c_str());
         else
             for (auto& c : moritz::classInfos()) std::printf("%s\t%s\n", c.name.c_str(), c.group.empty() ? "(alias)" : c.group.c_str());
-        return 0;
+        std::fflush(nullptr);
+        std::_Exit(0);
     }
     if (argc >= 2 && std::string(argv[1]) == "--version") {
         std::printf("Moritz %s\n", MORITZ_VERSION);

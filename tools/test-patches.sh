@@ -14,6 +14,10 @@ if [ -z "$MORITZ" ]; then
 fi
 ROOT=${2:-.}
 OUT=$(mktemp -d 2>/dev/null || mktemp -d -t moritz)
+# every run of the program has a time limit where `timeout` exists (Linux, MSYS2; brew's coreutils on
+# macOS), so a hang fails with the patch's name instead of stopping the run
+LIMIT=
+if command -v timeout > /dev/null 2>&1; then LIMIT="timeout 300"; elif command -v gtimeout > /dev/null 2>&1; then LIMIT="gtimeout 300"; fi
 fails=0
 count=0
 # tests/cross: an object against Musil's function for the same thing (a code box compares them)
@@ -22,7 +26,7 @@ for f in "$ROOT"/examples/*.moritz "$ROOT"/examples/*/*.moritz "$ROOT"/help/*.mo
     count=$((count + 1))
     dur=1
     case "$f" in */tests/cross/*) dur=3 ;; esac     # a cross-test records, then compares: give it time
-    log=$("$MORITZ" --render "$f" $dur "$OUT/out.wav" 2>&1)
+    log=$($LIMIT "$MORITZ" --render "$f" $dur "$OUT/out.wav" 2>&1)
     status=$?
     bad=$(printf '%s\n' "$log" | grep -iE "warn|error|unknown|cannot|can't|fail")
     if [ $status -ne 0 ] || [ -n "$bad" ]; then
@@ -43,7 +47,7 @@ done
 rm -rf "$OUT"
 echo "$count patches rendered, $fails failed"
 # every object has an entry in help/reference
-missing=$("$MORITZ" --reference-missing 2>/dev/null | tr -d '\r')
+missing=$($LIMIT "$MORITZ" --reference-missing 2>/dev/null | tr -d '\r')
 if [ -n "$missing" ]; then
     echo "FAIL objects without a reference entry (help/reference/*.txt):"
     printf '%s\n' "$missing" | head -20
@@ -52,7 +56,7 @@ fi
 # what a code box can call: exactly the list in tests/code-names.txt (a new name, or a refused one that
 # came back, shows here; after an intended change: moritz --code-names > tests/code-names.txt)
 HERE=$(cd "$(dirname "$0")/.." && pwd)
-if ! "$MORITZ" --code-names 2>/dev/null | tr -d '\r' | diff -q "$HERE/tests/code-names.txt" - > /dev/null; then
+if ! $LIMIT "$MORITZ" --code-names 2>/dev/null | tr -d '\r' | diff -q "$HERE/tests/code-names.txt" - > /dev/null; then
     echo "FAIL the names a code box can call differ from tests/code-names.txt:"
     "$MORITZ" --code-names 2>/dev/null | tr -d '\r' | diff "$HERE/tests/code-names.txt" - | head -10
     fails=$((fails + 1))
