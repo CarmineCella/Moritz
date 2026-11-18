@@ -261,7 +261,19 @@ static void test_nebula_switch() {
     }
 }
 
+// --- key names: every tonic, major and minor, spelled as musicians spell them ---
+static void test_key_names() {
+    const char* maj[12] = {"C", "Db", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"};
+    const char* min[12] = {"C", "C#", "D", "Eb", "E", "F", "F#", "G", "G#", "A", "Bb", "B"};
+    bool ok = true;
+    for (int k = 0; k < 12; ++k)
+        ok = ok && std::string(musil::mir::keyName(k, false)) == maj[k] && std::string(musil::mir::keyName(k, true)) == min[k]
+                && std::string(musil::mir::keyName(k + 12, false)) == maj[k] && std::string(musil::mir::keyName(k - 12, true)) == min[k];
+    expect(ok, "key names: Db Eb F# Ab Bb major, C# Eb F# G# Bb minor, for any tonic number");
+}
+
 int main() {
+    test_key_names();
     test_nebula_switch();
     test_hpss();
     test_partconv();

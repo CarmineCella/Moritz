@@ -446,10 +446,11 @@ inline Mat tempogram(const Vec& flux, double fps, int win, int step) {
 // ------------------------------------------------------------------ key
 // the tonic of a key as musicians usually spell it: the major keys with the fewest accidentals
 // (Db Eb F# Ab Bb), the minor keys as their relative majors' signatures read (C# Eb F# G# Bb)
-inline const char* keyName(int k, bool minor = false) {
-    static const char* const major[12] = {"C", "Db", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"};
-    static const char* const minorNames[12] = {"C", "C#", "D", "Eb", "E", "F", "F#", "G", "G#", "A", "Bb", "B"};
-    return (minor ? minorNames : major)[((k % 12) + 12) % 12];
+// (one table, major then minor for each tonic; no array is named major or minor: they are the C library's macros)
+inline const char* keyName(int k, bool isMinor = false) {
+    static const char* const names[24] = {"C", "C", "Db", "C#", "D", "D", "Eb", "Eb", "E", "E", "F", "F",
+                                          "F#", "F#", "G", "G", "Ab", "G#", "A", "A", "Bb", "Bb", "B", "B"};
+    return names[2 * (((k % 12) + 12) % 12) + (isMinor ? 1 : 0)];
 }
 // Krumhansl & Kessler's profiles (probe-tone experiments, Krumhansl 1990)
 inline const std::array<double, 12>& majorProfile() {
