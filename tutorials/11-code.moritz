@@ -46,7 +46,7 @@
   (obj pl2 play~ t11chord (pos 200 480))
   (obj d2 dac~ (pos 200 515))
   (obj s5 comment "5. More: the examples in 12 code (process, analysis, texture, atoms, chords), Musil's own examples (musil/examples), and the manual." (pos 20 560))
-  (obj s5b comment "   A code box may read and write files but not run programs, use the network or wait; the Console and moritz --run have all of Musil." (pos 20 578))
+  (obj s5b comment "   A code box reads files anywhere and writes them in its patch's folder; it does not run programs, use the network or wait; the Console and moritz --run have all of Musil." (pos 20 578))
   (connect sl 0 c1 0)
   (connect c1 0 nf 0)
   (connect c1 1 pl 0)

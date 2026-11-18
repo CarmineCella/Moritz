@@ -451,8 +451,10 @@ needs and without what it does itself.
         an algorithm changes here, and both follow.
   \item \textbf{The \texttt{code} box.} A script inside a patch, run off the audio thread
         when it receives a bang: its inlets set variables, its outlets send lists, and it
-        reads and writes buffers. It may do what a patch may do (read and write files) but
-        not run programs, delete files, use the network, wait or quit.
+        reads and writes buffers. It runs with Musil's sandboxed capabilities: it reads files
+        anywhere, writes them only in its patch's folder and in \texttt{\textasciitilde/Documents/Moritz},
+        and does not run programs, use the network, wait or quit. A box marked
+        \texttt{@trusted} asks, once per folder, to do everything.
 \end{itemize}
 
 \section{The code editor}

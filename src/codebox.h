@@ -26,5 +26,9 @@ public:
 // set by the application (mainwindow.cpp): open the editor of a box, and close it when the box goes
 extern std::function<void(CodeSource*)> openCodeSource;
 extern std::function<void(CodeSource*)> codeSourceGone;
+// set by the application: a code box marked @trusted asks once whether the patches in folder (the box's
+// patch's folder, "" for an unsaved patch) may do everything (write anywhere, run programs, the network).
+// Unset (moritz --render, the tests): never.
+extern std::function<bool(const std::string& folder, const std::string& box)> askTrust;
 
 }  // namespace moritz

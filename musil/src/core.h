@@ -564,7 +564,14 @@ struct Interp {
     struct who_scope { const char*& w; const char* saved; who_scope(Interp& i, const char* n) : w(i.who), saved(i.who) { w = n; } ~who_scope() { w = saved; } };
     // a path to read: resolved like read_path, then checked; a path to write: checked
     std::string readable(const std::string& path) { std::string p = read_path(path); require_read(p); return p; }
-    const std::string& writable(const std::string& path) { require_write(path); return path; }
+    // where a relative path is written: the current directory, unless the host sets write_dir (Moritz: the
+    // folder of the code box's patch); the result is the path to open, checked against the capabilities
+    std::string write_dir;
+    std::string writable(const std::string& path) {
+        std::string p = !write_dir.empty() && !path.empty() && !std::filesystem::path(path).is_absolute() ? write_dir + "/" + path : path;
+        require_write(p);
+        return p;
+    }
     // the largest vector or list a builtin makes (elements): beyond it an error rather than gigabytes
     static constexpr double max_elements = 268435456.0;   // 2^28: 2 GB of doubles
     size_t check_size(double n, const char* what) {

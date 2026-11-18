@@ -5,8 +5,7 @@
 // when the script has run. The script is kept in the patch, or in a .mu file the box names; double-click
 // opens it in the code editor.
 //
-// A code box may do what a patch may do: read and write files (as buffer~ and sfrecord~ do). It may not
-// run programs, delete files, use the network, wait or quit (refused with an error, session.cpp).
+// What a code box may do is Musil's capability profile (session.cpp): see @trusted below.
 
 #include "codebox.h"
 #include "objects.h"
@@ -19,13 +18,17 @@ namespace moritz {
 
 std::function<void(CodeSource*)> openCodeSource;
 std::function<void(CodeSource*)> codeSourceGone;
+std::function<bool(const std::string&, const std::string&)> askTrust;
 
 namespace {
 
 bool endsWithMu(const std::string& s) { return s.size() > 3 && s.compare(s.size() - 3, 3, ".mu") == 0; }
 
 // ---------------------------------------------------------------- code
-// code [inlets] [outlets] [file.mu]: a Musil script (1 inlet, 1 outlet, the script in the patch).
+// code [inlets] [outlets] [file.mu] [@trusted]: a Musil script (1 inlet, 1 outlet, the script in the patch).
+// A script reads files anywhere and writes them in its patch's folder and in ~/Documents/Moritz; it does
+// not run programs, use the network, wait or quit (Musil's sandboxed profile). With @trusted, the first
+// run asks the user whether the patches in that folder may do everything; the answer is remembered.
 //   bang                   runs the script (left inlet)
 //   anything else          (left inlet) becomes in1, then the script runs
 //   to inlet k             becomes ink (cold: nothing runs)
@@ -48,6 +51,8 @@ public:
                 ++nums;
             } else if (endsWithMu(x.s)) {
                 file_ = x.s;
+            } else if (x.s == "@trusted") {
+                wantsTrust_ = true;
             }
         }
         setPorts(std::vector<Port>((size_t)nIn_, Port::Control), std::vector<Port>((size_t)nOut_ + 1, Port::Control));
@@ -99,6 +104,11 @@ public:
             ContextHooks h;
             h.patch = patch;
             h.restricted = true;
+            if (wantsTrust_) {
+                const Patch* q = patch;
+                while (q && q->dir.empty() && q->parent) q = q->parent;
+                h.trusted = askTrust && askTrust(q ? q->dir : "", "code " + id);
+            }
             h.preload = {"signals.mu"};                  // a box is about sound: the signals library is there
             h.outlet = [this](int k, const Message& m) {
                 if (k >= 1 && k <= nOut_) outlet(k - 1, m);
@@ -153,6 +163,7 @@ private:
     std::vector<Message> values_;
     std::shared_ptr<LangContext> ctx_;
     std::shared_ptr<bool> alive_ = std::make_shared<bool>(true);
+    bool wantsTrust_ = false;
 };
 
 }  // namespace

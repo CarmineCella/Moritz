@@ -57,6 +57,7 @@ biquad
 blackman
 bpf
 break
+breathe
 buffer
 buffer-rate
 car->pol
@@ -128,7 +129,9 @@ euler
 eval
 even?
 event-rate
+exec
 exists?
+exit
 exp
 expr
 eye
@@ -192,6 +195,7 @@ iir
 impose-envelope
 impulse
 inf
+input
 insert-at
 interactive?
 interleave
@@ -397,6 +401,7 @@ reduce
 regex-match?
 register-curve
 reject
+remove
 remove-at
 repeat
 replace
@@ -416,6 +421,8 @@ seed
 segments
 self-similarity
 send
+serve
+serve-stop
 serving
 set
 set-buffer!
@@ -424,6 +431,7 @@ shuffle
 sign
 sin
 sine
+sleep
 slice
 solve
 sort
@@ -487,6 +495,8 @@ trim
 true
 try
 type
+udp-receive
+udp-send
 unique
 upper
 values

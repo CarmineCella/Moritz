@@ -253,6 +253,28 @@ void App::init() {
     Fl::keyboard_screen_scaling(0);      // Cmd +/- zoom the patch (View menu), not the whole interface
     openCodeSource = [this](CodeSource* s) { openCodeFor(s); };
     codeSourceGone = [this](CodeSource* s) { codeSourceClosed(s); };
+    // a code box marked @trusted: the user decides, once per folder of patches (kept in the preferences,
+    // one folder per line); an unsaved patch is trusted for this session only
+    askTrust = [](const std::string& folder, const std::string& box) {
+        static bool unsavedTrusted = false;
+        Fl_Preferences t(appPrefs(), "trust");
+        char buf[8192];
+        t.get("folders", buf, "", sizeof buf);
+        std::string list = buf;
+        if (folder.empty() ? unsavedTrusted : ("\n" + list + "\n").find("\n" + folder + "\n") != std::string::npos)
+            return true;
+        int r = askUser("%s asks to do everything a program can: write files anywhere, run programs, use the "
+                        "network.\n\nAllow the patches in\n%s?",
+                        "Don't Allow", "Allow", nullptr, box.c_str(),
+                        folder.empty() ? "this unsaved patch (until Moritz quits)" : folder.c_str());
+        if (r != 1) return false;
+        if (folder.empty()) unsavedTrusted = true;
+        else {
+            t.set("folders", (list.empty() ? folder : list + "\n" + folder).c_str());
+            appPrefs().flush();
+        }
+        return true;
+    };
     Fl::add_timeout(1.0 / 15, toolTimer);
     Patch::onDestroyed = [this](Patch* p) {
         for (auto* d : docs) {

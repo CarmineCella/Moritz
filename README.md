@@ -75,8 +75,9 @@ rhythms, scores, MIDI files, MusicXML, orchestration with sample databases).
   inlets set the variables `in1`, `in2`...; `out 1 values` sends out of its
   first outlet; its last outlet bangs when the script has run. The script is
   kept in the patch, or in a `.mu` file next to it; double-click the box to
-  edit it. A box may read and write files, as a patch does, but not run
-  programs, delete files, use the network, wait or quit.
+  edit it. A box reads files anywhere and writes them in its patch's folder
+  and in `~/Documents/Moritz`; it does not run programs, use the network,
+  wait or quit, unless it is marked `@trusted` and you allow its folder.
 - **How it talks to your patches**: `buffer "name"` gives the channels of a
   `buffer~` as vectors, `set-buffer! "name" channels [rate]` fills it (a
   `waveform~` shows it at once, a `play~` plays it), and `send "name" values`

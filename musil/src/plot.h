@@ -890,9 +890,9 @@ inline vptr plot_save_png(vlist& a, Interp& i) {
     figure f; try { f = parse_figure(a[0]); } catch (std::exception& e) { i.bad(e.what()); }
     int w = a.size() > 2 ? (int)i.scalar(a[2]) : 900, h = a.size() > 3 ? (int)i.scalar(a[3]) : 560;
     if (w < 1 || h < 1 || w > 16384 || h > 16384) i.bad("size: 1 to 16384 pixels");
-    i.require_write(i.str(a[1]));
+    std::string path = i.writable(i.str(a[1]));
     if (plot_needs_awake()) Fl::lock();
-    try { figure_to_png(f, i.str(a[1]), w, h); } catch (std::exception& e) { if (plot_needs_awake()) Fl::unlock(); i.bad(e.what()); }
+    try { figure_to_png(f, path, w, h); } catch (std::exception& e) { if (plot_needs_awake()) Fl::unlock(); i.bad(e.what()); }
     if (plot_needs_awake()) Fl::unlock();
     return v_nil();
 }

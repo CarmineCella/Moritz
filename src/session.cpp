@@ -215,12 +215,6 @@ musil::vptr fnOut(musil::vlist& a, musil::Interp& I) {
     return musil::v_nil();
 }
 
-// what a code box refuses: what a patch cannot do either (run programs, delete files, the network), and
-// what would block or end Moritz
-musil::vptr fnRefused(musil::vlist&, musil::Interp& I) {
-    I.bad("not in a code box (a box may read and write files, but not run programs, delete files, use the "
-          "network, wait or quit); the Console and moritz --run can");
-}
 
 // (buffer name) the channels of a buffer~ as vectors; (buffer-rate name) its sample rate
 musil::vptr fnBuffer(musil::vlist& a, musil::Interp& I) {
@@ -314,10 +308,18 @@ const std::set<std::string>& languageLibraryNames(bool functions) {
 
 }  // namespace
 
-const std::vector<std::string>& refusedInCodeBox() {
-    static const std::vector<std::string> n = {"exec", "remove", "input", "exit", "sleep", "breathe",
-                                               "udp-send", "udp-receive", "serve", "serve-stop"};
-    return n;
+// What a code box may do: Musil's sandboxed profile, checked inside every builtin that touches the system.
+// It reads anywhere; it writes only in its patch's folder and in ~/Documents/Moritz; it does not run
+// programs, use the network, wait or quit. A box whose patch the user trusted (code @trusted) may do all.
+musil::Capabilities codeBoxCapabilities(const Patch* p) {
+    std::vector<std::string> roots;
+    if (p) {
+        const Patch* q = p;
+        while (q && q->dir.empty() && q->parent) q = q->parent;   // a subpatch: its file's folder
+        if (q && !q->dir.empty()) roots.push_back(q->dir);
+    }
+    if (std::string home = homeDir(); !home.empty()) roots.push_back(home + "/Documents/Moritz");
+    return musil::Capabilities::sandboxed(roots);
 }
 
 LangContext::LangContext(std::string l, ContextHooks h)
@@ -336,7 +338,10 @@ LangContext::LangContext(std::string l, ContextHooks h)
     I.def("set-buffer!", fnSetBuffer, 2, 3);
     if (hooks.restricted) {
         I.def("out", fnOut, 1, -1);
-        for (auto& n : refusedInCodeBox()) I.def(n, fnRefused, 0, -1);
+        if (!hooks.trusted) I.caps = codeBoxCapabilities(hooks.patch);
+        // a relative path is written in the patch's folder (or in ~/Documents/Moritz for an unsaved patch)
+        auto roots = codeBoxCapabilities(hooks.patch).write_roots;
+        if (!roots.empty()) I.write_dir = roots.front();
     }
     musilPaths(I);
 #ifndef _WIN32
@@ -345,12 +350,6 @@ LangContext::LangContext(std::string l, ContextHooks h)
     auto* buf = new ConsoleStream();
     *buf->sink = hooks.print;
     I.out = new std::ostream(buf);
-    I.yield_fn = [this] {
-        if (stop_) {
-            stop_ = false;
-            throw musil::Error("", 0, "stopped");
-        }
-    };
     for (auto& kv : I.global->vars) baseline_.push_back(kv.first);
     try {
         I.load("std.mu");
@@ -380,7 +379,7 @@ bool LangContext::eval(const std::string& code, const std::string& file, int fir
                        std::function<void(const EvalResult&)> done) {
     bool expected = false;
     if (!busy_.compare_exchange_strong(expected, true)) return false;
-    stop_ = false;
+    interp_->clear_stop();
     // blank lines in front keep the line numbers of the file the code comes from
     std::string src = std::string((size_t)std::max(0, firstLine - 1), '\n') + code;
     auto self = shared_from_this();
@@ -393,6 +392,10 @@ bool LangContext::eval(const std::string& code, const std::string& file, int fir
             musil::vptr v = I.run(src, file);
             if (v && v->t != musil::Value::NIL) r.value = preview(v, 400);
         } catch (musil::Exit_signal&) {
+        } catch (musil::Stop_signal&) {             // Stop: try in the script could not catch it
+            r.ok = false;
+            r.error = "stopped";
+            r.stopped = true;
         } catch (const musil::Error& e) {
             r.ok = false;
             r.error = e.what();
@@ -403,6 +406,7 @@ bool LangContext::eval(const std::string& code, const std::string& file, int fir
             r.ok = false;
             r.error = e.what();
         }
+        I.clear_stop();
         I.call_stack.clear();
         I.function_depth = 0;
         I.loop_depth = 0;
@@ -464,14 +468,12 @@ std::vector<std::string> codeBoxNames() {
     auto c = std::make_shared<LangContext>("code", h);
     c->snapshot();
     std::vector<std::string> out;
-    std::set<std::string> refused(refusedInCodeBox().begin(), refusedInCodeBox().end());
-    for (auto& n : c->names())
-        if (!refused.count(n)) out.push_back(n);
+    for (auto& n : c->names()) out.push_back(n);   // what may run is decided inside the builtins
     return out;
 }
 
 void LangContext::stop() {
-    if (busy_) stop_ = true;
+    if (busy_) interp_->request_stop();             // any thread; sticky until the run returns
 }
 
 void LangContext::snapshot() {

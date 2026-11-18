@@ -30,7 +30,7 @@
   (obj d dac~ (pos 20 390))
   (obj s3 comment "3. The script can be a file next to the patch: code 1 1 myscript.mu (read again at every run; double-click to edit it)." (pos 20 435))
   (obj s4 comment "Messages: bang, set name values, stop, reset (a fresh interpreter), open, read file.mu. In the script: (send name values) to receive boxes." (pos 20 453))
-  (obj s5 comment "A box may read and write files, as a patch does; it may not run programs, delete files, use the network, wait or quit." (pos 20 471))
+  (obj s5 comment "A box reads files anywhere and writes them in its patch's folder and in ~/Documents/Moritz; it does not run programs, use the network, wait or quit (unless marked @trusted and allowed)." (pos 20 471))
   (obj s6 comment "The Console and moritz --run have all of Musil. The std and signals libraries are loaded; load music.mu or scientific.mu for more." (pos 20 489))
   (obj man link "The Musil manual (PDF)" ../musil/docs/musil_manual.pdf (pos 20 515))
   (connect n1 0 c1 0)

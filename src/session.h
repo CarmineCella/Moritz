@@ -44,7 +44,8 @@ struct ContextHooks {
     Patch* patch = nullptr;
     std::function<void(int, const Message&)> outlet;          // (out k values...): outlet k (from 1)
     std::function<void(const std::string&)> print;
-    bool restricted = false;
+    bool restricted = false;                                   // a code box: Musil's sandboxed profile
+    bool trusted = false;                                      // ... unless the user trusted its patch: everything
     std::vector<std::string> preload;                          // libraries loaded after std.mu
 };
 
@@ -68,7 +69,7 @@ public:
 
 private:
     std::unique_ptr<musil::Interp> interp_;
-    std::atomic<bool> busy_{false}, stop_{false};
+    std::atomic<bool> busy_{false};
     std::mutex mu_;
     std::vector<Variable> vars_;
     std::vector<std::string> names_;
@@ -78,7 +79,6 @@ private:
 // the session's context
 std::shared_ptr<LangContext> sessionContext();
 // the names refused in a code box, and every name a code box can use (sorted: moritz --code-names)
-const std::vector<std::string>& refusedInCodeBox();
 std::vector<std::string> codeBoxNames();
 
 // the documentation of Musil's functions (help/musil/help.txt)
