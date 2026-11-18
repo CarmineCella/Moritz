@@ -30,9 +30,12 @@ jobs:
         with:
           path: deps
           key: deps-macos-${{ steps.v.outputs.deps }}
+      - uses: hendrikmuhs/ccache-action@v1.2     # unchanged files (FLTK included) are not compiled again
+        with:
+          key: ccache-macos
       - name: Build
         run: |
-          cmake -B build $VERSION_ARG
+          cmake -B build $VERSION_ARG -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
           cmake --build build -j4
           cmake --build build --target dist
       - name: Render every patch
@@ -68,9 +71,12 @@ jobs:
         with:
           path: deps
           key: deps-linux-${{ steps.v.outputs.deps }}
+      - uses: hendrikmuhs/ccache-action@v1.2     # unchanged files (FLTK included) are not compiled again
+        with:
+          key: ccache-linux
       - name: Build
         run: |
-          cmake -B build $VERSION_ARG
+          cmake -B build $VERSION_ARG -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
           cmake --build build -j4
           cmake --build build --target dist
       - name: Render every patch
@@ -149,9 +155,12 @@ jobs:
         with:
           path: deps
           key: deps-linux-sanitize-${{ hashFiles('CMakeLists.txt', 'musil/cmake/fltk.cmake') }}
+      - uses: hendrikmuhs/ccache-action@v1.2     # unchanged files (FLTK included) are not compiled again
+        with:
+          key: ccache-sanitize-${{ matrix.sanitizer }}
       - name: Build
         run: |
-          cmake -B build -DMORITZ_SANITIZE=${{ matrix.sanitizer }} -DCMAKE_BUILD_TYPE=RelWithDebInfo
+          cmake -B build -DMORITZ_SANITIZE=${{ matrix.sanitizer }} -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
           cmake --build build -j4
       - name: Test
         env:
@@ -173,9 +182,12 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential cmake xvfb libasound2-dev libx11-dev libxext-dev \
             libxft-dev libxinerama-dev libxcursor-dev libxrender-dev libxfixes-dev libfontconfig1-dev
+      - uses: hendrikmuhs/ccache-action@v1.2     # unchanged files (FLTK included) are not compiled again
+        with:
+          key: ccache-musil-${{ matrix.fltk }}
       - name: Build and test
         run: |
-          cmake -S musil -B build-musil -DMUSIL_FLTK=${{ matrix.fltk }}
+          cmake -S musil -B build-musil -DMUSIL_FLTK=${{ matrix.fltk }} -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
           cmake --build build-musil -j4
           xvfb-run -a ctest --test-dir build-musil -j2 --output-on-failure
       - name: The committed help and grammar are current
