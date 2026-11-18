@@ -46,4 +46,15 @@ function deep-return (n) {
 check (== (deep-return 4) 8) "return from two loops deep"
 check (== (expr ((deep-return 2) + 1)) 5) "a call inside expr"
 
+; --- the libraries' functions keep their own names -------------------------------------------------------
+var sum 0
+check (== (mean (vec 1 2 3)) 2) "a program's (var sum 0) does not break mean"
+check (== sum 0) "...and the program's sum is its own"
+function length (x) "mine"
+check (== (median (vec 3 1 2)) 2) "a program's own length does not break median"
+check (equal? (length 1) "mine") "...and the program calls its own"
+set tau 7
+check (== tau 7) "set changes a library variable"
+check (contains? (str (vars)) "mean") "vars lists the library's names"
+
 report "test_semantics"

@@ -33,6 +33,10 @@
 //     exit, and writes outside write_roots. allow_blocking is caps.blocking.
 //   - Per-interpreter state. Interp::state<T>() is a T owned by the interpreter (made on first use):
 //     the libraries keep their tables there, so several interpreters run at once on threads.
+//   - Names. The builtins and the libraries (files found on the load path) are defined in Interp::library
+//     and, shared, in Interp::global, the program's environment; a library function closes over the
+//     library environment, so a program that defines a name of its own (var sum 0) does not change what
+//     the library's functions mean (see Env). Interp::names() lists every name.
 //   - Memory. Interp::collect() frees the cycles a closure stored in its own scope makes; it runs by
 //     itself when the environments alive keep growing.
 //
@@ -223,11 +227,21 @@ inline vptr copy_literal(const vptr& v, int depth = 0) {
 // lambda made there) would keep that environment alive forever: the environment holds the function and
 // the function holds the environment. So such a binding holds the environment weakly, and reading the
 // name gives back an ordinary function that holds it (a copy: it can be returned and outlive the scope).
-// The global environment is exempt: it lives as long as the interpreter, which clears it at the end.
+// The global environments are exempt: they live as long as the interpreter, which clears them at the end.
+// The two global environments (Interp::global, the program's, and Interp::library) mirror each other: what
+// the library defines is defined in both (shared), so the program sees every name in its own global
+// environment, while a library function, which closes over the library environment, finds the library's
+// definition even after the program defines the same name for itself (a var or a function of the program
+// stops the sharing of that name: the program's own from then on). A set changes a shared name on both
+// sides. A name the library does not have is looked for among the program's globals (fallback).
 struct Env {
     std::unordered_map<std::string, vptr> vars;
     eptr parent;
     bool global = false;
+    Env* fallback = nullptr;                      // the library's: the program's global environment
+    Env* mirror = nullptr;                        // the other global environment
+    bool library_side = false;                    // this is the library's
+    std::unordered_set<std::string>* shared = nullptr;   // the names defined in both (the library's, not redefined by the program)
     live_counter<live_envs> counted;
     Env(eptr p = nullptr) : parent(std::move(p)) {}
     static vptr strong(const vptr& v) {
@@ -242,19 +256,36 @@ struct Env {
         auto w = v_copy(*v); w->wclosure = v->closure; w->closure.reset();
         return w;
     }
-    void bind(const std::string& k, vptr v) { vars[k] = held(std::move(v)); }
+    void bind(const std::string& k, vptr v) {
+        vptr h = held(std::move(v));
+        if (mirror) {
+            if (library_side) { mirror->vars[k] = h; shared->insert(k); }
+            else shared->erase(k);
+        }
+        vars[k] = std::move(h);
+    }
     vptr find(const std::string& k) {
+        Env* last = this;
         for (Env* w = this; w; w = w->parent.get()) {
             auto it = w->vars.find(k);
             if (it != w->vars.end()) return strong(it->second);
+            last = w;
         }
+        if (last->fallback) { auto it = last->fallback->vars.find(k); if (it != last->fallback->vars.end()) return strong(it->second); }
         return nullptr;
     }
     bool assign(const std::string& k, vptr v) {
+        Env* last = this;
         for (Env* w = this; w; w = w->parent.get()) {
             auto it = w->vars.find(k);
-            if (it != w->vars.end()) { it->second = w->held(std::move(v)); return true; }
+            if (it != w->vars.end()) {
+                it->second = w->held(std::move(v));
+                if (w->mirror && w->shared->count(k)) w->mirror->vars[k] = it->second;
+                return true;
+            }
+            last = w;
         }
+        if (last->fallback) { auto it = last->fallback->vars.find(k); if (it != last->fallback->vars.end()) { it->second = std::move(v); return true; } }
         return false;
     }
 };
@@ -511,7 +542,9 @@ inline bool path_under(const fs::path& p, const std::vector<std::string>& roots)
 
 struct Frame { vptr name; sptr file; int line; };   // call-stack entry; formatted lazily on error
 struct Interp {
-    eptr global;
+    eptr library;                              // the builtins and the libraries (files found on the load path)
+    eptr global;                               // the program's names, and the library's too (shared until the program redefines one)
+    std::unordered_set<std::string> shared_names;   // the library's names the program has not redefined
     std::vector<Frame> call_stack;
     int stack_depth = 0, max_stack = 100000;   // depth cap (secondary; the stack of the thread is the real guard)
     std::uintptr_t stack_base = 0;             // where the outermost evaluation on this thread started
@@ -533,7 +566,7 @@ struct Interp {
     bool gc_enabled = true;
     std::unordered_set<std::string> loaded_files;   // ran to completion; a second load is a no-op
     std::unordered_set<std::string> loading_files;  // currently running; a load from inside is a cycle and is skipped
-    std::unordered_set<std::string> library_files;  // the files found on the load path (and those they load next to them)
+    std::unordered_set<std::string> library_files;  // the files that run in the library environment
     std::vector<std::string> load_path;     // extra directories searched by load (after the local ones)
     std::string home_path;                  // ~/.musil, searched last
     sptr current_file; int current_line = 0;
@@ -613,18 +646,20 @@ struct Interp {
         compact_at = tracked_envs.size() + 1024;
     }
     size_t collect();
+    std::vector<std::string> names();       // every name defined: the program's and the libraries', sorted
     [[noreturn]] void err(const std::string& m) { throw Error(current_file?*current_file:"<input>", current_line, m); }
     void yield_check() {
         if (stop_requested.load(std::memory_order_relaxed)) throw Stop_signal{};
         if ((++eval_count & 1023) == 0) { if (yield_fn) yield_fn(); idle(); }
     }
-    void def(const std::string& name, op_t f, int amin, int amax) { global->vars[name] = v_op(f, name, amin, amax); }
+    void def(const std::string& name, op_t f, int amin, int amax) { def(name, v_op(f, name, amin, amax)); }
     void def(const std::string& name, op_t f, int arity = 0) { def(name, f, arity, arity); }
-    void def(const std::string& name, vptr v) { global->vars[name] = std::move(v); }
+    void def(const std::string& name, vptr v) { library->vars[name] = v; global->vars[name] = std::move(v); shared_names.insert(name); }
     vptr eval(vptr expr, eptr e);           // evaluate: a return reaching it is its value
     vptr ev(vptr expr, eptr e);             // the evaluator itself: a return, break or continue is left in flow
     vptr call_fn(vptr fn, vlist args);
     vptr run(const std::string& src, const std::string& filename = "<input>");
+    vptr run_in(const std::string& src, const std::string& filename, eptr env);
     void load(const std::string& path);
     std::string find_file(const std::string& path, bool* in_library = nullptr);   // the resolved path load would use, or ""
     void set_stack_floor(std::uintptr_t here) {
@@ -1335,12 +1370,16 @@ inline void print_help(Interp& i, const std::string& name) {
     *i.out << std::flush;
 }
 inline vptr fn_definedp(vlist& a, Interp& i) { const std::string& n = a[0]->t==Value::SYM ? a[0]->s : i.str(a[0]); return v_bool(i.global->find(n) != nullptr); }
-inline vptr fn_vars(vlist&, Interp& i) { std::vector<std::string> names; for (auto& kv : i.global->vars) names.push_back(kv.first); std::sort(names.begin(), names.end()); vlist out; for (auto& n : names) out.push_back(v_sym(n)); return v_list(std::move(out)); }
+inline vptr fn_vars(vlist&, Interp& i) { vlist out; for (auto& n : i.names()) out.push_back(v_sym(n)); return v_list(std::move(out)); }
 
 // constructor/destructor, methods
 inline Interp::Interp() {
     rng.seed((uint64_t)std::chrono::high_resolution_clock::now().time_since_epoch().count());
+    library = make_env(); library->global = true;
     global = make_env(); global->global = true;
+    library->fallback = global.get();
+    library->mirror = global.get(); global->mirror = library.get(); library->library_side = true;
+    library->shared = global->shared = &shared_names;
 #ifdef _WIN32
     const char sep = ';'; const char* home = std::getenv("USERPROFILE");
 #else
@@ -1381,12 +1420,21 @@ inline Interp::Interp() {
     a("copy", fn_copy, 1, 1); a("live-objects", fn_live_objects, 0, 0); a("error", fn_error, 0, N); a("clock", fn_clock, 0, 0); a("load", fn_load, 1, 1);
     a("defined?", fn_definedp, 1, 1); a("vars", fn_vars, 0, 0); a("exit", fn_exit, 0, 1);
     a("help", fn_help, 1, 1); a("parse", fn_parse, 1, 1);
-    quote_op = global->vars["quote"];
+    quote_op = library->vars["quote"];
 }
 inline Interp::~Interp() {
-    for (auto& w : tracked_envs) if (auto e = w.lock()) e->vars.clear();
+    for (auto& w : tracked_envs) if (auto e = w.lock()) { e->vars.clear(); e->parent.reset(); }
     if (global) global->vars.clear();
+    if (library) { library->vars.clear(); library->fallback = library->mirror = nullptr; }
+    if (global) global->mirror = nullptr;
     flow_value.reset(); quote_op.reset();
+}
+inline std::vector<std::string> Interp::names() {
+    std::vector<std::string> n;
+    for (auto& kv : global->vars) n.push_back(kv.first);
+    for (auto& kv : library->vars) if (!global->vars.count(kv.first)) n.push_back(kv.first);
+    std::sort(n.begin(), n.end());
+    return n;
 }
 // The cycle collector. Reference counting frees everything except a cycle: a closure stored in a structure
 // of its own scope (the object pattern: (put! self 'get (function () self))), an inner closure assigned to a
@@ -1450,8 +1498,9 @@ inline size_t Interp::collect() {
 //   2. the current directory
 //   3. each entry of load_path (MUSIL_PATH, plus whatever the host adds)
 //   4. ~/.musil
-// A file found on the load path (or next to a library that loads it) is a library: its reading is not checked
-// against the capabilities (Interp::caps), which concern the program's own files.
+// A file found on the load path (or next to a library that loads it) is a library: it runs in the library
+// environment, so a program's own names never change what the library's functions mean; its reading is not
+// checked against the capabilities (Interp::caps), which concern the program's own files.
 inline std::string Interp::find_file(const std::string& path, bool* in_library) {
     fs::path p(path), resolved; bool lib = false;
     auto try_path = [&](const fs::path& q, bool is_lib) { std::error_code ec; if (resolved.empty() && !q.empty() && fs::is_regular_file(q, ec)) { resolved = q; lib = is_lib; } };
@@ -1484,16 +1533,17 @@ inline void Interp::load(const std::string& path) {
     if (lib) library_files.insert(canon);
     struct guard { Interp& i; std::string c; sptr f; int l; bool ok = false;
         ~guard() { i.loading_files.erase(c); if (ok) i.loaded_files.insert(c); i.current_file = f; i.current_line = l; } } g{*this, canon, sf, sl};
-    run(ss.str(), canon);
+    run_in(ss.str(), canon, lib ? library : global);
     g.ok = true;   // a module that fails is not cached: the next load runs it again and reports the error again
 }
-inline vptr Interp::run(const std::string& src, const std::string& filename) {
+inline vptr Interp::run(const std::string& src, const std::string& filename) { return run_in(src, filename, global); }
+inline vptr Interp::run_in(const std::string& src, const std::string& filename, eptr env) {
     auto file = std::make_shared<std::string>(filename);
     Parser p(src, file);
     auto prog = p.program();
     current_file = file;
     if (!main_file && !filename.empty() && filename[0] != '<' && loading_files.empty()) main_file = file;
-    vptr r = eval(prog, global);
+    vptr r = eval(prog, std::move(env));
     if (stack_depth == 0) { flow = FLOW_NONE; flow_value.reset(); if (tracked_envs.size() >= compact_at / 2) maintain(); }
     return r;
 }
