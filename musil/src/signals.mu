@@ -654,8 +654,9 @@ function ambi-add (a b) (map (zip a b) (function (p) (+ (head p) (last p))))
 ; (ambi-decode B speakers)   B-format to a list of speakers, each (list az el) or a bare azimuth, through the
 ;                          matrix of ambi-decoder: for speakers all at ear height the exact horizontal decoder of a
 ;                          ring (at least 2N+1 speakers, evenly spaced) with 2D max-rE weights, whose energy vector
-;                          reaches 0.71 at order 1 and 0.87 at order 2; with elevations, sampling of the sphere with
-;                          the SN3D correction (2n+1) and 3D max-rE weights
+;                          reaches 0.71 at order 1 and 0.87 at order 2, and the energy-preserving decoder (EPAD) for
+;                          any other ring (5.0, too few speakers); with elevations, the energy-preserving decoder of
+;                          the sphere with 3D max-rE weights
 function ambi-decode (B speakers) {
     var order (- (round (sqrt (length B))) 1)
     return (map (ambi-decoder order speakers) (function (g) {
@@ -686,7 +687,7 @@ function channel (sig k) (if (equal? (type sig) "list") (getidx sig k) sig)
 function stereo-add (a b) (list (+ (channel a 0) (channel b 0)) (+ (channel a 1) (channel b 1)))
 function stereo-scale (a g) (list (* g (channel a 0)) (* g (channel a 1)))
 ; (binaural-decode B sr)   B-format for headphones: decoded to 17 virtual speakers spread over the sphere (8 at ear
-;                          height, 4 above, 4 below, 1 overhead, the sphere-sampling decoder of ambi-decoder), each
+;                          height, 4 above, 4 below, 1 overhead, the energy-preserving decoder of ambi-decoder), each
 ;                          rendered with the head responses of its direction (hrir), summed; at order 1 a front
 ;                          source has the broadband level of the front head response itself (low frequencies come out
 ;                          louder, high ones softer, as with any decoding to virtual speakers); => (list left right). One expression, so it streams in a synth too.

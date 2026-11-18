@@ -872,8 +872,10 @@
 #ambi-decoder
   (ambi-decoder order speakers)
   => the decoding matrix ambi-decode uses: a row of (order+1)^2 gains per speaker
-  (speakers: (list az el) or azimuths). All at ear height: a ring, the exact horizontal decoder with 2D max-rE
-  weights; with elevations: sampling of the sphere, SN3D-corrected (2n+1) with 3D max-rE weights
+  (speakers: (list az el) or azimuths). All at ear height: a ring; evenly spaced with at least 2N+1 speakers, the
+  exact horizontal decoder, else (irregular, as 5.0, or too few speakers) the energy-preserving decoder (EPAD) of
+  the circular harmonics, so every direction is about as loud; both with 2D max-rE weights. With elevations: the
+  energy-preserving decoder of the spherical harmonics with 3D max-rE weights (on a t-design, the sampling decoder)
 #ambi-rotate
   (ambi-rotate B yaw)
   => B turned by yaw degrees about the vertical axis (positive to the left):
@@ -1301,8 +1303,9 @@
   B-format to a list of speakers, each (list az el) or a bare azimuth, through the
   matrix of ambi-decoder: for speakers all at ear height the exact horizontal decoder of a
   ring (at least 2N+1 speakers, evenly spaced) with 2D max-rE weights, whose energy vector
-  reaches 0.71 at order 1 and 0.87 at order 2; with elevations, sampling of the sphere with
-  the SN3D correction (2n+1) and 3D max-rE weights
+  reaches 0.71 at order 1 and 0.87 at order 2, and the energy-preserving decoder (EPAD) for
+  any other ring (5.0, too few speakers); with elevations, the energy-preserving decoder of
+  the sphere with 3D max-rE weights
 #max-re-weights
   (max-re-weights order)
   the per-channel 2D max-rE weights of an order (Zotter & Frank), cos(n pi / (2N + 2)) for
@@ -1320,7 +1323,7 @@
 #binaural-decode
   (binaural-decode B sr)
   B-format for headphones: decoded to 17 virtual speakers spread over the sphere (8 at ear
-  height, 4 above, 4 below, 1 overhead, the sphere-sampling decoder of ambi-decoder), each
+  height, 4 above, 4 below, 1 overhead, the energy-preserving decoder of ambi-decoder), each
   rendered with the head responses of its direction (hrir), summed; at order 1 a front
   source has the broadband level of the front head response itself (low frequencies come out
   louder, high ones softer, as with any decoding to virtual speakers); => (list left right). One expression, so it streams in a synth too.

@@ -434,6 +434,22 @@ check (near? (energy-vector 2 (speaker-ring 6)) 0.8660 1e-3) "ambi-decoder: orde
 check (== (getidx (head (ambi-decoder 1 (speaker-ring 4))) 2) 0) "ambi-decoder: a ring does not hear the height channel"
 check (!= (getidx (getidx (ambi-decoder 1 (list (list 0 0) (list 90 40) (list 0 -30))) 1) 2) 0) "ambi-decoder: speakers with elevations sample the sphere"
 check (== (length binaural-speakers) 17) "binaural-decode: seventeen virtual speakers"
+; irregular layouts and too few speakers: the energy-preserving decoder, a source equally loud from every direction
+function src-energy (o spk az el) { var gs (vec (map (ambi-decoder o spk) (function (row) (dot row (ambi-gains o az el)))))
+                                    return (sum (* gs gs)) }
+function energy-spread-db (o spk el) {
+    var es (vec (map (vec->list (* 15 (range 24))) (function (az) (src-energy o spk az el))))
+    return (* 10 (log10 (/ (max es) (min es))))
+}
+var five (vec 0 30 -30 110 -110)
+check (< (energy-spread-db 1 five 0) 1) "ambi-decoder: 5.0 at order 1, every direction about as loud (EPAD)"
+check (< (abs (* 10 (log10 (/ (src-energy 1 five 0 0) (src-energy 1 five 180 0))))) 1) "ambi-decoder: 5.0, front and back balanced"
+check (< (energy-spread-db 2 (speaker-ring 4) 0) 1) "ambi-decoder: order 2 on four speakers (too few), within 1 dB (1.5 with the regular formula)"
+check (< (energy-spread-db 2 five 0) 0.1) "ambi-decoder: 5.0 at order 2 (13.5 dB with the regular formula)"
+check (< (energy-spread-db 1 binaural-speakers 0) 1) "ambi-decoder: the 17 directions of binaural-decode, even around"
+check (< (energy-spread-db 1 binaural-speakers 40) 1) "ambi-decoder: the 17 directions, even above"
+check (< (energy-spread-db 3 binaural-speakers 0) 0.1) "ambi-decoder: the 17 directions at order 3, even (sampling the sphere was 0.4 dB off)"
+check (near? (head (ambi-decoder 2 (speaker-ring 6))) (head (ambi-decoder 2 (vec 0 -60 -120 180 120 60))) 1e-12) "ambi-decoder: a regular ring in any order is the exact decoder"
 var pn (vec (map (pan-n sx (speaker-ring 8) 100) rms))
 check (and (> (getidx pn 2) (getidx pn 3)) (== (getidx pn 0) 0) (== (getidx pn 5) 0)) "pan-n: between the two nearest speakers only"
 check (near? (vec (map (pan-azimuth sx 90) rms)) (vec (rms sx) 0) 1e-6) "pan-azimuth: 90 is the left"

@@ -622,8 +622,10 @@ inline std::vector<std::pair<double, double>> speaker_dirs(const vptr& spk, Inte
     return dirs;
 }
 // (ambi-decoder order speakers) => the decoding matrix ambi-decode uses: a row of (order+1)^2 gains per speaker
-//   (speakers: (list az el) or azimuths). All at ear height: a ring, the exact horizontal decoder with 2D max-rE
-//   weights; with elevations: sampling of the sphere, SN3D-corrected (2n+1) with 3D max-rE weights
+//   (speakers: (list az el) or azimuths). All at ear height: a ring; evenly spaced with at least 2N+1 speakers, the
+//   exact horizontal decoder, else (irregular, as 5.0, or too few speakers) the energy-preserving decoder (EPAD) of
+//   the circular harmonics, so every direction is about as loud; both with 2D max-rE weights. With elevations: the
+//   energy-preserving decoder of the spherical harmonics with 3D max-rE weights (on a t-design, the sampling decoder)
 inline vptr sig_ambi_decoder(vlist& a, Interp& i) {
     int order = (int)i.scalar(a[0]); if (order < 0 || order > 7) i.bad("order must be 0..7");
     auto M = ambi_decoder(order, speaker_dirs(a[1], i));

@@ -113,7 +113,7 @@ ambi-decode      : levels of a source at 45 on that ring (0.356 0.356 0 0)
 pan-n            : levels on a ring of 8, source at 100 (0 0 0.684 0.195 0 0 0 0)
 hrir 90 0        : two ears, 23 samples; the far ear later and quieter; 710 measured KEMAR directions loaded (hrtf-unload: the spherical model)
 binaural         : a left click, ear levels (0.305 0.146)
-binaural-decode  : B-format for headphones; a front source (1.151 1.151)
+binaural-decode  : B-format for headphones; a front source (1.18 1.18)
 moving-source, ambi-render, channel, stereo-add, normalize-peak-stereo: see spatial.mu
 
 --- resampling and channels ---
