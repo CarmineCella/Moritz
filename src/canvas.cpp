@@ -57,8 +57,6 @@ double cableDist(double px, double py, double ax, double ay, double bx, double b
     return best;
 }
 
-void flashTimer(void* data) { static_cast<Canvas*>(data)->redraw(); }
-
 // Message box text as shown, like Max: a line break after each ";", so
 // "; cf 1200; q 8" reads ";" / "cf 1200;" / "q 8". Only the display
 // changes; the box keeps its text on one line.
@@ -183,7 +181,49 @@ Box* Canvas::alive(Box* b) const {
     return nullptr;
 }
 
-void Canvas::layoutBox(Box* b) const {
+// Flashing and animated boxes: only their areas are drawn again (the rest of the canvas is kept).
+void Canvas::flashTimer(void* data) {
+    auto* c = static_cast<Canvas*>(data);
+    double t = now();
+    bool any = false;
+    for (auto& b : c->patch_->boxes)
+        if (b->animated() || b->flashUntil > t - 0.2) {     // a flash just over: once more, without it
+            c->damageBox(b.get());
+            any = true;
+        }
+    if (!any) c->redraw();
+}
+
+void Canvas::damageBox(Box* b) {
+    int X = screenX(b->x) - 4, Y = screenY(b->y) - 4;
+    int W = (int)std::ceil(b->w * zoom_) + 9, H = (int)std::ceil(b->h * zoom_) + 9;
+    damage(FL_DAMAGE_USER1, X, Y, W, H);
+}
+
+void layoutPatch(Patch* p) {
+    for (auto& b : p->boxes) layoutBox(b.get());
+}
+
+void Canvas::layout(Box* b) {
+    if (b->kind == BoxKind::UI) {                  // its own size, which may follow its state
+        b->h = kBoxH;
+        b->uiSize(b->w, b->h);
+        return;
+    }
+    Layout& l = layouts_[b];
+    std::string t = b->label();
+    int ports = b->numIns() * 1024 + b->numOuts();
+    if (l.kind == (int)b->kind && l.ports == ports && l.zoom == zd::zoom() && l.settings == settingsGeneration() &&
+        l.label == t) {
+        b->w = l.w;
+        b->h = l.h;
+        return;
+    }
+    layoutBox(b);
+    l = Layout{std::move(t), (int)b->kind, ports, b->w, b->h, zd::zoom(), settingsGeneration()};
+}
+
+void layoutBox(Box* b) {
     zd::font(kFont, kFontSize);
     std::string t = b->label();
     int tw = (int)zd::width(t.c_str());
@@ -569,25 +609,40 @@ void Canvas::pasteText(const std::string& text) {
 void Canvas::draw() {
     Patch& p = *patch_;
     zd::push_clip(x(), y(), w(), h());
+    // what is to be drawn: all of it, or (an animated box) a part; in patch units, with a margin
+    int cx = x(), cy = y(), cw = w(), ch = h();
+    fl_clip_box(x(), y(), w(), h(), cx, cy, cw, ch);
+    const int vx0 = patchX(cx) - 2, vy0 = patchY(cy) - 2, vx1 = patchX(cx + cw) + 2, vy1 = patchY(cy + ch) + 2;
+    auto visible = [&](int bx0, int by0, int bx1, int by1) { return bx1 >= vx0 && bx0 <= vx1 && by1 >= vy0 && by0 <= vy1; };
     fl_color(locked_ ? kBgLocked : kBgEdit);
     zd::rectf(x(), y(), w(), h());
     {
     zd::Scope zoomed(x(), y(), zoom_);           // the patch, zoomed around the canvas's corner
-    if (!locked_ && zoom_ >= 0.5) {
+    if (!locked_ && zoom_ >= 0.5) {              // the grid, where it is drawn
         fl_color(kGrid);
-        int g0x = (int)std::floor(sx_ / 15.0) * 15, g0y = (int)std::floor(sy_ / 15.0) * 15;
-        for (int gx = g0x; gx < sx_ + viewW(); gx += 15)
-            for (int gy = g0y; gy < sy_ + viewH(); gy += 15)
+        int gx0 = std::max(sx_, vx0), gy0 = std::max(sy_, vy0);
+        int gx1 = std::min(sx_ + viewW(), vx1), gy1 = std::min(sy_ + viewH(), vy1);
+        int g0x = (int)std::floor(gx0 / 15.0) * 15, g0y = (int)std::floor(gy0 / 15.0) * 15;
+        for (int gx = g0x; gx < gx1; gx += 15)
+            for (int gy = g0y; gy < gy1; gy += 15)
                 zd::point(ox() + gx, oy() + gy);
     }
 
-    for (auto& b : p.boxes) layoutBox(b.get());
+    for (auto& b : p.boxes) layout(b.get());
+    if (layouts_.size() > 2 * p.boxes.size() + 64) {     // forget the boxes that are gone
+        std::unordered_map<const Box*, Layout> kept;
+        for (auto& b : p.boxes)
+            if (auto it = layouts_.find(b.get()); it != layouts_.end()) kept.emplace(it->first, std::move(it->second));
+        layouts_.swap(kept);
+    }
 
-    // cables
+    // cables (a curve stays between its ends across, and bends at most 140 up or down)
     for (auto& c : p.conns) {
         int ax, ay, bx, by;
         portPos(c.from, true, c.outlet, ax, ay);
         portPos(c.to, false, c.inlet, bx, by);
+        if (!visible(std::min(ax, bx) - 4, std::min(ay, by) - 150, std::max(ax, bx) + kPortW + 4, std::max(ay, by) + 150))
+            continue;
         ax += ox() + kPortW / 2; bx += ox() + kPortW / 2;
         ay += oy(); by += oy();
         bool sig = c.from->outs[c.outlet] != Port::Control;   // signal and tap links
@@ -608,9 +663,11 @@ void Canvas::draw() {
     }
 
     bool flashing = false, animating = false;
+    double t = now();
     for (auto& b : p.boxes) {
+        if (!visible(b->x - 4, b->y - 4, b->x + b->w + 4, b->y + b->h + 4)) continue;
         drawBox(b.get());
-        if (b->flashUntil > now()) flashing = true;
+        if (b->flashUntil > t) flashing = true;
         if (b->animated()) animating = true;
     }
     if ((flashing || animating) && !Fl::has_timeout(flashTimer, this))
@@ -942,7 +999,7 @@ void Canvas::newBoxAt(const std::string& cls, int bx, int by) {
     if (win_) win_->pushUndo(patch_);
     Patch& p = *patch_;
     Box* b = p.addBox(makeBox(cls, {}, patch_), std::max(0, bx), std::max(0, by));
-    layoutBox(b);
+    layout(b);
     if (win_) win_->markDirty(patch_);
     if (b->kind == BoxKind::Number || b->kind == BoxKind::UI) {
         b->selected = true;                 // ready to use, nothing to type

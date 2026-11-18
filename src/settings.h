@@ -31,6 +31,7 @@ std::vector<std::string> fontSuggestions(bool monospaced);   // fonts most syste
 void loadSettings();               // from the preferences, then applySettings()
 void saveSettings();
 void applySettings();              // fonts and sizes into the slots and the theme (no redraw)
+unsigned settingsGeneration();     // grows with every applySettings(): what was measured with the old ones is stale
 void showSettings();               // the dialog
 Fl_Double_Window* settingsWindow();   // the dialog's window (null before it is shown)
 

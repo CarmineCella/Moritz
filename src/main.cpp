@@ -72,7 +72,7 @@ int snapshot(moritz::Patch& p, const std::string& path, bool edit, int W, int H,
     {                                     // lay the boxes out: sizes depend on the font
         Fl_Image_Surface probe(8, 8);
         Fl_Surface_Device::push_current(&probe);
-        canvas->draw();
+        moritz::layoutPatch(&p);
         Fl_Surface_Device::pop_current();
     }
     if (W <= 0 || H <= 0) {

@@ -64,7 +64,14 @@ const char* keep(const std::string& name) {
 
 }  // namespace
 
+namespace {
+unsigned gGeneration = 1;
+}
+
+unsigned settingsGeneration() { return gGeneration; }
+
 void applySettings() {
+    ++gGeneration;
     Settings& s = settings();
     s.patchSize = std::clamp(s.patchSize, 8, 32);
     s.codeSize = std::clamp(s.codeSize, 8, 32);

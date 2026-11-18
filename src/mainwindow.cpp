@@ -207,9 +207,9 @@ void schedulerTimer(void*) {
 void fitPatch(Patch* p, int& W, int& H) {
     W = 420;
     H = 300;
-    fl_font(kFont, kFontSize);
+    layoutPatch(p);                       // as the canvas will draw them
     for (auto& x : p->boxes) {
-        int bw = std::max(x->w, (int)fl_width(x->label().c_str()) + 24);
+        int bw = x->w + 8;
         W = std::max(W, x->x + bw + 40);
         H = std::max(H, x->y + x->h + 50);
     }

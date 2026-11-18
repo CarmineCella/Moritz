@@ -4,6 +4,7 @@
 
 #include <cmath>
 #include <functional>
+#include <unordered_map>
 #include <set>
 
 #include "jobs.h"
@@ -37,6 +38,11 @@ inline std::string examplesDir() { return resourceDir("examples"); }
 // Fills libraryPath(), abstractionPath() and helpPath(): the user's library
 // (~/Documents/Moritz/library) first, then the bundled library and examples.
 void setupSearchPaths();
+
+// A box's size on the canvas, from its text in the patch font (unzoomed units, measured at the zoom
+// being drawn). Works without a window: a snapshot or a new window's size measures with it too.
+void layoutBox(Box* b);
+void layoutPatch(Patch* p);
 
 // Questions and alerts that wait for the user (fl_choice, fl_alert). In batch mode (--window-png, the
 // tests) nothing waits: the text is printed, and askUser answers batchAnswer (answer=<n>, default 0).
@@ -107,7 +113,7 @@ private:
     Hit hitTest(int mx, int my) const;
     int inletAt(Box* b, int mx) const;
     void portPos(Box* b, bool out, int i, int& px, int& py) const;
-    void layoutBox(Box* b) const;
+    void layout(Box* b);           // layoutBox, through the cache
     std::string bufferOf(Box* b) const;
     void drawBox(Box* b);
     void beginEdit(Box* b, bool isNew);
@@ -115,6 +121,8 @@ private:
     std::vector<Box*> selectedBoxes() const;
     void numberDrag(int dy);
     static void editCb(Fl_Widget* w, void* data);
+    static void flashTimer(void* data);
+    void damageBox(Box* b);        // draw only that box's area again
 
     MainWindow* doc() const;   // the document (for help patches: the front one)
     // the patch's origin in unzoomed screen units: drawing goes through the
@@ -168,6 +176,15 @@ private:
     int suggX_ = 0, suggY_ = 0, suggW_ = 0;   // popup geometry (window coords)
     void drawSuggestions();
     int suggestionAt(int ex, int ey) const;
+
+    // the layout of each box, measured again only when its text, the settings or the zoom change
+    struct Layout {
+        std::string label;
+        int kind = -1, ports = -1, w = 0, h = 0;
+        double zoom = 0;
+        unsigned settings = 0;
+    };
+    std::unordered_map<const Box*, Layout> layouts_;
 };
 
 // A window showing a subpatcher, abstraction or pfft~ patch, or a help patch.
