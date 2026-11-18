@@ -33,6 +33,8 @@
 //     exit, and writes outside write_roots. allow_blocking is caps.blocking.
 //   - Per-interpreter state. Interp::state<T>() is a T owned by the interpreter (made on first use):
 //     the libraries keep their tables there, so several interpreters run at once on threads.
+//   - Memory. Interp::collect() frees the cycles a closure stored in its own scope makes; it runs by
+//     itself when the environments alive keep growing.
 //
 
 #pragma once
@@ -198,6 +200,7 @@ inline vptr v_op(op_t f, std::string name, int amin, int amax) {
 inline vptr v_opaque(std::string tag, std::shared_ptr<void> p) { 
     auto v = v_nil(); v->t = Value::OPAQUE; v->opaque_tag = std::move(tag); v->opaque = std::move(p); return v; 
 }
+inline vptr v_copy(const Value& s) { auto v = std::make_shared<Value>(s); v->lit = false; return v; }
 // A literal of the program text, as a value a variable may own: a number or a string is copied (a vector
 // literal changed in place would change the program); anything else is itself.
 inline vptr unlit(vptr v) {
@@ -231,12 +234,12 @@ struct Env {
         if (!v || v->t != Value::FN || v->closure || v->op) return v;
         eptr c = v->wclosure.lock();
         if (!c) return v;
-        auto s = std::make_shared<Value>(*v); s->closure = std::move(c); s->wclosure.reset();
+        auto s = v_copy(*v); s->closure = std::move(c); s->wclosure.reset();
         return s;
     }
     vptr held(vptr v) const {
         if (global || !v || v->t != Value::FN || v->op || v->closure.get() != this) return v;
-        auto w = std::make_shared<Value>(*v); w->wclosure = v->closure; w->closure.reset();
+        auto w = v_copy(*v); w->wclosure = v->closure; w->closure.reset();
         return w;
     }
     void bind(const std::string& k, vptr v) { vars[k] = held(std::move(v)); }
@@ -526,6 +529,8 @@ struct Interp {
     int waiting = 0;                        // > 0 inside a builtin that waits (sleep): a safe point for background code
     void idle() { if (idle_fn && !in_idle) { in_idle = true; try { idle_fn(); } catch (...) { in_idle = false; throw; } in_idle = false; } }
     std::vector<std::weak_ptr<Env>> tracked_envs;
+    size_t compact_at = 1024, gc_threshold = 4096;
+    bool gc_enabled = true;
     std::unordered_set<std::string> loaded_files;   // ran to completion; a second load is a no-op
     std::unordered_set<std::string> loading_files;  // currently running; a load from inside is a cycle and is skipped
     std::unordered_set<std::string> library_files;  // the files found on the load path (and those they load next to them)
@@ -595,11 +600,19 @@ struct Interp {
     eptr make_env(eptr parent = nullptr) {
         auto e = std::make_shared<Env>(std::move(parent));
         tracked_envs.push_back(e);
-        if (tracked_envs.size() >= 1024 && (tracked_envs.size() & 1023) == 0)
-            tracked_envs.erase(std::remove_if(tracked_envs.begin(), tracked_envs.end(),
-                [](const std::weak_ptr<Env>& w) { return w.expired(); }), tracked_envs.end());
+        if (tracked_envs.size() >= compact_at) maintain();
         return e;
     }
+    void maintain() {            // forget the environments gone; collect cycles when the live ones keep growing
+        tracked_envs.erase(std::remove_if(tracked_envs.begin(), tracked_envs.end(),
+            [](const std::weak_ptr<Env>& w) { return w.expired(); }), tracked_envs.end());
+        if (gc_enabled && tracked_envs.size() > gc_threshold) {
+            collect();
+            gc_threshold = std::max<size_t>(4096, tracked_envs.size() * 2);
+        }
+        compact_at = tracked_envs.size() + 1024;
+    }
+    size_t collect();
     [[noreturn]] void err(const std::string& m) { throw Error(current_file?*current_file:"<input>", current_line, m); }
     void yield_check() {
         if (stop_requested.load(std::memory_order_relaxed)) throw Stop_signal{};
@@ -1375,6 +1388,63 @@ inline Interp::~Interp() {
     if (global) global->vars.clear();
     flow_value.reset(); quote_op.reset();
 }
+// The cycle collector. Reference counting frees everything except a cycle: a closure stored in a structure
+// of its own scope (the object pattern: (put! self 'get (function () self))), an inner closure assigned to a
+// variable of an outer scope. Trial deletion finds them without knowing the roots: every environment and
+// every list or function reachable from an environment gets its reference count; the references among them
+// are subtracted; what is left is held from outside (a variable of the host, a C++ frame of the evaluator,
+// the interpreter's globals) and is alive, with all it reaches. The rest is garbage: its environments and
+// lists are emptied, which breaks the cycles, and reference counting frees them. Safe at any moment of an
+// evaluation, since everything the evaluator holds it holds by shared pointer.
+inline size_t Interp::collect() {
+    struct node { long refs; bool env; bool live; };
+    std::unordered_map<const void*, node> nodes;
+    std::vector<eptr> envs; envs.reserve(tracked_envs.size());
+    for (auto& w : tracked_envs) if (auto p = w.lock()) envs.push_back(std::move(p));
+    for (auto& p : envs) nodes.emplace(p.get(), node{ (long)p.use_count() - 1, true, false });
+    std::vector<const Value*> vals, todo;
+    auto container = [](const vptr& v) { return v && ((v->t == Value::LIST && !v->l.empty()) || (v->t == Value::FN && v->closure)); };
+    auto visit = [&](const vptr& v) {
+        if (!container(v)) return;
+        if (nodes.emplace(v.get(), node{ (long)v.use_count(), false, false }).second) { vals.push_back(v.get()); todo.push_back(v.get()); }
+    };
+    for (auto& p : envs) for (auto& kv : p->vars) visit(kv.second);
+    while (!todo.empty()) { const Value* v = todo.back(); todo.pop_back(); if (v->t == Value::LIST) for (auto& c : v->l) visit(c); }
+    auto internal = [&](const void* k) { auto it = nodes.find(k); if (it != nodes.end()) it->second.refs--; };
+    for (auto& p : envs) { if (p->parent) internal(p->parent.get()); for (auto& kv : p->vars) if (container(kv.second)) internal(kv.second.get()); }
+    for (const Value* v : vals) {
+        if (v->t == Value::LIST) { for (auto& c : v->l) if (container(c)) internal(c.get()); }
+        else if (v->closure) internal(v->closure.get());
+    }
+    // what is held from outside is alive, and so is everything it reaches
+    std::vector<const void*> live;
+    for (auto& kv : nodes) if (kv.second.refs > 0) { kv.second.live = true; live.push_back(kv.first); }
+    auto reach = [&](const void* k) { auto it = nodes.find(k); if (it != nodes.end() && !it->second.live) { it->second.live = true; live.push_back(k); } };
+    while (!live.empty()) {
+        const void* k = live.back(); live.pop_back();
+        if (nodes[k].env) {
+            const Env* p = static_cast<const Env*>(k);
+            if (p->parent) reach(p->parent.get());
+            for (auto& kv : p->vars) if (container(kv.second)) reach(kv.second.get());
+        } else {
+            const Value* v = static_cast<const Value*>(k);
+            if (v->t == Value::LIST) { for (auto& c : v->l) if (container(c)) reach(c.get()); }
+            else if (v->closure) reach(v->closure.get());
+        }
+    }
+    // the rest only holds itself: empty it (what it held is freed when the graveyard goes)
+    std::vector<std::unordered_map<std::string, vptr>> graveyard; std::vector<eptr> parents; std::vector<vlist> lists; std::vector<eptr> closures;
+    size_t freed = 0;
+    for (auto& p : envs) if (!nodes[p.get()].live) { graveyard.emplace_back(); graveyard.back().swap(p->vars); parents.push_back(std::move(p->parent)); ++freed; }
+    for (const Value* v : vals) if (!nodes[v].live) {
+        Value* m = const_cast<Value*>(v);
+        if (m->t == Value::LIST) { lists.emplace_back(); lists.back().swap(m->l); } else closures.push_back(std::move(m->closure));
+    }
+    nodes.clear();
+    graveyard.clear(); parents.clear(); lists.clear(); closures.clear();
+    envs.clear();
+    return freed;
+}
 // load: search order for a relative path:
 //   1. the directory of the file doing the loading
 //   2. the current directory
@@ -1424,7 +1494,7 @@ inline vptr Interp::run(const std::string& src, const std::string& filename) {
     current_file = file;
     if (!main_file && !filename.empty() && filename[0] != '<' && loading_files.empty()) main_file = file;
     vptr r = eval(prog, global);
-    if (stack_depth == 0) { flow = FLOW_NONE; flow_value.reset(); }
+    if (stack_depth == 0) { flow = FLOW_NONE; flow_value.reset(); if (tracked_envs.size() >= compact_at / 2) maintain(); }
     return r;
 }
 inline Interp*& repl_interp() { static thread_local Interp* p = nullptr; return p; }

@@ -75,4 +75,27 @@ check (== (length holder) 3) "the same list twice is allowed"
 
 check (== (length (live-objects)) 2) "live-objects gives values and environments"
 
+; --- cycles: a closure stored in a structure of its own scope is collected ----------------------------------
+; the object pattern: the scope holds self, self holds a function, the function holds the scope
+function make-obj (n) {
+    var self (list (list 'n n))
+    put! self 'get (function () self)
+    return self
+}
+var o (make-obj 3)
+check (== (get (apply (get o 'get) (list)) 'n) 3) "an object made of a closure works"
+var e2 (envs)
+for (var k 0) (< k 40000) (var k (+ k 1)) (make-obj k)
+check (< (- (envs) e2) 25000) "objects that hold themselves are collected (the collector runs by itself: 40000 without it)"
+; an inner closure assigned to a variable of an outer scope
+function outer () {
+    var keep nil
+    each (list 1) (function (x) (set keep (function () keep)))
+    return 0
+}
+var e3 (envs)
+for (var k 0) (< k 40000) (var k (+ k 1)) (outer)
+check (< (- (envs) e3) 40000) "an inner closure kept in an outer scope is collected (80000 without the collector)"
+check (== (get (apply (get o 'get) (list)) 'n) 3) "...and what is still in use is not"
+
 report "test_memory"
