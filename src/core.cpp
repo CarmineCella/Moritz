@@ -1172,9 +1172,10 @@ void Patch::runDue(double now) {
         Timer tm = std::move(timers_.back());
         timers_.pop_back();
         // the timer's own time: what it schedules next counts from there, and
-        // the messages it sends are stamped with it (a timer very late, after
-        // the GUI was stuck, catches up from a quarter second ago, not in a burst)
-        dueNow_ = offline ? tm.t : std::max(tm.t, now - 0.25);
+        // the messages it sends are stamped with it. A timer more than a quarter
+        // second late (the GUI was stuck) fires once, now, and what it schedules
+        // counts from now: no burst to catch up. Offline the time is always exact.
+        dueNow_ = offline || tm.t >= now - 0.25 ? tm.t : now;
         tm.fn();
     }
     dueNow_ = prevNow;

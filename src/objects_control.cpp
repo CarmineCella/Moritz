@@ -104,7 +104,8 @@ private:
         outletBang(0);
         if (!running_ || g != gen_) return;     // stopped or restarted downstream
         next_ += interval_ / 1000.0;
-        if (next_ < patch->time() - 0.25) next_ = patch->time();   // fell far behind
+        double now = patch->logicalTime();      // a timer very late runs at the clock's time (Patch::runDue)
+        if (next_ < now - 0.25) next_ = now + interval_ / 1000.0;   // fell far behind: on from now, no burst
         patch->scheduleAt(this, next_, [this] { tick(); });
     }
     float interval_;

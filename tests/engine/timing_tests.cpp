@@ -123,3 +123,35 @@ TEST(a_message_after_audio_restarts_lands_at_once) {
         if (auto at = callback(pause); !at.empty()) first = k * P + at[0];
     CHECK(first == 0);                             // at the start of the first callback, not a second later
 }
+
+// The GUI was stuck for a second: a timer that late fires once and goes on from now. It caught up from a
+// quarter second ago instead: a metro 10 or a line with a 10 ms grain fired some 25 times at once, all
+// stamped on the same sample. Rendered offline, the timers stay exact (metro_clicks_land_on_their_sample_offline).
+TEST(a_timer_very_late_fires_once) {
+    for (const char* text : {"(patch (obj m metro 10) (obj p print t) (connect m 0 p 0))",
+                             "(patch (obj m line 0 10) (obj p print t) (connect m 0 p 0))"}) {
+        double wall = 0;
+        Rig r("");
+        r.p.offline = false;
+        r.p.clock = [&wall] { return wall; };
+        std::string err;
+        r.p.load(text, err);
+        if (std::string(text).find("metro") != std::string::npos) r.box("m")->message(0, {Atom("bang")});
+        else r.box("m")->message(0, {Atom(1.f), Atom(5000.f)});
+        for (int k = 1; k <= 100; ++k) {
+            wall = k * 0.001;
+            r.p.runDue(wall);
+        }
+        size_t before = r.printed.size();
+        CHECK(before >= 10 && before <= 12);
+        wall += 1.0;                                // the GUI was stuck
+        r.p.runDue(wall);
+        CHECK(r.printed.size() == before + 1);
+        wall += 0.005;
+        r.p.runDue(wall);
+        CHECK(r.printed.size() == before + 1);
+        wall += 0.006;                              // and on, from then
+        r.p.runDue(wall);
+        CHECK(r.printed.size() == before + 2);
+    }
+}
