@@ -197,6 +197,17 @@ check (near? (acf-f0 (slice (pvoc-pitch tone 1.5) 2000 2048) sr) 333.3 3) "pvoc-
 check (near? (acf-f0 (slice (pvoc-pitch tone 0.5) 2000 2048) sr) 111 2) "pvoc-pitch: an octave down"
 check (near? (length (pvoc tone (list (list "stretch" (list 1 3))))) (* 1.5 (length tone)) 400) "pvoc: a ramped stretch 1->3 (the hop ramps linearly, as in sparkle: 1.5x overall)"
 check (equal? (pvoc (vec) (list)) (vec)) "pvoc: empty input"
+; the level of a pitch shift: each partial's lobe moved whole (resampling it bin by bin made +1.7 dB at 2, -4.2 at 0.5)
+var lt (sine sr 440 2)
+function db-ratio (a b) (* 20 (log10 (/ (rms (slice a 4000 8000)) (rms (slice b 4000 8000)))))
+check (< (abs (db-ratio (pvoc-pitch lt 2) lt)) 0.5) "pvoc-pitch: an octave up keeps the level"
+check (< (abs (db-ratio (pvoc-pitch lt 0.5) lt)) 0.5) "pvoc-pitch: an octave down keeps the level"
+check (< (abs (db-ratio (pvoc-pitch lt 1.37) lt)) 0.5) "pvoc-pitch: any ratio keeps the level"
+; the signal is padded with a window on both sides: an attack at the very start comes out whole, the end too
+var at0 (pvoc lt (list))
+check (> (/ (rms (take at0 400)) (rms (take lt 400))) 0.9) "pvoc: an attack at the start is kept (padded)"
+check (> (/ (rms (slice at0 (- (length lt) 400) 400)) (rms (drop lt (- (length lt) 400)))) 0.9) "pvoc: the end is kept (padded)"
+check (equal? (pvoc lt (list (list 'pitch 1.5))) (pvoc lt (list (list "pitch" 1.5)))) "pvoc: options with symbol keys"
 check (contains? (error-of (function () (pvoc tone (list (list "nope" 1))))) "unknown option") "pvoc: unknown option"
 check (contains? (error-of (function () (pvoc tone (list (list "cross" (list 2 0.5 tone)))))) "needs an envelope") "pvoc: cross mode 2 needs an envelope"
 var voiced (bandpass (osc sr (+ (zeros 8000) 200) (gen 512 (ones 12))) sr 900 3)
@@ -204,7 +215,8 @@ function formant-bin (v) (argmax (take (spectral-envelope (magnitudes (fft (* (s
 function bin-mag (v k) (getidx (magnitude-spectrum (* (slice v 2000 2048) (hann 2048))) k)
 var shifted (pvoc-pitch-formant voiced 1.5 100)
 check (> (bin-mag shifted 77) (* 10 (+ 1e-9 (bin-mag shifted 51)))) "pvoc-pitch-formant: harmonics moved to 300 Hz (bin 77), none left at 200 (bin 51)"
-check (< (abs (- (formant-bin shifted) (formant-bin voiced))) 15) "pvoc-pitch-formant: formant stayed"
+function centroid-2k (v) (spectral-centroid (magnitude-spectrum (* (slice v 2000 2048) (hann 2048))) (spectrum-freqs 2048 sr))
+check (< (abs (- (centroid-2k shifted) (centroid-2k voiced))) (* 0.3 (abs (- (centroid-2k (pvoc-pitch voiced 1.5)) (centroid-2k voiced))))) "pvoc-pitch-formant: the spectral balance stays where it was (the formants), not with the pitch"
 check (> (abs (- (formant-bin (pvoc-pitch voiced 1.5)) (formant-bin voiced))) 15) "pvoc-pitch: formant moves without preservation"
 check (< (formant-bin (pvoc-formants voiced 0.5 100)) (* 0.7 (formant-bin voiced))) "pvoc-formants: formants move down, pitch kept"
 check (near? (acf-f0 (slice (pvoc-formants voiced 0.5 100) 2000 2048) sr) 200 3) "pvoc-formants: pitch kept"
@@ -239,6 +251,7 @@ check (> (rms (head (nebula sr 0.3 (list (list "proto1" snd) (list "seed" 2) (li
 check (== (length (head (nebula sr 0.3 (list (list "density" (list 5 50)) (list "seed" 2))))) (length (head (nebula sr 0.3 (list (list "density" (list 5 50)) (list "seed" 2)))))) "nebula: a ramped density"
 check (contains? (error-of (function () (nebula sr 1 (list (list "proto1" "saw"))))) "waveform") "nebula: unknown waveform"
 check (contains? (error-of (function () (nebula sr 1 (list (list "nope" 1))))) "unknown option") "nebula: unknown option"
+check (equal? (nebula sr 0.2 (list (list 'freq 300) (list 'seed 3))) (nebula sr 0.2 (list (list "freq" 300) (list "seed" 3)))) "nebula: option keys as symbols"
 
 ; --- deconv, svf, lores ---
 var dry (* (noise 2000) (hann 2000))

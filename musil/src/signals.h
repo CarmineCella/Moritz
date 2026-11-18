@@ -298,7 +298,7 @@ inline vptr sig_pvoc(vlist& a, Interp& i) {
     const varr& x = i.num(a[0]); vlist& opts = i.list(a[1]);
     pvoc_opts o;
     for (auto& e : opts) {
-        vlist& kv = i.list(e); if (kv.size() != 2 || kv[0]->t != Value::STR) i.bad("an option is (list \"key\" value)");
+        vlist& kv = i.list(e); if (kv.size() != 2 || (kv[0]->t != Value::STR && kv[0]->t != Value::SYM)) i.bad("an option is (list key value), the key a string or a symbol");
         const std::string& k = kv[0]->s; const vptr& v = kv[1];
         if (k == "stretch") pvoc_ramp(i, v, o.stretch0, o.stretch1);
         else if (k == "pitch") pvoc_ramp(i, v, o.pitch0, o.pitch1);
@@ -326,8 +326,12 @@ inline vptr sig_pvoc(vlist& a, Interp& i) {
     size_t Wn = (size_t)o.window, I = std::max<size_t>(1, Wn / (size_t)o.overlap);
     double D0 = (double)I / o.stretch0, D1 = (double)I / o.stretch1;
     size_t frames = (size_t)std::ceil((double)tot / ((D0 + D1) / 2));
+    // the frames whose windows reach into the output from before its start or after its end: computed too (the
+    // signal padded with a window of zeros on both sides), so the first window does not fade the attack in and the
+    // last does not fade the end out; the output is then trimmed to the frames proper
+    size_t edge = (Wn + I - 1) / I - 1;
     double peak = 0; for (double v : x) peak = std::max(peak, std::fabs(v));
-    std::vector<double> out(I * frames + Wn, 0.0), now(Wn), prev(Wn), onow(Wn), oprev(Wn), frame(Wn);
+    std::vector<double> out(I * (frames + 2 * edge) + Wn, 0.0), now(Wn), prev(Wn), onow(Wn), oprev(Wn), frame(Wn);
     auto fill = [&](const varr& sig, long p, bool wrap, std::vector<double>& w) {
         long n = (long)sig.size();
         for (size_t k = 0; k < Wn; k++) {
@@ -336,24 +340,39 @@ inline vptr sig_pvoc(vlist& a, Interp& i) {
             else w[k] = idx >= 0 && idx < n ? sig[(size_t)idx] : 0.0;
         }
     };
-    double read = 0;
-    for (size_t f = 0; f < frames; f++) {
-        double t = frames > 1 ? (double)f / (frames - 1) : 0;
+    // one frame at the read position, synthesis hop Isyn, the parameters at t (0..1 over the frames), into frame
+    auto run = [&](dsp::Vocoder& v, double read, double t, double Isyn) {
         double D = D0 + (D1 - D0) * t, P = o.pitch0 + (o.pitch1 - o.pitch0) * t, K = o.form0 + (o.form1 - o.form0) * t;
         double T = o.thr0 + (o.thr1 - o.thr0) * t, A = o.xa0 + (o.xa1 - o.xa0) * t;
         long p = (long)std::floor(read), Dn = std::max(1L, std::lround(D));
         fill(x, p, false, now); fill(x, p - Dn, false, prev);
         if (o.xmode) { fill(*o.other, p, true, onow); fill(*o.other, p - Dn, true, oprev); }
-        voc.process(now.data(), prev.data(), o.xmode ? onow.data() : (const double*)nullptr, o.xmode ? oprev.data() : (const double*)nullptr,
-                    (double)Dn, (double)I, P, K, T * peak, A, frame.data());
-        for (size_t k = 0; k < Wn; k++) out[f * I + k] += frame[k];
-        read += D;
+        v.process(now.data(), prev.data(), o.xmode ? onow.data() : (const double*)nullptr, o.xmode ? oprev.data() : (const double*)nullptr,
+                  (double)Dn, Isyn, P, K, T * peak, A, frame.data());
+        return D;
+    };
+    double read = 0;
+    for (size_t f = 0; f < frames + edge; f++) {          // from the start on, past the end by the edge frames
+        double t = frames > 1 ? std::min(1.0, (double)f / (frames - 1)) : 0;
+        read += run(voc, read, t, (double)I);
+        for (size_t k = 0; k < Wn; k++) out[(edge + f) * I + k] += frame[k];
     }
-    out.resize(I * frames);
-    varr y(out.data(), out.size());
+    if (edge > 0) {
+        // before the start: a second vocoder walks back from the first frame (synthesis hop -I), so its phases are
+        // the main one's continued back in time and the two overlap-add coherently. Same settings, same first frame
+        // (its output is the main vocoder's: dropped); a negative hop negates the frame's scale, undone here
+        dsp::Vocoder back(o.window, o.pad);
+        back.envelope = voc.envelope; back.crossMode = voc.crossMode; back.phaseMode = voc.phaseMode;
+        if (back.phaseMode == 2) back.seed((uint32_t)i.rng());
+        run(back, 0, 0, (double)I);
+        for (size_t k = 1; k <= edge; k++) {
+            run(back, -(double)k * D0, 0, -(double)I);
+            for (size_t j = 0; j < Wn; j++) out[(edge - k) * I + j] -= frame[j];
+        }
+    }
+    varr y(out.data() + edge * I, I * frames);
     return v_arr(std::move(y));
 }
-
 // (deconv y h [threshold]) => x such that (conv x h) ~ y, as long as y: the spectrum of y divided by that
 //   of h, regularised (Tikhonov): Y conj(H) / (|H|^2 + threshold^2 max|H|^2), threshold 0.001 by default, so
 //   where |H| is far above threshold times its peak it is Y / H, at that level half of it, and below it the
@@ -412,7 +431,7 @@ inline vptr sig_nebula(vlist& a, Interp& i) {
     std::string window = "hann";
     bool seeded = false;
     for (auto& e : opts) {
-        vlist& kv = i.list(e); if (kv.size() != 2 || kv[0]->t != Value::STR) i.bad("an option is (list \"key\" value)");
+        vlist& kv = i.list(e); if (kv.size() != 2 || (kv[0]->t != Value::STR && kv[0]->t != Value::SYM)) i.bad("an option is (list key value), the key a string or a symbol");
         const std::string& k = kv[0]->s; const vptr& v = kv[1];
         auto ramp = [&](double& to) { double x0, x1; pvoc_ramp(i, v, x0, x1); to = x0; ramps.push_back({ x0, x1, &to }); };
         if (k == "proto1" || k == "proto2") {

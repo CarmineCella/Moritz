@@ -184,7 +184,9 @@ function fftshift (v) {
 }
 ; (pvoc x opts)            the phase vocoder (signals.h): analysis, phase-locked resynthesis and
 ;                          every transformation in one pass, as sparkle did. opts is a list of
-;                          (list key value); a value given as (list start end) ramps over the file.
+;                          (list key value), the key a string or a symbol; a value given as (list start end)
+;                          ramps over the file. The sound is padded with a window of zeros at both ends, so an
+;                          attack at its very start and its end come out whole (not faded by the first and last window).
 ;                            "stretch"   time-stretch ratio (2 = twice as long)              default 1
 ;                            "pitch"     pitch-shift ratio (2 = an octave up)                  1
 ;                            "formants"  formant-move ratio, needs "envelope"                  1

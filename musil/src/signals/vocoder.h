@@ -9,7 +9,7 @@
 // analysis stays right. The synthesis phases accumulate from frame to frame by the synthesis hop I,
 // and are locked around the spectral peaks (Laroche-Dolson): every bin keeps its analysed offset
 // from the peak of its region. Then, as in sparkle:
-//   - pitch shift by P, by resampling the spectrum;
+//   - pitch shift by P, each peak's region moved as a whole to the peak's new place (its level kept);
 //   - formant (spectral envelope) preservation, or a move of the formants by F: the envelope is the
 //     cepstral smoothing of the log spectrum's peak-to-peak interpolation (a one-pass stand-in for
 //     the iterated "true envelope"), and each bin is scaled by the envelope where it came from;
@@ -52,7 +52,8 @@ public:
 
     // now, prev: `window` samples at the read position and D samples before it. otherNow,
     // otherPrev: the same for the second sound (cross-synthesis; null when crossMode is 0).
-    // I: synthesis hop; P: pitch ratio; F: formant ratio; threshold: bins below threshold times a
+    // I: synthesis hop (negative: the phases walk back from the last frame, for frames before a start; the
+    // frame comes out negated); P: pitch ratio; F: formant ratio; threshold: bins below threshold times a
     // full-scale sine are dropped (0: none); A: cross amount, 0..1. out: `window` samples to
     // overlap-add at the synthesis position.
     template <class T>
@@ -126,17 +127,25 @@ public:
                 mags_[k] *= std::exp(e - env1_[k]);
             }
         }
-        // pitch shift: the spectrum resampled by P
+        // pitch shift: every peak's region moved as a whole (Laroche-Dolson), its peak from bin k to the bin
+        // nearest k P; the shape of each partial's lobe is kept, so its level is (resampling the spectrum bin by
+        // bin would widen or thin the lobes: +1.7 dB an octave up, -4.2 dB an octave down). The phases already
+        // advance at P times the analysed frequencies; regions that land on the same bins add as complex values
         if (P != 1) {
+            std::fill(newm_.begin(), newm_.end(), 0.0);
+            std::fill(newp_.begin(), newp_.end(), 0.0);
             for (size_t k = 0; k < N2; ++k) {
-                double src = (double)k / P;
-                bool in = src < (double)N2;
-                size_t i = in ? (size_t)src : 0;
-                newm_[k] = in ? mags_[i] : 0;
-                newp_[k] = in ? psi_[i] : 0;
+                long pk = (long)owner_[k];
+                long j = (long)k + std::lround((double)pk * P) - pk;
+                if (j < 0 || j >= (long)N2 || mags_[k] == 0) continue;
+                newm_[(size_t)j] += mags_[k] * std::cos(psi_[k]);
+                newp_[(size_t)j] += mags_[k] * std::sin(psi_[k]);
             }
-            mags_.swap(newm_);
-            psi_.swap(newp_);
+            for (size_t k = 0; k < N2; ++k) {
+                double a = newm_[k], b = newp_[k];
+                mags_[k] = std::sqrt(a * a + b * b);
+                psi_[k] = mags_[k] > 0 ? std::atan2(b, a) : 0.0;
+            }
         }
         if (phaseMode == 1) std::fill(psi_.begin(), psi_.end(), 0.0);
         else if (phaseMode == 2) for (auto& p : psi_) p = kTwoPi * (rng_() / 4294967296.0);
