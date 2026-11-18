@@ -355,31 +355,7 @@ function acf-f0 (x sr) {
 }
 
 ; --- filters --------------------------------------------------------------------
-; (biquad type sr f0 q gain-db) => (list b a) of an RBJ biquad; type is one of
-;   "lowpass" "highpass" "bandpass" "notch" "peak" "lowshelf" "highshelf"
-function biquad (type sr f0 q gain-db) {
-    if (or (> (length f0) 1) (> (length q) 1) (> (length gain-db) 1)) { error "biquad: a moving cutoff, q or gain is a streaming feature (a synth); offline they are single numbers" }
-    var w0 (/ (* tau f0) sr)
-    var c (cos w0)
-    var s (sin w0)
-    var alpha (/ s (* 2 q))
-    var A (pow 10 (/ gain-db 40))
-    var sA (sqrt A)
-    if (equal? type "lowpass")  { return (list (vec (/ (- 1 c) 2) (- 1 c) (/ (- 1 c) 2)) (vec (+ 1 alpha) (* -2 c) (- 1 alpha))) }
-    if (equal? type "highpass") { return (list (vec (/ (+ 1 c) 2) (- 0 (+ 1 c)) (/ (+ 1 c) 2)) (vec (+ 1 alpha) (* -2 c) (- 1 alpha))) }
-    if (equal? type "bandpass") { return (list (vec alpha 0 (- 0 alpha)) (vec (+ 1 alpha) (* -2 c) (- 1 alpha))) }
-    if (equal? type "notch")    { return (list (vec 1 (* -2 c) 1) (vec (+ 1 alpha) (* -2 c) (- 1 alpha))) }
-    if (equal? type "peak")     { return (list (vec (+ 1 (* alpha A)) (* -2 c) (- 1 (* alpha A))) (vec (+ 1 (/ alpha A)) (* -2 c) (- 1 (/ alpha A)))) }
-    if (equal? type "lowshelf") {
-        return (list (vec (* A (+ (- (+ A 1) (* (- A 1) c)) (* 2 sA alpha))) (* 2 A (- (- A 1) (* (+ A 1) c))) (* A (- (- (+ A 1) (* (- A 1) c)) (* 2 sA alpha))))
-                     (vec (+ (+ A 1) (* (- A 1) c) (* 2 sA alpha)) (* -2 (+ (- A 1) (* (+ A 1) c))) (- (+ (+ A 1) (* (- A 1) c)) (* 2 sA alpha))))
-    }
-    if (equal? type "highshelf") {
-        return (list (vec (* A (+ (+ (+ A 1) (* (- A 1) c)) (* 2 sA alpha))) (* -2 A (+ (- A 1) (* (+ A 1) c))) (* A (- (+ (+ A 1) (* (- A 1) c)) (* 2 sA alpha))))
-                     (vec (+ (- (+ A 1) (* (- A 1) c)) (* 2 sA alpha)) (* 2 (- (- A 1) (* (+ A 1) c))) (- (- (+ A 1) (* (- A 1) c)) (* 2 sA alpha))))
-    }
-    error "biquad: unknown type " type
-}
+; (biquad type sr f0 q gain-db) is C++ (signals.h, signals/biquad.h: the RBJ coefficients of Moritz's biquads too)
 ; (apply-filter x coeffs)  run x through (list b a) as returned by biquad
 function apply-filter (x coeffs) (iir x (head coeffs) (last coeffs))
 ; (lowpass x sr f0 q) (highpass x sr f0 q) (bandpass x sr f0 q) (notch x sr f0 q) one biquad, applied

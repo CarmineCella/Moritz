@@ -160,6 +160,36 @@ check (near? (sum (head lp)) (sum (last lp)) 1e-12) "biquad lowpass: unity gain 
 var hp (biquad "highpass" sr 1000 0.707 0)
 check (near? (sum (head hp)) 0 1e-12) "biquad highpass: zero gain at DC"
 check (contains? (error-of (function () (biquad "weird" sr 1 1 0))) "unknown type") "biquad: unknown type"
+; biquad is C++ now (signals/biquad.h, shared with Moritz and mir.h): the cookbook formulas as Musil wrote them
+function biquad-mu (type sr f0 q gain-db) {
+    if (or (> (length f0) 1) (> (length q) 1) (> (length gain-db) 1)) { error "biquad: a moving cutoff, q or gain is a streaming feature (a synth); offline they are single numbers" }
+    var w0 (/ (* tau f0) sr)
+    var c (cos w0)
+    var s (sin w0)
+    var alpha (/ s (* 2 q))
+    var A (pow 10 (/ gain-db 40))
+    var sA (sqrt A)
+    if (equal? type "lowpass")  { return (list (vec (/ (- 1 c) 2) (- 1 c) (/ (- 1 c) 2)) (vec (+ 1 alpha) (* -2 c) (- 1 alpha))) }
+    if (equal? type "highpass") { return (list (vec (/ (+ 1 c) 2) (- 0 (+ 1 c)) (/ (+ 1 c) 2)) (vec (+ 1 alpha) (* -2 c) (- 1 alpha))) }
+    if (equal? type "bandpass") { return (list (vec alpha 0 (- 0 alpha)) (vec (+ 1 alpha) (* -2 c) (- 1 alpha))) }
+    if (equal? type "notch")    { return (list (vec 1 (* -2 c) 1) (vec (+ 1 alpha) (* -2 c) (- 1 alpha))) }
+    if (equal? type "peak")     { return (list (vec (+ 1 (* alpha A)) (* -2 c) (- 1 (* alpha A))) (vec (+ 1 (/ alpha A)) (* -2 c) (- 1 (/ alpha A)))) }
+    if (equal? type "lowshelf") {
+        return (list (vec (* A (+ (- (+ A 1) (* (- A 1) c)) (* 2 sA alpha))) (* 2 A (- (- A 1) (* (+ A 1) c))) (* A (- (- (+ A 1) (* (- A 1) c)) (* 2 sA alpha))))
+                     (vec (+ (+ A 1) (* (- A 1) c) (* 2 sA alpha)) (* -2 (+ (- A 1) (* (+ A 1) c))) (- (+ (+ A 1) (* (- A 1) c)) (* 2 sA alpha))))
+    }
+    if (equal? type "highshelf") {
+        return (list (vec (* A (+ (+ (+ A 1) (* (- A 1) c)) (* 2 sA alpha))) (* -2 A (+ (- A 1) (* (+ A 1) c))) (* A (- (+ (+ A 1) (* (- A 1) c)) (* 2 sA alpha))))
+                     (vec (+ (- (+ A 1) (* (- A 1) c)) (* 2 sA alpha)) (* 2 (- (- A 1) (* (+ A 1) c))) (- (- (+ A 1) (* (- A 1) c)) (* 2 sA alpha))))
+    }
+    error "biquad: unknown type " type
+}
+each (list "lowpass" "highpass" "bandpass" "notch" "peak" "lowshelf" "highshelf") (function (t) {
+    var c (biquad t 44100 1234 0.9 -4.5)
+    var m (biquad-mu t 44100 1234 0.9 -4.5)
+    check (and (near? (head c) (head m) 1e-12) (near? (last c) (last m) 1e-12)) (concat "biquad " t ": the cookbook's coefficients")
+})
+check (contains? (error-of (function () (biquad "lowpass" sr (vec 100 200) 1 0))) "streaming") "biquad: a moving cutoff is for a synth"
 check (equal? (iir (vec 1 0 0 0) (vec 1) (vec 1 -0.5)) (vec 1 0.5 0.25 0.125)) "iir: one-pole decay"
 check (equal? (iir (vec 1 0 0) (vec 2 2) (vec 2)) (vec 1 1 0)) "iir: a0 scaling"
 check (contains? (error-of (function () (iir (vec 1) (vec 1) (vec 0)))) "nonzero") "iir: a0 zero"

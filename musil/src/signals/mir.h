@@ -18,6 +18,7 @@
 #include <string>
 #include <vector>
 
+#include "biquad.h"
 #include "fft.h"
 
 namespace musil {
@@ -534,17 +535,12 @@ inline std::vector<int> noveltyPeaks(const Vec& nov, double threshold, int width
 }
 
 // ------------------------------------------------------------------ curves
-// RBJ biquad, for the loudness weighting
+// RBJ biquad (signals/biquad.h), for the loudness weighting
 struct Biquad2 {
     double b0 = 1, b1 = 0, b2 = 0, a1 = 0, a2 = 0, x1 = 0, x2 = 0, y1 = 0, y2 = 0;
     void design(bool high, double sr, double f0, double q) {
-        double w0 = kTwoPi * f0 / sr, cs = std::cos(w0), alpha = std::sin(w0) / (2 * q), a0 = 1 + alpha;
-        if (high) { b0 = (1 + cs) / 2; b1 = -(1 + cs); }
-        else { b0 = (1 - cs) / 2; b1 = 1 - cs; }
-        b2 = b0;
-        b0 /= a0; b1 /= a0; b2 /= a0;
-        a1 = -2 * cs / a0;
-        a2 = (1 - alpha) / a0;
+        auto c = dsp::rbj(high ? dsp::BiquadType::Highpass : dsp::BiquadType::Lowpass, sr, f0, q).normalized();
+        b0 = c.b0; b1 = c.b1; b2 = c.b2; a1 = c.a1; a2 = c.a2;
     }
     double run(double x) {
         double y = b0 * x + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2;

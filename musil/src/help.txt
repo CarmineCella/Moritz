@@ -848,6 +848,11 @@
   12 times so that it rides on the harmonic peaks instead of averaging peaks and valleys (signals/envelope.h, the
   estimator of Moritz's specenv~). The order sets the resolution: about sr / (2 f0) of the sound, f0 its lowest
   fundamental (150 for a voice at 44.1 kHz), follows the formants without rippling at the harmonics; lower is smoother
+#biquad
+  (biquad type sr f0 q gain-db)
+  => (list b a) of an RBJ biquad (the cookbook's coefficients, a[0] not 1: iir takes
+  them as they are); type is one of "lowpass" "highpass" "bandpass" "notch" "peak" "lowshelf" "highshelf"; gain-db
+  is for peak and the shelves (signals/biquad.h, the coefficients of Moritz's biquad objects and of mir.h too)
 #svf
   (svf x sr freq q type)
   => x through a state-variable filter (signals/filters.h, as Moritz's svf~);
@@ -1153,10 +1158,6 @@
 #acf-f0
   (acf-f0 x sr)
   fundamental by autocorrelation; 0 when no clear peak
-#biquad
-  (biquad type sr f0 q gain-db)
-  => (list b a) of an RBJ biquad; type is one of
-  "lowpass" "highpass" "bandpass" "notch" "peak" "lowshelf" "highshelf"
 #apply-filter
   (apply-filter x coeffs)
   run x through (list b a) as returned by biquad

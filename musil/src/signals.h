@@ -24,6 +24,7 @@
 #include "signals/hrtf.h"
 #include "signals/convolution.h"
 #include "signals/filters.h"
+#include "signals/biquad.h"
 #include "signals/envelope.h"
 #include "signals/denormal.h"
 #include <map>
@@ -404,6 +405,18 @@ inline vptr sig_spectral_envelope(vlist& a, Interp& i) {
     thread_local dsp::TrueEnvelope<double> te; te.init((int)n);
     te.full(mags.data(), (int)order, 12, env.data());
     return v_arr(varr(env.data(), n));
+}
+
+// (biquad type sr f0 q gain-db) => (list b a) of an RBJ biquad (the cookbook's coefficients, a[0] not 1: iir takes
+//   them as they are); type is one of "lowpass" "highpass" "bandpass" "notch" "peak" "lowshelf" "highshelf"; gain-db
+//   is for peak and the shelves (signals/biquad.h, the coefficients of Moritz's biquad objects and of mir.h too)
+inline vptr sig_biquad(vlist& a, Interp& i) {
+    for (size_t k = 2; k < 5; ++k) if (a[k]->t == Value::NUM && a[k]->num.size() > 1) i.bad("biquad: a moving cutoff, q or gain is a streaming feature (a synth); offline they are single numbers");
+    dsp::BiquadType t; std::string name = i.str(a[0]);
+    if (!dsp::biquad_type(name, t)) i.bad("biquad: unknown type " + name);
+    auto c = dsp::rbj(t, i.scalar(a[1]), i.scalar(a[2]), i.scalar(a[3]), i.scalar(a[4]));
+    varr b(3), av(3); b[0] = c.b0; b[1] = c.b1; b[2] = c.b2; av[0] = c.a0; av[1] = c.a1; av[2] = c.a2;
+    return v_list({ v_arr(std::move(b)), v_arr(std::move(av)) });
 }
 
 // (svf x sr freq q type) => x through a state-variable filter (signals/filters.h, as Moritz's svf~);
@@ -1007,7 +1020,7 @@ inline void add_signals(Interp& i) {
     i.def("interleave", sig_interleave, 1, 1); i.def("deinterleave", sig_deinterleave, 2, 2);
     i.def("local-maxima", sig_local_maxima, 1, 1); i.def("gather", sig_gather, 2, 2);
     i.def("add-at!", sig_add_at_inplace, 3, 3); i.def("comb", sig_comb, 3, 3); i.def("allpass", sig_allpass, 3, 3);
-    i.def("pvoc", sig_pvoc, 2, 2); i.def("nebula", sig_nebula, 3, 3); i.def("deconv", sig_deconv, 2, 3); i.def("svf", sig_svf, 5, 5); i.def("spectral-envelope", sig_spectral_envelope, 2, 2);
+    i.def("pvoc", sig_pvoc, 2, 2); i.def("nebula", sig_nebula, 3, 3); i.def("deconv", sig_deconv, 2, 3); i.def("svf", sig_svf, 5, 5); i.def("biquad", sig_biquad, 5, 5); i.def("spectral-envelope", sig_spectral_envelope, 2, 2);
     i.def("adsr", sig_adsr, 6, 6); i.def("lag", sig_lag, 3, 3); i.def("hpss", sig_hpss, 4, 4);
     i.def("chromagram", sig_chromagram, 4, 4); i.def("self-similarity", sig_self_similarity, 1, 1); i.def("foote-novelty", sig_foote_novelty, 2, 2);
     i.def("tempogram", sig_tempogram, 3, 4); i.def("beat-track", sig_beat_track, 4, 4);
