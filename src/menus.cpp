@@ -350,6 +350,37 @@ void App::refreshMenus() {
     }
 }
 
+namespace {
+void refreshLater(void*) { App::get().refreshMenus(); }
+
+int dispatch(int e, Fl_Window* w) {
+    // a key: the states as they are now, before the menus look for its shortcut
+    if (e == FL_KEYBOARD || e == FL_SHORTCUT) App::get().refreshMenus();
+    int r = Fl::handle_(e, w);
+    if (e == FL_FOCUS || e == FL_SHOW || e == FL_PUSH) {
+        App::get().refreshMenus();
+        // and once the system has finished bringing the window to the front (on macOS the window
+        // becomes the first one after it has the focus)
+        Fl::remove_timeout(refreshLater);
+        Fl::add_timeout(0.0, refreshLater);
+    }
+    return r;
+}
+}  // namespace
+
+void App::followFrontWindow() { Fl::event_dispatch(dispatch); }
+
+bool App::menuItemActive(const std::string& id) {
+    auto& t = table();
+    for (size_t k = 0; k < t.size(); ++k)
+        if (id == t[k].id)
+            for (auto& s : menus_) {
+                int i = s.index[k];
+                if (i >= 0 && i < s.bar->size()) return !(s.bar->menu()[i].flags & FL_MENU_INACTIVE);
+            }
+    return false;
+}
+
 void App::rebuildRecentMenus() {
     auto& paths = recentPaths();
     paths.clear();

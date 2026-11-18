@@ -113,7 +113,15 @@ expect "Edit Mode with a help window in front" "state: menu patch.edit disabled"
 run "$G/numbers.moritz" --window-png none act=menu:patch.edit act=state
 expect "Edit Mode on a document" "state: front"
 
-# 13. the code view, typed into, replaces a subpatcher whose window is open and animated: the window's timers
+# 13. a code window comes to the front after a help window: Save (Cmd+S) is active again, Undo acts on its text
+run "$G/undo.moritz" --window-png none open=c1 act=help:metro act=menuitem:file.save act=menuitem:edit.undo \
+    act=raise:code act=wait:0.1 act=menuitem:file.save act=menuitem:edit.undo
+expect "Save with a help window in front" "state: menu item file.save inactive"
+expect "Undo with a help window in front" "state: menu item edit.undo inactive"
+if [ "$(grep -c "state: menu item file.save active" "$out")" = 1 ] &&
+   [ "$(grep -c "state: menu item edit.undo active" "$out")" = 1 ]; then ok; else fail "Save in a code window after a help window"; fi
+
+# 14. the code view, typed into, replaces a subpatcher whose window is open and animated: the window's timers
 #     must not walk the freed patch before FLTK deletes the window (the patch is long, so applying it takes
 #     longer than the timer's period)
 flashpatch() {   # flashpatch <a box more inside the subpatcher>

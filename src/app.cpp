@@ -128,6 +128,7 @@ void App::init() {
     midi.refresh();
     Fl::add_timeout(1.0, midiTick);
     Fl::add_handler(eggHandler);
+    followFrontWindow();
 #ifdef __APPLE__
     // one menu bar for every window, at the top of the screen
     Fl_Group* cur = Fl_Group::current();

@@ -400,6 +400,10 @@ public:
     // the menus (menus.cpp)
     void buildMenu(Fl_Menu_Bar* m);
     void refreshMenus();                     // enabled and checked items; the macOS bar only when they change
+    // refreshMenus() whenever any window comes to the front (a code window, a text view, the console...)
+    // and before each key goes to a shortcut: the states follow what the commands act on
+    void followFrontWindow();
+    bool menuItemActive(const std::string& id);   // the state shown in the (first) menu bar (tests)
     void rebuildRecentMenus();               // File > Open Recent follows the list
     Fl_Menu_Bar* menuFor(DocumentWindow* w); // the bar showing w's menu state
     void forgetMenu(Fl_Menu_Bar* m);         // its window is closing

@@ -21,6 +21,8 @@
 //   act=send:<id>:<message>   a message to a box of the front document
 //   act=codeedit:<text>       text added at the end of the front code editor
 //   act=codesave              the front code editor's Save
+//   act=raise:code            the first code editor's window comes to the front, as a click on it does
+//   act=menuitem:<command>    print: the command's item in the menu bar, active or not
 //   act=state                 print: the documents, the front one's state, the code editors
 //   act=buffer:<name>         print: the frames of a buffer~
 //   act=boxes                 print: the boxes of the front document
@@ -186,6 +188,19 @@ bool act(const std::string& a) {
         if (verb == "codesave") return cw->save();
         Fl_Text_Buffer* buf = cw->editor()->buffer();
         buf->append(arg.c_str());
+        return true;
+    }
+    if (verb == "raise") {
+        if (arg != "code" || app.codeWindows().empty()) return false;
+        CodeWindow* cw = app.codeWindows().front();
+        cw->show();
+        Fl::first_window(cw);
+        Fl::handle(FL_FOCUS, cw);           // what the system sends the window it brings to the front
+        return true;
+    }
+    if (verb == "menuitem") {
+        if (!findCommand(arg)) return false;
+        state("menu item %s %s", arg, app.menuItemActive(arg) ? "active" : "inactive");
         return true;
     }
     if (verb == "state") {
