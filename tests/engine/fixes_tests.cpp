@@ -245,3 +245,28 @@ TEST(sfplay_plays_the_newest_file_opened_with_audio_off) {
     CHECK(std::fabs(y[100] - 0.6f) < 1e-3f);
     for (auto& f : files) std::remove(f.c_str());
 }
+
+// buffer~ write read the samples while record~ wrote them on the audio thread (a data race: the thread
+// sanitizer reports it): they are copied under the patch lock, and the file is written from the copy
+TEST(buffer_write_copies_the_samples_under_the_lock) {
+    const char* t = std::getenv("TMPDIR");
+    std::string path = std::string(t && *t ? t : "/tmp") + "/moritz-engine-buffer-write.wav";
+    Rig r("(patch (obj s sig~ 0.5) (obj rec record~ tape) (obj b buffer~ tape 50) (connect s 0 rec 0))");
+    r.box("rec")->message(0, {Atom("loop"), Atom(1.f)});
+    r.box("rec")->message(0, {Atom(1.f)});
+    r.run(64);
+    std::atomic<bool> stop{false};
+    std::thread audio([&] {
+        std::vector<float> buf(2 * 64);
+        while (!stop) r.p.process(nullptr, 0, buf.data(), 2, 64);
+    });
+    for (int k = 0; k < 20; ++k) r.box("b")->message(0, {Atom("write"), Atom(path)});
+    r.box("b")->message(0, {Atom("size"), Atom(100.f)});
+    stop = true;
+    audio.join();
+    SampleBuffer back;
+    std::string err;
+    CHECK(decodeAudioFile(path, back, err) && back.frames == (long)(0.05 * 44100));
+    CHECK(!r.printedSomething("buffer~"));
+    std::remove(path.c_str());
+}

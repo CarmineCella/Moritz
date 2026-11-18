@@ -395,14 +395,15 @@ public:
         if (m[0].is("read") && m.size() > 1) {
             read(m[1].str());
         } else if (m[0].is("write") && m.size() > 1) {
-            if (!writeWavFile(patch->resolvePath(m[1].str()), buf, err)) patch->print(err);
+            // the samples as they are now, copied under the lock; the file written outside it
+            if (!writeWavFile(patch->resolvePath(m[1].str()), copy(), err)) patch->print(err);
         } else if (m[0].is("size") && m.size() > 1 && m[1].isFloat()) {
             SampleBuffer b;
             b.channels = buf.channels;
             b.sr = buf.sr;
             b.frames = std::max(0L, (long)(m[1].f / 1000.0 * buf.sr));
             b.data.assign((size_t)b.frames * b.channels, 0.f);
-            std::copy_n(buf.data.begin(), std::min(buf.data.size(), b.data.size()), b.data.begin());
+            copyInto(b.data);
             replace(std::move(b));
         } else if (m[0].is("clear")) {
             SampleBuffer b;
@@ -435,6 +436,21 @@ public:
         }
         b = SampleBuffer();                              // the old storage, freed outside the lock
         patch->root()->forEachBox([](Box* x) { x->buffersChanged(); });
+    }
+    // GUI thread: the samples as they are now (record~ and poke~ may be writing them): the room is
+    // made before, only the copy is made under the lock
+    SampleBuffer copy() {
+        SampleBuffer c;
+        c.channels = buf.channels;
+        c.sr = buf.sr;
+        c.frames = buf.frames;
+        c.data.resize(buf.data.size());
+        copyInto(c.data);
+        return c;
+    }
+    void copyInto(std::vector<float>& to) {               // as many samples as both hold
+        std::lock_guard<std::mutex> lk(patch->mutex());
+        std::copy_n(buf.data.begin(), std::min(buf.data.size(), to.size()), to.begin());
     }
     std::string name;
     SampleBuffer buf;        // see above
