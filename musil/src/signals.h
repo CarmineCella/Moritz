@@ -341,7 +341,8 @@ inline vptr sig_deconv(vlist& a, Interp& i) {
 
 // (svf x sr freq q type) => x through a state-variable filter (signals/filters.h, as Moritz's svf~);
 //   type is "low" "high" "band" or "notch"; q in 0..1 is the resonance; freq and q are numbers or vectors
-//   as long as x (a moving filter). Streams in a synth (freq and q read once per block there).
+//   as long as x (a moving filter). Streams in a synth (freq and q read once per block there). The band
+//   output is not normalised (as svf~): its peak gain is 1/(2 - 1.98 q), -6 dB at q 0, 0 dB at 0.5, +34 dB at 1
 inline int svf_type(Interp& i, const vptr& v) {
     std::string t = i.str(v);
     if (t == "low") return 0; if (t == "high") return 1; if (t == "band") return 2; if (t == "notch") return 3;

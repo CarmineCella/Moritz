@@ -237,6 +237,12 @@ check (> (centroid-of (svf wn sr 2000 0.5 "high")) (centroid-of wn)) "svf high r
 check (near? (+ (svf wn sr 700 0.3 "low") (svf wn sr 700 0.3 "high")) (svf wn sr 700 0.3 "notch") 1e-9) "svf: notch = low + high"
 check (near? (svf wn sr 700 0.3 "band") (svf wn sr (+ (zeros 4096) 700) (+ (zeros 4096) 0.3) "band") 1e-12) "svf: freq and q as vectors"
 check (contains? (error-of (function () (svf wn sr 700 0.3 "comb"))) "type") "svf: unknown type"
+; the band output is not normalised (svf~'s behaviour): its peak gain is 1/(2 - 1.98 q)
+var s700 (sine sr 700 1)
+function band-gain (q) (/ (rms (drop (svf s700 sr 700 q "band") 4000)) (rms (drop s700 4000)))
+check (near? (band-gain 0) 0.5 0.01) "svf: band gain 0.5 at q 0"
+check (near? (band-gain 0.5) (/ 1 1.01) 0.01) "svf: band gain about 1 at q 0.5"
+check (near? (band-gain 1) 50 1) "svf: band gain 50 (+34 dB) at q 1"
 check (near? (lores wn sr 1000 0) (lowpass wn sr 1000 0.707) 1e-12) "lores: res 0 is a plain lowpass"
 check (> (rms (lores (osc sr (+ (zeros 8000) 1000) table) sr 1000 1)) (* 5 (rms (lores (osc sr (+ (zeros 8000) 1000) table) sr 1000 0)))) "lores: res 1 resonates at the cutoff"
 

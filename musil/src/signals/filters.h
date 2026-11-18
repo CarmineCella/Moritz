@@ -7,12 +7,17 @@
 #include <algorithm>
 #include <cmath>
 
+
 namespace musil {
 namespace dsp {
 
 // State-variable filter, topology-preserving (Simper): low, high, band and notch outputs at once.
 // q in 0..1 is the resonance (as in MSP's svf~): 0 a gentle slope, towards 1 a sharp peak. The
 // frequency is kept within 1 Hz and 0.49 sr. Stable under fast modulation of both.
+// Gains (k = 2 - 1.98 q, the damping): low and high pass 1 in their passband and 1/k at the cutoff; the
+// band output is the unnormalised band-pass, whose gain at the centre is 1/k too: 0.5 (-6 dB) at q 0, 1
+// (0 dB) at q 0.5, 50 (+34 dB) at q 1. That is svf~'s established behaviour, kept: scale the band output
+// by k (or lower q) for a band-pass of unit peak gain. The notch is low + high (unit gain away from it).
 class Svf {
 public:
     void set(double f, double q, double sr) {
