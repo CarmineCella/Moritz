@@ -173,6 +173,34 @@ struct Book {
     double energy = 0, residual = 0;
 };
 
+// The largest of a vector of energies and where it is (the first place, on a tie), kept up to date as single
+// values change: a tournament tree, O(log n) an update instead of a scan of every frame at every atom
+class MaxTree {
+public:
+    void build(const std::vector<float>* v) {
+        v_ = v; n_ = (int)v->size(); size_ = 1;
+        while (size_ < std::max(1, n_)) size_ <<= 1;
+        t_.assign((size_t)(2 * size_), -1);
+        for (int i = 0; i < n_; ++i) t_[(size_t)(size_ + i)] = i;
+        for (int i = size_ - 1; i >= 1; --i) t_[(size_t)i] = better(t_[(size_t)(2 * i)], t_[(size_t)(2 * i + 1)]);
+    }
+    void update(int i) {
+        for (int k = (size_ + i) / 2; k >= 1; k /= 2) t_[(size_t)k] = better(t_[(size_t)(2 * k)], t_[(size_t)(2 * k + 1)]);
+    }
+    int top() const { return size_ > 0 && !t_.empty() ? t_[1 < t_.size() ? 1 : 0] : -1; }
+
+private:
+    int better(int a, int b) const {
+        if (a < 0) return b;
+        if (b < 0) return a;
+        float va = (*v_)[(size_t)a], vb = (*v_)[(size_t)b];
+        return vb > va ? b : a;                      // a is left of b: it wins a tie
+    }
+    const std::vector<float>* v_ = nullptr;
+    int n_ = 0, size_ = 0;
+    std::vector<int> t_;
+};
+
 // ------------------------------------------------------------------ parametric pursuit
 class ParametricPursuit {
 public:
@@ -219,19 +247,22 @@ public:
         book.energy = energy();
         double target = book.energy * std::pow(10.0, -snrDb / 10.0), e = book.energy;
         for (size_t s = 0; s < scales_.size(); ++s) {
-            for (long f = 0; f < (long)scales_[s].best.size(); ++f) update(s, f);
+            for (long f = 0; f < (long)scales_[s].best.size(); ++f) update(s, f, false);
+            scales_[s].tree.build(&scales_[s].best);
             if (tick && !tick(.1 * (s + 1) / scales_.size())) return false;
         }
         for (int a = 0; a < maxAtoms && e > target; ++a) {
+            // the strongest frame of all: the first scale whose best is strictly larger (as a scan in order would)
             size_t bs = 0;
             long bf = -1;
             float bE = 0;
-            for (size_t s = 0; s < scales_.size(); ++s)
-                for (long f = 0; f < (long)scales_[s].best.size(); ++f)
-                    if (scales_[s].best[(size_t)f] > bE) { bE = scales_[s].best[(size_t)f]; bs = s; bf = f; }
+            for (size_t s = 0; s < scales_.size(); ++s) {
+                int f = scales_[s].tree.top();
+                if (f >= 0 && scales_[s].best[(size_t)f] > bE) { bE = scales_[s].best[(size_t)f]; bs = s; bf = f; }
+            }
             if (bf < 0 || bE < 1e-14) break;
             BookAtom at = select(bs, bf);
-            if (at.energy <= 0) { scales_[bs].best[(size_t)bf] = 0; continue; }
+            if (at.energy <= 0) { scales_[bs].best[(size_t)bf] = 0; scales_[bs].tree.update((int)bf); continue; }
             e = std::max(0.0, e - at.energy);
             book.atoms.push_back(at);
             // the frames that overlap the atom change
@@ -262,6 +293,7 @@ private:
         std::vector<int> bin;
         double W = 0;
         mir::FFT fft;
+        MaxTree tree;                                // over best
     };
     // the projection on cos and sin at bin k of a frame's spectrum: energy, coefficients
     static double project(const Scale& sc, double a, double b, double c2re, double c2im, double& alpha, double& beta) {
@@ -272,7 +304,7 @@ private:
         beta = (C * b - X * a) / det;
         return alpha * a + beta * b;
     }
-    void update(size_t s, long f) {
+    void update(size_t s, long f, bool track = true) {
         Scale& sc = scales_[s];
         long p = f * sc.hop;
         std::fill(sc.re.begin(), sc.re.end(), 0.f);
@@ -289,6 +321,7 @@ private:
         }
         sc.best[(size_t)f] = best;
         sc.bin[(size_t)f] = bk;
+        if (track) sc.tree.update((int)f);
     }
     // the exact projection at angular frequency w (rad/sample) on the frame at p
     double exact(const Scale& sc, long p, double w, double& alpha, double& beta) const {
@@ -372,8 +405,15 @@ inline bool soundPursuit(const Dictionary& d, std::vector<float> x, double sr, c
     MelDescriptor desc(sr);
     residual = x;
     const long total = (long)x.size();
-    mir::FFT fft;
-    std::vector<float> rr, ri, ar, ai;
+    // the FFTs are cached: one plan per size; each atom's spectrum per size, for the whole pursuit (up to a budget
+    // of memory); the residual's per size and length, for the candidates of one component. The products are the
+    // same floats as before, so the book is the same
+    std::map<long, mir::FFT> plans;
+    auto plan = [&](long P) -> mir::FFT& { auto& f = plans[P]; if (f.size() != (int)P) f.init((int)P); return f; };
+    struct Spec { std::vector<float> re, im; };
+    std::map<std::pair<int, long>, Spec> atomSpec;
+    size_t atomFloats = 0; const size_t atomBudget = (size_t)1 << 25;      // 32M floats: 128 MB
+    std::vector<float> rr, ri;
     for (size_t sg = 0; sg < segs.size(); ++sg) {
         long a = segs[sg].first, S = segs[sg].second - a;
         for (int c = 0; c < o.components; ++c) {
@@ -394,21 +434,37 @@ inline bool soundPursuit(const Dictionary& d, std::vector<float> x, double sr, c
             double bestG = 0, bestCoef = 0;
             int bestK = -1;
             long bestTau = 0;
+            std::map<std::pair<long, long>, Spec> resSpec;            // (P, W): the residual's spectrum
             for (int ci = 0; ci < keep; ++ci) {
                 const SoundAtom& at = d.atoms[(size_t)sim[(size_t)ci].second];
                 // the atom starts in the segment but is matched (and later
                 // subtracted) whole, over what follows it too
                 long n = (long)at.x.size(), W = std::min(S + n, total - a), P = 1;
                 while (P < S + n) P <<= 1;
-                rr.assign((size_t)P, 0.f); ri.assign((size_t)P, 0.f);
-                ar.assign((size_t)P, 0.f); ai.assign((size_t)P, 0.f);
-                for (long t = 0; t < W; ++t) rr[(size_t)t] = residual[(size_t)(a + t)];
-                for (long t = 0; t < n; ++t) ar[(size_t)t] = at.x[(size_t)t];
-                fft.init((int)P);
-                fft.forward(rr.data(), ri.data());
-                fft.forward(ar.data(), ai.data());
+                mir::FFT& fft = plan(P);
+                auto rk = std::make_pair(P, W);
+                auto rit = resSpec.find(rk);
+                if (rit == resSpec.end()) {
+                    Spec sp; sp.re.assign((size_t)P, 0.f); sp.im.assign((size_t)P, 0.f);
+                    for (long t = 0; t < W; ++t) sp.re[(size_t)t] = residual[(size_t)(a + t)];
+                    fft.forward(sp.re.data(), sp.im.data());
+                    rit = resSpec.emplace(rk, std::move(sp)).first;
+                }
+                auto ak = std::make_pair(sim[(size_t)ci].second, P);
+                auto ait = atomSpec.find(ak);
+                const Spec* asp = ait != atomSpec.end() ? &ait->second : nullptr;
+                Spec fresh;
+                if (!asp) {
+                    fresh.re.assign((size_t)P, 0.f); fresh.im.assign((size_t)P, 0.f);
+                    for (long t = 0; t < n; ++t) fresh.re[(size_t)t] = at.x[(size_t)t];
+                    fft.forward(fresh.re.data(), fresh.im.data());
+                    if (atomFloats + 2 * (size_t)P <= atomBudget) { atomFloats += 2 * (size_t)P; asp = &atomSpec.emplace(ak, std::move(fresh)).first->second; }
+                    else asp = &fresh;
+                }
+                rr.resize((size_t)P); ri.resize((size_t)P);
+                const Spec& R = rit->second;
                 for (long k = 0; k < P; ++k) {             // R conj(A)
-                    float xr = rr[(size_t)k], xi = ri[(size_t)k], yr = ar[(size_t)k], yi = -ai[(size_t)k];
+                    float xr = R.re[(size_t)k], xi = R.im[(size_t)k], yr = asp->re[(size_t)k], yi = -asp->im[(size_t)k];
                     rr[(size_t)k] = xr * yr - xi * yi;
                     ri[(size_t)k] = xr * yi + xi * yr;
                 }
