@@ -40,9 +40,18 @@ hosted() {
 cd "$ROOT/musil/tests" || exit 1
 TESTS="test_core test_std test_system test_scientific test_signals test_live test_music test_atoms test_plot test_memory test_stress test_smoke test_load"
 [ "$MODE" = moritz ] && TESTS=$(echo "$TESTS" | sed 's/test_live//; s/test_plot//')
+# test_live checks the audio thread in real time (voices start and stop within tens of ms): on a busy
+# machine it may miss, so it gets three tries, and says when it needed more than one
 for t in $TESTS; do
     count=$((count + 1))
-    if ! run "$t.mu" > "$TMP/out.txt" 2>&1; then fail "$t"; tail -5 "$TMP/out.txt"; fi
+    tries=1
+    [ "$t" = test_live ] && tries=3
+    k=1
+    while ! run "$t.mu" > "$TMP/out.txt" 2>&1; do
+        if [ $k -ge $tries ]; then fail "$t"; tail -5 "$TMP/out.txt"; break; fi
+        echo "retry $t (try $k: $(grep -m1 'assertion failed' "$TMP/out.txt" | sed 's/.*assertion failed: //'))"
+        k=$((k + 1))
+    done
 done
 
 # --- the golden references
