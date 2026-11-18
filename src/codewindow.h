@@ -52,7 +52,7 @@ public:
     void toggleComment();
     void complete();                              // Tab after a name: the names that start like it
     void cursorMoved();                           // help on the name under the cursor
-    void textChanged();
+    void textChanged(int pos, int nIns, int nDel);
 
 private:
     std::string path_;
@@ -75,7 +75,8 @@ private:
 
     std::shared_ptr<LangContext> context();       // the one chosen
     void run(const std::string& code, int firstLine, int lastLine);
-    void restyle();
+    void restyle();                               // all of it
+    void restyle(int from, int to);               // the lines from..to, more if a string spans them
     void refreshTitle();
     void refreshOutline();
     void refreshVariables();

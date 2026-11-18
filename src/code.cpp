@@ -72,8 +72,10 @@ Fl_Text_Display::Style_Table_Entry* styleTable() {
     return s;
 }
 
-void styleText(const std::string& text, std::string& style) {
+// true when the text ends inside a string (a string that goes on past it)
+bool styleText(const std::string& text, std::string& style) {
     style.assign(text.size(), 'A');
+    bool open = false;
     size_t i = 0, n = text.size();
     bool lineStart = true;
     while (i < n) {
@@ -90,6 +92,7 @@ void styleText(const std::string& text, std::string& style) {
                 style[i++] = 'C';
             }
             if (i < n) style[i++] = 'C';
+            else open = true;
             continue;
         }
         if (std::strchr("(){}", c)) { style[i++] = 'E'; lineStart = false; continue; }
@@ -118,6 +121,7 @@ void styleText(const std::string& text, std::string& style) {
         (void)lineStart;
         ++i;
     }
+    return open;
 }
 
 // the bracket depth at the start of every line (strings and comments left out)
@@ -361,8 +365,8 @@ CodeWindow::CodeWindow() : Fl_Double_Window(1060, 680, "Untitled — code") {
     status_->align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE);
     resizable(tile);
     end();
-    text_->add_modify_callback([](int, int ins, int del, int, const char*, void* d) {
-        if (ins || del) static_cast<CodeWindow*>(d)->textChanged();
+    text_->add_modify_callback([](int pos, int ins, int del, int, const char*, void* d) {
+        if (ins || del) static_cast<CodeWindow*>(d)->textChanged(pos, ins, del);
     }, this);
     callback([](Fl_Widget* w, void*) {
         auto* cw = static_cast<CodeWindow*>(w);
@@ -662,15 +666,36 @@ void CodeWindow::cursorMoved() {
     (void)line;
 }
 
-void CodeWindow::textChanged() {
+void CodeWindow::textChanged(int pos, int nIns, int nDel) {
     if (!dirty_) {
         dirty_ = true;
         refreshTitle();
     }
-    errorLine_ = 0;
-    restyle();
+    // the style buffer follows the text, then the lines that changed are coloured again
+    if (nDel > 0) style_->remove(pos, pos + nDel);
+    if (nIns > 0) style_->insert(pos, std::string((size_t)nIns, 'A').c_str());
+    if (errorLine_ > 0 || flashFrom_ > 0) {          // the marks go: all of it
+        errorLine_ = 0;
+        flashFrom_ = flashTo_ = 0;
+        restyle();
+    } else {
+        restyle(pos, pos + nIns);
+    }
     Fl::remove_timeout(outlineTimer, this);
     Fl::add_timeout(0.5, outlineTimer, this);
+}
+
+void CodeWindow::restyle(int from, int to) {
+    int len = text_->length();
+    int a = text_->line_start(std::clamp(from, 0, len)), b = text_->line_end(std::clamp(to, 0, len));
+    // inside a string that spans lines, or one that may now span more: all of it
+    if ((a > 0 && style_->byte_at(a - 1) == 'C') || (b < len && style_->byte_at(b) == 'C')) { restyle(); return; }
+    char* part = text_->text_range(a, b);
+    std::string t = part, st;
+    std::free(part);
+    if (styleText(t, st)) { restyle(); return; }     // a string left open: it goes on below
+    style_->replace(a, b, st.c_str());
+    editor_->redisplay_range(a, b);
 }
 
 void CodeWindow::restyle() {

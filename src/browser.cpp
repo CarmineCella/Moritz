@@ -86,12 +86,32 @@ std::vector<std::string> patchFiles(const std::string& dir) {
     return out;
 }
 
-// the comment at the top of a patch file: its description, and its topic
+// the comment at the top of a patch file: its description, and its topic. Read once per file: the
+// browser is filled again each time it is shown, and the examples do not change meanwhile.
+void readHeaderOnce(const std::string& path, std::string& text, std::string& topic);
 void readHeader(const std::string& path, std::string& text, std::string& topic) {
+    static std::map<std::string, std::pair<std::string, std::string>> cache;
+    auto it = cache.find(path);
+    if (it == cache.end()) {
+        std::pair<std::string, std::string> h;
+        readHeaderOnce(path, h.first, h.second);
+        it = cache.emplace(path, std::move(h)).first;
+    }
+    text = it->second.first;
+    topic = it->second.second;
+}
+void readHeaderOnce(const std::string& path, std::string& text, std::string& topic) {
     std::string src;
     text.clear();
     topic.clear();
-    if (!readFile(path, src)) return;
+    {                                          // the header only: the first lines
+        std::FILE* f = fileio::open(path, "rb");
+        if (!f) return;
+        char buf[8192];
+        size_t n = std::fread(buf, 1, sizeof buf, f);
+        std::fclose(f);
+        src.assign(buf, n);
+    }
     size_t pos = 0;
     bool first = true;
     while (pos < src.size()) {

@@ -766,10 +766,17 @@ void App::showConsole() {
         consoleView_->textsize(settings().codeSize - 1);
         console_->resizable(consoleView_);
         console_->end();
-        for (auto& line : consoleLines_) consoleBuf_->append((line + "\n").c_str());
+        // the lines logged before it opened, oldest first; from now on they go straight into it
+        std::string all;
+        for (size_t k = 0; k < consoleLines_.size(); ++k)
+            all += consoleLines_[(consoleFirst_ + k) % consoleLines_.size()] + "\n";
+        consoleBuf_->text(all.c_str());
+        consoleBufLines_ = (int)consoleLines_.size();
+        consoleLines_.clear();
+        consoleFirst_ = 0;
     }
     console_->show();
-    consoleView_->scroll(consoleBuf_->count_lines(0, consoleBuf_->length()), 0);
+    consoleView_->scroll(consoleBufLines_, 0);
     consoleAlert = false;
     refreshTools();
 }
@@ -1291,6 +1298,8 @@ void App::toolTimer(void*) {
 
 void App::clearConsole() {
     consoleLines_.clear();
+    consoleFirst_ = 0;
+    consoleBufLines_ = 0;
     if (consoleBuf_) consoleBuf_->text("");
 }
 
@@ -1300,20 +1309,32 @@ void App::print(const std::string& s) {
 }
 
 void App::log(const std::string& s) {
-    std::string low = s;
-    for (auto& c : low) c = (char)std::tolower((unsigned char)c);
-    if (!consoleAlert && (low.find("error") != std::string::npos || low.find("can't") != std::string::npos ||
-                          low.find("unknown") != std::string::npos || low.find("fail") != std::string::npos)) {
-        consoleAlert = true;
-        refreshTools();
+    if (!consoleAlert) {
+        std::string low = s;
+        for (auto& c : low) c = (char)std::tolower((unsigned char)c);
+        if (low.find("error") != std::string::npos || low.find("can't") != std::string::npos ||
+            low.find("unknown") != std::string::npos || low.find("fail") != std::string::npos) {
+            consoleAlert = true;
+            refreshTools();
+        }
     }
-    consoleLines_.push_back(s);
-    if (consoleLines_.size() > 2000) consoleLines_.erase(consoleLines_.begin());
-    if (consoleBuf_) {
-        consoleBuf_->append((s + "\n").c_str());
-        if (consoleBuf_->length() > 200000) consoleBuf_->remove(0, consoleBuf_->length() - 150000);
-        consoleView_->scroll(consoleBuf_->count_lines(0, consoleBuf_->length()), 0);
+    if (!consoleBuf_) {                      // not opened yet: the last kConsoleKeep lines, in a ring
+        constexpr size_t kConsoleKeep = 2000;
+        if (consoleLines_.size() < kConsoleKeep) consoleLines_.push_back(s);
+        else {
+            consoleLines_[consoleFirst_] = s;
+            consoleFirst_ = (consoleFirst_ + 1) % kConsoleKeep;
+        }
+        return;
     }
+    consoleBuf_->append((s + "\n").c_str());
+    consoleBufLines_ += 1 + (int)std::count(s.begin(), s.end(), '\n');
+    if (consoleBuf_->length() > 200000) {    // the oldest 50 KB go, from a line's start
+        int cut = consoleBuf_->line_end(consoleBuf_->length() - 150000) + 1;
+        consoleBufLines_ -= consoleBuf_->count_lines(0, cut);
+        consoleBuf_->remove(0, cut);
+    }
+    consoleView_->scroll(consoleBufLines_, 0);
 }
 
 void App::setAudio(bool on) {
@@ -1494,12 +1515,16 @@ MainWindow::MainWindow(int w, int h)
     resizable(canvas);
     size_range(400, 300);
 
-    patch.onRedraw = [this] { canvas->redraw(); };
+    patch.onRedraw = [this] {
+        canvas->redraw();
+        App::get().patchChanged();
+    };
     patch.onStatus = [this](const std::string& s) { setStatus(s); };
     patch.onPrint = [this](const std::string& s) { print(s); };
     patch.onStructure = [this] {
         refreshStatus();
         canvas->redraw();                 // an inner edit can change a box's ports
+        App::get().patchChanged();
     };
 
     callback([](Fl_Widget* w, void*) {
@@ -1577,6 +1602,7 @@ void MainWindow::markDirty(Patch* p) {
     if (Patch* a = abstractionOf(p ? p : &patch)) absDirty_.insert(a);
     else dirty_ = true;
     updateTitle();
+    App::get().patchChanged();
 }
 
 Patch* MainWindow::abstractionOf(Patch* p) const {
@@ -1934,8 +1960,14 @@ PatchWindow::PatchWindow(MainWindow* d, Patch* p, const std::string& title, bool
     size_range(300, 200);
     canvas->setLocked(true);
     canvas->readOnly = help;
-    p->onRedraw = [this] { canvas->redraw(); };
-    p->onStructure = [this] { canvas->redraw(); };
+    p->onRedraw = [this] {
+        canvas->redraw();
+        App::get().patchChanged();
+    };
+    p->onStructure = [this] {
+        canvas->redraw();
+        App::get().patchChanged();
+    };
     callback([](Fl_Widget* w, void*) {
         if (Fl::event() == FL_SHORTCUT && Fl::event_key() == FL_Escape) return;
         auto* pw = static_cast<PatchWindow*>(w);
@@ -2307,16 +2339,30 @@ ToolMeters::ToolMeters(int x, int y, int w, int h) : Fl_Widget(x, y, w, h) {
 
 ToolMeters::~ToolMeters() = default;
 
+// Drawn again only when something it shows changed: with the audio off (or silent) the bars fall to
+// rest and the meters stay still.
 void ToolMeters::update(float cpu, const std::vector<float>& peaks) {
-    cpu_ = cpu;
-    if (level_.size() != peaks.size()) { level_.assign(peaks.size(), 0.f); hold_.assign(peaks.size(), 0.f); }
-    for (size_t c = 0; c < peaks.size(); ++c) {
-        level_[c] = std::max(peaks[c], level_[c] * 0.82f);          // a falling bar
-        hold_[c] = std::max(peaks[c], hold_[c] * 0.97f);
-        if (peaks[c] >= 0.999f)
-            clipUntil_ = std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count() + 2;
+    bool changed = std::fabs(cpu - cpu_) >= 0.005f;
+    if (changed) cpu_ = cpu;
+    if (level_.size() != peaks.size()) {
+        level_.assign(peaks.size(), 0.f);
+        hold_.assign(peaks.size(), 0.f);
+        changed = true;
     }
-    redraw();
+    double now = std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    auto rest = [](float v) { return v < 1e-3f ? 0.f : v; };   // below -60 dB the bars show nothing
+    for (size_t c = 0; c < peaks.size(); ++c) {
+        float l = rest(std::max(peaks[c], level_[c] * 0.82f));        // a falling bar
+        float h = rest(std::max(peaks[c], hold_[c] * 0.97f));
+        if (l != level_[c] || h != hold_[c]) changed = true;
+        level_[c] = l;
+        hold_[c] = h;
+        if (peaks[c] >= 0.999f) clipUntil_ = now + 2;
+    }
+    bool clip = now < clipUntil_;
+    if (clip != clipShown_) changed = true;
+    clipShown_ = clip;
+    if (changed) redraw();
 }
 
 void ToolMeters::draw() {

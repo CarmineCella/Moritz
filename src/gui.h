@@ -3,6 +3,7 @@
 #pragma once
 
 #include <cmath>
+#include <cstdint>
 #include <functional>
 #include <unordered_map>
 #include <set>
@@ -220,6 +221,7 @@ private:
     static void modified(int pos, int nIns, int nDel, int nRestyled, const char* deleted, void* d);
     static void applyLater(void* d);
     static void poll(void* d);
+    void restyle(int from, int to);
     void setStatus(const std::string& s, bool error = false);
     MainWindow* doc_;
     bool readOnly_;
@@ -228,6 +230,7 @@ private:
     Fl_Text_Editor* editor_;
     Fl_Box* status_;
     std::string shown_;            // the text last in sync with the patch
+    uint64_t shownChange_ = 0;     // App::changes() when it was
     bool pending_ = false;         // edited, not applied yet
     bool syncing_ = false;
 };
@@ -258,6 +261,7 @@ private:
     float cpu_ = 0;
     std::vector<float> level_, hold_;
     double clipUntil_ = 0;
+    bool clipShown_ = false;
 };
 
 Fl_Preferences& appPrefs();      // the user's settings (browser.cpp)
@@ -340,6 +344,10 @@ public:
     void log(const std::string& s);     // console only
     void refreshStatus();               // every document
     void armTimer();                    // schedule the next patch timer event
+    // something in a patch changed (an edit, a structure change, a box redrawn): the code views
+    // compare this count to know when to read their patch again
+    uint64_t changes() const { return changes_; }
+    void patchChanged() { ++changes_; }
 
     void showText();                         // Patch > Code View: the front patch as text
     void showText(MainWindow* doc, Patch* p, const std::string& title, bool readOnly);
@@ -356,12 +364,15 @@ private:
     std::vector<PatchWindow*> helpWindows_;
     std::vector<PatchTextWindow*> textWindows_;
     std::vector<CodeWindow*> codeWindows_;
+    uint64_t changes_ = 0;
     std::vector<std::string> openLater_;      // asked to open before the command line was read
     Fl_Menu_Bar* sysMenu_ = nullptr;          // macOS: one menu bar for all windows
     Fl_Double_Window* console_ = nullptr;
     Fl_Text_Display* consoleView_ = nullptr;
     Fl_Text_Buffer* consoleBuf_ = nullptr;
-    std::vector<std::string> consoleLines_;   // kept until the console opens
+    std::vector<std::string> consoleLines_;   // kept until the console opens: a ring of the last 2000
+    size_t consoleFirst_ = 0;                 // the oldest line in consoleLines_, once it is full
+    int consoleBufLines_ = 0;                 // lines in consoleBuf_
     Fl_Double_Window* referenceWin_ = nullptr;
     Fl_Text_Display* referenceView_ = nullptr;
     Fl_Text_Buffer* referenceBuf_ = nullptr;

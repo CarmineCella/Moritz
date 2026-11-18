@@ -35,7 +35,8 @@ Fl_Text_Display::Style_Table_Entry* codeStyles() {
     return kStyles;
 }
 
-std::string highlight(const std::string& t) {
+// the styles of a text; open: set when it ends inside a string
+std::string highlight(const std::string& t, bool* open = nullptr) {
     std::string st(t.size(), 'A');
     bool inStr = false, comment = false;
     for (size_t i = 0; i < t.size(); ++i) {
@@ -63,6 +64,7 @@ std::string highlight(const std::string& t) {
                     }
         }
     }
+    if (open) *open = inStr;
     return st;
 }
 
@@ -136,6 +138,9 @@ void PatchTextWindow::setStatus(const std::string& s, bool error) {
 // in the middle of an edit that has not reached the patch yet.
 void PatchTextWindow::refresh(bool force) {
     if (!patch || (pending_ && !force)) return;
+    uint64_t now = App::get().changes();
+    if (!force && now == shownChange_) return;      // nothing happened in any patch since
+    shownChange_ = now;
     std::string t = patch->serialize();
     if (t == shown_ && !force) return;
     int top = editor_->get_absolute_top_line_number(), cur = editor_->insert_position();
@@ -149,17 +154,40 @@ void PatchTextWindow::refresh(bool force) {
     setStatus(readOnly_ ? "help patch: read only" : "in sync with the drawing · edit here or there");
 }
 
-void PatchTextWindow::modified(int, int nIns, int nDel, int, const char*, void* d) {
+void PatchTextWindow::modified(int pos, int nIns, int nDel, int, const char*, void* d) {
     auto* w = static_cast<PatchTextWindow*>(d);
     if (w->syncing_ || (nIns == 0 && nDel == 0)) return;
-    char* t = w->text_->text();
-    w->style_->text(highlight(t).c_str());
-    std::free(t);
-    w->editor_->redisplay_range(0, w->text_->length());
+    // the style buffer follows the text; the lines that changed are coloured again
+    if (nDel > 0) w->style_->remove(pos, pos + nDel);
+    if (nIns > 0) w->style_->insert(pos, std::string((size_t)nIns, 'A').c_str());
+    w->restyle(pos, pos + nIns);
     w->pending_ = true;
     w->setStatus("editing…");
     Fl::remove_timeout(applyLater, w);
     Fl::add_timeout(0.7, applyLater, w);    // apply once typing pauses
+}
+
+void PatchTextWindow::restyle(int from, int to) {
+    int len = text_->length();
+    int a = text_->line_start(std::clamp(from, 0, len)), b = text_->line_end(std::clamp(to, 0, len));
+    bool open = false;
+    std::string st;
+    if (!(a > 0 && style_->byte_at(a - 1) == 'C') && !(b < len && style_->byte_at(b) == 'C')) {
+        char* part = text_->text_range(a, b);
+        st = highlight(part, &open);
+        std::free(part);
+    } else {
+        open = true;
+    }
+    if (open) {                                      // a string across lines: all of it
+        char* t = text_->text();
+        style_->text(highlight(t).c_str());
+        std::free(t);
+        editor_->redisplay_range(0, len);
+        return;
+    }
+    style_->replace(a, b, st.c_str());
+    editor_->redisplay_range(a, b);
 }
 
 void PatchTextWindow::replaceText(const std::string& t) { text_->text(t.c_str()); }
@@ -188,6 +216,7 @@ void PatchTextWindow::applyNow() {
     }
     if (patch->owner) patch->rebuild();          // a subpatcher's inlets follow positions
     if (doc_) doc_->markDirty(patch);
+    App::get().patchChanged();
     shown_ = patch->serialize();
     pending_ = false;
     if (err.empty()) setStatus("applied · in sync with the drawing");
