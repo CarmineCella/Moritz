@@ -152,7 +152,9 @@ inline const resample_table& resample_kernel(double factor) {
     if (tab.fc == fc) return tab;
     const double pi = 3.14159265358979323846;
     bool down = fc < 1;
-    int half = down ? (int)std::ceil(32.0 / fc) : 24, taps = 2 * half;
+    // 32 zero crossings of the lowpass each side, at most 4096 taps each side (a factor under 1/128: a kernel that
+    // long would take gigabytes; a shorter one still cuts at fc, with a wider transition band)
+    int half = down ? (int)std::min(4096.0, std::ceil(32.0 / fc)) : 24, taps = 2 * half;
     int Q = down ? std::max(64, (int)std::lround(512 * fc)) : 512;     // a wider kernel is smoother: fewer phases
     double cut = down ? 0.93 * fc : 1.0, beta = 7.0, i0b = bessel_i0(beta);
     tab.t.assign((size_t)(Q + 1) * taps, 0.0);
@@ -570,7 +572,7 @@ inline vptr sig_lag(vlist& a, Interp& i) {
 // the engine of Moritz's hpss too)
 inline vptr sig_hpss(vlist& a, Interp& i) {
     const varr& x = i.num(a[0]); size_t n = (size_t)i.index(a[1]), hop = (size_t)i.index(a[2]); int kernel = (int)i.scalar(a[3]);
-    if (n < 16 || (n & (n - 1))) i.bad("n must be a power of 2 >= 16");
+    if (n < 16 || n > ((size_t)1 << 24) || (n & (n - 1))) i.bad("n must be a power of 2, 16 to 2^24");
     if (hop < 1 || hop > n) i.bad("hop must be in 1..n");
     if (kernel < 3) i.bad("kernel must be >= 3");
     std::vector<double> h, p;
@@ -775,7 +777,7 @@ inline mir::Mat rows_of(Interp& i, const vptr& v, bool square) {
     return m;
 }
 inline void check_stft(Interp& i, size_t n, size_t hop) {
-    if (n < 16 || (n & (n - 1))) i.bad("n must be a power of 2 >= 16");
+    if (n < 16 || n > ((size_t)1 << 24) || (n & (n - 1))) i.bad("n must be a power of 2, 16 to 2^24");
     if (hop < 1 || hop > n) i.bad("hop must be in 1..n");
 }
 // the magnitude spectrogram of the analyses below: mir.h's (Hann n, a frame every hop centred on it, a full-scale
@@ -887,6 +889,8 @@ inline vptr sig_key_scores(vlist& a, Interp& i) {
 //   (mir.h's tempoEstimate, as Moritz's beats); (tempo-estimate-with flux fps 120 10) is the autocorrelation's own peak
 inline vptr sig_tempo_estimate_with(vlist& a, Interp& i) {
     const varr& f = i.num(a[0]);
+    double fps = i.scalar(a[1]);
+    if (!std::isfinite(fps) || fps <= 0 || fps > 1e6) i.bad("fps must be in (0, 1e6]");
     return v_num(mir::tempoEstimate(mir::Vec(std::begin(f), std::end(f)), i.scalar(a[1]), i.scalar(a[2]), i.scalar(a[3])));
 }
 

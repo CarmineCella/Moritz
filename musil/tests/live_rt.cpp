@@ -88,6 +88,14 @@ int main() {
     double g64 = glide(64), g512 = glide(512);
     expect(g64 > 0 && std::fabs(g64 - g512) <= 1, "voice-set glides in the same time with blocks of 64 and 512 (" + std::to_string(g64) + " and " + std::to_string(g512) + " samples)");
     expect(std::fabs(g64 - voice_glide * 44100) < 4, "...its time constant is voice_glide (" + std::to_string(g64) + " samples)");
+    // more timed changes in one block than a parameter queues: the latest in time is the one that stays
+    {
+        param_node pn("p", 0.0);
+        for (int k = 0; k < param_node::MAX_CHANGES + 8; ++k) pn.at(k, (double)k, 0);
+        std::vector<std::unique_ptr<gnode>> none;
+        pn.process(none, 64);
+        expect(pn.target.load() == (double)(param_node::MAX_CHANGES + 7), "set-param: past the queue, the latest change is kept (" + std::to_string(pn.target.load()) + ")");
+    }
     e.forget(); e.open = false;
     if (failures == 0) std::cout << "live_rt: all checks passed\n";
     return failures == 0 ? 0 : 1;

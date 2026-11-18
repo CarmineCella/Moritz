@@ -343,7 +343,7 @@ inline vptr mus_orchidea_search(vlist& a, Interp& i) {
     if (p.xover_rate <= 0 || p.xover_rate > 1) i.bad("orchidea-search: crossover must be in (0, 1]");
     if (p.sparsity < 0 || p.sparsity > 1) i.bad("orchidea-search: sparsity must be in 0..1");
     if (p.hysteresis < 0 || p.positive < 0 || p.negative < 0) i.bad("orchidea-search: the penalisations and the hysteresis must be >= 0");
-    vptr sv = rec_get(opts, "seed"); p.seed = sv && sv->t == Value::NUM ? (unsigned)sv->num[0] : (unsigned)i.rng();
+    vptr sv = rec_get(opts, "seed"); p.seed = sv && sv->t == Value::NUM && sv->num.size() > 0 ? (unsigned)seed_of(i, sv->num[0]) : (unsigned)i.rng();
     bool quiet = opt_num("quiet", 0) != 0; std::string conn = "closest"; if (vptr cv = rec_get(opts, "connection")) conn = str_of(cv);
     std::vector<std::string> styles = opt_list("styles"), dynamics = opt_list("dynamics"), others = opt_list("others");
     if (conn != "closest" && conn != "best" && conn != "path") i.bad("orchidea-search: connection is closest, best or path");

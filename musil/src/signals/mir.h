@@ -338,12 +338,15 @@ inline double tempoEstimate(const Vec& flux, double fps, double centre = 100, do
     Vec c(flux);
     double m = meanOf(c);
     for (auto& v : c) v -= m;
-    Vec ac = autocorr(c, std::min((int)std::ceil(fps * 60 / 30) + 2, (int)c.size() / 2 - 1));
+    if (!(fps > 0) || !std::isfinite(fps) || c.size() < 4) return centre;
+    const double maxLag = std::min(std::ceil(fps * 60 / 30) + 2, (double)c.size() / 2 - 1);
+    if (maxLag < 2) return centre;
+    Vec ac = autocorr(c, (int)maxLag);
     double best = 0, bestBpm = centre;
     for (double bpm = 30; bpm <= 300; bpm += .5) {
         double lag = fps * 60 / bpm;
+        if (!(lag >= 0) || lag + 1 >= (double)ac.size()) continue;
         int l0 = (int)lag;
-        if (l0 + 1 >= (int)ac.size()) continue;
         double t = lag - l0, v = ac[(size_t)l0] * (1 - t) + ac[(size_t)l0 + 1] * t;
         double w = std::exp(-.5 * std::pow(std::log2(bpm / centre) / width, 2));
         if (v * w > best) { best = v * w; bestBpm = bpm; }

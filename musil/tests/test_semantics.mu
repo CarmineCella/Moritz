@@ -84,6 +84,16 @@ check (== (expr (1 && (bump 0))) 1) "expr &&: true and true"
 check (== side 1) "expr &&: the right side is evaluated when it decides"
 check (== (expr (0 || 0 || (bump 0))) 1) "expr ||: chained"
 check (== (expr ((1 + 2) * 3 == 9 && 2 > 1)) 1) "expr: precedence unchanged"
-check (contains? (error-of (function () (expr (0 && undefined-name)))) "") "expr: a skipped side is still read"
+check (== (expr (0 && undefined-name)) 0) "expr &&: a skipped side is not evaluated (an undefined name is no error)"
+
+; a (function ...) form built as data and changed afterwards makes the changed function (program text, which
+; cannot change in place, keeps its prepared body)
+var form (list 'function (list 'x) (list '+ 'x 1))
+check (== ((eval form) 3) 4) "function: a form built as data"
+setidx form 2 (list '* 'x 10)
+check (== ((eval form) 3) 30) "function: a form built as data, its body changed afterwards"
+setidx form 1 (list 'y)
+setidx form 2 (list '* 'y 100)
+check (== ((eval form) 3) 300) "function: a form built as data, its parameters changed afterwards"
 
 report "test_semantics"

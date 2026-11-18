@@ -19,6 +19,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <vector>
 
 namespace musil {
@@ -43,7 +44,7 @@ public:
     void full(const T* mags, int order, int iterations, T* env) {
         T peak = 0;
         for (int k = 0; k < M_; ++k) peak = std::max(peak, mags[k]);
-        T fl = std::max(peak * (T)1e-4, (T)1e-300);
+        T fl = std::max(peak * (T)1e-4, std::numeric_limits<T>::min());   // 1e-300 is 0 in float
         for (int k = 0; k < M_; ++k) target_[(size_t)k] = std::log(std::max(mags[k], fl));
         run(order, iterations);
         for (int k = 0; k < M_; ++k) env[k] = std::exp(cur_[(size_t)k]);

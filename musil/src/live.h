@@ -155,7 +155,10 @@ struct param_node : gnode {                               // a hot parameter wit
     change changes[MAX_CHANGES]; int nchanges = 0;
     param_node(std::string nm, double v) : name(std::move(nm)), value(v) { target = v; }
     void at(int offset, double v, int r) {               // the audio thread, before process: kept in time order
-        if (nchanges == MAX_CHANGES) { target = v; ramp = r; return; }
+        if (nchanges == MAX_CHANGES) {                    // full: the latest in time is kept, in the last place
+            if (offset >= changes[MAX_CHANGES - 1].offset) changes[MAX_CHANGES - 1] = { offset, v, r };
+            return;
+        }
         int k = nchanges++;
         while (k > 0 && changes[k - 1].offset > offset) { changes[k] = changes[k - 1]; k--; }
         changes[k] = { offset, v, r };

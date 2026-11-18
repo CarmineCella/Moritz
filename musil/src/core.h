@@ -1029,16 +1029,18 @@ try {
             if (l.size() == 4 && l[1]->t == Value::SYM && l[2]->t == Value::LIST) { named = true;  pi = 2; bi = 3; }
             else if (l.size() == 3 && l[1]->t == Value::LIST)                     { named = false; pi = 1; bi = 2; }
             else err("function: expected (function [name] (params) body)");
-            if (!expr->body) {                                 // the form's prepared body and parameters, made the first time
-                std::vector<std::string> ps;
+            // the form's prepared body and parameters: kept the first time for program text (which cannot change in
+            // place), made again each time for a form built as data (which a program may have changed since)
+            std::vector<std::string> ps; vptr body;
+            if (!expr->lit || !expr->body) {
                 for (auto& p : l[pi]->l) {
                     if (p->t != Value::SYM) err("function: parameter must be a symbol, got " + str_of(p));
                     ps.push_back(p->s);
                 }
-                expr->params = std::move(ps);
-                expr->body = hoist_returns(l[bi]);
-            }
-            auto fn = v_nil(); fn->t = Value::FN; fn->closure = e; fn->body = expr->body; fn->params = expr->params;
+                body = hoist_returns(l[bi]);
+                if (expr->lit) { expr->params = ps; expr->body = body; }
+            } else { ps = expr->params; body = expr->body; }
+            auto fn = v_nil(); fn->t = Value::FN; fn->closure = e; fn->body = body; fn->params = std::move(ps);
             if (named) { fn->s = l[1]->s; e->bind(l[1]->s, fn); }   // a named function remembers its name (str prints it)
             cleanup(); return fn;
         }
@@ -1517,6 +1519,8 @@ inline std::string Interp::find_file(const std::string& path, bool* in_library) 
         if (current_file) {
             fs::path base = fs::path(*current_file).parent_path();
             bool from_lib = library_files.count(*current_file) > 0;
+            std::error_code fe;                        // a file run by its bare name: its folder is "." (not typed input)
+            if (base.empty() && fs::is_regular_file(*current_file, fe)) base = ".";
             if (!base.empty()) try_path(base / p, from_lib);
         }
         for (auto& d : load_path) try_path(fs::path(d) / p, true);

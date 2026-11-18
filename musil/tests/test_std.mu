@@ -21,6 +21,13 @@ var r1 (rand 5)
 seed 42
 var r2 (rand 5)
 check (equal? r1 r2) "seed makes rand reproducible"
+; the numbers themselves, the same on every system (rng.h's raw draws, never a std:: distribution)
+seed 42
+var q1 (rand)
+var q2 (rand)
+check (and (< (abs (- q1 0.755155532954539)) 1e-14) (< (abs (- q2 0.639031393854697)) 1e-14)) "rand: the same numbers for seed 42 on every system"
+seed -1
+check (< (abs (- (rand) 0.025913863009904)) 1e-14) "seed: a negative seed is the same on every system"
 check (== (length r1) 5) "rand n"
 check (and (>= (rand) 0) (< (rand) 1)) "rand in [0,1)"
 check (equal? (sort (vec 3 1 2)) (vec 1 2 3)) "sort"

@@ -657,6 +657,11 @@ function tempo-estimate-with-mu (flux fps centre width) {
     }
     return best-bpm
 }
+; bad sizes are errors, not crashes or gigabytes
+check (contains? (error-of (function () (tempo-estimate-with (rand 40) -10 100 0.6))) "fps") "tempo-estimate-with: a negative fps is an error"
+check (contains? (error-of (function () (tempo-estimate-with (rand 40) 1e12 100 0.6))) "fps") "tempo-estimate-with: a huge fps is an error"
+check (contains? (error-of (function () (chromagram (rand 100) 8000 4294967296 1))) "2^24") "chromagram: n above 2^24 is an error"
+check (<= (length (resample (ones 64) 0.0001)) 1) "resample: a tiny factor (its kernel bounded)"
 var pcd (vec 0.9 0.1 0.5 0.1 0.7 0.6 0.1 0.8 0.1 0.5 0.1 0.4)
 check (all? (zip (key-scores pcd) (key-scores-mu pcd)) (function (p) (and (equal? (head (head p)) (head (last p))) (equal? (getidx (head p) 1) (getidx (last p) 1)) (near? (last (head p)) (last (last p)) 1e-12)))) "key-scores: as written in Musil (keys spelled as musicians spell them)"
 check (equal? (head (head (key-scores (rotate-vec pcd 3)))) "Eb") "key-scores: a key a minor third above C is Eb"

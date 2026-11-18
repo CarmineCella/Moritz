@@ -181,6 +181,12 @@ int main() {
             I.load((own / "main.mu").string());
             expect(I.global->find("from")->s == "own", "load: the loading file's own folder first");
         }
+        {   // a main file run by its bare name (musil main.mu): its folder is the current one, still searched first
+            fs::current_path(own);
+            Interp I; make_env(I); I.load_path = { lib.string() };
+            I.load("main.mu");
+            expect(I.global->find("from")->s == "own", "load: a file run by its bare name finds its own modules first");
+        }
         fs::current_path(was); fs::remove_all(root, ec);
     }
     std::cerr << "embed: per-interpreter state\n" << std::flush;   // where it stopped, if it crashes

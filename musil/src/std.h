@@ -29,7 +29,13 @@ inline vptr fn_range(vlist& a, Interp& i) {   // (range n) | (range a b) | (rang
 }
 // (seed n) seed the random generator so that rand repeats
 // (rand) a number in [0, 1); (rand n) a vector of n of them
-inline vptr fn_seed(vlist& a, Interp& i) { i.rng.seed((uint64_t)i.scalar(a[0])); return v_nil(); }
+// the seed through a signed 64-bit integer: a negative or fractional seed is the same on every system (a negative
+// double converted to unsigned is undefined, and arm64 and x86 disagree on it)
+inline uint64_t seed_of(Interp& i, double s) {
+    if (!std::isfinite(s) || std::fabs(s) >= 9.2e18) i.bad("seed: a whole number, |n| < 9.2e18");
+    return (uint64_t)(int64_t)s;
+}
+inline vptr fn_seed(vlist& a, Interp& i) { i.rng.seed(seed_of(i, i.scalar(a[0]))); return v_nil(); }
 //   53 random bits from the raw 64-bit draws (rng.h): the same numbers on every system for a seed
 inline vptr fn_rand(vlist& a, Interp& i) {
     if (a.empty()) return v_num(rnd::uniform01(i.rng));

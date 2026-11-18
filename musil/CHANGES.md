@@ -16,8 +16,10 @@
 - **Closures that hold their own scope are freed**: a cycle collector frees the object pattern
   (`put! self 'get (function () self)`) and inner closures kept in an outer scope.
 - **Faster control flow**: `return`, `break` and `continue` are no longer C++ exceptions (a
-  `continue` costs under a microsecond instead of about 13), and a `(function ...)` form prepares
-  its body once.
+  `continue` costs under a microsecond instead of about 13), and a `(function ...)` form of the
+  program text prepares its body once (a form built as data, which a program may change, every time).
+  A `break`, `continue` or `return` stops at the end of a loaded file: a `break` in a file loaded
+  inside a loop no longer ends the loop that loaded it.
 - **live**: a `set-param` with a time lands on its very sample, `voice-set` glides in 5 ms whatever
   the block size, and the noise node draws the same numbers on every system.
 
@@ -46,13 +48,20 @@
   denormals to zero.
 - **Ambisonic decoding**: a regular ring of at least 2N+1 speakers keeps the exact decoder; any
   other ring (5.0, too few speakers) and any layout with elevations (`binaural-decode`'s 17
-  directions) get the energy-preserving decoder (EPAD): every direction about as loud.
+  directions) get the energy-preserving decoder (EPAD): much more even than before (5.0 at order 3:
+  19 dB between the loudest and the quietest direction instead of 27), though a ring with fewer
+  than 2N+1 speakers cannot make every direction equally loud.
 - **`conv~`'s engine** spreads its work over the callbacks of a block (the worst callback with a
   10 s response: 145 to 44 microseconds).
 - **Maple**: the sound pursuit is 2.7 times faster (cached spectra), the books the same.
 - **One implementation of the analyses** (`src/signals/mir.h`): `chromagram`, `mel-spectrogram`,
   `mfcc-gram`, `self-similarity`, `foote-novelty`, `tempogram`, `beat-track`, `key-scores` and
   `tempo-estimate-with` give Moritz's numbers; keys are named as musicians spell them (E♭ major, F♯ minor).
+  `tempo-estimate-with` reads only lags under half the curve's length, so a short excerpt can give
+  another tempo than before.
+- Bad sizes are errors: `tempo-estimate-with` with an fps that is not in (0, 1e6], an STFT size
+  above 2^24; `resample` bounds its kernel for factors under 1/128; a negative `seed` is the same
+  on every system.
 - Headers for Moritz: the FFT has a real-input transform (`RealFFT`), and the spectral envelope
   (`envelope.h`, `spectral-envelope` a builtin on it, the order advice unified: about sr / (2 f0)),
   HPSS (`hpss.h`) and the RBJ biquads (`biquad.h`, `biquad` a builtin on it) have one header each.
