@@ -160,7 +160,10 @@ jobs:
           key: ccache-sanitize-${{ matrix.sanitizer }}
       - name: Build
         run: |
-          cmake -B build -DMORITZ_SANITIZE=${{ matrix.sanitizer }} -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          # -O1 -g1: what the sanitizers' authors advise (line numbers in the reports, a much faster build than -O2 -g)
+          cmake -B build -DMORITZ_SANITIZE=${{ matrix.sanitizer }} -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            "-DCMAKE_C_FLAGS_RELWITHDEBINFO=-O1 -g1 -DNDEBUG" "-DCMAKE_CXX_FLAGS_RELWITHDEBINFO=-O1 -g1 -DNDEBUG" \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
           cmake --build build -j4
       - name: Test
         env:
