@@ -233,7 +233,7 @@ std::string pathOf(Patch* p) {
 void setMenuCheck(Fl_Menu_Bar* m, const char* path, bool on) {
     if (!m) return;
     auto it = const_cast<Fl_Menu_Item*>(m->find_item(path));
-    if (!it) return;
+    if (!it || (it->value() != 0) == on) return;   // the macOS bar is rebuilt by update(): only on a change
     if (on) it->set();
     else it->clear();
     m->update();
