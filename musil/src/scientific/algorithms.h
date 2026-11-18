@@ -201,7 +201,9 @@ void kmeans(const T* data,
 
 // ---------------------------------------------------------
 // kmeans_pp: k-means++ starts, Lloyd's iterations (at most iters, until no point moves), several starts,
-// the tightest clustering kept (the smallest sum of squared distances). Deterministic for a seed.
+// the tightest clustering kept (the smallest sum of squared distances). The same result on every system for
+// a seed (the draws come from mt19937 itself, not from the library's distributions), and the clusters are
+// numbered in the order the points first meet them (the first point is in cluster 0).
 //   points: n rows of m features; labels: n cluster indices (out); centroids: k rows (out)
 // ---------------------------------------------------------
 inline void kmeans_pp(const std::vector<std::vector<double>>& P, int k, int iters, unsigned seed, int starts,
@@ -220,17 +222,23 @@ inline void kmeans_pp(const std::vector<std::vector<double>>& P, int k, int iter
         return best;
     };
     std::mt19937 rng(seed);
+    auto unit = [&rng]() { return (double)rng() / 4294967296.0; };      // [0, 1), the same everywhere
     double bestSse = std::numeric_limits<double>::max();
     for (int start = 0; start < std::max(1, starts); ++start) {
-        std::vector<std::vector<double>> C = {P[std::uniform_int_distribution<size_t>(0, P.size() - 1)(rng)]};
+        std::vector<std::vector<double>> C = {P[std::min(P.size() - 1, (size_t)(unit() * P.size()))]};
         while ((int)C.size() < k) {                                // far points are likelier
             std::vector<double> w;
+            double total = 0;
             for (auto& p : P) {
                 double best = std::numeric_limits<double>::max();
                 for (auto& c : C) best = std::min(best, dist2(p, c));
                 w.push_back(best);
+                total += best;
             }
-            C.push_back(P[std::discrete_distribution<size_t>(w.begin(), w.end())(rng)]);
+            size_t pick = P.size() - 1;
+            double u = unit() * total, acc = 0;
+            for (size_t i = 0; i < w.size(); ++i) { acc += w[i]; if (u < acc) { pick = i; break; } }
+            C.push_back(P[pick]);
         }
         std::vector<int> label(P.size(), -1);
         for (int it = 0; it < iters; ++it) {
@@ -254,6 +262,14 @@ inline void kmeans_pp(const std::vector<std::vector<double>>& P, int k, int iter
         for (size_t i = 0; i < P.size(); ++i) sse += dist2(P[i], C[(size_t)label[i]]);
         if (sse < bestSse) { bestSse = sse; centroids = C; labels = label; }
     }
+    std::vector<int> order((size_t)k, -1);                        // clusters numbered as the points meet them
+    int next = 0;
+    for (int l : labels) if (order[(size_t)l] < 0) order[(size_t)l] = next++;
+    for (int c = 0; c < k; ++c) if (order[(size_t)c] < 0) order[(size_t)c] = next++;
+    std::vector<std::vector<double>> C2((size_t)k);
+    for (int c = 0; c < k; ++c) C2[(size_t)order[(size_t)c]] = centroids[(size_t)c];
+    centroids = C2;
+    for (auto& l : labels) l = order[(size_t)l];
 }
 
 #endif // ALGORITHMS_H

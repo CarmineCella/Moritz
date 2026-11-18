@@ -564,7 +564,8 @@
   => (list eigenvalues eigenvectors) of a symmetric matrix by Jacobi rotations;
 #kmeans
   (kmeans M k)
-  => (list labels centroids): labels is a vector of cluster indices, centroids a k x d matrix
+  => (list labels centroids): labels is a vector of cluster indices, centroids a k x d matrix.
+  k-means++ starts and Lloyd's iterations, ten starts, the tightest kept (the same as Moritz's kmeans box)
 #knn
   (knn training k queries)
   => list of predicted labels.

@@ -17,7 +17,7 @@ option(MUSIL_TESTS    "Build the test targets" ON)
 
 
 # --- Uninstall ------------------------------------------------------------------
-#   cmake --build build --target uninstall    removes <prefix>/bin/musil, <prefix>/bin/musil-ide,
+#   cmake --build build --target uninstall    removes <prefix>/bin/musil,
 #   <prefix>/include/musil/ and ~/.musil/ (plus whatever the last install's manifest lists, for an
 #   install made with --prefix elsewhere). FLTK's own `uninstall` target is renamed when it is
 #   fetched (see the patch below), so `uninstall` is ours.
@@ -104,18 +104,7 @@ if(MUSIL_FLTK)
   target_link_libraries(musil PRIVATE fltk::images fltk::fltk)
 endif()
 
-# --- The IDE: editor, console, variables, help; plots and controls in windows --------
-if(MUSIL_FLTK)
-  add_executable(musil-ide ide/main.cpp)
-  target_link_libraries(musil-ide PRIVATE musil_base fltk::images fltk::fltk)
-  target_compile_definitions(musil-ide PRIVATE MUSIL_HAS_FLTK MUSIL_SOURCE_LIB="${CMAKE_CURRENT_SOURCE_DIR}/src")
-  if(APPLE)
-    set_target_properties(musil-ide PROPERTIES MACOSX_BUNDLE FALSE)
-  endif()
-  if(WIN32)
-    set_target_properties(musil-ide PROPERTIES WIN32_EXECUTABLE TRUE)   # a window, no console
-  endif()
-endif()
+# --- The IDE of Musil 0.9.1 stays in Musil's own repository; in Moritz, its code editor and Console do its work
 
 if(MUSIL_READLINE)
   find_path(READLINE_INCLUDE_DIR readline/readline.h)
@@ -171,11 +160,8 @@ endif()
 file(GLOB MUSIL_LANG_FILES ${CMAKE_CURRENT_SOURCE_DIR}/src/*.mu ${CMAKE_CURRENT_SOURCE_DIR}/src/help.txt ${CMAKE_CURRENT_SOURCE_DIR}/src/hrtf_kemar.csv ${CMAKE_CURRENT_SOURCE_DIR}/src/hall_concertgebouw.wav)
 file(GLOB MUSIL_HEADERS ${CMAKE_CURRENT_SOURCE_DIR}/src/*.h)
 install(TARGETS musil RUNTIME DESTINATION bin)
-if(MUSIL_FLTK)
-  install(TARGETS musil-ide RUNTIME DESTINATION bin)
-endif()
 install(FILES ${MUSIL_HEADERS} DESTINATION include/musil)
-install(DIRECTORY src/system src/scientific src/live DESTINATION include/musil FILES_MATCHING PATTERN "*.h")
+install(DIRECTORY src/system src/scientific src/signals src/music src/live DESTINATION include/musil FILES_MATCHING PATTERN "*.h")
 install(FILES ${MUSIL_LANG_FILES} DESTINATION ${MUSIL_HOME})
 
 # --- Tests: one per library, plus stress/smoke/load/golden/examples -----------
