@@ -80,6 +80,13 @@ expect "Cancel keeps the document" "state: documents 1"
 run --render "$G/link.moritz" 0.1
 expect "a link banged at load" "not opened"
 
+# 9. a Max patch can't make the import write outside its folder
+mkdir -p "$T/max/sub"
+printf '{"patcher":{"boxes":[{"box":{"id":"obj-1","maxclass":"newobj","text":"inlet","patching_rect":[10,10,30,20]}}],"lines":[]}}\n' > "$T/max/x.maxpat"
+printf '{"patcher":{"boxes":[{"box":{"id":"obj-1","maxclass":"newobj","text":"poly~ ../x 2","patching_rect":[10,10,80,20]}}],"lines":[]}}\n' > "$T/max/sub/main.maxpat"
+run --import "$T/max/sub/main.maxpat" "$T/max/sub/main.moritz"
+if [ $status -eq 0 ] && [ ! -e "$T/max/x.moritz" ] && grep -q "outside the folder" "$out"; then ok; else fail "Max import stays in its folder"; fi
+
 # 11. Recent files hold absolute paths, whatever the command line said
 ( cd "$G" && "$MORITZ" numbers.moritz --window-png none > "$out" 2>&1 )
 if grep -rq "numbers.moritz" "$HOME" 2>/dev/null && ! grep -rq "^0:numbers.moritz" "$HOME" 2>/dev/null; then ok

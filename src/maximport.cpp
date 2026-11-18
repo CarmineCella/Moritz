@@ -136,10 +136,31 @@ private:
 
     void note(std::map<std::string, int>& m, const std::string& k) { ++m[k]; }
 
+    // A name a patch gives for an abstraction stays in the imported patch's folder (or a folder inside
+    // it): "../x", "/x", "C:x" or "a/../../x" would reach files anywhere, and the import writes next to
+    // what it finds.
+    static bool insideFolder(const std::string& name) {
+        if (name.empty() || name[0] == '/' || name[0] == '\\' || name.find(':') != std::string::npos) return false;
+        size_t k = 0;
+        while (k <= name.size()) {
+            size_t e = name.find_first_of("/\\", k);
+            if (e == std::string::npos) e = name.size();
+            std::string part = name.substr(k, e - k);
+            if (part == ".." || part.empty()) return false;
+            k = e + 1;
+        }
+        return true;
+    }
+
     // An abstraction used by the patch: convert name.maxpat into name.moritz
     // next to it (an existing name.moritz is kept).
     void abstraction(const std::string& name) {
         if (name.empty() || isClassName(name) || visiting_.count(name)) return;
+        if (!insideFolder(name)) {
+            if (fileio::isFile(dir_ + "/" + name + ".maxpat"))
+                report.problems.push_back(name + ".maxpat: not converted: it is outside the folder of the imported patch");
+            return;
+        }
         std::string maxFile = dir_ + "/" + name + ".maxpat";
         std::string mFile = dir_ + "/" + name + ".moritz";
         if (!fileio::isFile(maxFile)) return;
@@ -322,7 +343,7 @@ private:
                         line += "\n" + pad + "    " + patcher(*inner, indent + 4, &sigIns);
                     } else if (!isClassName(cls)) {
                         abstraction(cls);
-                        if (!fileio::isFile(dir_ + "/" + cls + ".moritz") && !findAbstractionFile(cls))
+                        if (!(insideFolder(cls) && fileio::isFile(dir_ + "/" + cls + ".moritz")) && !findAbstractionFile(cls))
                             note(report.unknown, cls);
                     }
                     line += ")";
