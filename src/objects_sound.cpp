@@ -104,9 +104,9 @@ public:
     void message(int in, const Message& m) override {
         if (in > 0) { if (m[0].isFloat()) setScalar(in, m[0].f); return; }
         if (m[0].isFloat()) { setScalar(0, m[0].f); return; }
-        if (m[0].is("bang")) startAt_.store(0.f);
-        else if (m[0].is("start")) startAt_.store(std::max(0.f, argf(m, 1, 0.f)));
-        else if (m[0].is("stop")) stop_.store(true);
+        if (m[0].is("bang")) post(kStart, 0.f);
+        else if (m[0].is("start")) post(kStart, std::max(0.f, argf(m, 1, 0.f)));
+        else if (m[0].is("stop")) post(kStop);
         else if (m[0].is("loop")) loop_.store(argf(m, 1, 1.f) != 0.f);
         else if (m[0].is("envelope")) cepstrum_.store(std::clamp((int)argf(m, 1, 0.f), 0, wn_));
         else if (m[0].is("threshold")) threshold_.store(std::max(0.f, argf(m, 1, 0.f)));
@@ -122,15 +122,19 @@ public:
         const float *spd = sigIn(0, n), *pitch = sigIn(1, n), *form = sigIn(2, n);
         const float *amount = sigIn(3, n), *other = sigIn(4, n);
         const SampleBuffer* sb = live_ ? nullptr : ref_.get();
-        if (float s = startAt_.exchange(-1.f); s >= 0.f && sb) {
-            pos_ = s / 1000.0 * sb->sr;
-            playing_ = true;
-            for (auto& c : chans_) std::fill(c->ola.begin(), c->ola.end(), 0.f);
-            reset_ = true;                                  // the next frame resets the vocoders
-            ++gen_;                                         // a frame computing now is not heard
-            ready_ = 0;
+        for (int k = 0; k < events(); ++k) {               // start and stop (a frame is the grain)
+            const Event& e = event(k);
+            if (e.kind == kStart && sb) {
+                pos_ = e.a / 1000.0 * sb->sr;
+                playing_ = true;
+                for (auto& c : chans_) std::fill(c->ola.begin(), c->ola.end(), 0.f);
+                reset_ = true;                              // the next frame resets the vocoders
+                ++gen_;                                     // a frame computing now is not heard
+                ready_ = 0;
+            } else if (e.kind == kStop) {
+                playing_ = false;
+            }
         }
-        if (stop_.exchange(false)) playing_ = false;
         for (int i = 0; i < n; ++i) {
             if (live_) ring_[(size_t)ringPos_] = spd[i];        // keep the input(s)
             ring2_[(size_t)ringPos_] = other[i];
@@ -292,8 +296,9 @@ private:
     bool playing_ = false;
     int ready_ = 0, readPos_ = 0, ringPos_ = 0;
     float sync_ = 0.f;
-    std::atomic<float> startAt_{-1.f}, threshold_{0.f};
-    std::atomic<bool> stop_{false}, loop_{false};
+    enum : uint8_t { kStart = kEvUser, kStop };
+    std::atomic<float> threshold_{0.f};
+    std::atomic<bool> loop_{false};
     std::atomic<int> cepstrum_{0}, phaseMode_{0};
     // the frames' worker: the audio thread hands it a frame (kBusy) and takes the result (kDone)
     Job job_;
@@ -782,7 +787,7 @@ public:
         else if (h.is("speed")) speed_.store(num(1, 1));
         else if (h.is("grainlets")) grainlets_.store(std::max(0.f, num(1, 0)));
         else if (h.is("poly")) poly_.store(std::clamp((int)num(1, 256), 1, Neb::kMaxPoly));
-        else if (h.is("seed")) seed_.store((unsigned)num(1, 1));
+        else if (h.is("seed")) post(kSeed, num(1, 1));
         else if (h.is("window") && m.size() > 1) {
             std::lock_guard<std::mutex> lk(patch->mutex());
             neb_.setWindow(m[1].str());
@@ -797,12 +802,13 @@ public:
         }
     }
     void dsp(int n) override {
+        for (int k = 0; k < events(); ++k)
+            if (event(k).kind == kSeed) neb_.seed((unsigned)event(k).a);
         if (!audioBuffersAvailable()) {        // the GUI holds the lock: it is changing neb_ (proto, window)
             dsp::fill(sigOut(0), 0.f, n);
             dsp::fill(sigOut(1), 0.f, n);
             return;
         }
-        if (unsigned s = seed_.exchange(0)) neb_.seed(s);
         auto& p = neb_.p;
         p.on = on_.load(std::memory_order_relaxed);
         p.density = density_.load(); p.densityRnd = densityRnd_.load();
@@ -832,7 +838,7 @@ private:
         grainlets_{0.f};
     std::atomic<float> pitch_[2] = {0.f, 0.f};
     std::atomic<int> poly_{256};
-    std::atomic<unsigned> seed_{0};
+    enum : uint8_t { kSeed = kEvUser };
 };
 
 }  // namespace
