@@ -415,6 +415,28 @@ void CodeWindow::bind(CodeSource* s) {
                                 : "the file of " + s->title() + " · Cmd-Enter runs the block in the box");
 }
 
+void CodeWindow::unbind() {
+    if (source_) formerTitle_ = source_->title();
+    source_ = nullptr;
+}
+
+void CodeWindow::rebind(CodeSource* s) {
+    formerTitle_.clear();
+    if (!dirty_) {                                  // nothing edited here: the text of the box that is there now
+        std::string f = s->file();
+        if (f.empty()) { path_.clear(); setText(s->script()); }
+        else if (f != path_) load(f);
+    }
+    bind(s);
+}
+
+void CodeWindow::keepUnbound() {
+    refreshTitle();
+    refreshVariables();
+    setStatus((formerTitle_.empty() ? std::string("its box") : formerTitle_) +
+              " is gone: the text is kept here; Save As puts it in a file");
+}
+
 void CodeWindow::setText(const std::string& t) {
     text_->text(t.c_str());
     dirty_ = false;
@@ -427,9 +449,10 @@ void CodeWindow::setText(const std::string& t) {
 bool CodeWindow::save() {
     if (source_ && path_.empty()) {                     // the script of a code box: into the box
         char* t = text_->text();
+        Patch* p = source_->patchOf();
         source_->setScript(t);
         std::free(t);
-        App::get().markEdited(source_->patchOf());
+        App::get().markEdited(p);
         dirty_ = false;
         refreshTitle();
         return true;
@@ -459,6 +482,7 @@ bool CodeWindow::saveAs() {
     std::string old = path_;
     path_ = p;
     if (!save()) { path_ = old; return false; }   // the editor stays as it was
+    formerTitle_.clear();
     return true;
 }
 
@@ -468,11 +492,15 @@ bool CodeWindow::confirmDiscard() {
     int r = askUser("Save the changes to %s?", "Cancel", "Save", "Don't Save", name.c_str());
     if (r == 0) return false;
     if (r == 1) return save();
+    dirty_ = false;             // discarded: it closes (or its box goes) without asking again
     return true;
 }
 
 void CodeWindow::refreshTitle() {
-    std::string name = source_ && path_.empty() ? source_->title() : path_.empty() ? "Untitled" : path_.substr(path_.find_last_of("/\\") + 1);
+    std::string name = source_ && path_.empty() ? source_->title()
+                       : !path_.empty()          ? path_.substr(path_.find_last_of("/\\") + 1)
+                       : !formerTitle_.empty()   ? formerTitle_ + " (its box is gone)"
+                                                 : "Untitled";
     copy_label((name + (dirty_ ? " *" : "") + " — code").c_str());
 }
 

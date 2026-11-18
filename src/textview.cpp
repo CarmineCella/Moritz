@@ -179,7 +179,7 @@ void PatchTextWindow::applyNow() {
     std::string t = raw;
     std::free(raw);
     if (t == shown_) { pending_ = false; setStatus("in sync with the drawing · edit here or there"); return; }
-    if (doc_) doc_->pushUndo();
+    if (doc_) doc_->pushUndo(patch);
     std::string err;
     if (!patch->applyText(t, err)) {
         if (doc_) doc_->dropUndo();
@@ -187,7 +187,7 @@ void PatchTextWindow::applyNow() {
         return;
     }
     if (patch->owner) patch->rebuild();          // a subpatcher's inlets follow positions
-    if (doc_) doc_->markDirty();
+    if (doc_) doc_->markDirty(patch);
     shown_ = patch->serialize();
     pending_ = false;
     if (err.empty()) setStatus("applied · in sync with the drawing");

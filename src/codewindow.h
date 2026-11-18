@@ -36,6 +36,11 @@ public:
     // runs in the box's interpreter
     void bind(CodeSource* s);
     CodeSource* source() const { return source_; }
+    // the box is gone (App::codeSourceClosed): unbind() at once; then rebind() to the box that took its
+    // place (its text again unless edited here), or keepUnbound(): the text stays, Save asks for a file
+    void unbind();
+    void rebind(CodeSource* s);
+    void keepUnbound();
     void setText(const std::string& t);
     Fl_Text_Editor* editor() { return editor_; }
     void applyFont();                             // the code font and size of the settings
@@ -51,6 +56,7 @@ public:
 private:
     std::string path_;
     CodeSource* source_ = nullptr;
+    std::string formerTitle_;                     // unbound: the box it was the script of
     bool dirty_ = false;
     int errorLine_ = 0;                           // highlighted until the next edit
     int flashFrom_ = 0, flashTo_ = 0;             // lines just sent to run

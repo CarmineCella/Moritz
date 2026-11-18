@@ -293,8 +293,12 @@ public:
     CodeWindow* newCode();
     CodeWindow* openCode(const std::string& path);
     CodeWindow* openCodeFor(CodeSource* s);          // the script of a code box (double-click)
-    void codeSourceClosed(CodeSource* s);            // the box is gone: its editor closes
+    // the box is gone (deleted, replaced by undo or the code view): its editor is bound again to the
+    // box that took its place, closed when it has nothing unsaved, or kept as a buffer of its own
+    void codeSourceClosed(CodeSource* s);
     void markEdited(Patch* p);                       // the document showing p is now edited
+    void pushUndoFor(Patch* p);                      // an undo step in the document showing p
+    MainWindow* docOf(Patch* p);                     // the document p belongs to
     void closeCode(CodeWindow* w);      // already confirmed
     CodeWindow* frontCode();            // the code window in front, if one is
     const std::vector<CodeWindow*>& codeWindows() const { return codeWindows_; }
@@ -361,6 +365,15 @@ private:
     ToolButton* recorderBtn_ = nullptr;
     std::string recordingsDir_;
     static void toolTimer(void* data);
+    // code editors whose box went away while something was being rebuilt: settled from the event loop
+    struct Orphan {
+        CodeWindow* window;
+        MainWindow* doc;         // the document the box was in (nullptr: closing)
+        std::string where;       // the patch it was in, as a path of box ids
+        std::string id;          // the box
+    };
+    std::vector<Orphan> orphans_;
+    static void settleOrphans(void* data);
     friend class PatchWindow;
 };
 
@@ -412,7 +425,15 @@ public:
     Canvas* canvas = nullptr;
 
 private:
-    void restore(const std::string& snapshot);
+    // An undo step: the text of the patch an edit changed (the document's, a subpatcher's or an
+    // abstraction's), found again by its path of box ids. Undo puts it back with Patch::applyText, which
+    // keeps every box whose line did not change, with its state.
+    struct UndoStep {
+        std::string where;      // "" the document's patch, "p1/fm2" a patch inside
+        std::string text;
+    };
+    bool restore(std::vector<UndoStep>& from, std::vector<UndoStep>& to, std::string& msg);
+    Patch* resolve(const std::string& where) const;   // the patch at a path of box ids, or nullptr
 
     Fl_Menu_Bar* menu_ = nullptr;   // Windows and Linux: each window has its menu
     friend class App;
@@ -431,7 +452,7 @@ private:
     std::string path_;
     std::string suggested_;          // Save As proposes this name (imported patches)
     bool dirty_ = false;
-    std::vector<std::string> undo_, redo_;
+    std::vector<UndoStep> undo_, redo_;
     std::string message_;
 };
 

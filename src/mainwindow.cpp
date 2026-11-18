@@ -779,18 +779,66 @@ CodeWindow* App::openCodeFor(CodeSource* s) {
 }
 
 void App::codeSourceClosed(CodeSource* s) {
-    for (auto* w : codeWindows_)
-        if (w->source() == s) { closeCode(w); return; }
+    // This runs inside the box's destructor, maybe while its patch is being rebuilt (undo, the code
+    // view) and under its lock: only note it, and settle from the event loop.
+    for (auto* w : codeWindows_) {
+        if (w->source() != s) continue;
+        Orphan o{w, nullptr, "", ""};
+        if (auto* b = dynamic_cast<Box*>(s)) {    // where it was: a box may take its place there
+            o.id = b->id;
+            o.doc = docOf(b->patch);              // nullptr when its document is closing
+            if (o.doc) o.where = pathOf(b->patch);
+        }
+        w->unbind();
+        orphans_.push_back(o);
+        if (!Fl::has_timeout(settleOrphans)) Fl::add_timeout(0, settleOrphans);
+        return;
+    }
+}
+
+void App::settleOrphans(void*) {
+    App& app = App::get();
+    auto orphans = std::move(app.orphans_);
+    app.orphans_.clear();
+    for (auto& o : orphans) {
+        if (std::find(app.codeWindows_.begin(), app.codeWindows_.end(), o.window) == app.codeWindows_.end()) continue;
+        CodeSource* next = nullptr;
+        if (o.doc && std::find(app.docs.begin(), app.docs.end(), o.doc) != app.docs.end())
+            if (Patch* p = o.doc->resolve(o.where))
+                if (Box* b = p->find(o.id)) next = dynamic_cast<CodeSource*>(b);
+        if (next) {
+            // the box that took its place (undo, the code view): the editor follows it
+            bool open = false;
+            for (auto* w : app.codeWindows_) open = open || w->source() == next;
+            if (!open) {
+                o.window->rebind(next);
+                continue;
+            }
+        }
+        if (!o.window->dirty()) app.closeCode(o.window);   // nothing unsaved: as before, it closes
+        else o.window->keepUnbound();                      // its text stays, as a buffer of its own
+    }
+}
+
+MainWindow* App::docOf(Patch* p) {
+    for (auto* d : docs)
+        for (Patch* q = p; q; q = q->parent)
+            if (q == &d->patch) return d;
+    return nullptr;
 }
 
 void App::markEdited(Patch* p) {
-    for (auto* d : docs)
-        for (Patch* q = p; q; q = q->parent)
-            if (q == &d->patch) { d->markDirty(); return; }
+    if (auto* d = docOf(p)) d->markDirty(p);
+}
+
+void App::pushUndoFor(Patch* p) {
+    if (auto* d = docOf(p)) d->pushUndo(p);
 }
 
 void App::closeCode(CodeWindow* w) {
     codeWindows_.erase(std::remove(codeWindows_.begin(), codeWindows_.end(), w), codeWindows_.end());
+    for (auto& o : orphans_)
+        if (o.window == w) o.window = nullptr;
     w->hide();
     Fl::delete_widget(w);
 }
@@ -1469,6 +1517,15 @@ int MainWindow::handle(int e) {
 
 bool MainWindow::confirmDiscard() {
     canvas->commitEdit();
+    for (auto* w : subwindows_) w->canvas->commitEdit();
+    App& app = App::get();
+    // the scripts of its code boxes, edited in their editors and not put back yet
+    for (auto* cw : std::vector<CodeWindow*>(app.codeWindows())) {
+        CodeSource* s = cw->source();
+        if (!s || !cw->dirty() || app.docOf(s->patchOf()) != this) continue;
+        cw->show();
+        if (!cw->confirmDiscard()) return false;
+    }
     if (!dirty_) return true;
     std::string name = path_.empty() ? "Untitled" : baseName(path_);
     int r = askUser("Save changes to \"%s\"?", "Cancel", "Save", "Don't Save", name.c_str());
@@ -1599,8 +1656,9 @@ bool MainWindow::saveAs() {
 
 // ---- Edit
 
-void MainWindow::pushUndo(Patch*) {
-    undo_.push_back(patch.serialize());
+void MainWindow::pushUndo(Patch* p) {
+    if (!p) p = &patch;
+    undo_.push_back({pathOf(p), p->serialize()});
     if (undo_.size() > 500) undo_.erase(undo_.begin());
     redo_.clear();
 }
@@ -1609,36 +1667,46 @@ void MainWindow::dropUndo() {
     if (!undo_.empty()) undo_.pop_back();
 }
 
-void MainWindow::restore(const std::string& snapshot) {
-    std::string err;
-    canvas->reset();
+// Puts back the text of the last step of `from`, keeping what did not change (applyText): a buffer~'s
+// sound, a code box's interpreter and editor, the sound of everything else go on.
+bool MainWindow::restore(std::vector<UndoStep>& from, std::vector<UndoStep>& to, std::string& msg) {
+    canvas->commitEdit();
+    activeCanvas()->commitEdit();
     auto open = openSubpatchPaths();
-    patch.load(snapshot, err);
-    reopenSubpatches(open);
-    markDirty();
+    bool done = false;
+    while (!from.empty() && !done) {
+        UndoStep s = std::move(from.back());
+        from.pop_back();
+        Patch* p = resolve(s.where);
+        if (!p) { msg = "skipped an edit of " + s.where + ", which is gone"; continue; }
+        to.push_back({s.where, p->serialize()});
+        std::string err;
+        if (!p->applyText(s.text, err)) {     // can't happen with a text the patch wrote; nothing changed
+            to.pop_back();
+            msg = "can't restore: " + err;
+            break;
+        }
+        if (p->owner) p->rebuild();           // a subpatcher's inlets and outlets follow positions
+        markDirty(p);
+        done = true;
+    }
+    reopenSubpatches(open);                   // a subpatcher remade by it: its window again
+    canvas->reset();
+    for (auto* w : subwindows_) w->canvas->reset();
     canvas->redraw();
+    return done;
 }
 
 void MainWindow::undo() {
-    canvas->commitEdit();
-    activeCanvas()->commitEdit();
-    if (undo_.empty()) { setStatus("nothing to undo"); return; }
-    redo_.push_back(patch.serialize());
-    std::string s = std::move(undo_.back());
-    undo_.pop_back();
-    restore(s);
-    setStatus("undo");
+    std::string msg;
+    bool ok = restore(undo_, redo_, msg);
+    setStatus(ok ? (msg.empty() ? "undo" : msg) : (msg.empty() ? "nothing to undo" : msg));
 }
 
 void MainWindow::redo() {
-    canvas->commitEdit();
-    activeCanvas()->commitEdit();
-    if (redo_.empty()) { setStatus("nothing to redo"); return; }
-    undo_.push_back(patch.serialize());
-    std::string s = std::move(redo_.back());
-    redo_.pop_back();
-    restore(s);
-    setStatus("redo");
+    std::string msg;
+    bool ok = restore(redo_, undo_, msg);
+    setStatus(ok ? (msg.empty() ? "redo" : msg) : (msg.empty() ? "nothing to redo" : msg));
 }
 
 // ---- Patch
@@ -1704,20 +1772,27 @@ std::vector<std::string> MainWindow::openSubpatchPaths() const {
     return v;
 }
 
+Patch* MainWindow::resolve(const std::string& where) const {
+    Patch* p = &patch;
+    size_t start = 0;
+    while (p && start < where.size()) {
+        size_t end = where.find('/', start);
+        std::string id = where.substr(start, end == std::string::npos ? std::string::npos : end - start);
+        Box* b = p->find(id);
+        p = b ? b->inner() : nullptr;
+        if (end == std::string::npos) break;
+        start = end + 1;
+    }
+    return p;
+}
+
 void MainWindow::reopenSubpatches(const std::vector<std::string>& paths) {
     for (auto& path : paths) {
-        Patch* p = &patch;
-        Box* b = nullptr;
-        size_t start = 0;
-        while (p && start <= path.size()) {
-            size_t end = path.find('/', start);
-            std::string id = path.substr(start, end == std::string::npos ? std::string::npos : end - start);
-            b = p->find(id);
-            p = b ? b->inner() : nullptr;
-            if (end == std::string::npos) break;
-            start = end + 1;
-        }
-        if (p && b) openSubpatch(b);
+        Patch* p = resolve(path);
+        if (!p || !p->owner) continue;
+        bool open = false;                    // still open (its box was kept): left where it is
+        for (auto* w : subwindows_) open = open || (w->patch == p && w->shown());
+        if (!open) openSubpatch(p->owner);
     }
 }
 

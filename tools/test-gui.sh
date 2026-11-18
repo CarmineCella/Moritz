@@ -61,6 +61,13 @@ status=0
 if cmp -s "$T/big.moritz" "$T/big-original.moritz" && grep -q "alert: Can't save" "$out" &&
    [ -z "$(ls -A "$T" | grep '\.tmp$')" ]; then ok; else fail "a failed save keeps the file"; fi
 
+# 5. undo puts back what changed and keeps the rest: the buffer~'s sound, the edited script's editor
+run "$G/undo.moritz" --window-png none open=c1 act=wait:0.5 act=buffer:snd "act=codeedit:;edited" act=new:button \
+    act=undo act=buffer:snd act=state
+frames=$(grep "state: buffer snd frames" "$out" | head -1)
+if [ $status -eq 0 ] && [ "$(grep -c "$frames" "$out")" = 2 ] && ! grep -q "frames 0$" "$out" &&
+   grep -q "state: code bound code c1 edited yes" "$out"; then ok; else fail "undo keeps buffer~ and the code editor"; fi
+
 # 11. Recent files hold absolute paths, whatever the command line said
 ( cd "$G" && "$MORITZ" numbers.moritz --window-png none > "$out" 2>&1 )
 if grep -rq "numbers.moritz" "$HOME" 2>/dev/null && ! grep -rq "^0:numbers.moritz" "$HOME" 2>/dev/null; then ok
