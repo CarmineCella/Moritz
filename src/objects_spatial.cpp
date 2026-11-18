@@ -274,15 +274,19 @@ public:
         nch_ = channelsOf(order_);
         setPorts(std::vector<Port>((size_t)nch_, P::Signal), {P::Signal, P::Signal});
     }
-    void resolve() override { build(patch->root()->sampleRate.load()); }
-    void dsp(int n) override {
+    // prepared at compile (on the GUI thread) for the rate: again only when it changed
+    void resolve() override {
         double sr = patch->root()->sampleRate.load();
         if (sr > 0 && std::fabs(sr - builtSr_) > 0.5) build(sr);
+    }
+    void dsp(int n) override {
         float *L = sigOut(0), *R = sigOut(1);
         std::fill(L, L + n, 0.f);
         std::fill(R, R + n, 0.f);
         const int T = taps_;
-        if (T == 0) return;
+        // not prepared for this rate (the compile after a rate change is coming): silence, never
+        // the preparation here
+        if (T == 0 || std::fabs(patch->root()->sampleRate.load() - builtSr_) > 0.5) return;
         for (int k = 0; k < nch_; ++k) {
             const float* x = sigIn(k, n);
             float* h = &hist_[(size_t)k * 2 * T];           // the last T inputs, twice (no wrapping in the loop)
@@ -375,12 +379,18 @@ public:
         setScalar(1, argf(a, 0, 0.f));
         setScalar(2, argf(a, 1, 0.f));
     }
-    void resolve() override { prepare(patch->root()->sampleRate.load()); }
-    void dsp(int n) override {
+    // prepared at compile (on the GUI thread) for the rate: again only when it changed
+    void resolve() override {
         double sr = patch->root()->sampleRate.load();
         if (sr > 0 && (!set_ || std::fabs(sr - sr_) > 0.5)) prepare(sr);
+    }
+    void dsp(int n) override {
         float *L = sigOut(0), *R = sigOut(1);
-        if (!set_) { std::fill(L, L + n, 0.f); std::fill(R, R + n, 0.f); return; }
+        if (!set_ || std::fabs(patch->root()->sampleRate.load() - sr_) > 0.5) {   // never prepared here
+            std::fill(L, L + n, 0.f);
+            std::fill(R, R + n, 0.f);
+            return;
+        }
         const float* x = sigIn(0, n);
         float az = sigIn(1, n)[n - 1], el = sigIn(2, n)[n - 1];
         bool move = !have_ || std::fabs(az - az_) > 1e-3f || std::fabs(el - el_) > 1e-3f;

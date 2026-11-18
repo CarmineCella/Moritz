@@ -82,6 +82,12 @@ struct Rig {
     }
 };
 
+inline float peakOf(const std::vector<float>& x, size_t from = 0, size_t to = ~size_t(0)) {
+    float p = 0.f;
+    for (size_t i = from; i < std::min(to, x.size()); ++i) p = std::max(p, std::fabs(x[i]));
+    return p;
+}
+
 // one channel of interleaved output
 inline std::vector<float> channel(const std::vector<float>& x, int ch, int c) {
     std::vector<float> y;

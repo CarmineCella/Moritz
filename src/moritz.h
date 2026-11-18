@@ -362,6 +362,10 @@ public:
     std::string dir;          // folder of the patch file, for relative paths ("" = parent's)
     std::string resolvePath(const std::string& p) const;
     void rebuild();           // recompile after a box changed what it refers to
+    // the sample rate changed (the audio device reopened): compiles again if the boxes were
+    // prepared for another rate, so they prepare (delay lines, head responses) here, on the
+    // GUI thread before audio starts, never in dsp()
+    void rateChanged();
 
     // ---- audio (audio thread)
     void process(const float* in, int inCh, float* out, int outCh, int frames);
@@ -407,6 +411,7 @@ private:
     std::vector<Timer> timers_;
     uint64_t timerSeq_ = 0;
     bool inRunDue_ = false;
+    double planRate_ = 0.0;      // root: the sample rate of the last compile
     // messages from other threads for the dispatch thread (root)
     std::atomic<std::thread::id> dispatch_{};
     std::mutex foreignMutex_;

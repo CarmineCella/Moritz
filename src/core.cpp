@@ -623,6 +623,7 @@ int Patch::maxOutputChannel() const {
 // Orders signal boxes so every box runs after the boxes feeding it, and
 // points each signal inlet at the output buffers connected to it.
 void Patch::compile() {
+    if (!parent) planRate_ = sampleRate.load();
     // inner patches first: their inlets/outlets decide the owner's ports
     for (auto& b : boxes)
         if (b->inner()) {
@@ -727,6 +728,13 @@ void Patch::addSendReceiveEdges(const std::vector<Box*>& sig, std::map<Box*, std
             next[s].push_back(r);
             indeg[r]++;
         }
+}
+
+void Patch::rateChanged() {
+    if (parent) { root()->rateChanged(); return; }
+    if (sampleRate.load() == planRate_) return;
+    std::lock_guard<std::mutex> lk(dspMutex);
+    compile();
 }
 
 void Patch::rebuild() {

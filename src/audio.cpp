@@ -125,6 +125,7 @@ bool AudioEngine::open(std::string& err) {
             return false;
         }
         patch_.sampleRate = (double)device_.sampleRate;
+        patch_.rateChanged();     // boxes prepared for another rate prepare again, before audio starts
         patch_.ioBufferFrames = (int)device_.playback.internalPeriodSizeInFrames;
         patch_.cpuLoad = 0.f;
         if (ma_device_start(&device_) != MA_SUCCESS) {
