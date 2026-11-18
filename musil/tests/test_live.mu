@@ -335,11 +335,36 @@ if (not (equal? (platform) "windows")) {
     ; --- the evaluation port ---
     serve 47770
     check (== (serving) 47770) "serve, serving"
+    ; a message starts with the port's token, in ~/.musil/port-47770.token (or, when ~/.musil is not the user's,
+    ; in a folder of the user's in the temporary directory), readable by the user alone
+    var home-token (concat (getenv "HOME") "/.musil/port-47770.token")
+    var tmpdir (if (getenv "TMPDIR") (getenv "TMPDIR") "/tmp")
+    var token-file (if (exists? home-token) home-token (concat tmpdir "/musil-" (trim (exec "id -u")) "/port-47770.token"))
+    var token (trim (read token-file))
+    check (== (length token) 32) "the port's token: random, in the token file"
+    check (equal? (trim (exec (concat "stat -f %Lp " token-file " 2>/dev/null || stat -c %a " token-file))) "600") "the token file is the user's alone"
+
     ; the client runs in the background: the port is served from this thread's idle time (sleep idles)
-    exec "(printf 'var from-editor 41\\n(+ from-editor 1)\\n\\004' | nc 127.0.0.1 47770 > /tmp/musil_port_reply.txt 2>/dev/null &)"
+    exec (concat "(printf '" token "\\nvar from-editor 41\\n(+ from-editor 1)\\n\\004' | nc 127.0.0.1 47770 > /tmp/musil_port_reply.txt 2>/dev/null &)")
     sleep 0.5
     check (equal? (trim (read "/tmp/musil_port_reply.txt")) "42") "the port evaluates what it receives and replies with the value"
     check (== from-editor 41) "...in the global environment"
+    exec "(printf 'not-the-token\\nvar intruder 1\\n\\004' | nc 127.0.0.1 47770 > /tmp/musil_port_reply.txt 2>/dev/null &)"
+    sleep 0.5
+    check (contains? (read "/tmp/musil_port_reply.txt") "refused") "a message without the token is refused"
+    check (not (defined? 'intruder)) "...and not evaluated"
+    ; code that arrives while a loop runs waits for a safe point (here the sleep after the loop): it never runs in the
+    ; middle of an evaluation (it used to, and reset the evaluator's state under the running loop)
+    exec (concat "(printf '" token "\\nvar from-editor2 7\\n\\004' | nc 127.0.0.1 47770 > /tmp/musil_port_reply.txt 2>/dev/null &)")
+    var seen-in-loop 0
+    var t-loop (clock)
+    while (< (- (clock) t-loop) 0.4) {
+        if (defined? 'from-editor2) { set seen-in-loop 1 }
+        for (var k 0) (< k 50) (var k (+ k 1)) (list k)
+    }
+    check (== seen-in-loop 0) "the port does not evaluate in the middle of a running loop"
+    sleep 0.5
+    check (== from-editor2 7) "...it evaluates once the program waits"
     serve-stop
     check (== (serving) 0) "serve-stop"
 

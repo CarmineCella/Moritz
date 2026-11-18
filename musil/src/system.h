@@ -9,6 +9,7 @@
 #include "system/wav_tools.h"
 #include "system/csv_tools.h"
 #include <cstdio>
+#include <cerrno>
 #include <cstring>
 #include <thread>
 #ifndef _WIN32
@@ -16,6 +17,8 @@
 #include <sys/socket.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <sys/stat.h>
+#include <sys/select.h>
 #else
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -42,8 +45,8 @@ inline vptr sys_platform(vlist&, Interp&) {
 }
 // (exec "command") => the command's standard output as a string
 inline vptr sys_exec(vlist& a, Interp& i) {
-    i.blocking("exec");
     const std::string& cmd = i.str(a[0]);
+    i.require_exec(cmd); i.require_blocking("exec");
     FILE* p = popen(cmd.c_str(), "r"); if (!p) i.bad("cannot run " + cmd);
     std::string out; char buf[256]; while (fgets(buf, sizeof(buf), p)) out += buf;
     pclose(p); return v_str(std::move(out));
@@ -65,13 +68,17 @@ inline vptr sys_interactive(vlist&, Interp&) {
     return v_bool(true);
 #endif
 }
+// a builtin that waits is a safe point: background code (the evaluation port, a window's request) may run there
+struct waiting_scope { Interp& i; explicit waiting_scope(Interp& in) : i(in) { ++i.waiting; } ~waiting_scope() { --i.waiting; } };
 // (breathe) let the background work run once (windows, schedulers, the score player): for a long computation
 //   done from a window's button, once per step
-inline vptr sys_breathe(vlist&, Interp& i) { if (i.yield_fn) i.yield_fn(); i.idle(); return v_nil(); }
+inline vptr sys_breathe(vlist&, Interp& i) { i.check_stop(); waiting_scope w(i); if (i.yield_fn) i.yield_fn(); i.idle(); return v_nil(); }
 inline vptr sys_sleep(vlist& a, Interp& i) {   // in slices, so a stop request and background work (live loops) get through
-    i.blocking("sleep");
-    double secs = i.scalar(a[0]); auto end = std::chrono::steady_clock::now() + std::chrono::duration<double>(secs);
+    i.require_blocking("sleep");
+    double secs = i.scalar(a[0]); auto end = std::chrono::steady_clock::now() + std::chrono::duration<double>(std::max(0.0, std::min(secs, 1e9)));
+    waiting_scope w(i);
     while (true) {
+        i.check_stop();
         auto now = std::chrono::steady_clock::now(); if (now >= end) break;
         std::this_thread::sleep_for(std::min(std::chrono::duration<double>(0.005), std::chrono::duration<double>(end - now)));
         if (i.yield_fn) i.yield_fn();
@@ -88,6 +95,7 @@ inline vptr sys_cwd(vlist&, Interp&) { return v_str(fs::current_path().string())
 // (ls [dir]) => list of entry names, sorted
 inline vptr sys_ls(vlist& a, Interp& i) {
     fs::path d = a.empty() ? fs::current_path() : fs::path(i.str(a[0]));
+    i.require_read(d.string());
     std::error_code ec; std::vector<std::string> names;
     for (auto& e : fs::directory_iterator(d, ec)) names.push_back(e.path().filename().string());
     if (ec) i.bad("cannot list " + d.string());
@@ -96,12 +104,12 @@ inline vptr sys_ls(vlist& a, Interp& i) {
     return v_list(std::move(out));
 }
 // (mkdir path) => creates the directory and its parents; nil
-inline vptr sys_mkdir(vlist& a, Interp& i) { std::error_code ec; fs::create_directories(i.str(a[0]), ec); if (ec) i.bad("cannot create " + i.str(a[0])); return v_nil(); }
+inline vptr sys_mkdir(vlist& a, Interp& i) { std::error_code ec; fs::create_directories(i.writable(i.str(a[0])), ec); if (ec) i.bad("cannot create " + i.str(a[0])); return v_nil(); }
 // (remove path) => deletes a file or an empty directory; 1 if something was removed
-inline vptr sys_remove(vlist& a, Interp& i) { std::error_code ec; bool r = fs::remove(i.str(a[0]), ec); if (ec) i.bad("cannot remove " + i.str(a[0])); return v_bool(r); }
+inline vptr sys_remove(vlist& a, Interp& i) { std::error_code ec; bool r = fs::remove(i.writable(i.str(a[0])), ec); if (ec) i.bad("cannot remove " + i.str(a[0])); return v_bool(r); }
 // (stat path) => (list size is-dir modified-seconds) or nil if it does not exist
 inline vptr sys_stat(vlist& a, Interp& i) {
-    fs::path p(i.read_path(i.str(a[0]))); std::error_code ec;
+    fs::path p(i.readable(i.str(a[0]))); std::error_code ec;
     if (!fs::exists(p, ec)) return v_nil();
     bool dir = fs::is_directory(p, ec);
     double size = dir ? 0.0 : (double)fs::file_size(p, ec);
@@ -115,7 +123,8 @@ inline vptr sys_stat(vlist& a, Interp& i) {
 // --- CSV: a table is a list of rows, a row a list of cells; numeric cells become numbers ---
 // (read-csv path) => table. write-csv is in system.mu.
 inline vptr sys_read_csv(vlist& a, Interp& i) {
-    std::string path = i.read_path(i.str(a[0]));
+    std::string path = i.readable(i.str(a[0]));
+    std::error_code ec; if (fs::exists(path, ec) && !fs::is_regular_file(path, ec)) i.bad("not a regular file: " + path);
     std::ifstream f(path); if (!f) i.bad("cannot open " + path);
     vlist rows;
     for (auto& row : readCSV(f)) {
@@ -132,7 +141,9 @@ inline vptr sys_read_csv(vlist& a, Interp& i) {
 // (read-wav path) => (list sample-rate (list channel-vector ...)): 8, 16, 24 and 32-bit PCM or 32/64-bit float, any channels and rate
 inline vptr sys_read_wav(vlist& a, Interp& i) {
     WAVHeader h{}; std::vector<std::vector<double>> chans;
-    try { chans = read_wav_raw(i.read_path(i.str(a[0])).c_str(), h); } catch (std::exception& e) { i.bad(e.what()); }
+    std::string path = i.readable(i.str(a[0]));
+    { std::error_code ec; if (fs::exists(path, ec) && !fs::is_regular_file(path, ec)) i.bad("not a regular file: " + path); }
+    try { chans = read_wav_raw(path.c_str(), h); } catch (std::exception& e) { i.bad(e.what()); }
     vlist cl;
     for (auto& c : chans) { varr v(c.size()); for (size_t k = 0; k < c.size(); k++) v[k] = c[k]; cl.push_back(v_arr(std::move(v))); }
     return v_list({ v_num((double)h.sampleRate), v_list(std::move(cl)) });
@@ -154,7 +165,8 @@ inline vptr sys_write_wav(vlist& a, Interp& i) {
     if (chans.empty()) i.bad("no channels");
     for (auto& c : chans) if (c.size() != chans[0].size()) i.bad("all channels must have the same length");
     WAVHeader h{}; h.audioFormat = (uint16_t)fmt; h.numChannels = (uint16_t)chans.size(); h.sampleRate = (uint32_t)sr; h.bitsPerSample = (uint16_t)bits;
-    try { write_wav_raw(i.str(a[0]).c_str(), chans, h); } catch (std::exception& e) { i.bad(e.what()); }
+    const std::string& path = i.writable(i.str(a[0]));
+    try { write_wav_raw(path.c_str(), chans, h); } catch (std::exception& e) { i.bad(e.what()); }
     return v_nil();
 }
 
@@ -164,25 +176,27 @@ using socket_t = SOCKET;
 inline bool udp_ready() { static bool ok = [] { WSADATA d; return WSAStartup(MAKEWORD(2, 2), &d) == 0; }(); return ok; }
 inline void udp_close(socket_t s) { closesocket(s); }
 inline bool udp_bad(socket_t s) { return s == INVALID_SOCKET; }
-inline void udp_timeout(socket_t s, double seconds) { DWORD ms = (DWORD)(seconds * 1000); setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, (const char*)&ms, sizeof(ms)); }
 using addr_len_t = int;
 #else
 using socket_t = int;
 inline bool udp_ready() { return true; }
 inline void udp_close(socket_t s) { ::close(s); }
 inline bool udp_bad(socket_t s) { return s < 0; }
-inline void udp_timeout(socket_t s, double timeout) {   // tv_sec/tv_usec have platform-specific types: assign, don't brace-initialise
-    timeval tv{};
-    tv.tv_sec  = static_cast<decltype(tv.tv_sec)>(timeout);
-    tv.tv_usec = static_cast<decltype(tv.tv_usec)>((timeout - static_cast<double>(tv.tv_sec)) * 1e6);
-    setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
-}
 using addr_len_t = socklen_t;
 #endif
+// wait up to `seconds` for a socket to be readable: true if it is
+inline bool socket_readable(socket_t s, double seconds) {
+    fd_set fds; FD_ZERO(&fds); FD_SET(s, &fds);
+    timeval tv{};
+    tv.tv_sec  = static_cast<decltype(tv.tv_sec)>(seconds);
+    tv.tv_usec = static_cast<decltype(tv.tv_usec)>((seconds - static_cast<double>(tv.tv_sec)) * 1e6);
+    return select((int)s + 1, &fds, nullptr, nullptr, &tv) > 0;
+}
 // (udp-send host port payload [osc?]) => 1 on success, 0 on failure. With osc?=1 the payload is
 // sent as a minimal OSC message (address only, padded, empty type tag).
 inline vptr sys_udp_send(vlist& a, Interp& i) {
     std::string host = i.str(a[0]); int port = (int)i.scalar(a[1]);
+    i.require_net("udp-send " + host + ":" + std::to_string(port));
     std::string payload = str_of(a[2]); bool osc = a.size() > 3 && truthy(a[3]);
     if (!udp_ready()) return v_bool(false);
     socket_t sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP); if (udp_bad(sock)) return v_bool(false);
@@ -192,18 +206,30 @@ inline vptr sys_udp_send(vlist& a, Interp& i) {
     long r = sendto(sock, buf.data(), (int)buf.size(), 0, (sockaddr*)&srv, sizeof(srv));
     udp_close(sock); return v_bool(r >= 0);
 }
-// (udp-receive host port [timeout-seconds]) => the next datagram as a string, or nil on timeout/failure
+// (udp-receive host port [timeout-seconds]) => the next datagram as a string, or nil on timeout/failure. Without a
+//   timeout it waits until a datagram comes (or the program is stopped); either way it waits in slices, so a stop
+//   request and the background work get through.
 inline vptr sys_udp_receive(vlist& a, Interp& i) {
     std::string host = i.str(a[0]); int port = (int)i.scalar(a[1]);
+    i.require_net("udp-receive " + host + ":" + std::to_string(port)); i.require_blocking("udp-receive");
     double timeout = a.size() > 2 ? i.scalar(a[2]) : -1;
     if (!udp_ready()) return v_nil();
     socket_t sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP); if (udp_bad(sock)) return v_nil();
-    if (timeout >= 0) udp_timeout(sock, timeout);
+    struct closer { socket_t s; ~closer() { udp_close(s); } } c{ sock };
     sockaddr_in srv{}; srv.sin_family = AF_INET; srv.sin_port = htons((uint16_t)port); srv.sin_addr.s_addr = inet_addr(host.c_str());
-    if (::bind(sock, (sockaddr*)&srv, sizeof(srv)) < 0) { udp_close(sock); return v_nil(); }
+    if (::bind(sock, (sockaddr*)&srv, sizeof(srv)) < 0) return v_nil();
+    auto end = std::chrono::steady_clock::now() + std::chrono::duration<double>(std::max(0.0, std::min(timeout, 1e9)));
+    waiting_scope w(i);
+    while (true) {
+        i.check_stop();
+        double slice = 0.02;
+        if (timeout >= 0) { double left = std::chrono::duration<double>(end - std::chrono::steady_clock::now()).count(); if (left <= 0) return v_nil(); slice = std::min(slice, left); }
+        if (socket_readable(sock, slice)) break;
+        if (i.yield_fn) i.yield_fn();
+        i.idle();
+    }
     static thread_local char msg[65536]; sockaddr_in cli{}; addr_len_t cl = sizeof(cli);
     long n = recvfrom(sock, msg, sizeof(msg), 0, (sockaddr*)&cli, &cl);
-    udp_close(sock);
     if (n < 0) return v_nil();
     return v_str(std::string(msg, (size_t)n));
 }
@@ -211,70 +237,167 @@ inline vptr sys_udp_receive(vlist& a, Interp& i) {
 
 // --- the evaluation port: a local TCP socket that evaluates the text it receives -------------------
 // Editors send code here (the VS Code extension, or `musil --send`): a message is the text up to the
-// end of the connection (or a line holding only \x04), it is evaluated in the global environment as if
-// typed in the console, its printed output goes where the host's output goes, and a one-line reply
-// ("ok", the value, or "error: ...") is written back. The server is polled from the interpreter's
-// idle hook, so it works in the CLI (`musil --serve 7770 -i`), during a running script, and in the
-// IDE. Only local connections (127.0.0.1) are accepted.
+// end of the connection (or a line holding only \x04). Its first line is the port's token: the port
+// opens with a random token, written to ~/.musil/port-<port>.token, or to a private folder in the temporary
+// directory when ~/.musil is not the user's (readable by the user alone; `musil --send` reads it there) and a message without it is refused unread. The rest
+// is evaluated in the global environment as if typed in the console, its printed output goes where the
+// host's output goes, and a one-line reply ("ok", the value, or "error: ...") is written back. Only
+// local connections (127.0.0.1) are accepted.
+// The port is polled from the interpreter's idle hook, but a message is evaluated only at a safe point:
+// when the interpreter is idle (between evaluations: the REPL waiting, a host's event loop) or waits in
+// sleep. Arriving in the middle of an evaluation, it waits; the state of the evaluation it interrupts
+// (the call stack, the depths) is saved and restored around it.
 
-
+inline std::string random_token() {
+    std::random_device rd; std::string t; const char* hex = "0123456789abcdef";
+    for (int k = 0; k < 4; k++) { unsigned v = rd(); for (int j = 0; j < 4; j++) { t += hex[v & 15]; v >>= 4; t += hex[v & 15]; v >>= 4; } }
+    return t;
+}
+// Where the token of a port is written, in order: ~/.musil (when the user may write there), else a folder of the
+// user's own in the temporary directory. A folder or a file is used only when it is the user's and nobody else's.
+inline std::vector<std::string> port_token_files(int port) {
+    std::vector<std::string> out; std::string name = "port-" + std::to_string(port) + ".token";
+    const char* home = std::getenv("HOME");
+#ifdef _WIN32
+    if (!home) home = std::getenv("USERPROFILE");
+#endif
+    if (home && *home) out.push_back((fs::path(home) / ".musil" / name).string());
+#ifndef _WIN32
+    std::error_code ec; fs::path tmp = fs::temp_directory_path(ec);
+    if (!ec) out.push_back((tmp / ("musil-" + std::to_string((long)getuid())) / name).string());
+#endif
+    return out;
+}
+#ifndef _WIN32
+inline bool owned_privately(const std::string& path, bool dir) {   // the user's, and not writable (a folder) or readable (a file) by others
+    struct stat st; if (::lstat(path.c_str(), &st) != 0) return false;
+    if (st.st_uid != getuid()) return false;
+    if (dir) return S_ISDIR(st.st_mode) && (st.st_mode & 022) == 0;
+    return S_ISREG(st.st_mode) && (st.st_mode & 077) == 0;
+}
+#endif
+// the token a running port wrote for `port`, or "" (musil --send reads it)
+inline std::string read_port_token(int port) {
+    for (auto& f : port_token_files(port)) {
+#ifndef _WIN32
+        if (!owned_privately(f, false)) continue;
+#endif
+        std::ifstream t(f); std::string token; if (t && std::getline(t, token) && !token.empty()) return token;
+    }
+    return "";
+}
 struct eval_server {
     int sock = -1, port = 0;
+    std::string token, token_file;
     struct client { int fd; std::string buf; };
     std::vector<client> clients;
+    std::vector<client> ready;                             // complete messages waiting for a safe point
     std::function<void(const std::string&)> on_receive;   // hosts may show what arrived (the IDE's console)
+    void close_all();
+    ~eval_server() { close_all(); }
 };
-inline eval_server& server() { static eval_server s; return s; }
+inline eval_server& server(Interp& i) { return i.state<eval_server>(); }
 
 #ifndef _WIN32
-inline void serve_start(Interp& i, int port) {
-    eval_server& s = server();
-    if (s.sock >= 0) { ::close(s.sock); s.sock = -1; }
+inline void eval_server::close_all() {
+    for (auto& c : clients) ::close(c.fd);
+    for (auto& c : ready) ::close(c.fd);
+    clients.clear(); ready.clear();
+    if (sock >= 0) ::close(sock);
+    sock = -1; port = 0;
+    if (!token_file.empty()) { std::error_code ec; fs::remove(token_file, ec); token_file.clear(); }
+}
+// open the port; token: the one messages must start with ("" for a random one, written to the token file)
+inline void serve_start(Interp& i, int port, const std::string& token = "") {
+    eval_server& s = server(i);
+    s.close_all();
     s.sock = socket(AF_INET, SOCK_STREAM, 0); if (s.sock < 0) i.bad("cannot open a socket");
     int yes = 1; setsockopt(s.sock, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof yes);
     sockaddr_in addr{}; addr.sin_family = AF_INET; addr.sin_port = htons((uint16_t)port); addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
     if (::bind(s.sock, (sockaddr*)&addr, sizeof addr) < 0 || listen(s.sock, 8) < 0) { ::close(s.sock); s.sock = -1; i.bad("cannot listen on port " + std::to_string(port)); }
     fcntl(s.sock, F_SETFL, O_NONBLOCK); s.port = port;
+    s.token = token.empty() ? random_token() : token;
+    for (auto& tf : port_token_files(port)) {              // the user alone can read it
+        std::error_code ec; fs::path dir = fs::path(tf).parent_path();
+        if (!fs::exists(dir, ec)) { if (::mkdir(dir.c_str(), 0700) != 0) continue; }
+        if (!owned_privately(dir.string(), true) && dir.filename() != ".musil") continue;   // a temporary folder someone else made: not ours
+        ::unlink(tf.c_str());
+        int fd = ::open(tf.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0600);
+        if (fd < 0) continue;
+        std::string line = s.token + "\n"; bool ok = ::write(fd, line.data(), line.size()) == (long)line.size(); ok = ::close(fd) == 0 && ok;
+        if (ok) { s.token_file = tf; break; }
+        ::unlink(tf.c_str());
+    }
 }
-inline void serve_stop() { eval_server& s = server(); for (auto& c : s.clients) ::close(c.fd); s.clients.clear(); if (s.sock >= 0) ::close(s.sock); s.sock = -1; s.port = 0; }
-inline void serve_evaluate(Interp& i, int fd, std::string code) {
-    while (!code.empty() && (code.back() == '\x04' || code.back() == '\n' || code.back() == '\r')) code.pop_back();
-    if (server().on_receive) server().on_receive(code);
+inline void serve_stop(Interp& i) { server(i).close_all(); }
+inline bool same_token(const std::string& a, const std::string& b) {   // in constant time
+    if (a.size() != b.size() || a.empty()) return false;
+    unsigned char d = 0; for (size_t k = 0; k < a.size(); k++) d |= (unsigned char)(a[k] ^ b[k]);
+    return d == 0;
+}
+inline void serve_evaluate(Interp& i, int fd, std::string msg) {
+    eval_server& s = server(i);
+    while (!msg.empty() && (msg.back() == '\x04' || msg.back() == '\n' || msg.back() == '\r')) msg.pop_back();
+    size_t nl = msg.find('\n');
+    std::string first = msg.substr(0, nl), code = nl == std::string::npos ? "" : msg.substr(nl + 1);
+    while (!first.empty() && first.back() == '\r') first.pop_back();
     std::string reply;
+    if (!same_token(first, s.token)) {
+        reply = "error: refused: the first line of a message must be the port's token (" + (s.token_file.empty() ? std::string("no token file could be written") : s.token_file) + ")\n";
+        (void)!write(fd, reply.data(), reply.size()); ::close(fd); return;
+    }
+    if (s.on_receive) s.on_receive(code);
+    // what the evaluation in progress (if any) is in the middle of: kept, and given back afterwards
+    size_t calls = i.call_stack.size(); int fdepth = i.function_depth, ldepth = i.loop_depth;
+    sptr file = i.current_file; int line = i.current_line; const char* who = i.who;
+    auto restore = [&] {
+        i.call_stack.resize(calls); i.function_depth = fdepth; i.loop_depth = ldepth;
+        i.current_file = file; i.current_line = line; i.who = who;
+    };
     try { vptr r = i.run(code, "<editor>"); reply = r && r->t != Value::NIL ? str_of_limited(r, 200000) : "ok"; }   // bounded: a score or a database would be gigabytes
     catch (Exit_signal&) { reply = "exit"; }
+    catch (Stop_signal&) { restore(); reply = "stopped\n"; (void)!write(fd, reply.data(), reply.size()); ::close(fd); throw; }
     catch (std::exception& e) { reply = std::string("error: ") + e.what(); *i.out << "error: " << e.what() << "\n" << std::flush; }
-    i.call_stack.clear(); i.function_depth = 0; i.loop_depth = 0; i.stack_depth = 0;
+    restore();
     reply += "\n"; (void)!write(fd, reply.data(), reply.size()); ::close(fd);
 }
-// Accept connections and read messages; called from the idle hook
+// Accept connections and read messages; called from the idle hook. Complete messages are evaluated at a safe point.
 inline void serve_poll(Interp& i) {
-    eval_server& s = server(); if (s.sock < 0) return;
+    eval_server& s = server(i); if (s.sock < 0) return;
     for (int k = 0; k < 8; k++) {
         sockaddr_in from{}; socklen_t fl = sizeof from; int fd = accept(s.sock, (sockaddr*)&from, &fl);
         if (fd < 0) break;
         fcntl(fd, F_SETFL, O_NONBLOCK); s.clients.push_back({ fd, "" });
     }
     for (size_t k = 0; k < s.clients.size();) {
-        client_read:
-        char buf[4096]; long n = read(s.clients[k].fd, buf, sizeof buf);
-        if (n > 0) { s.clients[k].buf.append(buf, (size_t)n); if (s.clients[k].buf.find('\x04') == std::string::npos) goto client_read; }
-        bool done = n == 0 || (n > 0 && s.clients[k].buf.find('\x04') != std::string::npos);
-        if (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK) done = true;
-        if (done) { eval_server::client c = s.clients[k]; s.clients.erase(s.clients.begin() + k); serve_evaluate(i, c.fd, c.buf); }
+        bool done = false;
+        while (true) {
+            char buf[4096]; long n = read(s.clients[k].fd, buf, sizeof buf);
+            if (n > 0) { s.clients[k].buf.append(buf, (size_t)n); if (s.clients[k].buf.find('\x04') != std::string::npos) { done = true; break; } if (s.clients[k].buf.size() > (64u << 20)) { done = true; break; } continue; }
+            if (n == 0 || (errno != EAGAIN && errno != EWOULDBLOCK)) done = true;
+            break;
+        }
+        if (done) { s.ready.push_back(std::move(s.clients[k])); s.clients.erase(s.clients.begin() + (long)k); }
         else k++;
+    }
+    if (i.stack_depth > 0 && i.waiting == 0) return;       // in the middle of an evaluation: the messages wait
+    while (!s.ready.empty()) {
+        eval_server::client c = std::move(s.ready.front()); s.ready.erase(s.ready.begin());
+        serve_evaluate(i, c.fd, std::move(c.buf));
     }
 }
 #else
-inline void serve_start(Interp& i, int) { i.bad("the evaluation port is not available on this platform"); }
-inline void serve_stop() {}
+inline void eval_server::close_all() {}
+inline void serve_start(Interp& i, int, const std::string& = "") { i.bad("the evaluation port is not available on this platform"); }
+inline void serve_stop(Interp&) {}
 inline void serve_poll(Interp&) {}
 #endif
 
-// (serve port) start the evaluation port; (serve-stop); (serving) => the port or 0
-inline vptr fn_serve(vlist& a, Interp& i) { serve_start(i, (int)i.scalar(a[0])); return v_num(server().port); }
-inline vptr fn_serve_stop(vlist&, Interp&) { serve_stop(); return v_nil(); }
-inline vptr fn_serving(vlist&, Interp&) { return v_num(server().port); }
+// (serve port) start the evaluation port; (serve-stop); (serving) => the port or 0. A message to the port starts with
+//   its token, in ~/.musil/port-<port>.token (or <tmp>/musil-<uid>/port-<port>.token)
+inline vptr fn_serve(vlist& a, Interp& i) { int port = (int)i.scalar(a[0]); i.require_net("serve " + std::to_string(port)); serve_start(i, port); return v_num(server(i).port); }
+inline vptr fn_serve_stop(vlist&, Interp& i) { serve_stop(i); return v_nil(); }
+inline vptr fn_serving(vlist&, Interp& i) { return v_num(server(i).port); }
 inline void add_serve(Interp& i) {         // called by add_system: the port is served from the idle hook
     i.def("serve", fn_serve, 1, 1); i.def("serve-stop", fn_serve_stop, 0, 0); i.def("serving", fn_serving, 0, 0);
     auto prev = i.idle_fn;
