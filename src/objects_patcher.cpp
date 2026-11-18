@@ -859,7 +859,7 @@ class ExprSigBox : public Box {
 public:
     explicit ExprSigBox(const Message& a) : src_(messageToString(a)) {
         int nv = 0;
-        ok_ = ExprParser(src_).parse(fn_, nv, err_);
+        ok_ = ExprParser(src_).parse(prog_, nv, err_);
         nv_ = std::max(1, nv);
         setPorts(std::vector<Port>((size_t)nv_, P::Signal), {P::Signal});
     }
@@ -875,20 +875,16 @@ public:
         float* y = sigOut(0);
         if (!ok_) { dsp::fill(y, 0.f, n); return; }
         const float* in[9];
-        for (int k = 0; k < nv_; ++k) in[k] = sigIn(k, n);
-        double v[9] = {0};
-        for (int i = 0; i < n; ++i) {
-            for (int k = 0; k < nv_; ++k) v[k] = in[k][i];
-            double r = fn_(v);
-            y[i] = std::isfinite(r) ? (float)r : 0.f;
-        }
+        for (int k = 0; k < 9; ++k) in[k] = sigIn(std::min(k, nv_ - 1), n);
+        prog_.evalBlock(in, n, y);                   // a flat program, an instruction over many samples
     }
 
 private:
     std::string src_, err_;
     bool ok_ = false;
     int nv_ = 1;
-    ExprParser::Fn fn_;
+    std::unique_ptr<ExprProgram> progPtr_ = std::make_unique<ExprProgram>();   // 32 KB: on the heap
+    ExprProgram& prog_ = *progPtr_;
 };
 
 // sah~ [threshold 0]: holds the left signal each time the right signal
