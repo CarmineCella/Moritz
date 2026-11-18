@@ -2,6 +2,8 @@
 
 ## 0.11
 
+### Language
+
 - **The libraries' names are their own.** A library (a file found on the load path) runs in an
   environment that mirrors the program's: its functions see its names, so a program's
   `(var sum 0)` or its own `function length` no longer breaks `mean` or `median`. A `set` on a
@@ -18,6 +20,42 @@
   its body once.
 - **live**: a `set-param` with a time lands on its very sample, `voice-set` glides in 5 ms whatever
   the block size, and the noise node draws the same numbers on every system.
+
+### Libraries
+
+- **Random numbers** are the same on every system for a seed: `rand`, `noise`, SoundTypes and
+  Orchidea draw from the raw generator (`src/rng.h`); `knn` breaks ties the same everywhere.
+- **Orchidea** keeps its best evaluated population and an elite of every generation (the best
+  solution found could be lost).
+- **`resample`** anti-aliases properly when downsampling (a Kaiser lowpass at 0.93 of the new
+  Nyquist, as wide as the factor needs: aliases under -65 dB); upsampling is unchanged.
+- **`autocorr`** by FFT (0.5 s to 3 ms for a second of audio).
+- **`conv`** is C++ (overlap-add over real FFTs, a streaming node as before); `conv-fast` is the
+  same function. `binaural-decode` is six times faster.
+- **`deconv`** (and Moritz's `condec`) regularises the inversion (Tikhonov:
+  `Y conj(H) / (|H|^2 + threshold^2 max|H|^2)`) instead of cutting the spectrum where `|H|` is
+  under the threshold; `threshold` 0 is the plain inverse.
+- **`stft`** pads its last frame, so `istft` gives back the whole input (it was shorter);
+  **`moving-source`** crossfades its blocks with `hann-fade` (no clicks where the direction changes).
+- **`pvoc`** (and `sparkle~`): the sound is padded with a window at both ends, so an attack at the
+  very start and the ending come out whole; a pitch shift moves each partial's region whole and
+  keeps the level (it was +1.7 dB an octave up, -4.2 dB an octave down).
+- **`nebula`** (and `nebula~`): about three times cheaper with many grains; triangle and square
+  are band-limited per octave, so high grains do not alias.
+- The recursive loops (`iir`, `comb`, `allpass`, `lag`, `adsr`, `svf`, `conv~`'s engine) flush
+  denormals to zero.
+- **Ambisonic decoding**: a regular ring of at least 2N+1 speakers keeps the exact decoder; any
+  other ring (5.0, too few speakers) and any layout with elevations (`binaural-decode`'s 17
+  directions) get the energy-preserving decoder (EPAD): every direction about as loud.
+- **`conv~`'s engine** spreads its work over the callbacks of a block (the worst callback with a
+  10 s response: 145 to 44 microseconds).
+- **Maple**: the sound pursuit is 2.7 times faster (cached spectra), the books the same.
+- **One implementation of the analyses** (`src/signals/mir.h`): `chromagram`, `mel-spectrogram`,
+  `mfcc-gram`, `self-similarity`, `foote-novelty`, `tempogram`, `beat-track`, `key-scores` and
+  `tempo-estimate-with` give Moritz's numbers; keys are named as musicians spell them (E♭ major, F♯ minor).
+- Headers for Moritz: the FFT has a real-input transform (`RealFFT`), and the spectral envelope
+  (`envelope.h`, `spectral-envelope` a builtin on it, the order advice unified: about sr / (2 f0)),
+  HPSS (`hpss.h`) and the RBJ biquads (`biquad.h`, `biquad` a builtin on it) have one header each.
 
 ## 0.10c
 
