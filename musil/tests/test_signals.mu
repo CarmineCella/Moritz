@@ -251,6 +251,13 @@ check (> (rms (head (nebula sr 0.3 (list (list "proto1" snd) (list "seed" 2) (li
 check (== (length (head (nebula sr 0.3 (list (list "density" (list 5 50)) (list "seed" 2))))) (length (head (nebula sr 0.3 (list (list "density" (list 5 50)) (list "seed" 2)))))) "nebula: a ramped density"
 check (contains? (error-of (function () (nebula sr 1 (list (list "proto1" "saw"))))) "waveform") "nebula: unknown waveform"
 check (contains? (error-of (function () (nebula sr 1 (list (list "nope" 1))))) "unknown option") "nebula: unknown option"
+; a square grain at 5 kHz (44.1 kHz): its harmonics above Nyquist are not in the table it reads, so nothing folds
+; back (the 5th harmonic, 25 kHz, would alias to 19.1 kHz)
+var sq (head (nebula 44100 0.5 (list (list "proto1" "square") (list "freq" 5000) (list "density" 2) (list "length" 400) (list "seed" 1))))
+var sqm (magnitude-spectrum (* (slice sq 4000 8192) (hann 8192)))
+function band-peak (m f) (max (slice m (- (round (/ (* f 8192) 44100)) 3) 7))
+check (< (amp->db (/ (band-peak sqm 19100) (band-peak sqm 5000))) -60) "nebula: a high square grain does not alias"
+check (> (amp->db (/ (band-peak sqm 15000) (band-peak sqm 5000))) -15) "nebula: its harmonics below Nyquist are kept"
 check (equal? (nebula sr 0.2 (list (list 'freq 300) (list 'seed 3))) (nebula sr 0.2 (list (list "freq" 300) (list "seed" 3)))) "nebula: option keys as symbols"
 
 ; --- deconv, svf, lores ---

@@ -13,7 +13,9 @@
 // value: density 40 with randomness 0.5 gives 20 to 60 grains a second. With grainlets n, each
 // grain lasts n periods of its frequency. `speed` is how fast the read position of a sound moves
 // on (grains start where it is). The random numbers are Park-Miller's, as in the original, so a
-// seed gives the same cloud everywhere.
+// seed gives the same cloud everywhere. Triangle and square are band-limited per octave (mipmapped
+// tables): a high grain reads a table with fewer harmonics, so nothing folds over the Nyquist frequency.
+// A prototype with no weight in a grain (morph 0 or 1) is not read.
 #pragma once
 
 #include <algorithm>
@@ -28,6 +30,7 @@ template <class T>
 class Nebula {
 public:
     static constexpr int kTable = 4096, kWin = 4096, kMaxPoly = 1024;
+    static constexpr int kLevels = 6;          // band-limited tables: odd harmonics up to 63, 31, 15, 7, 3, 1
 
     // the parameters, read by process(); the caller changes them between calls
     struct Params {
@@ -52,28 +55,41 @@ public:
         grains_.resize(kMaxPoly);
     }
     static bool isWave(const std::string& w) { return w == "sine" || w == "triangle" || w == "square" || w == "noise"; }
-    // prototype k (0 or 1) is a waveform; false if the name is not one
+    // prototype k (0 or 1) is a waveform; false if the name is not one. Triangle and square are band-limited
+    // and mipmapped: a table per octave of their harmonics (odd ones up to 63, 31 ... 1), and each grain reads
+    // the richest one whose harmonics stay under the Nyquist frequency at its frequency (and glissando)
     bool setWave(int k, const std::string& w) {
         if (!isWave(w)) return false;
         Proto& pr = proto_[k];
         pr.data = nullptr;
         pr.frames = 0;
-        pr.table.assign((size_t)kTable + 1, 0);
+        bool limited = w == "square" || w == "triangle";
+        pr.levels.assign(limited ? kLevels : 1, std::vector<double>((size_t)kTable + 1, 0.0));
+        pr.maxHarm.assign(pr.levels.size(), 0);
         unsigned seed = 12345;
-        for (int i = 0; i < kTable; ++i) {
-            double t = (double)i / kTable, v = 0;
-            if (w == "sine") v = std::sin(2 * kPi_ * t);
-            else if (w == "noise") { seed = seed * 1103515245u + 12345u; v = (seed >> 8) / 8388608.0 - 1.0; }
-            else
-                for (int h = 1; h <= 63; h += 2)            // band-limited, odd harmonics
-                    v += w == "square" ? std::sin(2 * kPi_ * h * t) / h
-                                       : ((h / 2) % 2 ? -1.0 : 1.0) * std::sin(2 * kPi_ * h * t) / (h * h);
-            pr.table[(size_t)i] = v;
+        double scale = 1;
+        for (size_t lv = 0; lv < pr.levels.size(); ++lv) {
+            int H = 63 >> lv;                                  // 63, 31, 15, 7, 3, 1
+            pr.maxHarm[lv] = limited ? H : 0;
+            auto& tab = pr.levels[lv];
+            for (int i = 0; i < kTable; ++i) {
+                double t = (double)i / kTable, v = 0;
+                if (w == "sine") v = std::sin(2 * kPi_ * t);
+                else if (w == "noise") { seed = seed * 1103515245u + 12345u; v = (seed >> 8) / 8388608.0 - 1.0; }
+                else
+                    for (int h = 1; h <= H; h += 2)            // band-limited, odd harmonics
+                        v += w == "square" ? std::sin(2 * kPi_ * h * t) / h
+                                           : ((h / 2) % 2 ? -1.0 : 1.0) * std::sin(2 * kPi_ * h * t) / (h * h);
+                tab[(size_t)i] = v;
+            }
+            if (lv == 0) {                                     // the full table's peak scales every level alike
+                double peak = 0;
+                for (double v : tab) peak = std::max(peak, std::fabs(v));
+                scale = 1.0 / std::max(peak, 1e-9);
+            }
+            for (auto& v : tab) v *= scale;
+            tab[(size_t)kTable] = tab[0];
         }
-        double peak = 0;
-        for (double v : pr.table) peak = std::max(peak, std::fabs(v));
-        for (auto& v : pr.table) v /= std::max(peak, 1e-9);
-        pr.table[(size_t)kTable] = pr.table[0];
         return true;
     }
     // prototype k is a sound: frames samples, every stride-th of data (one channel of interleaved
@@ -81,14 +97,15 @@ public:
     // sets it again before every block. frames 0: silence.
     void setSound(int k, const T* data, long frames, int stride, double sr) {
         Proto& pr = proto_[k];
-        pr.table.clear();
+        pr.levels.clear();
+        pr.maxHarm.clear();
         pr.data = data;
         pr.frames = data ? std::max(0L, frames) : 0;
         pr.stride = std::max(1, stride);
         pr.sr = sr;
-        if (pr.frames > 0) pr.readPos = std::fmod(pr.readPos, (double)pr.frames);
+        if (pr.frames > 0) pr.readPos = wrap(pr.readPos, (double)pr.frames);
     }
-    bool isSound(int k) const { return proto_[k].table.empty(); }
+    bool isSound(int k) const { return proto_[k].levels.empty(); }
     // the grain envelope: hann, hamming or blackman (an unknown name is hann)
     void setWindow(const std::string& type) {
         double a0 = .5, a1 = .5, a2 = 0;
@@ -116,26 +133,30 @@ public:
                 double lo = 1.0 / (d + r), hi = 1.0 / std::max(d - r, 1e-3);
                 untilNext_ = std::max(1.0, (lo + rnd() * (hi - lo)) * sr);
             }
-            for (auto& pr : proto_)              // the read position through a sound
-                if (pr.table.empty() && pr.frames > 0) {
-                    pr.readPos += p.speed * pr.sr / sr;
-                    double len = (double)pr.frames;
-                    pr.readPos = std::fmod(pr.readPos, len);
-                    if (pr.readPos < 0) pr.readPos += len;
-                }
         }
+        for (auto& pr : proto_)                  // the read position through a sound, n samples on
+            if (pr.levels.empty() && pr.frames > 0) pr.readPos = wrap(pr.readPos + n * p.speed * pr.sr / sr, (double)pr.frames);
         for (auto& g : grains_) {
             if (!g.active) continue;
+            // a prototype with no weight in the grain is not read at all
+            bool use0 = g.morph < 1.0, use1 = g.morph > 0.0;
+            const Proto& p0 = proto_[0];
+            const Proto& p1 = proto_[1];
+            const double len0 = p0.levels.empty() ? (double)std::max(1L, p0.frames) : (double)kTable;
+            const double len1 = p1.levels.empty() ? (double)std::max(1L, p1.frames) : (double)kTable;
+            const double* t0 = p0.levels.empty() ? nullptr : p0.levels[(size_t)g.level[0]].data();
+            const double* t1 = p1.levels.empty() ? nullptr : p1.levels[(size_t)g.level[1]].data();
             for (int i = g.delay; i < n; ++i) {
                 double e = g.envPos;
                 if (e >= kWin) { g.active = false; break; }
                 int ei = (int)e;
                 double w = window_[(size_t)ei] + (e - ei) * (window_[(size_t)ei + 1] - window_[(size_t)ei]);
-                double s = (1.0 - g.morph) * read(proto_[0], g.phase[0]) + g.morph * read(proto_[1], g.phase[1]);
+                double s = 0;
+                if (use0) { s += (1.0 - g.morph) * (t0 ? readTable(t0, g.phase[0]) : readSound(p0, g.phase[0])); g.phase[0] = wrap(g.phase[0] + g.inc[0] * g.glide, len0); }
+                if (use1) { s += g.morph * (t1 ? readTable(t1, g.phase[1]) : readSound(p1, g.phase[1])); g.phase[1] = wrap(g.phase[1] + g.inc[1] * g.glide, len1); }
                 s *= w * g.amp;
                 L[i] += (T)(s * g.left);
                 R[i] += (T)(s * g.right);
-                for (int k = 0; k < 2; ++k) g.phase[k] += g.inc[k] * g.glide;
                 g.glide += g.glideStep;
                 g.envPos += g.envStep;
             }
@@ -146,7 +167,8 @@ public:
 private:
     static constexpr double kPi_ = 3.14159265358979323846;
     struct Proto {
-        std::vector<double> table;          // a waveform, or empty for a sound
+        std::vector<std::vector<double>> levels;   // a waveform's tables, richest first; empty for a sound
+        std::vector<int> maxHarm;                  // the highest harmonic of each (0: not band-limited)
         const T* data = nullptr;
         long frames = 0;
         int stride = 1;
@@ -154,7 +176,7 @@ private:
     };
     struct Grain {
         bool active = false;
-        int delay = 0;
+        int delay = 0, level[2] = {0, 0};
         double phase[2] = {0, 0}, inc[2] = {0, 0}, envPos = 0, envStep = 0, glide = 1, glideStep = 0;
         double amp = 0, left = 0, right = 0, morph = 0;
     };
@@ -162,18 +184,24 @@ private:
         rng_ = (unsigned)((unsigned long long)rng_ * 16807ULL % 2147483647ULL);
         return rng_ / 2147483647.0;
     }
-    double read(const Proto& pr, double ph) const {
-        if (!pr.table.empty()) {
-            double x = std::fmod(ph, (double)kTable);
-            if (x < 0) x += kTable;
-            int i = (int)x;
-            return pr.table[(size_t)i] + (x - i) * (pr.table[(size_t)i + 1] - pr.table[(size_t)i]);
-        }
+    // x wrapped into [0, len): a step at a time when it is near (the usual case), fmod only for a far one
+    static double wrap(double x, double len) {
+        if (x >= len) { x -= len; if (x >= len) x = std::fmod(x, len); }
+        else if (x < 0) { x += len; if (x < 0) { x = std::fmod(x, len); if (x < 0) x += len; } }
+        return x >= len ? 0.0 : x;
+    }
+    // the phase is in [0, kTable)
+    static double readTable(const double* t, double x) {
+        int i = (int)x;
+        return t[i] + (x - i) * (t[i + 1] - t[i]);
+    }
+    // the phase is in [0, frames)
+    double readSound(const Proto& pr, double x) const {
         if (pr.frames <= 0) return 0;
-        double x = std::fmod(ph, (double)pr.frames);
-        if (x < 0) x += pr.frames;
+        if (x >= (double)pr.frames) x = std::fmod(x, (double)pr.frames);   // the sound was replaced by a shorter one
         long i = (long)x;
-        double a = (double)pr.data[(size_t)i * pr.stride], c = (double)pr.data[(size_t)((i + 1) % pr.frames) * pr.stride];
+        long j = i + 1 < pr.frames ? i + 1 : 0;
+        double a = (double)pr.data[(size_t)i * pr.stride], c = (double)pr.data[(size_t)j * pr.stride];
         return a + (x - i) * (c - a);
     }
     void spawn(double sr, int at) {
@@ -187,18 +215,22 @@ private:
             lenMs = lenMs - lr + rnd() * 2 * lr;
             if (p.grainlets > 0 && std::fabs(f) > 1e-3) lenMs = 1000.0 * p.grainlets / std::fabs(f);   // n periods
             double len = std::max(4.0, lenMs * sr / 1000.0);
+            double gl = std::clamp(p.gliss, 0.0, 1.0);
             for (int c = 0; c < 2; ++c) {
                 const Proto& pr = proto_[c];
-                if (!pr.table.empty()) {                         // a waveform: f in Hz
+                g.level[c] = 0;
+                if (!pr.levels.empty()) {                        // a waveform: f in Hz
                     g.inc[c] = f * kTable / sr;
                     g.phase[c] = 0;
+                    // the richest table whose top harmonic stays under Nyquist at the highest the grain reaches
+                    double top = std::fabs(f) * (1.0 + gl);
+                    while (g.level[c] + 1 < (int)pr.levels.size() && pr.maxHarm[(size_t)g.level[c]] * top >= 0.5 * sr) ++g.level[c];
                 } else {                                         // a sound: f is a speed ratio (or Hz, with its pitch)
                     double pitch = p.pitch[c];
                     g.inc[c] = (pitch > 0 ? f / pitch : f) * pr.sr / sr;
-                    g.phase[c] = pr.readPos;
+                    g.phase[c] = pr.frames > 0 ? wrap(pr.readPos + at * p.speed * pr.sr / sr, (double)pr.frames) : 0.0;   // where the read position is at this sample
                 }
             }
-            double gl = std::clamp(p.gliss, 0.0, 1.0);
             double target = 1.0 + (rnd() * 2 - 1) * gl;          // glide to f * target
             g.glide = 1.0;
             g.glideStep = (target - 1.0) / len;
