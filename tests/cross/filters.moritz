@@ -25,7 +25,7 @@
       "var e2 (err (getidx rec 1) (svf x 44100 800 0.6 \"low\"))"
       "var e3 (err (last rec) (lores x 44100 1200 0.5))"
       "print \"cross svf~ lores~: largest differences\" (fixed e1 6) (fixed e2 6) (fixed e3 6)"
-      "if (> (max (vec e1 e2 e3)) 1e-4) { print \"FAIL: svf~ or lores~ and Musil's svf or lores disagree\" }"
+      "if (> (max (vec e1 e2 e3)) 1e-4) { print \"FAIL: svf~ or lores~ and Musil's svf or lores disagree\" } { print \"PASS: svf~ or lores~ and Musil's svf or lores agree\" }"
       "var ir (vec 1 0 0 0.5 0 0 0 0.25 0 0.1)"
       "set-buffer! \"xir\" (list ir)"
       "set-buffer! \"xwet\" (list (take (conv (take x 8000) ir) 8000))"
@@ -37,7 +37,7 @@
       "var got (head (buffer \"xdry\"))"
       "var e (max (abs (- got want)))"
       "print \"cross condec: largest difference\" (fixed e 6)"
-      "if (> e 1e-4) { print \"FAIL: condec and Musil's deconv disagree\" }"))
+      "if (> e 1e-4) { print \"FAIL: condec and Musil's deconv disagree\" } { print \"PASS: condec and Musil's deconv agree\" }"))
   (connect pl 0 gr 0)
   (connect gr 0 sv 0)
   (connect gr 0 lr 0)

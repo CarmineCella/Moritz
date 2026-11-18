@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Carmine-Emanuele Cella. SPDX-License-Identifier: BSD-2-Clause
 // musil_host.h — Musil, the scripting language of Moritz, as Moritz uses it.
 //
-// The language is in musil/src, exactly as Musil 0.9.1 (tools/check-musil.sh). Moritz takes its core
+// The language is in musil/src, independent of Moritz (tools/check-musil.sh). Moritz takes its core
 // and the libraries that compute; it leaves out the live library (Moritz plays) and the plots (Moritz
 // draws). The halves written in Musil (std.mu, signals.mu, ...) are found on the load path. What Moritz
 // adds or changes is here and in session.cpp, never in musil/src.

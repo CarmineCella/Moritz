@@ -97,6 +97,10 @@ elseif(MODE STREQUAL "dist")
     run(ditto ${BIN}/Moritz.app ${d}/Moritz.app)
     copy_resources(${d} ON)
     file(REMOVE_RECURSE ${d}/library ${d}/help ${d}/tutorials)      # they are in the app
+    # the shared data (74 MB) once: the folder next to the app (for Musil's examples, ../../data) is a link
+    # to the app's own copy
+    file(REMOVE_RECURSE ${d}/data)
+    file(CREATE_LINK Moritz.app/Contents/Resources/data ${d}/data SYMBOLIC)
     file(COPY ${MUSIL} DESTINATION ${d}/musil)
     run(xattr -cr ${out})
     run(codesign --verify --deep --strict ${d}/Moritz.app)

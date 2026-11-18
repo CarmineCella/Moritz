@@ -127,9 +127,62 @@ jobs:
           name: windows
           path: build/Moritz-*-windows-x86_64.zip
 
+  sanitizers:                      # memory errors (ASan + UBSan) and data races (TSan), on Linux
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        sanitizer: [address, thread]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake curl xvfb libasound2-dev libx11-dev \
+            libxext-dev libxft-dev libxinerama-dev libxcursor-dev libxrender-dev libxfixes-dev \
+            libfontconfig1-dev
+      - uses: actions/cache@v4
+        with:
+          path: deps
+          key: deps-linux-sanitize-${{ hashFiles('CMakeLists.txt', 'musil/cmake/fltk.cmake') }}
+      - name: Build
+        run: |
+          cmake -B build -DMORITZ_SANITIZE=${{ matrix.sanitizer }} -DCMAKE_BUILD_TYPE=RelWithDebInfo
+          cmake --build build -j4
+      - name: Test
+        env:
+          ASAN_OPTIONS: detect_leaks=0:abort_on_error=1
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+          TSAN_OPTIONS: halt_on_error=1:second_deadlock_stack=1
+        run: xvfb-run -a ctest --test-dir build -j2 --output-on-failure -E '^(perf-|example-)'
+
+  musil-alone:                     # Musil built from musil/ alone, with and without FLTK
+    runs-on: ubuntu-22.04
+    strategy:
+      matrix:
+        fltk: [ON, OFF]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake xvfb libasound2-dev libx11-dev libxext-dev \
+            libxft-dev libxinerama-dev libxcursor-dev libxrender-dev libxfixes-dev libfontconfig1-dev
+      - name: Build and test
+        run: |
+          cmake -S musil -B build-musil -DMUSIL_FLTK=${{ matrix.fltk }}
+          cmake --build build-musil -j4
+          xvfb-run -a ctest --test-dir build-musil -j2 --output-on-failure
+      - name: The committed help and grammar are current
+        if: matrix.fltk == 'ON'
+        run: |
+          python3 musil/tools/gendoc.py
+          python3 tools/musil-help.py
+          git diff --exit-code -- musil/src/help.txt help/musil/help.txt musil/editors
+
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [macos, linux, windows]
+    needs: [macos, linux, windows, sanitizers, musil-alone]
     runs-on: ubuntu-latest
     permissions:
       contents: write

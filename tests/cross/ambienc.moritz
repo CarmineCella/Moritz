@@ -16,7 +16,7 @@
       "var want (ambi-gains 1 30 10)"
       "var err (max (abs (- got want)))"
       "print \"cross ambienc~: largest difference\" (fixed err 6)"
-      "if (> err 1e-4) { print \"FAIL: ambienc~ and Musil's ambi-gains disagree\" got want }"))
+      "if (> err 1e-4) { print \"FAIL: ambienc~ and Musil's ambi-gains disagree\" got want } { print \"PASS: ambienc~ and Musil's ambi-gains agree\" }"))
   (connect s 0 e 0)
   (connect e 0 r 0)
   (connect e 1 r 1)

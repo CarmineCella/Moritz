@@ -104,20 +104,13 @@ if(MUSIL_READLINE)
 endif()
 
 # --- Documentation ---------------------------------------------------------------
-# help.txt (read by `help`) and docs/generated/*.tex (included by the manual) come from the doc
-# comments in src/. They are regenerated at every configure, so a fresh clone has them; the PDF
-# is built on request:   cmake --build build --target musil-docs   (needs pdflatex)
+# help.txt (read by `help`, committed) and docs/generated/*.tex (included by the manual) come from the doc
+# comments in src/. The build never writes into the source tree: regenerate them on request,
+#   cmake --build build --target musil-docs    (the PDF too when pdflatex is there)
+# CI checks that the committed help.txt is current.
 find_program(PYTHON3 NAMES python3 python)
 find_program(PDFLATEX pdflatex)
 if(PYTHON3)
-  execute_process(COMMAND ${PYTHON3} ${CMAKE_CURRENT_SOURCE_DIR}/tools/gendoc.py
-                  WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} OUTPUT_VARIABLE gendoc_out RESULT_VARIABLE gendoc_rc)
-  if(gendoc_rc EQUAL 0)
-    string(STRIP "${gendoc_out}" gendoc_out)
-    message(STATUS "${gendoc_out}")
-  else()
-    message(WARNING "tools/gendoc.py failed: help.txt and the manual's function references were not regenerated")
-  endif()
   if(PDFLATEX)
     add_custom_target(musil-docs
       COMMAND ${PYTHON3} ${CMAKE_CURRENT_SOURCE_DIR}/tools/gendoc.py
@@ -133,7 +126,7 @@ if(PYTHON3)
       COMMENT "Regenerating help.txt and the function references (no pdflatex: the PDF is not rebuilt)")
   endif()
 else()
-  message(WARNING "python3 not found: help.txt is not regenerated; `help` needs an existing src/help.txt")
+  message(STATUS "python3 not found: no musil-docs target (the committed src/help.txt is used)")
 endif()
 
 # --- Install ------------------------------------------------------------------

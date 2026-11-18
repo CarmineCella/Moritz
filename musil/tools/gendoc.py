@@ -95,7 +95,7 @@ names = []
 for l in help_lines:
     if l.startswith("#"): names.extend(l[1:].split())
 special = ["var", "set", "function", "return", "if", "while", "for", "break", "continue", "try", "catch", "do", "quote", "expr", "eval", "apply", "load", "help", "and", "or", "not"]
-builtins = sorted(set(n for n in names if n not in special and re.match(r"^[A-Za-z][A-Za-z0-9\-?!>]*$", n)), key=len, reverse=True)
+builtins = sorted(set(n for n in names if n not in special and re.match(r"^[A-Za-z][A-Za-z0-9\-?!>]*$", n)), key=lambda n: (-len(n), n))   # longest first, then by name: the same file every time
 def alt(ws): return "|".join(re.escape(w) for w in ws)
 grammar = {
     "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",

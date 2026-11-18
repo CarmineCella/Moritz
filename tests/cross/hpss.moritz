@@ -20,7 +20,7 @@
       "var rh (corr (head (buffer \"xharm\")) (head mine))"
       "var rp (corr (head (buffer \"xperc\")) (last mine))"
       "print \"cross hpss: harmonic\" (fixed rh 4) \"percussive\" (fixed rp 4)"
-      "if (or (< rh 0.98) (< rp 0.98)) { print \"FAIL: the hpss object and Musil's hpss disagree\" }"))
+      "if (or (< rh 0.98) (< rp 0.98)) { print \"FAIL: the hpss object and Musil's hpss disagree\" } { print \"PASS: the hpss object and Musil's hpss agree\" }"))
   (connect lb 0 m 0)
   (connect m 0 h 0)
   (connect h 1 c 0))

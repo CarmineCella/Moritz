@@ -65,10 +65,18 @@ endif()
 set(MORITZ_DEPS ${CMAKE_CURRENT_SOURCE_DIR}/deps CACHE PATH "the downloaded dependencies")
 set(MA_VERSION 0.11.22)
 set(RTMIDI_VERSION 6.0.0)
-function(moritz_download url file)
+# each file is checked against its SHA-256, downloaded or already there
+function(moritz_download url file sha256)
+  if(EXISTS ${file})
+    file(SHA256 ${file} have)
+    if(NOT have STREQUAL sha256)
+      message(STATUS "${file} does not match its checksum: downloading it again")
+      file(REMOVE ${file})
+    endif()
+  endif()
   if(NOT EXISTS ${file})
     message(STATUS "downloading ${url}")
-    file(DOWNLOAD ${url} ${file}.part STATUS st TLS_VERIFY ON)
+    file(DOWNLOAD ${url} ${file}.part STATUS st TLS_VERIFY ON EXPECTED_HASH SHA256=${sha256})
     list(GET st 0 rc)
     if(NOT rc EQUAL 0)
       file(REMOVE ${file}.part)
@@ -79,14 +87,17 @@ function(moritz_download url file)
 endfunction()
 set(MA_DIR ${MORITZ_DEPS}/miniaudio-${MA_VERSION})
 set(RTMIDI_DIR ${MORITZ_DEPS}/rtmidi-${RTMIDI_VERSION})
-moritz_download(https://raw.githubusercontent.com/mackron/miniaudio/${MA_VERSION}/miniaudio.h ${MA_DIR}/miniaudio.h)
-moritz_download(https://raw.githubusercontent.com/thestk/rtmidi/${RTMIDI_VERSION}/RtMidi.h ${RTMIDI_DIR}/RtMidi.h)
-moritz_download(https://raw.githubusercontent.com/thestk/rtmidi/${RTMIDI_VERSION}/RtMidi.cpp ${RTMIDI_DIR}/RtMidi.cpp)
+moritz_download(https://raw.githubusercontent.com/mackron/miniaudio/${MA_VERSION}/miniaudio.h ${MA_DIR}/miniaudio.h
+                9019743287e443c55e5737a7297f38e5e358561701d6db2d905afb114390c410)
+moritz_download(https://raw.githubusercontent.com/thestk/rtmidi/${RTMIDI_VERSION}/RtMidi.h ${RTMIDI_DIR}/RtMidi.h
+                74f98ca172243b0b9c0c59f53c4e20285d879ffa86b3d61692109b013f4606f9)
+moritz_download(https://raw.githubusercontent.com/thestk/rtmidi/${RTMIDI_VERSION}/RtMidi.cpp ${RTMIDI_DIR}/RtMidi.cpp
+                184d775e88e5d73b079897363fb42af155122e879f0bc9254a1c7edae4eadb3c)
 
 # FLTK, the same for Moritz and Musil (musil/cmake/fltk.cmake), from the tarball in deps/
 include(${CMAKE_CURRENT_SOURCE_DIR}/musil/cmake/fltk.cmake)
 set(MUSIL_FLTK_TARBALL ${MORITZ_DEPS}/fltk-${MUSIL_FLTK_VERSION}-source.tar.gz)
-moritz_download(${MUSIL_FLTK_URL} ${MUSIL_FLTK_TARBALL})
+moritz_download(${MUSIL_FLTK_URL} ${MUSIL_FLTK_TARBALL} ${MUSIL_FLTK_SHA256})
 musil_fetch_fltk()
 
 # ---------------------------------------------------------------- where things go

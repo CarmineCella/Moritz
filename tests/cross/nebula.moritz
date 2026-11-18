@@ -17,7 +17,7 @@
       "var rl (corr (slice (head got) 0 40000) (slice (head want) 0 40000))"
       "var rr (corr (slice (last got) 0 40000) (slice (last want) 0 40000))"
       "print \"cross nebula~: correlation\" (fixed rl 5) (fixed rr 5)"
-      "if (or (< rl 0.999) (< rr 0.999)) { print \"FAIL: nebula~ and Musil's nebula disagree\" }"))
+      "if (or (< rl 0.999) (< rr 0.999)) { print \"FAIL: nebula~ and Musil's nebula disagree\" } { print \"PASS: nebula~ and Musil's nebula agree\" }"))
   (connect lb 0 go 0)
   (connect go 0 nb 0)
   (connect nb 0 r 0)

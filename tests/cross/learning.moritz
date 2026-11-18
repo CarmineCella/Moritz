@@ -29,7 +29,7 @@
       "    var mine (last (zscore M))"
       "    var err (max (abs (- in2 mine)))"
       "    print \"cross zscore: largest difference\" (fixed err 6)"
-      "    if (> err 1e-4) { print \"FAIL: the zscore object and Musil's zscore disagree\" in2 mine }"
+      "    if (> err 1e-4) { print \"FAIL: the zscore object and Musil's zscore disagree\" in2 mine } { print \"PASS: the zscore object and Musil's zscore agree\" }"
       "    ; kmeans: the same partition (cluster numbers may differ): points grouped alike by both"
       "    var musil (head (kmeans (zscore M) 3))"
       "    var same 1"
@@ -39,7 +39,7 @@
       "        }"
       "    }"
       "    print \"cross kmeans: same partition\" same"
-      "    if (== same 0) { print \"FAIL: the kmeans object and Musil's kmeans group the points differently\" labels musil }"
+      "    if (== same 0) { print \"FAIL: the kmeans object and Musil's kmeans group the points differently\" labels musil } { print \"PASS: the kmeans object and Musil's kmeans agree\" }"
       "}"))
   (connect lb 0 gen 0)
   (connect gen 0 z 0)

@@ -72,10 +72,13 @@ void startThread(std::function<void()> f) {
 }
 
 // the printed output of a context: whole lines go to the Console (or where the context's hooks say), on
-// the main thread
+// the main thread. The sink is read and changed on the main thread only (the interpreter thread copies the
+// pointer, set once): a line queued before the context's box was deleted finds it emptied by detach() and
+// goes to the Console instead of to the freed box.
 class ConsoleStream : public std::streambuf {
 public:
-    std::function<void(const std::string&)> sink;     // main thread; empty: the Console
+    using Sink = std::function<void(const std::string&)>;
+    const std::shared_ptr<Sink> sink = std::make_shared<Sink>();     // main thread; empty: the Console
     void finish() {
         if (!line_.empty()) send();
     }
@@ -96,8 +99,8 @@ private:
     void send() {
         std::string l = std::move(line_);
         line_.clear();
-        auto s = sink;
-        onMain([l, s] { if (s) s(l); else App::get().log(l); });
+        std::shared_ptr<Sink> s = sink;
+        onMain([l, s] { if (*s) (*s)(l); else App::get().log(l); });
     }
 };
 
@@ -260,6 +263,11 @@ musil::vptr fnSetBuffer(musil::vlist& a, musil::Interp& I) {
     size_t frames = 0;
     for (auto& c : ch) frames = std::max(frames, c.size());
     double sr = a.size() > 2 ? I.scalar(a[2]) : 0;
+    // the samples are interleaved here, on the interpreter's thread; under the audio lock they are only
+    // swapped in, and the old ones are freed after it is released
+    std::vector<float> data(frames * ch.size(), 0.f);
+    for (size_t c = 0; c < ch.size(); ++c)
+        for (size_t f = 0; f < ch[c].size(); ++f) data[f * ch.size() + c] = (float)ch[c][f];
     bool found = false;
     onMainWait([&] {
         Patch* p = patchOf(I);
@@ -268,12 +276,10 @@ musil::vptr fnSetBuffer(musil::vlist& a, musil::Interp& I) {
         found = true;
         {
             std::lock_guard<std::mutex> lk(b->patch->mutex());
+            b->buf.data.swap(data);
             b->buf.channels = (int)ch.size();
             b->buf.frames = (long)frames;
             if (sr > 0) b->buf.sr = sr;
-            b->buf.data.assign(frames * ch.size(), 0.f);
-            for (size_t c = 0; c < ch.size(); ++c)
-                for (size_t f = 0; f < ch[c].size(); ++f) b->buf.data[f * ch.size() + c] = (float)ch[c][f];
             ++b->version;
         }
         b->patch->rebuild();
@@ -337,7 +343,7 @@ LangContext::LangContext(std::string l, ContextHooks h)
     I.stack_budget = (64u << 20) / 4 * 3;          // code runs on a thread of 64 MB (startThread)
 #endif
     auto* buf = new ConsoleStream();
-    buf->sink = hooks.print;
+    *buf->sink = hooks.print;
     I.out = new std::ostream(buf);
     I.yield_fn = [this] {
         if (stop_) {
@@ -448,7 +454,7 @@ void LangContext::detach() {
     hooks.patch = nullptr;
     hooks.outlet = nullptr;
     hooks.print = nullptr;
-    if (interp_ && interp_->out) static_cast<ConsoleStream*>(interp_->out->rdbuf())->sink = nullptr;
+    if (interp_ && interp_->out) *static_cast<ConsoleStream*>(interp_->out->rdbuf())->sink = nullptr;   // main thread
 }
 
 std::vector<std::string> codeBoxNames() {

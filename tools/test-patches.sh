@@ -20,13 +20,24 @@ count=0
 for f in "$ROOT"/examples/*.moritz "$ROOT"/examples/*/*.moritz "$ROOT"/help/*.moritz "$ROOT"/library/*.moritz "$ROOT"/tutorials/*.moritz "$(cd "$(dirname "$0")/.." && pwd)"/tests/cross/*.moritz; do
     [ -f "$f" ] || continue
     count=$((count + 1))
-    log=$("$MORITZ" --render "$f" 1 "$OUT/out.wav" 2>&1)
+    dur=1
+    case "$f" in */tests/cross/*) dur=3 ;; esac     # a cross-test records, then compares: give it time
+    log=$("$MORITZ" --render "$f" $dur "$OUT/out.wav" 2>&1)
     status=$?
     bad=$(printf '%s\n' "$log" | grep -iE "warn|error|unknown|cannot|can't|fail")
     if [ $status -ne 0 ] || [ -n "$bad" ]; then
         echo "FAIL $f (exit $status)"
         printf '%s\n' "$bad" | head -5
         fails=$((fails + 1))
+    else
+        # a cross-test passes only when every comparison in it ran and said PASS (a comparison that never
+        # runs would otherwise pass in silence)
+        want=$(grep -o 'print \\"PASS' "$f" | wc -l | tr -d ' ')
+        got=$(printf '%s\n' "$log" | grep -c '^PASS')
+        if [ "$want" -gt 0 ] && [ "$got" -ne "$want" ]; then
+            echo "FAIL $f: $got of $want comparisons said PASS"
+            fails=$((fails + 1))
+        fi
     fi
 done
 rm -rf "$OUT"

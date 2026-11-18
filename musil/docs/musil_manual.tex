@@ -83,7 +83,7 @@ Musil is a small scripting language for sound and music computing: Scheme undern
 Tcl on the surface. Numbers are vectors, functions are values, code is data. The
 language is one C++ header with no dependencies; the libraries add the operating
 system, linear algebra and machine learning, signal processing, real-time sound and
-plotting, and the IDE puts all of it in a window.
+plotting, and Moritz, the patching environment Musil lives in, gives it an editor and a Console.
 }\par
 \vfill
 {\small\color{gray} (c) 2026 by Carmine-Emanuele Cella}
@@ -390,7 +390,7 @@ is searched next to the loading file, in the current directory, in each entry of
 (\musil{read}, \musil{read-wav}, \musil{read-csv}, \musil{exists?}, \musil{stat})
 apply a similar rule to their data: a relative path that does not exist in the current
 directory is looked for next to the file being run, so a script finds its data from
-wherever it was started, on the command line or from the IDE. A file that ran is not
+wherever it was started, on the command line or from Moritz's code editor. A file that ran is not
 run again (so mutual loads are safe); a file that failed is not cached. Nothing is
 loaded automatically: a program that wants the standard library says
 \musil{load "std.mu"}; each library loads what it needs (\musil{signals.mu} loads
@@ -412,8 +412,8 @@ needs and without what it does itself.
 
 \begin{itemize}[nosep]
   \item \textbf{Where you write it.} The code editor (File~$\to$~New Code, or a
-        \texttt{.mu} file opened) runs the selection or the line with Cmd-Enter and the
-        file with Cmd-R; the Console has a line that evaluates Musil. Both share one
+        \texttt{.mu} file opened) runs the selection or the block around the cursor with
+        Cmd-Enter and the file with Shift-Cmd-Enter; the Console has a line that evaluates Musil. Both share one
         session. \texttt{moritz --run file.mu} runs a script from the command line, and
         \texttt{moritz --repl} is a REPL.
   \item \textbf{What Moritz adds.} \musil{(buffer name)} reads a \texttt{buffer\textasciitilde}
@@ -443,51 +443,42 @@ needs and without what it does itself.
         not run programs, delete files, use the network, wait or quit.
 \end{itemize}
 
-\section{The IDE}
+\section{The code editor}
 \label{sec:ide}
 
-\textit{Musil} the application, up to version 0.9.1 (in Musil's own repository), was the
-interpreter with an editor around it. In Moritz, the code editor and the Console do the
-same work.
+\textit{Musil} the application, up to version 0.9.1 (archived in Musil's own repository), was
+the interpreter with an editor around it. Its work is now done by Moritz's code editor and
+Console, and, outside Moritz, by any editor and the command line.
 
 \begin{itemize}[nosep]
-  \item \textbf{Editor} (top left): \texttt{.mu} files with syntax colouring (keywords,
-        the documented builtins, strings, numbers, comments). \textbf{Cmd-Enter} runs the
-        block around the cursor (the lines between blank lines) or the selection;
-        \textbf{Cmd-Shift-Enter} the whole file; \textbf{Cmd-Alt-Enter} the current line.
-        The lines sent flash. A toolbar has Run file, Run block, Run line, Stop, Clear,
-        Controls and Settings. Undo, find (Cmd-F, Cmd-G), comment/uncomment (Cmd-/), text
-        size (Cmd-+, Cmd--, for every panel), go to line (Cmd-L), clear the console (Cmd-K),
-        files by drag and drop; Settings (Cmd-,) chooses the font (one fixed-width font for
-        everything, colours only mark syntax), the size, line numbers, the current-line
-        highlight, the margin guide and the evaluation port (0 turns it off), and remembers them.
-  \item \textbf{Console} (bottom left): everything printed, and a line to type Musil into:
-        Enter runs it, Up/Down recall history, Tab completes a name. Esc or Cmd-. stops a
-        running program (the interpreter checks at safe points, so the session survives).
-  \item \textbf{Variables} (top right): the globals with a preview of their values, coloured
-        by kind (numbers, strings, lists, functions); double-click prints one.
-  \item \textbf{Help} (bottom right): type a name or a word to search the documentation of
-        every function. \musil{(manual)} or the Help menu opens this PDF; Help~$\to$~Examples
-        copies any bundled example into an untitled buffer (the original stays untouched; its
-        data is still found), to run and edit.
-  \item \textbf{Plots and controls} open in windows of their own, from the IDE exactly as
-        from the command line; several plots can be open at once.
-  \item \textbf{From another editor}: the IDE listens on port 7770; code sent from VS Code
-        (the extension in \texttt{editors/vscode/musil}) or from \texttt{nc} is evaluated in
-        the same session.
+  \item \textbf{Editor}: \texttt{.mu} files (File~$\to$~New Code, or any \texttt{.mu} file
+        opened) with syntax colouring. \textbf{Cmd-Enter} runs the selection or the block
+        around the cursor (the lines between blank lines); \textbf{Shift-Cmd-Enter} runs the
+        whole file; \textbf{Esc} or \textbf{Cmd-.} stops a running program (the interpreter
+        stops at safe points, so the session survives); \textbf{Tab} after a name completes
+        it; \textbf{Cmd-/} comments or uncomments. The lines sent flash; the line of an error
+        is marked. A toolbar has Run block, Run file, Stop, Comment and Console. On Linux and
+        Windows, Ctrl takes the place of Cmd.
+  \item \textbf{Variables} (top right): what the session defines, with a preview of each value.
+  \item \textbf{Help} (bottom right): the documentation of the name under the cursor.
+  \item \textbf{Console}: everything printed, and a line to type Musil into; it shares the
+        session with the code editor.
+  \item \textbf{Settings} (Moritz~$\to$~Settings): the font and size of code, for the editor, the
+        Console and the code view of patches.
 \end{itemize}
 
-The interpreter runs on its own thread; the window stays responsive while a program
-runs. Libraries are found inside the app bundle, so nothing needs to be installed. On
-macOS, \texttt{./deploy\_macos.sh} builds \texttt{dist/Musil.app}.
-
+Outside Moritz, \texttt{musil file.mu} runs a file and \texttt{musil} alone is a prompt;
+\texttt{musil --serve port file.mu} runs a file and evaluates code sent to it while it runs,
+from VS Code (the extension in \texttt{musil/editors/vscode/musil}) or from
+\texttt{musil --send port file.mu}. The interpreter runs plots, controls and the score roll in
+windows of their own.
 
 % ═════════════════════════════════════════════════════════════════════════════
 \section{Tutorial}
 \label{sec:tutorial}
 
 This chapter teaches Musil from nothing, by doing. Every fragment in it can be typed into
-the IDE's console, sent from the editor with Cmd-Enter, or saved and run with
+Moritz's Console, sent from its code editor with Cmd-Enter, or saved and run with
 \texttt{musil file.mu}; all of them were run as written. Chapter~\ref{sec:language} is the
 precise account of the syntax and the evaluation rule, chapter~\ref{sec:practices} the
 style that experience has shown to work, and chapter~\ref{sec:libraries} the reference of
@@ -793,9 +784,10 @@ osc-map "/cutoff" 'cutoff                               ; /cutoff 800 from anywh
 osc-send "127.0.0.1" 9001 "/hello" 1 2.5 "three"        ; and the other way
 \end{lstlisting}
 
-The IDE keeps the interpreter running while the loops turn, so you edit the file, send a
-block with Cmd-Enter, and hear the change on the next cycle. From the command line,
-\texttt{musil --serve 7770 -i} does the same for an editor that sends code to the port.
+Live audio is Musil's own (Moritz plays sound through its patches), so loops run in
+\texttt{musil}: \texttt{musil --serve 7770 -i} keeps the interpreter running while the loops
+turn and evaluates the code an editor sends to the port, so you edit the file, send a block,
+and hear the change on the next cycle.
 
 \subsection{Music}
 
@@ -1322,7 +1314,7 @@ redefining it while the loop runs is the live coding: the next cycle plays the n
 definition. \musil{tempo}, \musil{beat}, \musil{stop-loop}; and the transformations of
 event lists, \musil{fast}, \musil{slow}, \musil{shift}, \musil{rev}, \musil{every},
 \musil{degrade}, \musil{cat}, \musil{stack}, \musil{steps}, are plain list functions.
-The scheduler runs in the interpreter's idle time (while the REPL or the IDE waits,
+The scheduler runs in the interpreter's idle time (while the REPL waits,
 and inside \musil{sleep}), on one thread with everything else.
 
 \begin{lstlisting}
@@ -1363,8 +1355,8 @@ and \musil{udp-receive}, for anything the conveniences do not cover. None of thi
 evaluation port below: OSC carries numbers to controls over UDP, the port carries code
 over TCP.
 
-\textbf{Editors.} \musil{(serve 7770)} (in \texttt{system}; the IDE does it at start-up; the command line
-with \texttt{--serve 7770 -i}) opens a local port that evaluates the text it receives, in
+\textbf{Editors.} \musil{(serve 7770)} (in \texttt{system}; on the command line
+\texttt{--serve 7770 -i}) opens a local port that evaluates the text it receives, in
 the session, as if typed. The VS Code extension in \texttt{editors/vscode/musil} sends the
 block around the cursor with Cmd-Enter (the file with Cmd-Shift-Enter) and gives
 \texttt{.mu} files syntax colouring, from a grammar generated with \texttt{help}. From a
@@ -1724,7 +1716,7 @@ note continued across a boundary on the same player and pitch becoming one longe
 dashed line marks every segment, and clicking in one fills the \emph{solution} menu with its
 solutions by cost; choosing one replaces the segment's notes (\musil{score-choose!},
 \musil{score-solutions}) and the playback follows. The search prints its progress
-(\musil{'quiet} 1 silences it), Esc interrupts it in the IDE, \musil{'seed} fixes its draws.
+(\musil{'quiet} 1 silences it), Esc interrupts it in Moritz's code editor, \musil{'seed} fixes its draws.
 \texttt{static\_orchidea.mu} orchestrates a bell, \texttt{dynamic\_orchidea.mu} a piano
 phrase cut at its chords, \texttt{orchfest.mu} puts the three orchestrators one after the
 other on the same sound. The names are Musil's; Orchidea's (\texttt{pop\_size},
@@ -1827,8 +1819,7 @@ Moritz's \texttt{atoms}, \texttt{pursuit}, \texttt{soundtypes}, \texttt{typegen}
 \subsection{plot}
 
 A figure is \musil{(list title layers options)}; \musil{plot.mu} builds it and
-\musil{show} opens it in a window of its own and returns, from the command line and from
-the IDE alike; the interpreter keeps the windows alive while it waits or sleeps, so
+\musil{show} opens it in a window of its own and returns, from the command line; the interpreter keeps the windows alive while it waits or sleeps, so
 several plots can be open while a program goes on, and a script that ends with windows
 open stays until they are closed. \musil{save-png} writes a file. \musil{subplots} puts
 several figures in one grid. Keys in a window: \texttt{+}/\texttt{-} zoom, W A S D pan,
@@ -1901,8 +1892,8 @@ All in \texttt{musil/examples/}, all run by \texttt{ctest}. Run them from that d
 \texttt{plots.mu}, \texttt{iris\_plot.mu} & waveforms, spectrograms, responses, clusters, surfaces \\
 \texttt{live\_play.mu}, \texttt{live\_chorale.mu}, \texttt{live\_probe.mu} & sounds through the device; a four-voice chorale scheduled with \musil{sequence}; a device check \\
 \texttt{live\_synth.mu}, \texttt{live\_offline.mu} & instruments as functions, played and changed live; the same rendered offline with parameter curves \\
-\texttt{live\_loops.mu}, \texttt{live\_controls.mu}, \texttt{live\_session.mu} & patterns redefined while they run; controls and OSC; a file to open in the IDE and play with \\
-\texttt{live\_house.mu}, \texttt{live\_techno.mu}, \texttt{live\_trance.mu} & tracks from the kits, the step notation and loops, to live-code in the IDE \\
+\texttt{live\_loops.mu}, \texttt{live\_controls.mu}, \texttt{live\_session.mu} & patterns redefined while they run; controls and OSC; a file to run with \texttt{musil --serve} and change from an editor while it plays \\
+\texttt{live\_house.mu}, \texttt{live\_techno.mu}, \texttt{live\_trance.mu} & tracks from the kits, the step notation and loops, to live-code with \texttt{musil --serve} and an editor \\
 \texttt{live\_emptyset.mu} & a style from its own instruments (impacts, iron, a wall of noise), Euclidean rhythms and silence as form \\
 \texttt{notation.mu} & a written line, an Orchidea chord and a granular cloud quantized and exported as MusicXML, with and without tuplets; the report; the grid heard \\
 \texttt{onsets.mu}, \texttt{transients.mu} & onset detection by spectral flux; harmonic/percussive separation (HPSS) on a file made for it \\
