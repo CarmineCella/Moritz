@@ -4,6 +4,7 @@
 
 #include <cmath>
 #include <functional>
+#include <set>
 
 #include "jobs.h"
 #include "midi.h"
@@ -298,6 +299,7 @@ public:
     void codeSourceClosed(CodeSource* s);
     void markEdited(Patch* p);                       // the document showing p is now edited
     void pushUndoFor(Patch* p);                      // an undo step in the document showing p
+    void abstractionSaved(Patch* a);                 // the other copies of its file follow it
     MainWindow* docOf(Patch* p);                     // the document p belongs to
     void closeCode(CodeWindow* w);      // already confirmed
     CodeWindow* frontCode();            // the code window in front, if one is
@@ -390,12 +392,18 @@ public:
     bool openFile(const std::string& path);   // into this window
     // a patch converted from elsewhere: Untitled, edited, saved as name.moritz in dir
     bool loadConverted(const std::string& src, const std::string& dir, const std::string& name);
-    bool save();
+    bool save();                              // the document's patch (Save As when it has no file)
+    bool saveAbstraction(Patch* a);           // an abstraction edited in its window, into its file
+    bool saveFront();                         // File > Save: the abstraction in front, or the patch
+    // the abstraction instance p is in (or is) inside this document, or nullptr
+    Patch* abstractionOf(Patch* p) const;
+    bool abstractionEdited(Patch* a) const { return absDirty_.count(a) > 0; }
+    void forget(Patch* p);                    // p is being destroyed
     bool saveAs();
     bool confirmDiscard();
-    bool isEmptyUntitled() const { return path_.empty() && !dirty_ && patch.boxes.empty(); }
+    bool isEmptyUntitled() const { return path_.empty() && !edited() && patch.boxes.empty(); }
     const std::string& path() const { return path_; }
-    bool edited() const { return dirty_; }
+    bool edited() const { return dirty_ || !absDirty_.empty(); }   // the patch, or an abstraction in it
     bool canUndo() const { return !undo_.empty(); }
     bool canRedo() const { return !redo_.empty(); }
     // Edit: p is the patch edited (a subpatcher, an abstraction, or the document's own)
@@ -452,6 +460,7 @@ private:
     std::string path_;
     std::string suggested_;          // Save As proposes this name (imported patches)
     bool dirty_ = false;
+    std::set<Patch*> absDirty_;      // abstractions edited in their windows, not saved yet
     std::vector<UndoStep> undo_, redo_;
     std::string message_;
 };

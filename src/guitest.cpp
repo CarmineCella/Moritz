@@ -122,7 +122,7 @@ bool act(const std::string& a) {
     if (verb == "save" || verb == "undo" || verb == "redo") {
         MainWindow* d = app.frontDoc();
         if (!d) return false;
-        if (verb == "save") d->save();
+        if (verb == "save") d->saveFront();
         else if (verb == "undo") d->undo();
         else d->redo();
         return true;

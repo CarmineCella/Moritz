@@ -68,6 +68,14 @@ frames=$(grep "state: buffer snd frames" "$out" | head -1)
 if [ $status -eq 0 ] && [ "$(grep -c "$frames" "$out")" = 2 ] && ! grep -q "frames 0$" "$out" &&
    grep -q "state: code bound code c1 edited yes" "$out"; then ok; else fail "undo keeps buffer~ and the code editor"; fi
 
+# 7. closing asks about an abstraction edited in its window, first, by its name
+mkdir -p "$T/abs"
+printf '(patch\n  (obj i inlet (pos 20 20))\n  (obj o outlet (pos 20 80))\n  (connect i 0 o 0))\n' > "$T/abs/twice.moritz"
+printf '(patch\n  (obj a1 twice (pos 20 20)))\n' > "$T/abs/main.moritz"
+run "$T/abs/main.moritz" --window-png none act=opensub:a1 act=new:button answer=0 act=confirmclose act=state
+expect "closing asks about the abstraction" "ask: Save the changes to the abstraction \"twice.moritz\"?"
+expect "Cancel keeps the document" "state: documents 1"
+
 # 11. Recent files hold absolute paths, whatever the command line said
 ( cd "$G" && "$MORITZ" numbers.moritz --window-png none > "$out" 2>&1 )
 if grep -rq "numbers.moritz" "$HOME" 2>/dev/null && ! grep -rq "^0:numbers.moritz" "$HOME" 2>/dev/null; then ok

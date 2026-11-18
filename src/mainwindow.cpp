@@ -253,7 +253,10 @@ void App::init() {
     codeSourceGone = [this](CodeSource* s) { codeSourceClosed(s); };
     Fl::add_timeout(1.0 / 15, toolTimer);
     Patch::onDestroyed = [this](Patch* p) {
-        for (auto* d : docs) d->closeSubpatchWindows(p);
+        for (auto* d : docs) {
+            d->closeSubpatchWindows(p);
+            d->forget(p);
+        }
         closeText(p);
         for (auto* w : std::vector<PatchWindow*>(helpWindows_))
             if (w->patch == p) {
@@ -339,7 +342,7 @@ void App::buildMenu(Fl_Menu_Bar* m) {
            FL_MENU_DIVIDER);
     m->add("File/Save", FL_COMMAND + 's', [](Fl_Widget*, void*) {
         if (auto* c = App::get().frontCode()) { c->save(); return; }
-        if (auto* d = App::get().frontDoc()) d->save();
+        if (auto* d = App::get().frontDoc()) d->saveFront();
     }, nullptr);
     m->add("File/Close", FL_COMMAND + 'w', APP_CB(closeFront), nullptr);
     m->add("File/Save as...", FL_COMMAND + FL_SHIFT + 's', [](Fl_Widget*, void*) {
@@ -833,6 +836,31 @@ void App::markEdited(Patch* p) {
 
 void App::pushUndoFor(Patch* p) {
     if (auto* d = docOf(p)) d->pushUndo(p);
+}
+
+void App::abstractionSaved(Patch* a) {
+    std::string text = a->serialize();
+    for (auto* d : docs) {
+        std::vector<Patch*> copies;
+        d->patch.forEachBox([&](Box* b) {
+            for (Patch* q : b->inners())
+                if (q != a && q->isAbstraction && q->file == a->file) copies.push_back(q);
+        });
+        for (Patch* q : copies) {
+            if (d->abstractionEdited(q)) {             // edited there too: it keeps its edits
+                print("abstraction " + baseName(a->file) + " was saved; a copy in " +
+                      (d->path().empty() ? std::string("Untitled") : baseName(d->path())) +
+                      " has edits of its own and was not updated");
+                continue;
+            }
+            std::string err;
+            if (q->applyText(text, err)) {             // the boxes that did not change go on
+                if (q->owner) q->rebuild();
+            } else {
+                print("abstraction " + baseName(a->file) + ": a copy could not follow: " + err);
+            }
+        }
+    }
 }
 
 void App::closeCode(CodeWindow* w) {
@@ -1492,15 +1520,26 @@ void MainWindow::setStatus(const std::string& s) {
 void MainWindow::updateTitle() {
     std::string t = (path_.empty() ? (suggested_.empty() ? std::string("Untitled") : suggested_ + " (from Max)")
                                    : baseName(path_)) +
-                    (dirty_ ? " — edited" : "") + " — Moritz";
+                    (edited() ? " — edited" : "") + " — Moritz";
     copy_label(t.c_str());
 }
 
-void MainWindow::markDirty(Patch*) {
-    if (!dirty_) {
-        dirty_ = true;
-        updateTitle();
-    }
+// An edit inside an abstraction (or a subpatcher in one) is unsaved in the abstraction's file, which is
+// saved on its own; any other edit is unsaved in the document.
+void MainWindow::markDirty(Patch* p) {
+    if (Patch* a = abstractionOf(p ? p : &patch)) absDirty_.insert(a);
+    else dirty_ = true;
+    updateTitle();
+}
+
+Patch* MainWindow::abstractionOf(Patch* p) const {
+    for (Patch* q = p; q && q != &patch; q = q->parent)
+        if (q->isAbstraction && !q->file.empty()) return q;
+    return nullptr;
+}
+
+void MainWindow::forget(Patch* p) {
+    if (absDirty_.erase(p)) updateTitle();
 }
 
 int MainWindow::handle(int e) {
@@ -1525,6 +1564,13 @@ bool MainWindow::confirmDiscard() {
         if (!s || !cw->dirty() || app.docOf(s->patchOf()) != this) continue;
         cw->show();
         if (!cw->confirmDiscard()) return false;
+    }
+    // abstractions edited in their windows: each has its own file
+    for (Patch* a : std::vector<Patch*>(absDirty_.begin(), absDirty_.end())) {
+        int r = askUser("Save the changes to the abstraction \"%s\"?", "Cancel", "Save", "Don't Save",
+                        baseName(a->file).c_str());
+        if (r == 0) return false;
+        if (r == 1 && !saveAbstraction(a)) return false;
     }
     if (!dirty_) return true;
     std::string name = path_.empty() ? "Untitled" : baseName(path_);
@@ -1553,6 +1599,7 @@ bool MainWindow::openFile(const std::string& path) {
     undo_.clear();
     redo_.clear();
     dirty_ = false;
+    absDirty_.clear();
     canvas->setLocked(true);           // Max opens patches locked
     updateTitle();
     log("opened " + path);
@@ -1579,6 +1626,7 @@ bool MainWindow::loadConverted(const std::string& src, const std::string& dir, c
     undo_.clear();
     redo_.clear();
     dirty_ = true;                     // not saved yet
+    absDirty_.clear();
     canvas->setLocked(false);
     updateTitle();
     if (!err.empty()) log(name + ":\n" + err);
@@ -1587,26 +1635,34 @@ bool MainWindow::loadConverted(const std::string& src, const std::string& dir, c
     return true;
 }
 
+bool MainWindow::saveFront() {
+    // inside an abstraction (or a p inside one) in front: Save writes that file
+    Canvas* active = activeCanvas();
+    if (active != canvas)
+        if (Patch* a = abstractionOf(active->patch())) return saveAbstraction(a);
+    return save();
+}
+
+bool MainWindow::saveAbstraction(Patch* a) {
+    for (auto* w : subwindows_) w->canvas->commitEdit();
+    std::string err;
+    if (!fileio::writeAtomic(a->file, a->serialize(), &err)) {   // the file stays as it was
+        alertUser("Can't save the abstraction %s:\n%s\n\nThe file on the disk is as it was.", baseName(a->file).c_str(),
+                  err.c_str());
+        log("can't save: " + err);
+        return false;
+    }
+    absDirty_.erase(a);
+    updateTitle();
+    log("saved abstraction " + a->file);
+    setStatus("saved abstraction " + baseName(a->file));
+    App::get().abstractionSaved(a);           // its other copies follow
+    return true;
+}
+
 bool MainWindow::save() {
     canvas->commitEdit();
-    Canvas* active = activeCanvas();
-    if (active != canvas) {
-        active->commitEdit();
-        // inside an abstraction (or a p inside one): Save writes that file
-        for (Patch* p = active->patch(); p; p = p->parent)
-            if (p->isAbstraction && !p->file.empty()) {
-                std::string err;
-                if (!fileio::writeAtomic(p->file, p->serialize(), &err)) {   // the file stays as it was
-                    alertUser("Can't save the abstraction %s:\n%s\n\nThe file on the disk is as it was.",
-                              baseName(p->file).c_str(), err.c_str());
-                    return false;
-                }
-                log("saved abstraction " + p->file);
-                setStatus("saved abstraction " + baseName(p->file) +
-                          " (other copies update when the patch is reopened)");
-                return true;
-            }
-    }
+    for (auto* w : subwindows_) w->canvas->commitEdit();
     if (path_.empty()) return saveAs();
     // a temporary file in the same folder, renamed over the old one once written: a full disk or a
     // crash leaves the old file whole
