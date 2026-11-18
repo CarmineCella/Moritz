@@ -22,6 +22,7 @@ is generated from `help/reference/` by `moritz --reference-md`.
 - [Routing](#routing)
 - [Patching](#patching)
 - [Interface](#interface)
+- [Code](#code)
 - [Library](#library)
 
 Objects follow their Max/MSP namesakes. Signal objects end in `~`. An unconnected signal inlet
@@ -3926,6 +3927,43 @@ Curves, bars, scatter plots and matrices (heat maps). It shows a buffer~, follow
 | 2 | y clicked: the row of an image, the value of a curve |
 
 See also: `buffer~` `waveform~` `soundtypes` `melbands~` `filterplot` `spectroscope~`
+
+## Code
+
+### `code`
+
+`code [inlets] [outlets] [file.mu]`
+
+A script in Musil inside the patch, as js is in Max. It runs off the audio thread when it gets a bang, in an interpreter of its own that keeps its variables from one run to the next (with the std and signals libraries loaded; load "music.mu" or "scientific.mu" for the others), and the last outlet bangs when it has run. Its inlets set the variables in1, in2... (a number, a vector for a list of numbers, a string, or a list; nil until a value comes): a message to the left inlet sets in1 and runs the script, the other inlets only store. In the script, (out k values...) sends out of outlet k; (buffer name) reads a buffer~ (a vector per channel), (buffer-rate name) its rate, (set-buffer! name x [rate]) writes one, and (send name values...) reaches the receive boxes of that name.
+
+The script is kept in the patch, or in the .mu file the box names (read at every run, next to the patch). Double-click the box (Cmd-double-click when editing) to open it in the code editor: Cmd-S puts it back into the box, Cmd-Enter runs a block in the box's interpreter. What it prints goes to the Console. A code box may read and write files, as a patch does; it may not run programs, delete files, use the network, wait or quit (exec, remove, udp-send, udp-receive, serve, input, sleep, exit: refused with an error). The Console and moritz --run have all of Musil.
+
+| Argument | |
+| --- | --- |
+| `inlets` | 1 to 16 (1) |
+| `outlets` | 0 to 16, besides the last one, which bangs when the script has run (1) |
+| `file.mu` | a script in a file instead of the patch (none) |
+
+| Message | |
+| --- | --- |
+| `bang` | runs the script |
+| `anything` | to the left inlet, becomes in1 and runs the script; to inlet k, becomes ink |
+| `set name values` | sets a variable without running |
+| `stop` | stops the script running |
+| `reset` | a fresh interpreter: the variables of earlier runs are gone |
+| `open` | opens the script in the code editor |
+| `read file.mu` | runs that file from now on |
+
+| Inlet | |
+| --- | --- |
+| 1 | bang runs the script; anything else becomes in1 and runs it; set name values, stop, reset, open, read file.mu |
+
+| Outlet | |
+| --- | --- |
+| 1 | what the script sends with (out k ...), k from 1; the last outlet: bang when the script has run |
+| 2 | what the script sends with (out k ...), k from 1; the last outlet: bang when the script has run |
+
+See also: `buffer~` `send` `receive` `print`
 
 ## Library
 
