@@ -172,6 +172,7 @@ if(MUSIL_TESTS)
   target_link_libraries(musil-live-rt-test PRIVATE musil_base Threads::Threads)
   add_test(NAME live-rt COMMAND musil-live-rt-test)
   add_test(NAME robust  COMMAND musil ${T}/test_robust.mu)
+  add_test(NAME semantics COMMAND musil ${T}/test_semantics.mu)
   if(NOT WIN32)   # the evaluation port: musil --send and its token
     add_test(NAME port-send COMMAND sh ${T}/port_send.sh $<TARGET_FILE:musil>)
   endif()

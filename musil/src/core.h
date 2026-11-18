@@ -148,7 +148,7 @@ struct Value {
     sptr file;
     op_t op = nullptr;
     std::vector<std::string> params;
-    vptr body; eptr closure;
+    vptr body; eptr closure;                       // a (function ...) form caches its prepared body in body
     std::weak_ptr<Env> wclosure;                  // a function bound in the environment it closes over holds it weakly (Env::bind)
     std::shared_ptr<void> opaque; std::string opaque_tag;
     live_counter<live_values> counted;
@@ -270,6 +270,8 @@ struct Error : std::exception {
         return cached.c_str();
     }
 };
+// return, break and continue are not exceptions (the evaluator passes them up as a state); these types
+// stay for hosts that named them
 struct Return_signal { vptr val; }; struct break_signal {}; struct continue_signal {};
 struct Exit_signal { int code; };
 // thrown when the host asked the interpreter to stop (Interp::request_stop): not an Error, not a
@@ -513,6 +515,8 @@ struct Interp {
     size_t stack_budget = 0;                   // bytes of C++ stack eval may use; 0: what the thread has (hosts may set a limit)
     std::uintptr_t stack_floor = 0;            // evaluation stops with an error below this address
     int function_depth = 0, loop_depth = 0;
+    enum flow_t { FLOW_NONE = 0, FLOW_RETURN, FLOW_BREAK, FLOW_CONTINUE };
+    int flow = FLOW_NONE; vptr flow_value;     // a return, break or continue on its way out (not an exception)
     unsigned long eval_count = 0;
     std::atomic<bool> stop_requested{false};
     std::function<void()> yield_fn;         // called every 1024 evals, for hosts that need to breathe
@@ -536,6 +540,7 @@ struct Interp {
     bool& allow_blocking = caps.blocking;   // false: builtins that wait (sleep, input, exec) refuse to run;
                                             // a host whose code must answer at once (a box in a patch) sets it
     std::unordered_map<const void*, std::shared_ptr<void>> extensions;   // state<T>()
+    vptr quote_op;                          // the quote builtin itself: apply quotes its arguments with it
 
     Interp();
     ~Interp();
@@ -603,7 +608,8 @@ struct Interp {
     void def(const std::string& name, op_t f, int amin, int amax) { global->vars[name] = v_op(f, name, amin, amax); }
     void def(const std::string& name, op_t f, int arity = 0) { def(name, f, arity, arity); }
     void def(const std::string& name, vptr v) { global->vars[name] = std::move(v); }
-    vptr eval(vptr expr, eptr e);
+    vptr eval(vptr expr, eptr e);           // evaluate: a return reaching it is its value
+    vptr ev(vptr expr, eptr e);             // the evaluator itself: a return, break or continue is left in flow
     vptr call_fn(vptr fn, vlist args);
     vptr run(const std::string& src, const std::string& filename = "<input>");
     void load(const std::string& path);
@@ -692,16 +698,19 @@ inline int op_prec(const std::string& o) {
     if (o == "*" || o == "/" || o == "%")  return 6;
     return 0;
 }
-inline vptr expr_parse(vlist& w, size_t& p, int min_p, Interp& i, eptr e);
-inline vptr expr_atom(vlist& w, size_t& p, Interp& i, eptr e) {
+// expr: the infix expression is read and evaluated in one pass (with run false it is only read). A return,
+// break or continue inside stops the reading and is passed up (the result is then nullptr).
+inline vptr expr_parse(vlist& w, size_t& p, int min_p, Interp& i, const eptr& e, bool run);
+inline vptr expr_atom(vlist& w, size_t& p, Interp& i, const eptr& e, bool run) {
     if (p >= w.size()) i.err("expr: unexpected end of expression");
     if (stack_low()) i.err("expr: nested too deep");
     vptr a = w[p];
     if (a->t == Value::NUM) { p++; return a; }
     if (a->t == Value::SYM) {
-        if (a->s == "-") { p++; vptr v = expr_atom(w, p, i, e); return v_arr(-i.num(v)); }
+        if (a->s == "-") { p++; vptr v = expr_atom(w, p, i, e, run); if (!run || !v) return v; return v_arr(-i.num(v)); }
         if (op_prec(a->s)) i.err("expr: unexpected operator " + a->s);
-        p++; auto v = e->find(a->s);
+        p++; if (!run) return a;
+        auto v = e->find(a->s);
         if (!v) i.err("expr: undefined: " + a->s);
         return v;
     }
@@ -710,23 +719,27 @@ inline vptr expr_atom(vlist& w, size_t& p, Interp& i, eptr e) {
         // (a op b ...) nested in an expr is a sub-expression; anything else is a call.
         vlist& sub = a->l;
         bool infix = sub.size() == 1 || (sub.size() >= 2 && sub[1]->t == Value::SYM && op_prec(sub[1]->s) > 0);
-        if (!infix) return i.eval(a, e);
-        size_t q = 0; vptr r = expr_parse(sub, q, 0, i, e);
+        if (!infix) { if (!run) return a; vptr r = i.ev(a, e); return i.flow ? nullptr : r; }
+        size_t q = 0; vptr r = expr_parse(sub, q, 0, i, e, run);
+        if (!r) return r;
         if (q < sub.size()) i.err("expr: unexpected " + str_of(sub[q]));
         return r;
     }
     if (a->t == Value::STR) { p++; return a; }
     i.err("expr: bad token " + str_of(a));
 }
-inline vptr expr_parse(vlist& w, size_t& p, int min_p, Interp& i, eptr e) {
-    vptr lhs = expr_atom(w, p, i, e);
+inline vptr expr_parse(vlist& w, size_t& p, int min_p, Interp& i, const eptr& e, bool run) {
+    vptr lhs = expr_atom(w, p, i, e, run);
+    if (!lhs) return lhs;
     while (p < w.size()) {
         if (w[p]->t != Value::SYM) i.err("expr: expected operator, got " + str_of(w[p]));
         int prec = op_prec(w[p]->s);
         if (prec == 0) i.err("expr: unknown operator " + w[p]->s);
         if (prec < min_p) break;
         std::string op = w[p++]->s;
-        vptr rhs = expr_parse(w, p, prec + 1, i, e);
+        vptr rhs = expr_parse(w, p, prec + 1, i, e, run);
+        if (!rhs) return rhs;
+        if (!run) continue;
         if (op == "&&") { lhs = v_bool(truthy(lhs) && truthy(rhs)); continue; }
         if (op == "||") { lhs = v_bool(truthy(lhs) || truthy(rhs)); continue; }
         if (op == "==") { if (lhs->t != Value::NUM || rhs->t != Value::NUM) { lhs = v_bool(equal(lhs, rhs)); continue; } }
@@ -798,9 +811,12 @@ inline bool ends_in_return(const vptr& v) {
     if (is_form(v, "if")) return v->l.size() == 4 && ends_in_return(v->l[2]) && ends_in_return(v->l[3]);
     return false;
 }
+// A function's body with its early returns moved to tail position where that is possible (the statements
+// after an (if c { ... return x }) become its else branch), so they leave without passing up a return.
+// Done once per (function ...) form: the form keeps the result.
 inline vptr hoist_returns(const vptr& v) {
     if (!v || v->t != Value::LIST || v->l.empty()) return v;
-    if (stack_low()) return v;                          // a body nested beyond the stack is left as it is
+    if (stack_low()) return v;                          // a body nested beyond the stack is left as it is (returns still work)
     if (is_form(v, "if")) {
         vlist n = v->l; for (size_t k=2; k<n.size(); k++) n[k] = hoist_returns(n[k]);
         return v_list(std::move(n), v->line, v->file);
@@ -840,6 +856,17 @@ inline void add_trace(Error& fe, const std::vector<Frame>& call_stack) {
     fe.cached.clear();
 }
 inline vptr Interp::eval(vptr expr, eptr e) {
+    vptr r = ev(std::move(expr), std::move(e));
+    if (flow) { if (flow == FLOW_RETURN) r = std::move(flow_value); flow = FLOW_NONE; flow_value.reset(); }
+    return r;
+}
+// A return, break or continue sets flow and leaves; every place that evaluates a part of a form checks flow
+// after it and passes it up (MUSIL_FLOW). A return stops at the frame that entered its function; a break or a
+// continue at its loop.
+#define MUSIL_FLOW(val) do { if (flow) { \
+    if (flow == FLOW_RETURN && entered_fn) { flow = FLOW_NONE; vptr rv_ = std::move(flow_value); cleanup(); return rv_ ? rv_ : v_nil(); } \
+    cleanup(); return (val); } } while (0)
+inline vptr Interp::ev(vptr expr, eptr e) {
     if (++stack_depth > max_stack) { --stack_depth; err("stack overflow (depth " + std::to_string(max_stack) + ")"); }
     struct guard { int& d; ~guard() { --d; } } g{stack_depth};
     {   // the thread's stack, measured: frame sizes differ between compilers and thread stacks between hosts
@@ -873,56 +900,69 @@ try {
             head = e->find(l[0]->s);
             if (!head) err("undefined: " + l[0]->s);
         } else if (l[0]->t == Value::FN) head = l[0];
-        else head = eval(l[0], e);
+        else { head = ev(l[0], e); MUSIL_FLOW(head); }
         op_t op = head->op;
 
         if (op == fn_quote) { cleanup(); return l.size() > 1 ? copy_literal(l[1]) : v_nil(); }
         if (op == fn_do) {
             if (l.size() == 1) { cleanup(); return v_nil(); }
-            for (size_t i=1; i+1<l.size(); i++) eval(l[i], e);
+            for (size_t i=1; i+1<l.size(); i++) { vptr r = ev(l[i], e); MUSIL_FLOW(r); }
             expr = l.back(); continue;
         }
         if (op == fn_and || op == fn_or) {                    // short-circuit: arguments are evaluated left to right, only as far as needed
             bool is_and = op == fn_and;
             if (l.size() == 1) { cleanup(); return v_bool(is_and); }
-            for (size_t i = 1; i + 1 < l.size(); i++) { bool t = truthy(eval(l[i], e)); if (is_and && !t) { cleanup(); return v_bool(false); } if (!is_and && t) { cleanup(); return v_bool(true); } }
+            for (size_t i = 1; i + 1 < l.size(); i++) {
+                vptr x = ev(l[i], e); MUSIL_FLOW(x);
+                bool t = truthy(x);
+                if (is_and && !t) { cleanup(); return v_bool(false); }
+                if (!is_and && t) { cleanup(); return v_bool(true); }
+            }
             expr = l.back(); continue;                         // the last argument decides, in tail position
         }
         if (op == fn_if) {
             if (l.size() < 3 || l.size() > 4) err("if: expected (if cond then [else])");
-            if (truthy(eval(l[1], e))) { expr = l[2]; continue; }
+            vptr c = ev(l[1], e); MUSIL_FLOW(c);
+            if (truthy(c)) { expr = l[2]; continue; }
             if (l.size() == 4) { expr = l[3]; continue; }
             cleanup(); return v_nil();
         }
-        if (op == fn_while) {
-            if (l.size() != 3) err("while: expected (while cond body)");
+        if (op == fn_while || op == fn_for) {
+            bool is_for = op == fn_for;
+            if (!is_for && l.size() != 3) err("while: expected (while cond body)");
+            if (is_for && l.size() != 5) err("for: expected (for init cond step body)");
+            if (is_for) { vptr r = ev(l[1], e); MUSIL_FLOW(r); }
+            const vptr& cond = l[is_for ? 2 : 1]; const vptr& body = l[is_for ? 4 : 2];
             vptr last = v_nil(); ++loop_depth;
-            try { while (truthy(eval(l[1], e)))
-                try { last = eval(l[2], e); } catch (continue_signal&) {} }
-            catch (break_signal&) {}
-            --loop_depth; cleanup(); return last;
-        }
-        if (op == fn_for) {
-            if (l.size() != 5) err("for: expected (for init cond step body)");
-            eval(l[1], e);
-            vptr last = v_nil(); ++loop_depth;
-            try { while (truthy(eval(l[2], e))) {
-                try { last = eval(l[4], e); } catch (continue_signal&) {}
-                eval(l[3], e); } }
-            catch (break_signal&) {}
+            // a break ends this loop, a continue goes on with the step; a return goes up
+            auto loop_flow = [&]() -> int { if (flow == FLOW_BREAK) { flow = FLOW_NONE; return 1; } if (flow == FLOW_CONTINUE) { flow = FLOW_NONE; return 2; } return 3; };
+            while (true) {
+                vptr c = ev(cond, e);
+                if (flow) { int k = loop_flow(); if (k == 1) break; if (k == 2) continue; --loop_depth; MUSIL_FLOW(c); }
+                if (!truthy(c)) break;
+                vptr b = ev(body, e);
+                if (flow) { int k = loop_flow(); if (k == 1) break; if (k == 3) { --loop_depth; MUSIL_FLOW(b); } }
+                else last = std::move(b);
+                if (is_for) {
+                    vptr s = ev(l[3], e);
+                    if (flow) { int k = loop_flow(); if (k == 1) break; if (k == 3) { --loop_depth; MUSIL_FLOW(s); } }
+                }
+            }
             --loop_depth; cleanup(); return last;
         }
         if (op == fn_var) {   // define (or redefine) in the current environment: a function's var never touches an outer one
             if (l.size() != 3) err("var: expected (var name value)");
             if (l[1]->t != Value::SYM) err("var: name must be a symbol, got " + str_of(l[1]));
-            vptr v = unlit(eval(l[2], e));
+            vptr v = ev(l[2], e); MUSIL_FLOW(v);
+            v = unlit(std::move(v));
             e->bind(l[1]->s, v);
             cleanup(); return v;
         }
         if (op == fn_set) {   // assign to the nearest existing binding, however far out; error if there is none
             if (l.size() != 3) err("set: expected (set name value)");
             if (l[1]->t != Value::SYM) err("set: name must be a symbol, got " + str_of(l[1]));
-            vptr v = unlit(eval(l[2], e));
+            vptr v = ev(l[2], e); MUSIL_FLOW(v);
+            v = unlit(std::move(v));
             if (expr->line) current_line = expr->line;
             if (!e->assign(l[1]->s, v)) err("set: undefined: " + l[1]->s);
             cleanup(); return v;
@@ -932,11 +972,16 @@ try {
             if (l.size() == 4 && l[1]->t == Value::SYM && l[2]->t == Value::LIST) { named = true;  pi = 2; bi = 3; }
             else if (l.size() == 3 && l[1]->t == Value::LIST)                     { named = false; pi = 1; bi = 2; }
             else err("function: expected (function [name] (params) body)");
-            auto fn = v_nil(); fn->t = Value::FN; fn->closure = e; fn->body = hoist_returns(l[bi]);
-            for (auto& p : l[pi]->l) {
-                if (p->t != Value::SYM) err("function: parameter must be a symbol, got " + str_of(p));
-                fn->params.push_back(p->s);
+            if (!expr->body) {                                 // the form's prepared body and parameters, made the first time
+                std::vector<std::string> ps;
+                for (auto& p : l[pi]->l) {
+                    if (p->t != Value::SYM) err("function: parameter must be a symbol, got " + str_of(p));
+                    ps.push_back(p->s);
+                }
+                expr->params = std::move(ps);
+                expr->body = hoist_returns(l[bi]);
             }
+            auto fn = v_nil(); fn->t = Value::FN; fn->closure = e; fn->body = expr->body; fn->params = expr->params;
             if (named) { fn->s = l[1]->s; e->bind(l[1]->s, fn); }   // a named function remembers its name (str prints it)
             cleanup(); return fn;
         }
@@ -947,29 +992,38 @@ try {
                 if (l.size() <= 1) { cleanup(); return v_nil(); }
                 expr = l[1]; continue;
             }
-            throw Return_signal{ l.size() > 1 ? eval(l[1], e) : v_nil() };
+            vptr v = l.size() > 1 ? ev(l[1], e) : v_nil(); MUSIL_FLOW(v);
+            flow = FLOW_RETURN; flow_value = v; cleanup(); return v;
         }
-        if (op == fn_break)    { if (loop_depth == 0) err("break outside loop"); throw break_signal{}; }
-        if (op == fn_continue) { if (loop_depth == 0) err("continue outside loop"); throw continue_signal{}; }
+        if (op == fn_break)    { if (loop_depth == 0) err("break outside loop"); flow = FLOW_BREAK; cleanup(); return v_nil(); }
+        if (op == fn_continue) { if (loop_depth == 0) err("continue outside loop"); flow = FLOW_CONTINUE; cleanup(); return v_nil(); }
         if (op == fn_try) {
             if (l.size() != 5 || l[2]->t != Value::SYM || l[2]->s != "catch" || l[3]->t != Value::SYM)
                 err("try: expected (try body catch name handler)");
             size_t depth = call_stack.size(); int fd = function_depth, ld = loop_depth;
-            try { vptr r = eval(l[1], e); cleanup(); return r; }
+            vptr r;
+            try { r = ev(l[1], e); }
             catch (Error& ex) {
-                call_stack.resize(depth); function_depth = fd; loop_depth = ld;
+                call_stack.resize(depth); function_depth = fd; loop_depth = ld; flow = FLOW_NONE; flow_value.reset();
                 auto ne = make_env(e); ne->vars[l[3]->s] = v_str(ex.what());
-                vptr r = eval(l[4], ne); cleanup(); return r;
+                vptr h = ev(l[4], ne); MUSIL_FLOW(h);
+                cleanup(); return h;
             }
+            MUSIL_FLOW(r);
+            cleanup(); return r;
         }
         if (op == fn_expr) {
             if (l.size() != 2 || l[1]->t != Value::LIST) err("expr: expected (expr (a op b ...))");
-            const char* saved_who = who; who = "expr";
-            size_t p = 0; vptr r = expr_parse(l[1]->l, p, 0, *this, e); who = saved_who; cleanup(); return r;
+            struct wg { const char*& w; const char* s; ~wg() { w = s; } } wguard{who, who}; who = "expr";
+            size_t p = 0; vptr r = expr_parse(l[1]->l, p, 0, *this, e, true);
+            if (!r && !flow) r = v_nil();
+            MUSIL_FLOW(r);
+            cleanup(); return r;
         }
         if (op == fn_eval) {
             if (l.size() != 2) err("eval: expected (eval form)");
-            expr = eval(l[1], e); continue;
+            vptr f = ev(l[1], e); MUSIL_FLOW(f);
+            expr = std::move(f); continue;
         }
         if (op == fn_help) {
             if (l.size() != 2 || (l[1]->t != Value::SYM && l[1]->t != Value::STR)) err("help: expected (help name)");
@@ -977,11 +1031,12 @@ try {
         }
         if (op == fn_apply) {
             if (l.size() != 3) err("apply: expected (apply fn list)");
-            vptr fv = eval(l[1], e), lv = eval(l[2], e);
+            vptr fv = ev(l[1], e); MUSIL_FLOW(fv);
+            vptr lv = ev(l[2], e); MUSIL_FLOW(lv);
             if (fv->t != Value::FN) err("apply: expected function, got " + std::string(type_name(fv)));
             if (lv->t != Value::LIST) err("apply: expected list, got " + std::string(type_name(lv)));
             vlist nl = { fv };
-            for (auto& x : lv->l) nl.push_back(v_list({ v_sym("quote"), x }));
+            for (auto& x : lv->l) nl.push_back(v_list({ quote_op, x }));
             expr = v_list(std::move(nl), expr->line, expr->file);
             continue;
         }
@@ -989,7 +1044,7 @@ try {
         // function call
         if (head->t != Value::FN) err("not callable: " + str_of(l[0]) + " (" + type_name(head) + ")");
         vlist args; args.reserve(l.size() - 1);
-        for (size_t i=1; i<l.size(); i++) args.push_back(eval(l[i], e));
+        for (size_t i=1; i<l.size(); i++) { vptr a = ev(l[i], e); MUSIL_FLOW(a); args.push_back(std::move(a)); }
         if (expr->line) current_line = expr->line;            // an argument may have run code elsewhere: errors are this call's
         if (expr->file) current_file = expr->file;
         if (head->op) { vptr r = call_op(head, args); cleanup(); return r; }   // op may throw: cleanup after
@@ -1003,25 +1058,22 @@ try {
                 err((l[0]->t == Value::SYM ? l[0]->s : std::string("<anon>")) + ": too many arguments (expected " +
                     std::to_string(head->params.size()) + ", got " + std::to_string(args.size()) + ")");
             vlist nl = { r };
-            for (size_t i=head->params.size(); i<args.size(); i++) nl.push_back(v_list({ v_sym("quote"), args[i] }));
+            for (size_t i=head->params.size(); i<args.size(); i++) nl.push_back(v_list({ quote_op, args[i] }));
             expr = v_list(std::move(nl), expr->line, expr->file);
             continue;
         }
         // user function call — in-place TCO; replace top of call_stack on each
         // tail-merged call so the trace reflects current location, not history.
         Frame fr{ l[0], current_file, current_line };
-        if (entered_fn) call_stack.back() = fr;
-        else { call_stack.push_back(fr); ++function_depth; loop_depth = 0; entered_fn = true; saved_file = current_file; saved_line = current_line; }
+        if (entered_fn) call_stack.back() = std::move(fr);
+        else { call_stack.push_back(std::move(fr)); ++function_depth; loop_depth = 0; entered_fn = true; saved_file = current_file; saved_line = current_line; }
         auto ne = make_env(head->closure);
-        for (size_t i=0; i<head->params.size(); i++) ne->vars[head->params[i]] = unlit(args[i]);
-        expr = head->body; e = ne;
+        ne->vars.reserve(head->params.size());
+        for (size_t i=0; i<head->params.size(); i++) ne->vars[head->params[i]] = unlit(std::move(args[i]));
+        expr = head->body; e = std::move(ne);
         // continue eval loop with new expr/env — no new C++ frame.
     }
-} catch (Return_signal& rs) {
-    if (entered_fn) { cleanup(); return rs.val; }
-    throw;  // propagate up to the eval frame that entered the function
-  }
-  catch (Error& fe) {
+} catch (Error& fe) {
     if (fe.file.empty() && fe.line == 0) { fe.file = current_file ? *current_file : "<input>"; fe.line = current_line; fe.cached.clear(); }
     add_trace(fe, call_stack);
     cleanup(); throw;
@@ -1033,6 +1085,7 @@ try {
   }
   catch (...) { cleanup(); throw; }
 }
+#undef MUSIL_FLOW
 inline vptr Interp::call_fn(vptr f, vlist args) {
     if (f->t != Value::FN) err("call: expected function, got " + std::string(type_name(f)));
     if (f->op == fn_eval) { if (args.size() != 1) err("eval: expected 1 argument"); return eval(args[0], global); }
@@ -1049,14 +1102,15 @@ inline vptr Interp::call_fn(vptr f, vlist args) {
         return call_fn(r, vlist(args.begin() + f->params.size(), args.end()));
     }
     auto ne = make_env(f->closure);
-    for (size_t i=0; i<f->params.size(); i++) ne->vars[f->params[i]] = unlit(args[i]);
+    ne->vars.reserve(f->params.size());
+    for (size_t i=0; i<f->params.size(); i++) ne->vars[f->params[i]] = unlit(std::move(args[i]));
     call_stack.push_back(Frame{ nullptr, current_file, current_line });
     struct restore {
         Interp& I; int loop; sptr file; int line;
         ~restore() { I.call_stack.pop_back(); --I.function_depth; I.loop_depth = loop; I.current_file = std::move(file); I.current_line = line; }
     } rs{ *this, loop_depth, current_file, current_line };
     ++function_depth; loop_depth = 0;
-    try { return eval(f->body, ne); } catch (Return_signal& r) { return r.val; }
+    return eval(f->body, ne);           // a return in the body is its value
 }
 
 // builtins
@@ -1240,7 +1294,8 @@ inline vptr fn_num(vlist& a, Interp& i) {
 inline vptr fn_copy(vlist& a, Interp& i) {
     auto& s=a[0]; auto v=v_nil();
     v->t=s->t; v->num=s->num; v->s=s->s; v->l=s->l;
-    v->op=s->op; v->params=s->params; v->body=s->body; v->closure=s->closure; v->wclosure=s->wclosure;
+    v->op=s->op; v->params=s->params; v->closure=s->closure; v->wclosure=s->wclosure;
+    if (s->t != Value::LIST) v->body=s->body;          // a list's body is a cache of the form, not data
     v->opaque=s->opaque; v->opaque_tag=s->opaque_tag;
     return v;
 }
@@ -1313,10 +1368,12 @@ inline Interp::Interp() {
     a("copy", fn_copy, 1, 1); a("live-objects", fn_live_objects, 0, 0); a("error", fn_error, 0, N); a("clock", fn_clock, 0, 0); a("load", fn_load, 1, 1);
     a("defined?", fn_definedp, 1, 1); a("vars", fn_vars, 0, 0); a("exit", fn_exit, 0, 1);
     a("help", fn_help, 1, 1); a("parse", fn_parse, 1, 1);
+    quote_op = global->vars["quote"];
 }
 inline Interp::~Interp() {
     for (auto& w : tracked_envs) if (auto e = w.lock()) e->vars.clear();
     if (global) global->vars.clear();
+    flow_value.reset(); quote_op.reset();
 }
 // load: search order for a relative path:
 //   1. the directory of the file doing the loading
@@ -1366,7 +1423,9 @@ inline vptr Interp::run(const std::string& src, const std::string& filename) {
     auto prog = p.program();
     current_file = file;
     if (!main_file && !filename.empty() && filename[0] != '<' && loading_files.empty()) main_file = file;
-    return eval(prog, global);
+    vptr r = eval(prog, global);
+    if (stack_depth == 0) { flow = FLOW_NONE; flow_value.reset(); }
+    return r;
 }
 inline Interp*& repl_interp() { static thread_local Interp* p = nullptr; return p; }
 inline void Interp::repl() {
@@ -1427,7 +1486,7 @@ inline void Interp::repl() {
             catch (Stop_signal&) { *out << "stopped\n"; }
             catch (const std::exception& ex) { *out << "error: " << ex.what() << "\n"; }
             clear_stop();
-            call_stack.clear(); function_depth = 0; loop_depth = 0; stack_depth = 0;
+            call_stack.clear(); function_depth = 0; loop_depth = 0; stack_depth = 0; flow = FLOW_NONE; flow_value.reset();
             buffer.clear(); depth = 0;
         }
     }

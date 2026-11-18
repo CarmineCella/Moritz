@@ -38,7 +38,7 @@ hosted() {
 
 # --- the tests of each library
 cd "$ROOT/musil/tests" || exit 1
-TESTS="test_core test_std test_system test_scientific test_signals test_live test_music test_atoms test_plot test_memory test_stress test_smoke test_load test_robust"
+TESTS="test_core test_std test_system test_scientific test_signals test_live test_music test_atoms test_plot test_memory test_stress test_smoke test_load test_robust test_semantics"
 [ "$MODE" = moritz ] && TESTS=$(echo "$TESTS" | sed 's/test_live//; s/test_plot//')
 # MUSIL_SKIP_TESTS="test_a test_b": left out (CI's thread-sanitizer job: test_robust nests deeper than TSan follows)
 kept=
