@@ -17,6 +17,9 @@ released with it. It stays independent: nothing in `musil/` uses Moritz (`tools/
   on `src/signals/mir.h` (spectrograms, mel bands, MFCCs, chroma, onsets, tempo, beats, keys,
   novelty, loudness). Moritz's analysis, atoms, pursuit and sound-types boxes run the same code.
   Examples `maple.mu` and `soundtypes.mu`; tests `test_atoms.mu`.
+- **`kmeans` starts with k-means++ and keeps the best of ten starts** (`kmeans_pp` in
+  `src/scientific/algorithms.h`, shared with Moritz's kmeans box): it used to start from the
+  first k points, and could merge two groups. The clusters may come out numbered differently.
 - **The command line finds its libraries next to it**, in `src/`, after `MUSIL_PATH` and
   before `~/.musil`: a `musil` shipped with its libraries runs as it is.
 - **`src/help.txt` is committed**, so a build without Python has the help.

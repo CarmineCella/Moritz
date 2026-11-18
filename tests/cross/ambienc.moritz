@@ -1,0 +1,28 @@
+; ambienc.moritz - cross-test: ambienc~ against Musil's ambi-gains (tools/test-patches.sh)
+(patch
+  (obj b buffer~ xamb 200 9 (pos 20 20))
+  (obj s sig~ 1 (pos 20 60))
+  (obj e ambienc~ 1 30 10 (pos 20 90))
+  (obj r record~ xamb 4 (pos 20 130))
+  (obj lb loadbang (pos 200 60))
+  (obj on message 1 (pos 200 90))
+  (obj dl delay 150 (pos 300 90))
+  (obj c code (pos 300 130)
+    (script
+      "; a constant 1 encoded by ambienc~ (first order, azimuth 30, elevation 10), recorded: its channels against"
+      "; Musil's gains for that direction"
+      "var rec (buffer \"xamb\")"
+      "var got (vec (map (vec->list (range 0 4)) (function (c) (getidx (getidx rec c) 2000))))"
+      "var want (ambi-gains 1 30 10)"
+      "var err (max (abs (- got want)))"
+      "print \"cross ambienc~: largest difference\" (fixed err 6)"
+      "if (> err 1e-4) { print \"FAIL: ambienc~ and Musil's ambi-gains disagree\" got want }"))
+  (connect s 0 e 0)
+  (connect e 0 r 0)
+  (connect e 1 r 1)
+  (connect e 2 r 2)
+  (connect e 3 r 3)
+  (connect lb 0 on 0)
+  (connect on 0 r 0)
+  (connect lb 0 dl 0)
+  (connect dl 0 c 0))

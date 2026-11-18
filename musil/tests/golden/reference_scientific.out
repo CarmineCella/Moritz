@@ -81,8 +81,8 @@ pca-explained   : (0.9964 0.0036)
 pca-scores 1    : (0.9978 2.0016 2.9974 4.0012 4.999)
 
 --- kmeans ---
-kmeans-labels   : (0 0 0 1 1 1)
-kmeans-centroids: ((0.033 0.033) (10.033 10.033))
+kmeans-labels   : (1 1 1 0 0 0)
+kmeans-centroids: ((10.033 10.033) (0.033 0.033))
 cluster-sizes   : (3 3)
 
 --- knn ---

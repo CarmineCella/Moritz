@@ -10,6 +10,7 @@
 #include <cmath>
 #include <stdexcept>
 #include <limits>
+#include <random>
 
 // ---------------------------------------------------------
 // median<T>(ptr, n)
@@ -195,6 +196,63 @@ void kmeans(const T* data,
         if (max_shift < tol) {
             break;
         }
+    }
+}
+
+// ---------------------------------------------------------
+// kmeans_pp: k-means++ starts, Lloyd's iterations (at most iters, until no point moves), several starts,
+// the tightest clustering kept (the smallest sum of squared distances). Deterministic for a seed.
+//   points: n rows of m features; labels: n cluster indices (out); centroids: k rows (out)
+// ---------------------------------------------------------
+inline void kmeans_pp(const std::vector<std::vector<double>>& P, int k, int iters, unsigned seed, int starts,
+                      std::vector<int>& labels, std::vector<std::vector<double>>& centroids) {
+    if (P.empty() || k <= 0 || k > (int)P.size()) throw std::invalid_argument("[kmeans] invalid n or k");
+    size_t m = P[0].size();
+    auto dist2 = [m](const std::vector<double>& a, const std::vector<double>& b) {
+        double s = 0;
+        for (size_t j = 0; j < m; ++j) s += (a[j] - b[j]) * (a[j] - b[j]);
+        return s;
+    };
+    auto nearest = [&](const std::vector<double>& p, const std::vector<std::vector<double>>& C) {
+        int best = 0;
+        double bd = std::numeric_limits<double>::max();
+        for (size_t c = 0; c < C.size(); ++c) { double d = dist2(p, C[c]); if (d < bd) { bd = d; best = (int)c; } }
+        return best;
+    };
+    std::mt19937 rng(seed);
+    double bestSse = std::numeric_limits<double>::max();
+    for (int start = 0; start < std::max(1, starts); ++start) {
+        std::vector<std::vector<double>> C = {P[std::uniform_int_distribution<size_t>(0, P.size() - 1)(rng)]};
+        while ((int)C.size() < k) {                                // far points are likelier
+            std::vector<double> w;
+            for (auto& p : P) {
+                double best = std::numeric_limits<double>::max();
+                for (auto& c : C) best = std::min(best, dist2(p, c));
+                w.push_back(best);
+            }
+            C.push_back(P[std::discrete_distribution<size_t>(w.begin(), w.end())(rng)]);
+        }
+        std::vector<int> label(P.size(), -1);
+        for (int it = 0; it < iters; ++it) {
+            bool moved = false;
+            for (size_t i = 0; i < P.size(); ++i) {
+                int b = nearest(P[i], C);
+                if (b != label[i]) { label[i] = b; moved = true; }
+            }
+            std::vector<std::vector<double>> sum((size_t)k, std::vector<double>(m, 0.0));
+            std::vector<int> n((size_t)k, 0);
+            for (size_t i = 0; i < P.size(); ++i) {
+                ++n[(size_t)label[i]];
+                for (size_t j = 0; j < m; ++j) sum[(size_t)label[i]][j] += P[i][j];
+            }
+            for (int c = 0; c < k; ++c)
+                if (n[(size_t)c] > 0)
+                    for (size_t j = 0; j < m; ++j) C[(size_t)c][j] = sum[(size_t)c][j] / n[(size_t)c];
+            if (!moved) break;
+        }
+        double sse = 0;
+        for (size_t i = 0; i < P.size(); ++i) sse += dist2(P[i], C[(size_t)label[i]]);
+        if (sse < bestSse) { bestSse = sse; centroids = C; labels = label; }
     }
 }
 

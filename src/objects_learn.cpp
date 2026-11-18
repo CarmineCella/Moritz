@@ -13,6 +13,7 @@
 // many there are. A list in the left inlet asks the model.
 
 #include "objects.h"
+#include "scientific/algorithms.h"
 
 #include <fstream>
 #include <map>
@@ -105,7 +106,7 @@ protected:
         for (size_t j = 0; j < d; ++j) {
             double v = 0;
             for (auto& x : X_) v += (double)(x[j] - mean[j]) * (x[j] - mean[j]);
-            sd[j] = n > 1 ? (float)std::sqrt(v / (n - 1)) : 1.f;
+            sd[j] = n > 1 ? (float)std::sqrt(v / n) : 1.f;          // as Musil's zscore: the population's
             if (sd[j] < 1e-9f) sd[j] = 1.f;
         }
     }
@@ -231,43 +232,13 @@ private:
         std::vector<std::vector<float>> P;
         for (auto& x : X_) P.push_back(scaled(x));
         k = std::min(k, (int)P.size());
-        std::mt19937 rng(seed_);
-        std::vector<std::vector<float>> bestC;
+        std::vector<std::vector<double>> Pd;
+        for (auto& p : P) Pd.emplace_back(p.begin(), p.end());
         std::vector<int> bestLabel;
-        double bestSse = 1e300;
-        for (int start = 0; start < 10; ++start) {
-        centroids_ = {P[std::uniform_int_distribution<size_t>(0, P.size() - 1)(rng)]};
-        while ((int)centroids_.size() < k) {                       // k-means++: far points are likelier
-            std::vector<double> w;
-            for (auto& p : P) {
-                float best = 1e30f;
-                for (auto& c : centroids_) best = std::min(best, dist2(p, c));
-                w.push_back(best);
-            }
-            centroids_.push_back(P[std::discrete_distribution<size_t>(w.begin(), w.end())(rng)]);
-        }
-        std::vector<int> label(P.size(), -1);
-        for (int it = 0; it < iters; ++it) {
-            bool moved = false;
-            for (size_t i = 0; i < P.size(); ++i) {
-                int best = nearest(P[i]);
-                if (best != label[i]) { label[i] = best; moved = true; }
-            }
-            std::vector<std::vector<float>> sum((size_t)k, std::vector<float>(dims(), 0.f));
-            std::vector<int> n((size_t)k, 0);
-            for (size_t i = 0; i < P.size(); ++i) {
-                ++n[(size_t)label[i]];
-                for (size_t j = 0; j < dims(); ++j) sum[(size_t)label[i]][j] += P[i][j];
-            }
-            for (int c = 0; c < k; ++c)
-                if (n[(size_t)c] > 0)
-                    for (size_t j = 0; j < dims(); ++j) centroids_[(size_t)c][j] = sum[(size_t)c][j] / n[(size_t)c];
-            if (!moved) break;
-        }
-        double sse = 0;
-        for (size_t i = 0; i < P.size(); ++i) sse += dist2(P[i], centroids_[(size_t)label[i]]);
-        if (sse < bestSse) { bestSse = sse; bestC = centroids_; bestLabel = label; }
-        }
+        std::vector<std::vector<double>> C;
+        ::kmeans_pp(Pd, k, iters, seed_, 10, bestLabel, C);   // Musil's kmeans (scientific/algorithms.h)
+        std::vector<std::vector<float>> bestC;
+        for (auto& c : C) bestC.emplace_back(c.begin(), c.end());
         centroids_ = bestC;
         std::vector<int> n((size_t)k, 0);
         for (int l : bestLabel) ++n[(size_t)l];

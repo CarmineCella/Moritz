@@ -10,7 +10,8 @@ ROOT=${2:-.}
 OUT=$(mktemp -d 2>/dev/null || mktemp -d -t moritz)
 fails=0
 count=0
-for f in "$ROOT"/examples/*.moritz "$ROOT"/examples/*/*.moritz "$ROOT"/help/*.moritz "$ROOT"/library/*.moritz "$ROOT"/tutorials/*.moritz; do
+# tests/cross: an object against Musil's function for the same thing (a code box compares them)
+for f in "$ROOT"/examples/*.moritz "$ROOT"/examples/*/*.moritz "$ROOT"/help/*.moritz "$ROOT"/library/*.moritz "$ROOT"/tutorials/*.moritz "$(cd "$(dirname "$0")/.." && pwd)"/tests/cross/*.moritz; do
     [ -f "$f" ] || continue
     count=$((count + 1))
     log=$("$MORITZ" --render "$f" 1 "$OUT/out.wav" 2>&1)

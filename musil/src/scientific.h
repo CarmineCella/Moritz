@@ -205,13 +205,16 @@ inline vptr sci_eig_sym(vlist& a, Interp& i) {
 }
 
 // --- machine learning ---
-// (kmeans M k) => (list labels centroids): labels is a vector of cluster indices, centroids a k x d matrix
+// (kmeans M k) => (list labels centroids): labels is a vector of cluster indices, centroids a k x d matrix.
+//   k-means++ starts and Lloyd's iterations, ten starts, the tightest kept (the same as Moritz's kmeans box)
 inline vptr sci_kmeans(vlist& a, Interp& i) {
     mat X = to_mat(i, a[0]); long k = i.index(a[1]);
     if (k < 1 || (size_t)k > X.r) i.bad("k must be between 1 and the number of rows");
-    std::vector<int> labels(X.r); std::vector<double> cent(k * X.c);
-    try { kmeans<double>(X.d.data(), (int)X.r, (int)X.c, (int)k, 1e-5, labels.data(), cent.data()); } catch (std::exception& e) { i.bad(e.what()); }
-    mat C(k, X.c); C.d = cent;
+    std::vector<std::vector<double>> P(X.r, std::vector<double>(X.c));
+    for (size_t r = 0; r < X.r; r++) for (size_t c = 0; c < X.c; c++) P[r][c] = X.d[r * X.c + c];
+    std::vector<int> labels; std::vector<std::vector<double>> cent;
+    try { kmeans_pp(P, (int)k, 100, 1, 10, labels, cent); } catch (std::exception& e) { i.bad(e.what()); }
+    mat C(k, X.c); for (long r = 0; r < k; r++) for (size_t c = 0; c < X.c; c++) C.d[r * X.c + c] = cent[(size_t)r][c];
     varr lv(X.r); for (size_t r = 0; r < X.r; r++) lv[r] = labels[r];
     return v_list({ v_arr(std::move(lv)), from_mat(C) });
 }

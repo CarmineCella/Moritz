@@ -1,0 +1,49 @@
+; learning.moritz - cross-test: the zscore and kmeans objects against Musil's (tools/test-patches.sh)
+(patch
+  (obj lb loadbang (pos 20 20))
+  (obj gen code 1 2 (pos 20 50)
+    (script
+      "; three groups of points, sent to zscore and kmeans, then every point asked back"
+      "var pts (list (list 1 10) (list 1.2 11) (list 0.8 9.5) (list 1.1 10.4) (list 0.9 10.8)"
+      "              (list 5 40) (list 5.3 41) (list 4.8 39) (list 5.1 40.5) (list 4.9 39.4)"
+      "              (list 9 15) (list 9.4 14) (list 8.7 16) (list 9.1 15.5) (list 8.8 14.6))"
+      "each pts (function (p) (out 1 'add p))"
+      "out 1 'train 3"
+      "out 2 \"reset\""
+      "each pts (function (p) (out 1 p))"
+      "out 2 \"check\""))
+  (obj z zscore (pos 20 90))
+  (obj k kmeans (pos 120 90))
+  (obj chk code 2 0 (pos 20 130)
+    (script
+      "; in1: \"reset\", a cluster number (from kmeans) or \"check\"; in2: what zscore made of the last point"
+      "; the cluster numbers kept from one run to the next (a var at the top level is global; inside { } it is local)"
+      "var labels (if (or (equal? in1 \"reset\") (not (defined? \"labels\"))) (list) labels)"
+      "if (equal? (type in1) \"scalar\") { push labels in1 }"
+      "if (equal? in1 \"check\") {"
+      "    var pts (list (list 1 10) (list 1.2 11) (list 0.8 9.5) (list 1.1 10.4) (list 0.9 10.8)"
+      "                  (list 5 40) (list 5.3 41) (list 4.8 39) (list 5.1 40.5) (list 4.9 39.4)"
+      "                  (list 9 15) (list 9.4 14) (list 8.7 16) (list 9.1 15.5) (list 8.8 14.6))"
+      "    var M (map pts vec)"
+      "    ; zscore: the last point standardised by the object, and by Musil"
+      "    var mine (last (zscore M))"
+      "    var err (max (abs (- in2 mine)))"
+      "    print \"cross zscore: largest difference\" (fixed err 6)"
+      "    if (> err 1e-4) { print \"FAIL: the zscore object and Musil's zscore disagree\" in2 mine }"
+      "    ; kmeans: the same partition (cluster numbers may differ): points grouped alike by both"
+      "    var musil (head (kmeans (zscore M) 3))"
+      "    var same 1"
+      "    for (var a 0) (< a 15) (var a (+ a 1)) {"
+      "        for (var b 0) (< b 15) (var b (+ b 1)) {"
+      "            if (not (equal? (== (getidx labels a) (getidx labels b)) (== (getidx musil a) (getidx musil b)))) { set same 0 }"
+      "        }"
+      "    }"
+      "    print \"cross kmeans: same partition\" same"
+      "    if (== same 0) { print \"FAIL: the kmeans object and Musil's kmeans group the points differently\" labels musil }"
+      "}"))
+  (connect lb 0 gen 0)
+  (connect gen 0 z 0)
+  (connect gen 0 k 0)
+  (connect z 0 chk 1)
+  (connect k 0 chk 0)
+  (connect gen 1 chk 0))

@@ -1,0 +1,26 @@
+; hpss.moritz - cross-test: the hpss object against Musil's hpss (tools/test-patches.sh)
+(patch
+  (obj b1 buffer~ xsrc drums.wav (pos 20 20))
+  (obj b2 buffer~ xharm (pos 160 20))
+  (obj b3 buffer~ xperc (pos 260 20))
+  (obj lb loadbang (pos 20 60))
+  (obj m message "run xsrc xharm xperc" (pos 20 90))
+  (obj h hpss 17 2048 (pos 20 120))
+  (obj c code (pos 20 160)
+    (script
+      "; the hpss object's two buffers against Musil's hpss of the same sound: they must agree"
+      "var x (head (buffer \"xsrc\"))"
+      "var mine (hpss x 2048 512 17)"
+      "function corr (a b) {"
+      "    var n (min (length a) (length b))"
+      "    var u (take a n)"
+      "    var v (take b n)"
+      "    return (/ (dot u v) (* (+ 1e-12 (norm u)) (+ 1e-12 (norm v))))"
+      "}"
+      "var rh (corr (head (buffer \"xharm\")) (head mine))"
+      "var rp (corr (head (buffer \"xperc\")) (last mine))"
+      "print \"cross hpss: harmonic\" (fixed rh 4) \"percussive\" (fixed rp 4)"
+      "if (or (< rh 0.98) (< rp 0.98)) { print \"FAIL: the hpss object and Musil's hpss disagree\" }"))
+  (connect lb 0 m 0)
+  (connect m 0 h 0)
+  (connect h 1 c 0))
