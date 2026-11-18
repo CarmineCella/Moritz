@@ -332,6 +332,7 @@ public:
     void redraw() { if (onRedraw) onRedraw(); }
     void print(const std::string& s);
 
+
     // ---- scheduler (GUI thread). Times are in seconds on `clock`.
     std::function<double()> clock;     // set on the root
     double time() const { return root()->clock ? root()->clock() : 0.0; }
@@ -393,6 +394,10 @@ private:
     uint64_t timerSeq_ = 0;
     bool inRunDue_ = false;
 };
+
+// The audio thread is inside Patch::process (for the allocation guard of
+// the engine's tests: nothing in there may allocate or free).
+bool inAudioProcess();
 
 // ====================================================================== audio
 

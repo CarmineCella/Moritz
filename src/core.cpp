@@ -798,7 +798,18 @@ void Patch::runDue(double now) {
     if (onSchedule) onSchedule();
 }
 
+namespace {
+thread_local int tlInProcess = 0;
+struct InProcess {
+    InProcess() { ++tlInProcess; }
+    ~InProcess() { --tlInProcess; }
+};
+}  // namespace
+
+bool inAudioProcess() { return tlInProcess > 0; }
+
 void Patch::process(const float* in, int inCh, float* out, int outCh, int frames) {
+    InProcess inside;
     std::fill(out, out + (size_t)frames * outCh, 0.f);
     std::unique_lock<std::mutex> lk(dspMutex, std::try_to_lock);
     if (!lk.owns_lock()) return;                     // GUI is editing: one silent block

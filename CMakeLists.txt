@@ -51,6 +51,13 @@ elseif(NOT MORITZ_SANITIZE STREQUAL "")
   message(FATAL_ERROR "MORITZ_SANITIZE is address or thread")
 endif()
 
+# -DMORITZ_SANITIZE=address or thread: everything built with that sanitizer (in its own build folder)
+set(MORITZ_SANITIZE "" CACHE STRING "build with a sanitizer: address or thread")
+if(MORITZ_SANITIZE)
+  add_compile_options(-fsanitize=${MORITZ_SANITIZE} -fno-omit-frame-pointer -g)
+  add_link_options(-fsanitize=${MORITZ_SANITIZE})
+endif()
+
 if(APPLE)
   set(MORITZ_PLATFORM macos)
 elseif(WIN32)
@@ -215,6 +222,31 @@ if(MORITZ_SH)
   add_test(NAME moritz-gui COMMAND ${MORITZ_SH} tools/test-gui.sh ${MORITZ_RUN}
            WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 endif()
+
+# The engine's own tests (C++): the program's sources without main.cpp, and tests/engine/*.cpp.
+# They run patches from text the way the audio thread does: the allocation guard, edits while
+# audio runs (clean under -DMORITZ_SANITIZE=thread), timing, and the fixes that come with tests.
+set(MORITZ_ENGINE_TEST_SOURCES ${MORITZ_SOURCES})
+list(FILTER MORITZ_ENGINE_TEST_SOURCES EXCLUDE REGEX "/src/main\\.cpp$|\\.rc$")
+file(GLOB MORITZ_ENGINE_TESTS CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/tests/engine/*.cpp)
+add_executable(moritz-engine-tests ${MORITZ_ENGINE_TEST_SOURCES} ${MORITZ_ENGINE_TESTS})
+target_include_directories(moritz-engine-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_CURRENT_SOURCE_DIR}/resources)
+target_include_directories(moritz-engine-tests SYSTEM PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/musil/src)
+target_compile_definitions(moritz-engine-tests PRIVATE MORITZ_VERSION="${MORITZ_VERSION}")
+target_compile_options(moritz-engine-tests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wextra -Wno-unused-parameter>)
+target_link_libraries(moritz-engine-tests PRIVATE moritz_io fltk::images fltk::fltk)
+if(APPLE)
+  target_link_libraries(moritz-engine-tests PRIVATE "-framework Cocoa" "-framework CoreAudio" "-framework AudioToolbox"
+                        "-framework CoreMIDI" "-framework CoreFoundation" "-weak_framework UniformTypeIdentifiers")
+elseif(WIN32)
+  target_compile_definitions(moritz-engine-tests PRIVATE NOMINMAX WIN32 UNICODE _UNICODE)
+  target_link_options(moritz-engine-tests PRIVATE -static -Wl,--stack,8388608)
+  target_link_libraries(moritz-engine-tests PRIVATE winmm ole32 uuid comctl32 comdlg32 gdi32 gdiplus winspool ws2_32
+                        shell32 advapi32 imm32 oleaut32)
+else()
+  target_link_libraries(moritz-engine-tests PRIVATE asound pthread dl m)
+endif()
+add_test(NAME moritz-engine COMMAND moritz-engine-tests WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 
 # ---------------------------------------------------------------- install
 if(APPLE)
