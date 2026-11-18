@@ -370,7 +370,12 @@ reference.mu:426: from inner
 
 Builtins check the number and types of their arguments
 (\texttt{sqrt: expected 1 argument, got 0}; \texttt{+: expected number, got string}).
-Deep recursion stops with \texttt{stack overflow} rather than crashing.
+Deep recursion stops with \texttt{stack overflow} rather than crashing, whatever the stack of
+the thread the interpreter runs on; so do text nested too deep for the reader
+(\musil{parse}) and lists nested too deep for \musil{equal?}. Anything that goes wrong
+inside a builtin, a vector too large to make included (\musil{(range 1e12)}), is a Musil
+error that \musil{try} catches. After a call returns, an error reports the line of the
+code that made the call, not the last line of the function called.
 
 \subsection{Code as data}
 
@@ -402,6 +407,13 @@ Lists and vectors are shared by reference: \musil{(var alias orig)} makes two na
 for one object, and \musil{push} or \musil{setidx} through either is visible through
 both. \musil{(copy x)} makes a new list or vector with the same elements (a shallow
 copy). Strings and numbers behave as values.
+
+The literals of the program text are never changed in place: \musil{(var x 0)} gives
+\musil{x} a number of its own, so \musil{(setidx x 0 1)} inside a function does not change
+what the next call starts from; a quoted list is a fresh list each time it is evaluated, so
+\musil{(var L '())} followed by \musil{push} starts empty on every call. A builtin that
+changes its argument in place refuses a literal reached any other way
+(\texttt{cannot change a constant of the program text}).
 
 % ═════════════════════════════════════════════════════════════════════════════
 \section{Musil in Moritz}
@@ -1362,7 +1374,12 @@ block around the cursor with Cmd-Enter (the file with Cmd-Shift-Enter) and gives
 \texttt{.mu} files syntax colouring, from a grammar generated with \texttt{help}. From a
 shell, \texttt{musil --send 7770 block.mu} (or with the code on stdin) sends and prints the
 reply, and any editor that can run a command can do the same; the two Musil processes
-stay separate sessions, the port only lets one hand code to the other.
+stay separate sessions, the port only lets one hand code to the other. The first line of a
+message is the port's token, a random one written when the port opens to
+\texttt{\textasciitilde/.musil/port-7770.token} (or to a folder of the user's in the temporary
+directory), readable by the user alone; \texttt{musil --send} reads it there (or takes
+\texttt{--token}), and a message without it is refused. Code that arrives while a program runs
+waits for it to be idle or in \musil{sleep}.
 
 \input{generated/live.tex}
 
@@ -1866,6 +1883,27 @@ and \texttt{i.fn(v)} return the payload or raise a Musil error naming the builti
 \texttt{v\_num}, \texttt{v\_arr}, \texttt{v\_str}, \texttt{v\_list};
 \texttt{i.call\_fn(f, args)} calls a Musil function; \texttt{i.yield\_fn} is called
 every 1024 evaluations for hosts that service an event loop.
+
+\textbf{Stopping.} \texttt{I.request\_stop()}, from any thread (a signal handler too), makes the
+running evaluation throw \texttt{musil::Stop\_signal} at its next step, and in \musil{sleep}
+and \musil{udp-receive}. It is not a Musil error: \musil{try} does not catch it, and it
+reaches the host. The request stays until the host calls \texttt{I.clear\_stop()}, once the
+evaluation has returned to it.
+
+\textbf{Capabilities.} \texttt{I.caps} (a \texttt{musil::Capabilities}) says what the
+program may do: \texttt{read}, \texttt{write}, \texttt{exec}, \texttt{net},
+\texttt{blocking} (wait: \musil{sleep}, \musil{input}, \musil{exec}, \musil{udp-receive})
+and \texttt{exit}, and the folders reading and writing are limited to
+(\texttt{read\_roots}, \texttt{write\_roots}; empty: anywhere). Every builtin that touches the
+system checks it inside, with \texttt{I.require\_read(path)}, \texttt{require\_write(path)},
+\texttt{require\_exec(what)}, \texttt{require\_net(what)}, \texttt{require\_blocking(what)}
+and \texttt{require\_exit()}; a path is resolved first (\texttt{..} and symbolic links cannot
+step out of a root), and a refusal is a Musil error \texttt{not allowed here: write /path}.
+\texttt{Capabilities::full()} is the default; \texttt{Capabilities::sandboxed(write\_roots,
+read\_roots)} refuses programs, the network, waiting and \musil{exit}. A host's own builtins
+that touch the system call the same checks. \texttt{I.state<T>()} is a \texttt{T} that belongs
+to the interpreter: tables a library keeps go there, so several interpreters run at once on
+threads.
 
 Document a builtin with a comment above it in the form
 \texttt{// (name args) description}; \texttt{tools/gendoc.py} turns those comments

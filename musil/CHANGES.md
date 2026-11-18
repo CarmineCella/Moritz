@@ -2,6 +2,40 @@
 
 ## 0.10c
 
+Musil 0.10c is 0.10b made safer: the same programs give the same results, and what used to crash
+the interpreter (or let a script do more than its host allows) is now an error.
+
+### Language and runtime
+
+- **The evaluation port asks for a token.** The first line of a message is the port's token, written
+  when the port opens to `~/.musil/port-<port>.token` (or to a folder of the user's in the
+  temporary directory), readable by the user alone; `musil --send` reads it (or takes `--token`).
+  Code that arrives while a program runs waits until the program is idle or in `sleep`, and no
+  longer resets the evaluation it interrupts (sending code during a loop could crash).
+- **No more crashes on deep or huge input**: text nested too deep for the reader (`parse`), lists
+  nested too deep for `equal?`, a vector too large to make (`(range 1e12)`, `(range 0 1 1e-300)`)
+  and any C++ exception inside a builtin are Musil errors that `try` catches. The stack limit is
+  the one of the thread the interpreter really runs on (an interpreter on a thread of 512 KB used
+  to overflow).
+- **Literals stay literals**: a variable bound to a number literal gets its own copy, and a quoted
+  list is a fresh list each time, so `(var x 0)` then `setidx`, or `(var L '())` then `push`, inside
+  a function no longer change what the next call starts from. The mutators refuse a literal reached
+  otherwise (`cannot change a constant of the program text`). Lists and vectors bound by `var` to
+  another variable are still shared, as documented.
+- **Errors after a call** report the line of the code that called, not the last line run in the
+  function called.
+- **Stop** (`Interp::request_stop`, for hosts; Ctrl-C in `musil`): an interrupt that `try` cannot
+  catch; it ends `sleep` and `udp-receive` at once.
+- **Capabilities** (`Interp::caps`, for hosts): what a program may do (read and write files, under
+  which folders; run programs; the network; wait; exit) is checked inside every builtin that
+  touches the system. `read` refuses what is not a regular file (`/dev/zero`), and files over 1 GB.
+- **Several interpreters at once**: the evaluation port, the loops, the idle hooks and the OSC input
+  belong to their interpreter; the controls, the playhead and the audio device are shared under
+  locks.
+- **The live engine's audio thread** neither allocates nor frees: buffers are made when a synth is
+  compiled, what the audio thread lets go of is freed by another thread, the binaural node's head
+  responses are computed when the synth is compiled. The sound is the same.
+
 ### Libraries
 
 - **Linear algebra**: `det`, `rank`, `inv`, `solve` and `eig-sym` use tolerances relative to the
