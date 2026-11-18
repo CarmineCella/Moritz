@@ -20,6 +20,43 @@ static void expect(bool ok, const std::string& what) {
 }
 
 
+// --- the MIDI reader: overlapping notes of a pitch, truncated and corrupt files ---
+static void test_midi() {
+    std::vector<unsigned char> head = {'M', 'T', 'h', 'd', 0, 0, 0, 6, 0, 0, 0, 1, 0x01, 0xe0};   // format 0, 1 track, 480 ppq
+    std::vector<unsigned char> trk = {0x00, 0x90, 60, 100,          // on at 0
+                                      0x81, 0x70, 0x90, 60, 80,     // on again at 240, before the first ends
+                                      0x81, 0x70, 0x80, 60, 0,      // off at 480: ends the first
+                                      0x81, 0x70, 0x80, 60, 0,      // off at 720: ends the second
+                                      0x00, 0xff, 0x2f, 0x00};
+    std::vector<unsigned char> f = head;
+    for (unsigned char c : {'M', 'T', 'r', 'k'}) f.push_back(c);
+    for (int s = 24; s >= 0; s -= 8) f.push_back((unsigned char)((trk.size() >> s) & 0xff));
+    f.insert(f.end(), trk.begin(), trk.end());
+    midi_file m = parse_midi(f, "overlap");
+    expect(m.notes.size() == 2, "midi: a pitch struck again before its note-off makes two notes");
+    if (m.notes.size() == 2) {
+        expect(std::fabs(m.notes[0].at) < 1e-9 && std::fabs(m.notes[0].dur - 0.5) < 1e-9 && m.notes[0].velocity == 100, "midi: the first note ends at the first note-off");
+        expect(std::fabs(m.notes[1].at - 0.25) < 1e-9 && std::fabs(m.notes[1].dur - 0.5) < 1e-9 && m.notes[1].velocity == 80, "midi: the second at the second");
+    }
+    // every truncation and many corruptions of a real file: read up to the damage, never past the data
+    std::ifstream in("../../data/test.mid", std::ios::binary);
+    std::vector<unsigned char> d((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    expect(d.size() > 14, "midi: the test file");
+    size_t read = 0;
+    for (size_t n = 0; n <= d.size(); ++n) {
+        std::vector<unsigned char> part(d.begin(), d.begin() + (long)n);
+        try { midi_file t = parse_midi(part, "truncated"); read += t.notes.size(); } catch (std::exception&) {}
+    }
+    expect(read > 0, "midi: truncated files give the notes before the cut");
+    std::mt19937 g(7);
+    for (int k = 0; k < 2000; ++k) {
+        std::vector<unsigned char> bad = d;
+        for (int j = 0; j < 4; ++j) bad[14 + g() % (bad.size() - 14)] = (unsigned char)(g() % 256);
+        bad.resize(14 + g() % (bad.size() - 13));
+        try { parse_midi(bad, "corrupt"); } catch (std::exception&) {}
+    }
+}
+
 // --- the libraries' shared state under interpreters on threads (as in Moritz) ---
 static void test_threads() {
     // resample's kernel table: two threads, two factors, the same samples as on one thread
@@ -62,6 +99,7 @@ static void test_threads() {
 
 int main() {
     test_threads();
+    test_midi();
     if (failures == 0) std::cout << "engines: all checks passed\n";
     return failures == 0 ? 0 : 1;
 }
