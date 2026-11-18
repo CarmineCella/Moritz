@@ -167,6 +167,7 @@ jobs:
           ASAN_OPTIONS: detect_leaks=0:abort_on_error=1
           UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
           TSAN_OPTIONS: halt_on_error=1:second_deadlock_stack=1
+          MUSIL_SKIP_TESTS: ${{ matrix.sanitizer == 'thread' && 'test_robust' || '' }}
         # under TSan: robust (100,000 calls deep, which TSan cannot follow) and the 219 patches (too slow) are left
         # to the address build, and the engine stress test covers threads; the examples and timings are long and
         # covered by the other jobs
@@ -179,6 +180,7 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 60
     strategy:
+      fail-fast: false
       matrix:
         fltk: [ON, OFF]
     steps:

@@ -19,7 +19,10 @@ G="$HERE/tests/gui"
 T=$(mktemp -d 2>/dev/null || mktemp -d -t moritz)
 HOME="$T/home"
 USERPROFILE="$T/home"
-export HOME USERPROFILE
+XDG_CONFIG_HOME="$T/home/.config"      # where FLTK keeps preferences on Linux (GitHub's machines set it)
+APPDATA="$T/home/AppData/Roaming"      # ... and on Windows
+LOCALAPPDATA="$T/home/AppData/Local"
+export HOME USERPROFILE XDG_CONFIG_HOME APPDATA LOCALAPPDATA
 mkdir -p "$HOME"
 fails=0
 count=0

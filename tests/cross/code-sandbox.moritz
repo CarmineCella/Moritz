@@ -6,7 +6,7 @@
   (obj c code (pos 20 60)
     (script
       "function refused (r) (and (equal? (type r) \"string\") (contains? r \"not allowed\"))"
-      "var w (try (write \"/tmp/moritz-sandbox-probe.txt\" \"x\") catch e e)"
+      "var w (try (write \"../moritz-sandbox-probe.txt\" \"x\") catch e e)"
       "var x (try (exec \"echo hello\") catch e e)"
       "var s (try (sleep 0.01) catch e e)"
       "var r (try (length (read \"code-sandbox.moritz\")) catch e e)"
@@ -16,7 +16,7 @@
       "if ok { print \"PASS: a code box writes only where it may, and runs no programs\" } { print \"FAIL: the sandbox\" w x s r here gone }"))
   (obj t code @trusted (pos 220 60)
     (script
-      "var w (try (write \"/tmp/moritz-sandbox-probe.txt\" \"x\") catch e e)"
+      "var w (try (write \"../moritz-sandbox-probe.txt\" \"x\") catch e e)"
       "if (and (equal? (type w) \"string\") (contains? w \"not allowed\")) { print \"PASS: @trusted with nobody to ask stays sandboxed\" } { print \"FAIL: @trusted ran unasked\" w }"))
   (connect lb 0 c 0)
   (connect lb 0 t 0))

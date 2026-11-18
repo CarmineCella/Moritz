@@ -342,7 +342,7 @@ if (not (equal? (platform) "windows")) {
     var token-file (if (exists? home-token) home-token (concat tmpdir "/musil-" (trim (exec "id -u")) "/port-47770.token"))
     var token (trim (read token-file))
     check (== (length token) 32) "the port's token: random, in the token file"
-    check (equal? (trim (exec (concat "stat -f %Lp " token-file " 2>/dev/null || stat -c %a " token-file))) "600") "the token file is the user's alone"
+    check (equal? (trim (exec (concat "stat -c %a " token-file " 2>/dev/null || stat -f %Lp " token-file))) "600") "the token file is the user's alone"
 
     ; the client runs in the background: the port is served from this thread's idle time (sleep idles)
     exec (concat "(printf '" token "\\nvar from-editor 41\\n(+ from-editor 1)\\n\\004' | nc 127.0.0.1 47770 > /tmp/musil_port_reply.txt 2>/dev/null &)")

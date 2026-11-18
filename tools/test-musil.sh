@@ -40,6 +40,10 @@ hosted() {
 cd "$ROOT/musil/tests" || exit 1
 TESTS="test_core test_std test_system test_scientific test_signals test_live test_music test_atoms test_plot test_memory test_stress test_smoke test_load test_robust"
 [ "$MODE" = moritz ] && TESTS=$(echo "$TESTS" | sed 's/test_live//; s/test_plot//')
+# MUSIL_SKIP_TESTS="test_a test_b": left out (CI's thread-sanitizer job: test_robust nests deeper than TSan follows)
+kept=
+for t in $TESTS; do case " $MUSIL_SKIP_TESTS " in *" $t "*) ;; *) kept="$kept $t" ;; esac; done
+TESTS=$kept
 # test_live checks the audio thread in real time (voices start and stop within tens of ms): on a busy
 # machine it may miss, so it gets three tries, and says when it needed more than one
 for t in $TESTS; do

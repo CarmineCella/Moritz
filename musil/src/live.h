@@ -519,17 +519,21 @@ struct bus_reverb {
     inline void process_frame(float* frame) {
         size_t hop = in_hops.load(std::memory_order_relaxed), slot = hop % RING;
         double d = dry.load(std::memory_order_relaxed), w = wet.load(std::memory_order_relaxed);
-        bool have = hop >= DELAY_HOPS && out_hops.load(std::memory_order_acquire) > hop - DELAY_HOPS;
+        size_t done = out_hops.load(std::memory_order_acquire);
+        bool have = hop >= DELAY_HOPS && done > hop - DELAY_HOPS;
+        // the slot being filled must not be one the worker may still be reading (it fell RING hops behind,
+        // on a loaded machine): then the reverb's input waits instead of being overwritten under the worker
+        bool room = hop < done + RING;
         size_t oslot = hop >= DELAY_HOPS ? (hop - DELAY_HOPS) % RING : 0;
         for (int ch = 0; ch < channels; ch++) {
             float x = frame[ch];
-            in_ring[(slot * P + fill) * channels + ch] = x;
+            if (room) in_ring[(slot * P + fill) * channels + ch] = x;
             float wv = have ? out_ring[(oslot * P + fill) * channels + ch] : 0.0f;
             float dv = dry_ring[dry_pos * channels + ch]; dry_ring[dry_pos * channels + ch] = x;
             frame[ch] = (float)(d * dv + w * wv);
         }
         if (++dry_pos >= DELAY_HOPS * P) dry_pos = 0;
-        if (++fill >= P) { fill = 0; in_hops.store(hop + 1, std::memory_order_release); }
+        if (room && ++fill >= P) { fill = 0; in_hops.store(hop + 1, std::memory_order_release); }
     }
     void run() {
         while (!quit) {
