@@ -37,8 +37,8 @@ flatten-spectrum : harmonics 1-4 raw (1.9 4.8 9.7 20.3) flattened (3.59 4.69 4.6
 impose-envelope  : carrier reshaped by a source's envelope; cepstrum: the cepstrum itself
 
 --- stft ---
-stft             : 9 frames of 256, hop 64
-istft            : 768 samples, error where frames overlap fully: 0
+stft             : 10 frames of 256, hop 64
+istft            : 832 samples, error where frames overlap fully: 0
 stft-magnitudes  : 128 bins per frame
 
 --- features (amps: positive-frequency magnitudes, freqs: their frequencies) ---
@@ -82,17 +82,17 @@ robotize, whisperize, denoise: lengths 4096 4032 4096
 
 --- hpss and onsets ---
 hpss             : harmonic rms 0.352 percussive rms 0.075 ; they add up to the input within 0
-onset-strength   : 28 values (the spectral flux per frame)
+onset-strength   : 29 values (the spectral flux per frame)
 onsets           : (0 0.248) (seconds; 0 first)
 onsets-adaptive  : (0 0.248) (threshold on a moving median of the flux)
 segments         : (1984 2016) (the pieces between onsets)
 
 --- nmf-separate ---
-nmf-separate     : 2 sources of 4000 samples; W (257 2) H (2 36) ; they add up to the input within 0
+nmf-separate     : 2 sources of 4000 samples; W (257 2) H (2 37) ; they add up to the input within 0
 nmf-learn-parts, nmf-separate-with: supervised, parts learnt from each source alone (see nmf.mu)
 
 --- morphology ---
-frame-spectra    : 61 frames of 1024 bins (the database's feature space, per frame)
+frame-spectra    : 62 frames of 1024 bins (the database's feature space, per frame)
 spectral-similarity: tone vs itself 0.98 , tone vs noise 0.07
 event-rate       : 3 events that change the spectrum; rates up to 1 a second
 polyphony-estimate: (1 1 1 1)  register-curve: centroid 57 lowest partial 57 (MIDI)
@@ -112,8 +112,8 @@ speaker-ring 4   : (0 90 180 -90)
 ambi-decode      : levels of a source at 45 on that ring (0.356 0.356 0 0)
 pan-n            : levels on a ring of 8, source at 100 (0 0 0.684 0.195 0 0 0 0)
 hrir 90 0        : two ears, 23 samples; the far ear later and quieter; 710 measured KEMAR directions loaded (hrtf-unload: the spherical model)
-binaural         : a left click, ear levels (0.294 0.139)
-binaural-decode  : B-format for headphones; a front source (1.15 1.15)
+binaural         : a left click, ear levels (0.305 0.146)
+binaural-decode  : B-format for headphones; a front source (1.151 1.151)
 moving-source, ambi-render, channel, stereo-add, normalize-peak-stereo: see spatial.mu
 
 --- resampling and channels ---
@@ -132,7 +132,7 @@ chromagram      : 12 pitch classes x 65 frames; the profile (0 0.87 0 0 0.98 0 0
 key-estimate    : A major (Krumhansl-Kessler profiles; key-scores ranks all 24)
 tempo-estimate  : 120 bpm from a click every half second (the autocorrelation of the onset strength, a prior on the tapped tempo)
 beats           : 120 bpm, 16 beats, the first at 0.023 s, every 0.498 s (beat-track: Ellis's dynamic programming)
-tempogram       : 271 rows (bpm 30-300) x 686 frames; mel-spectrogram, mfcc-gram: the timbre per frame
+tempogram       : 271 rows (bpm 30-300) x 687 frames; mel-spectrogram, mfcc-gram: the timbre per frame
 self-similarity : 259 x 259 (Foote); foote-novelty peaks at (3) s: where the texture changes
 
 ================================================================

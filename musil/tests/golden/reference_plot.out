@@ -25,7 +25,7 @@ plot plot-xy plot-lines scatter bars image surface: shown
 --- ready-made ---
 waveform        : waveform (line)
 spectrum        : spectrum (dB against Hz)
-spectrogram     : spectrogram ; image of 128 bins x 59 frames
+spectrogram     : spectrogram ; image of 128 bins x 60 frames
 histogram-figure: histogram 5 bars
 scatter-clusters: 2 layers, one per cluster
 wrote waveform and spectrogram: 1 1

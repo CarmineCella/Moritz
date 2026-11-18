@@ -131,34 +131,49 @@ inline vptr sig_delay(vlist& a, Interp& i) {
 }
 
 // (resample x factor) => x with its length multiplied by factor, by windowed-sinc interpolation
-// (any ratio; when downsampling the sinc is also the anti-aliasing lowpass)
+// (any ratio). Upsampling (factor >= 1): a Hann-windowed sinc of 24 zero crossings a side at the input
+// Nyquist. Downsampling: the sinc is also the anti-aliasing lowpass, a Kaiser-windowed sinc (beta 7, about
+// -70 dB in the stopband) with its cutoff at 0.93 of the new Nyquist and 32 of its zero crossings a side
+// (a half-width of 32 / factor input samples), so the transition band ends at the new Nyquist whatever the
+// factor: flat to about 0.86 of the new Nyquist, aliases below -65 dB.
+struct resample_table { double fc = -1; int half = 0, taps = 0, Q = 0; std::vector<double> t; };
+inline double bessel_i0(double x) { double s = 1, term = 1; for (int k = 1; k < 64; k++) { term *= (x / (2 * k)) * (x / (2 * k)); s += term; if (term < 1e-17 * s) break; } return s; }
+// the windowed sinc tabulated over Q fractional phases (interpolated between them), each phase normalised so that
+// a constant stays a constant; built once per cutoff and thread (a note's pitch shift asks for thousands)
+inline const resample_table& resample_kernel(double factor) {
+    thread_local resample_table tab;
+    double fc = factor < 1 ? factor : 1.0;                 // the kernel's scale, relative to the input Nyquist
+    if (tab.fc == fc) return tab;
+    const double pi = 3.14159265358979323846;
+    bool down = fc < 1;
+    int half = down ? (int)std::ceil(32.0 / fc) : 24, taps = 2 * half;
+    int Q = down ? std::max(64, (int)std::lround(512 * fc)) : 512;     // a wider kernel is smoother: fewer phases
+    double cut = down ? 0.93 * fc : 1.0, beta = 7.0, i0b = bessel_i0(beta);
+    tab.t.assign((size_t)(Q + 1) * taps, 0.0);
+    for (int q = 0; q <= Q; q++) {
+        double phase = (double)q / Q, wsum = 0; double* row = &tab.t[(size_t)q * taps];
+        for (int m = -half + 1; m <= half; m++) {
+            double d = phase - m, win;
+            if (down) { double r = d / half; win = std::fabs(r) >= 1 ? 0.0 : bessel_i0(beta * std::sqrt(1 - r * r)) / i0b; }
+            else win = 0.5 + 0.5 * std::cos(pi * d / half);
+            double sn = d == 0 ? cut : std::sin(pi * cut * d) / (pi * d);
+            row[m + half - 1] = sn * win; wsum += sn * win;
+        }
+        if (wsum != 0) for (int m = 0; m < taps; m++) row[m] /= wsum;
+    }
+    tab.fc = fc; tab.half = half; tab.taps = taps; tab.Q = Q;
+    return tab;
+}
 inline varr resample_sinc(const varr& x, double factor) {
     size_t in = x.size(); if (in == 0) return varr();
     size_t out_len = std::max<size_t>(1, (size_t)std::floor(in * factor + 0.5));
-    const int half = 24, taps = 2 * half; const double pi = 3.14159265358979323846;
-    double fc = factor < 1 ? factor : 1.0;                 // cutoff relative to the input Nyquist
-    // the windowed sinc tabulated over Q fractional phases (interpolated between them), normalised so that a constant
-    // stays a constant; kept between calls with the same cutoff (a note's pitch shift is asked for thousands of times)
-    // (per thread: interpreters run on several threads in Moritz)
-    static const int Q = 512; thread_local double table_fc = -1; thread_local std::vector<double> table;
-    if (fc != table_fc) {
-        table.assign((size_t)(Q + 1) * taps, 0.0);
-        for (int q = 0; q <= Q; q++) {
-            double phase = (double)q / Q, wsum = 0; double* row = &table[(size_t)q * taps];
-            for (int m = -half + 1; m <= half; m++) {
-                double d = phase - m, win = 0.5 + 0.5 * std::cos(pi * d / half);   // Hann-windowed sinc
-                double sn = d == 0 ? fc : std::sin(pi * fc * d) / (pi * d);
-                row[m + half - 1] = sn * win; wsum += sn * win;
-            }
-            if (wsum != 0) for (int m = 0; m < taps; m++) row[m] /= wsum;
-        }
-        table_fc = fc;
-    }
+    const resample_table& K = resample_kernel(factor);
+    const int half = K.half, taps = K.taps, Q = K.Q;
     varr out(0.0, out_len);
     for (size_t k = 0; k < out_len; k++) {
         double t = (double)k / factor; long c = (long)std::floor(t); double phase = t - (double)c;
         double qf = phase * Q; int q = (int)qf; double u = qf - q; if (q >= Q) { q = Q - 1; u = 1; }
-        const double* r0 = &table[(size_t)q * taps]; const double* r1 = r0 + taps;
+        const double* r0 = &K.t[(size_t)q * taps]; const double* r1 = r0 + taps;
         double acc = 0;
         long j0 = c - half + 1, j1 = c + half;
         long lo = std::max(j0, 0L), hi = std::min(j1, (long)in - 1);
@@ -174,13 +189,24 @@ inline vptr sig_resample(vlist& a, Interp& i) {
 }
 
 // (autocorr x) => biased autocorrelation (sum / n) for lags 0 .. n/2 - 1; it decays with lag, which
-// makes the first periodicity peak the largest
+// makes the first periodicity peak the largest. By FFT: |X|^2 of the signal padded to twice its length
+inline std::vector<double> autocorr_fft(const double* x, size_t n, size_t lags) {
+    size_t N = dsp::next_pow2(std::max<size_t>(2, 2 * n));
+    std::vector<double> re(N, 0.0), im(N, 0.0);
+    std::copy(x, x + n, re.begin());
+    dsp::FFT<double> f; f.init((int)N);
+    f.forward(re.data(), im.data());
+    for (size_t k = 0; k < N; k++) { re[k] = re[k] * re[k] + im[k] * im[k]; im[k] = 0; }
+    f.inverse(re.data(), im.data());
+    std::vector<double> r(lags, 0.0);
+    for (size_t lag = 0; lag < lags && lag < N; lag++) r[lag] = re[lag] / (double)N / (double)n;
+    return r;
+}
 inline vptr sig_autocorr(vlist& a, Interp& i) {
     const varr& x = i.num(a[0]); size_t n = x.size();
     if (n < 4) i.bad("signal too short");
-    size_t h = n / 2; varr r(0.0, h);
-    for (size_t lag = 0; lag < h; lag++) { double s = 0; for (size_t k = 0; k + lag < n; k++) s += x[k] * x[k + lag]; r[lag] = s / (double)n; }
-    return v_arr(std::move(r));
+    auto r = autocorr_fft(&x[0], n, n / 2);
+    return v_arr(varr(r.data(), r.size()));
 }
 
 // (interleave (list a b ...)) => one vector a0 b0 a1 b1 ...
@@ -329,8 +355,10 @@ inline vptr sig_pvoc(vlist& a, Interp& i) {
 }
 
 // (deconv y h [threshold]) => x such that (conv x h) ~ y, as long as y: the spectrum of y divided by that
-//   of h where |H| is above threshold (0.001) times its peak, else 0 (signals/convolution.h, as Moritz's
-//   condec): a recording un-reverberated by a measured response, or a response measured from a known sweep
+//   of h, regularised (Tikhonov): Y conj(H) / (|H|^2 + threshold^2 max|H|^2), threshold 0.001 by default, so
+//   where |H| is far above threshold times its peak it is Y / H, at that level half of it, and below it the
+//   gain falls smoothly to 0 instead of being cut; threshold 0 is the plain inverse (signals/convolution.h, as
+//   Moritz's condec): a recording un-reverberated by a measured response, or a response measured from a known sweep
 inline vptr sig_deconv(vlist& a, Interp& i) {
     const varr& y = i.num(a[0]); const varr& h = i.num(a[1]); double thr = a.size() > 2 ? i.scalar(a[2]) : 0.001;
     if (thr < 0) i.bad("threshold must be >= 0");
@@ -581,27 +609,15 @@ inline vptr sig_ambi_rotate(vlist& a, Interp& i) {
     }
     return v_list(std::move(out));
 }
-// (conv-fast x h) => the linear convolution of x and h (length n + m - 1), by overlap-add over blocks the size
-//   of h: the same result as conv, faster on long inputs, and the interpreter breathes between blocks (the
-//   windows stay responsive while a long score goes through the hall)
-inline vptr sig_conv_fast(vlist& a, Interp& i) {
+// (conv x h) (conv-fast x h) => the linear convolution of x and h (length n + m - 1, n and m their lengths), by FFTs
+//   (signals/convolution.h, as Moritz's condec): one transform when x is not much longer than h, else overlap-add
+//   over blocks; the interpreter breathes between blocks (the windows stay responsive while a long score goes
+//   through the hall). conv streams in a synth (h constant, partitioned); conv-fast is the same function offline
+inline vptr sig_conv(vlist& a, Interp& i) {
     const varr& x = i.num(a[0]); const varr& h = i.num(a[1]);
-    size_t n = x.size(), m = h.size(); if (n == 0 || m == 0) return v_arr(varr());
-    size_t B = 1; while (B < m) B <<= 1; size_t N = 2 * B;
-    std::vector<double> H(2 * N, 0.0); for (size_t k = 0; k < m; k++) H[2 * k] = h[k]; fft_inplace(H.data(), N, -1);
-    varr out(n + m - 1); std::fill(std::begin(out), std::end(out), 0.0);
-    std::vector<double> X(2 * N);
-    for (size_t start = 0; start < n; start += B) {
-        size_t len = std::min(B, n - start);
-        std::fill(X.begin(), X.end(), 0.0); for (size_t k = 0; k < len; k++) X[2 * k] = x[start + k];
-        fft_inplace(X.data(), N, -1);
-        for (size_t k = 0; k < N; k++) { double ar = X[2 * k], ai = X[2 * k + 1], br = H[2 * k], bi = H[2 * k + 1]; X[2 * k] = ar * br - ai * bi; X[2 * k + 1] = ar * bi + ai * br; }
-        fft_inplace(X.data(), N, 1);
-        size_t take = std::min(len + m - 1, out.size() - start);
-        for (size_t k = 0; k < take; k++) out[start + k] += X[2 * k] / N;
-        i.yield_check(); i.idle();                              // the UI, the scheduler, between blocks
-    }
-    return v_arr(std::move(out));
+    if (x.size() == 0 || h.size() == 0) return v_arr(varr());
+    auto y = dsp::convolve(&x[0], x.size(), &h[0], h.size(), [&] { i.yield_check(); i.idle(); });
+    return v_arr(varr(y.data(), y.size()));
 }
 // --- measured HRTFs: a table of directions with the two ears' impulse responses ---
 // (hrtf-load path) load a set from a CSV: each row azimuth, elevation, then the left ear's samples and the right's
@@ -953,7 +969,7 @@ inline void add_signals(Interp& i) {
     i.def("chromagram", sig_chromagram, 4, 4); i.def("self-similarity", sig_self_similarity, 1, 1); i.def("foote-novelty", sig_foote_novelty, 2, 2);
     i.def("tempogram", sig_tempogram, 3, 4); i.def("beat-track", sig_beat_track, 4, 4);
     i.def("mel-spectrogram", sig_mel_spectrogram, 5, 5); i.def("mfcc-gram", sig_mfcc_gram, 6, 6);
-    i.def("conv-fast", sig_conv_fast, 2, 2); i.def("ambi-gains", sig_ambi_gains, 3, 3); i.def("ambi-decoder", sig_ambi_decoder, 2, 2); i.def("binaural-level", sig_binaural_level, 2, 2); i.def("ambi-rotate", sig_ambi_rotate, 2, 2); i.def("hrir", sig_hrir, 3, 3); i.def("hrir-model", sig_hrir_model, 3, 3);
+    i.def("conv", sig_conv, 2, 2); i.def("conv-fast", sig_conv, 2, 2); i.def("ambi-gains", sig_ambi_gains, 3, 3); i.def("ambi-decoder", sig_ambi_decoder, 2, 2); i.def("binaural-level", sig_binaural_level, 2, 2); i.def("ambi-rotate", sig_ambi_rotate, 2, 2); i.def("hrir", sig_hrir, 3, 3); i.def("hrir-model", sig_hrir_model, 3, 3);
     i.def("hrtf-load", sig_hrtf_load, 1, 1); i.def("hrtf-unload", sig_hrtf_unload, 0, 0); i.def("hrtf-loaded", sig_hrtf_loaded, 0, 0);
 }
 

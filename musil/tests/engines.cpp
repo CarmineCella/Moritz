@@ -20,6 +20,25 @@ static void expect(bool ok, const std::string& what) {
 }
 
 
+// --- resampling: the anti-aliasing of a downsampling, the passband ---
+static double level_of(const varr& y, double f, double sr) {          // the amplitude of a sine of f in y (least squares)
+    double c = 0, s = 0, cc = 0, ss = 0;
+    size_t a = y.size() / 4, b = 3 * y.size() / 4;                      // away from the edges
+    for (size_t k = a; k < b; ++k) { double w = dsp::kTwoPi * f * (double)k / sr; c += y[k] * std::cos(w); s += y[k] * std::sin(w); cc += std::cos(w) * std::cos(w); ss += std::sin(w) * std::sin(w); }
+    return std::hypot(c / cc, s / ss);
+}
+static void test_resample() {
+    const double sr = 44100, factor = 0.1, nsr = sr * factor;          // to 4410 Hz: the new Nyquist is 2205 Hz
+    auto tone = [&](double f) { varr x(0.0, (size_t)sr); for (size_t k = 0; k < x.size(); ++k) x[k] = std::sin(dsp::kTwoPi * f * (double)k / sr); return x; };
+    double pass = level_of(resample_sinc(tone(0.8 * 2205), factor), 0.8 * 2205, nsr);
+    expect(std::fabs(20 * std::log10(pass)) < 0.2, "resample 0.1: 0.8 of the new Nyquist passes (" + std::to_string(20 * std::log10(pass)) + " dB)");
+    // 4340 Hz would alias to 70 Hz at 4410 Hz
+    double alias = level_of(resample_sinc(tone(4410 - 70), factor), 70, nsr);
+    expect(20 * std::log10(alias + 1e-30) < -60, "resample 0.1: what would alias is under -60 dB (" + std::to_string(20 * std::log10(alias + 1e-30)) + " dB)");
+    varr dc(1.0, 1000), y = resample_sinc(dc, 0.37);
+    expect(std::fabs(y[y.size() / 2] - 1) < 1e-9, "resample: a constant stays a constant");
+}
+
 // --- the MIDI reader: overlapping notes of a pitch, truncated and corrupt files ---
 static void test_midi() {
     std::vector<unsigned char> head = {'M', 'T', 'h', 'd', 0, 0, 0, 6, 0, 0, 0, 1, 0x01, 0xe0};   // format 0, 1 track, 480 ppq
@@ -130,6 +149,7 @@ static void test_threads() {
 
 int main() {
     test_threads();
+    test_resample();
     test_midi();
     test_orchidea();
     if (failures == 0) std::cout << "engines: all checks passed\n";

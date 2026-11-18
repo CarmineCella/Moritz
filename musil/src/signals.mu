@@ -120,13 +120,7 @@ function complex-mul (a b) {
     var bi (last b)
     return (list (- (* ar br) (* ai bi)) (+ (* ar bi) (* ai br)))
 }
-; (conv x h)               linear convolution through the FFT, length (+ (length x) (length h) -1)
-function conv (x h) {
-    var n (+ (length x) (length h) -1)
-    var padded-x (vec x (zeros (- n (length x))))
-    var padded-h (vec h (zeros (- n (length h))))
-    return (take (ifft (complex-mul (fft padded-x) (fft padded-h))) n)
-}
+; (conv x h) is C++ (signals.h): the linear convolution by FFTs, overlap-add for a long x
 
 ; (cepstrum mags)          real cepstrum of a full (symmetric) magnitude spectrum
 function cepstrum (mags) (ifft (list (log (max mags 1e-12)) (zeros (length mags))))
@@ -150,12 +144,16 @@ function flatten-spectrum (mags order) (/ mags (spectral-envelope mags order))
 function impose-envelope (mags source order) (* (flatten-spectrum mags order) (spectral-envelope source order))
 
 ; --- STFT: a list of complex spectra, one per hop, Hann-windowed ---------------------
-; (stft x n hop) => list of (list re im); (istft frames n hop) => signal by overlap-add
+; (stft x n hop) => list of (list re im): frames at 0, hop, 2 hop ... until one reaches the end of x (the last is
+;                          padded with zeros), so istft gives back at least the whole of x; (istft frames n hop) =>
+;                          signal by overlap-add
 function stft (x n hop) {
     var w (hann n)
     var frames (list)
-    for (var pos 0) (<= (+ pos n) (length x)) (var pos (+ pos hop)) {
-        push frames (fft (* (slice x pos n) w))
+    var count (+ 1 (max 0 (ceil (/ (- (length x) n) hop))))
+    var padded (vec x (zeros (max 0 (- (+ (* hop (- count 1)) n) (length x)))))
+    for (var pos 0) (<= (+ pos n) (length padded)) (var pos (+ pos hop)) {
+        push frames (fft (* (slice padded pos n) w))
     }
     return frames
 }
@@ -723,20 +721,31 @@ function ambi-render (sources order) {
     return acc
 }
 ; (moving-source x order az-curve el-curve blocks)   a signal whose direction changes: encoded block by block
-;                          (blocks samples each) at the azimuth and elevation curves (vectors, one value per block)
+;                          (blocks samples each) at the azimuth and elevation curves (vectors, one value per block),
+;                          the blocks crossfaded: each is a Hann window of two blocks centred on it (at 50% overlap
+;                          they sum to 1), so the direction glides from block to block without clicks
 function moving-source (x order azs els blocks) {
     var nb (length azs)
-    var out (map (vec->list (range (* (+ order 1) (+ order 1)))) (function (k) (zeros (length x))))
-    each (range nb) (function (b) {
-        var seg (slice x (* b blocks) blocks)
-        if (> (length seg) 0) {
-            var enc (ambi-encode (* seg (hann-fade seg)) order (getidx azs b) (getidx els b))
-            each (zip out enc) (function (p) (add-at! (head p) (* b blocks) (last p)))
+    var n (length x)
+    var out (map (vec->list (range (* (+ order 1) (+ order 1)))) (function (k) (zeros n)))
+    var w (hann-fade (* 2 blocks))
+    var half (floor (/ blocks 2))
+    for (var b -1) (<= b nb) (var b (+ b 1)) {                 ; a window more at each end: the sum is 1 everywhere
+        var start (- (* b blocks) half)
+        var a (max 0 start)
+        var e (min n (+ start (* 2 blocks)))
+        if (> e a) {
+            var d (max 0 (min (- nb 1) b))
+            var seg (* (slice x a (- e a)) (slice w (- a start) (- e a)))
+            var enc (ambi-encode seg order (getidx azs d) (getidx els d))
+            each (zip out enc) (function (p) (add-at! (head p) a (last p)))
         }
-    })
+    }
     return out
 }
-function hann-fade (seg) (ones (length seg))
+; (hann-fade seg)          a periodic Hann window as long as seg (a vector or a length): the crossfade of moving-source,
+;                          whose windows of two blocks at a block's hop sum to 1
+function hann-fade (seg) (hann (if (> (length seg) 1) (length seg) seg))
 
 ; --- source separation by NMF --------------------------------------------------------------
 ; (nmf-separate x n hop k iterations)   x split into k sources: NMF of its magnitude spectrogram

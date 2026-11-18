@@ -837,8 +837,10 @@
 #deconv
   (deconv y h [threshold])
   => x such that (conv x h) ~ y, as long as y: the spectrum of y divided by that
-  of h where |H| is above threshold (0.001) times its peak, else 0 (signals/convolution.h, as Moritz's
-  condec): a recording un-reverberated by a measured response, or a response measured from a known sweep
+  of h, regularised (Tikhonov): Y conj(H) / (|H|^2 + threshold^2 max|H|^2), threshold 0.001 by default, so
+  where |H| is far above threshold times its peak it is Y / H, at that level half of it, and below it the
+  gain falls smoothly to 0 instead of being cut; threshold 0 is the plain inverse (signals/convolution.h, as
+  Moritz's condec): a recording un-reverberated by a measured response, or a response measured from a known sweep
 #svf
   (svf x sr freq q type)
   => x through a state-variable filter (signals/filters.h, as Moritz's svf~);
@@ -869,11 +871,12 @@
   (ambi-rotate B yaw)
   => B turned by yaw degrees about the vertical axis (positive to the left):
   within each order, the pair (m, -m) rotates by m yaw, exactly; B is a list of (order+1)^2 channel vectors
-#conv-fast
-  (conv-fast x h)
-  => the linear convolution of x and h (length n + m - 1), by overlap-add over blocks the size
-  of h: the same result as conv, faster on long inputs, and the interpreter breathes between blocks (the
-  windows stay responsive while a long score goes through the hall)
+#conv conv-fast
+  (conv x h)  (conv-fast x h)
+  => the linear convolution of x and h (length n + m - 1, n and m their lengths), by FFTs
+  (signals/convolution.h, as Moritz's condec): one transform when x is not much longer than h, else overlap-add
+  over blocks; the interpreter breathes between blocks (the windows stay responsive while a long score goes
+  through the hall). conv streams in a synth (h constant, partitioned); conv-fast is the same function offline
 #hrtf-load
   (hrtf-load path)
   load a set from a CSV: each row azimuth, elevation, then the left ear's samples and the right's
@@ -1016,9 +1019,6 @@
 #complex-mul
   (complex-mul a b)
   product of two (list re im) spectra
-#conv
-  (conv x h)
-  linear convolution through the FFT, length (+ (length x) (length h) -1)
 #cepstrum
   (cepstrum mags)
   real cepstrum of a full (symmetric) magnitude spectrum
@@ -1037,7 +1037,9 @@
   mags reshaped to carry the spectral envelope of source
 #stft
   (stft x n hop)
-  => list of (list re im); (istft frames n hop) => signal by overlap-add
+  => list of (list re im): frames at 0, hop, 2 hop ... until one reaches the end of x (the last is
+  padded with zeros), so istft gives back at least the whole of x; (istft frames n hop) =>
+  signal by overlap-add
 #istft
   (istft frames n hop)
   the signal back from stft frames by windowed overlap-add
@@ -1331,7 +1333,13 @@
 #moving-source
   (moving-source x order az-curve el-curve blocks)
   a signal whose direction changes: encoded block by block
-  (blocks samples each) at the azimuth and elevation curves (vectors, one value per block)
+  (blocks samples each) at the azimuth and elevation curves (vectors, one value per block),
+  the blocks crossfaded: each is a Hann window of two blocks centred on it (at 50% overlap
+  they sum to 1), so the direction glides from block to block without clicks
+#hann-fade
+  (hann-fade seg)
+  a periodic Hann window as long as seg (a vector or a length): the crossfade of moving-source,
+  whose windows of two blocks at a block's hop sum to 1
 #nmf-separate
   (nmf-separate x n hop k iterations)
   x split into k sources: NMF of its magnitude spectrogram

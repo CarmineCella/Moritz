@@ -119,33 +119,50 @@ private:
 };
 
 
-// y = x * h, the whole linear convolution (nx + nh - 1 samples), by one FFT
-inline std::vector<double> convolve(const std::vector<double>& x, const std::vector<double>& h) {
-    if (x.empty() || h.empty()) return {};
-    size_t len = x.size() + h.size() - 1, N = next_pow2(len);
-    std::vector<double> xr(N, 0.0), xi(N, 0.0), hr(N, 0.0), hi(N, 0.0);
-    std::copy(x.begin(), x.end(), xr.begin());
-    std::copy(h.begin(), h.end(), hr.begin());
-    FFT<double> fft;
-    fft.init((int)N);
-    fft.forward(xr.data(), xi.data());
-    fft.forward(hr.data(), hi.data());
-    for (size_t k = 0; k < N; ++k) {
-        double a = xr[k], b = xi[k];
-        xr[k] = a * hr[k] - b * hi[k];
-        xi[k] = a * hi[k] + b * hr[k];
+// y = x * h, the whole linear convolution (n + m - 1 samples, n and m the lengths of x and h), by FFTs: one
+// transform when x is not much longer than h, else overlap-add over blocks (FFTs of about 8 times h's length).
+// breathe(), when given, is called between blocks (an interpreter keeps its windows alive).
+template <class Breathe>
+inline std::vector<double> convolve(const double* x, size_t n, const double* h, size_t m, Breathe breathe) {
+    if (n == 0 || m == 0) return {};
+    size_t len = n + m - 1, N = next_pow2(std::max<size_t>(2, len)), cap = 8 * next_pow2(std::max<size_t>(2, m));
+    if (N > cap) N = cap;                                   // overlap-add: blocks of N - m + 1 samples of x
+    size_t B = N - m + 1;
+    FFT<double> f;
+    f.init((int)N);
+    std::vector<double> hr(N, 0.0), hi(N, 0.0), xr(N), xi(N), y(len, 0.0);
+    std::copy(h, h + m, hr.begin());
+    f.forward(hr.data(), hi.data());
+    for (size_t start = 0; start < n; start += B) {
+        size_t take = std::min(B, n - start);
+        std::fill(xr.begin(), xr.end(), 0.0);
+        std::fill(xi.begin(), xi.end(), 0.0);
+        std::copy(x + start, x + start + take, xr.begin());
+        f.forward(xr.data(), xi.data());
+        for (size_t k = 0; k < N; ++k) {
+            double a = xr[k], b = xi[k];
+            xr[k] = a * hr[k] - b * hi[k];
+            xi[k] = a * hi[k] + b * hr[k];
+        }
+        f.inverse(xr.data(), xi.data());
+        size_t out = std::min(take + m - 1, len - start);
+        for (size_t k = 0; k < out; ++k) y[start + k] += xr[k] / (double)N;
+        if (start + B < n) breathe();
     }
-    fft.inverse(xr.data(), xi.data());
-    std::vector<double> y(len);
-    for (size_t k = 0; k < len; ++k) y[k] = xr[k] / (double)N;
     return y;
 }
+inline std::vector<double> convolve(const std::vector<double>& x, const std::vector<double>& h) {
+    return convolve(x.data(), x.size(), h.data(), h.size(), [] {});
+}
 
-// x such that x * h ~ y (as long as y): the spectrum of y divided by that of h where |H| is above
-// threshold times its peak, else 0 (condec). Non-finite results are 0.
+// x such that x * h ~ y (as long as y), by regularised (Tikhonov, Wiener-like) inversion of h's spectrum:
+// X = Y conj(H) / (|H|^2 + lambda max|H|^2) with lambda = threshold^2 (condec). Where |H| is well above
+// threshold times its peak this is Y / H; at threshold times the peak the gain is half the inverse's, and
+// below it falls to 0 smoothly instead of being cut (a hard cut rings). threshold 0: the plain inverse.
+// Non-finite results are 0.
 inline std::vector<double> deconvolve(const std::vector<double>& y, const std::vector<double>& h, double threshold) {
     if (y.empty() || h.empty()) return std::vector<double>(y.size(), 0.0);
-    size_t N = next_pow2(std::max(y.size(), h.size()));
+    size_t N = next_pow2(std::max<size_t>(2, std::max(y.size(), h.size())));
     std::vector<double> yr(N, 0.0), yi(N, 0.0), hr(N, 0.0), hi(N, 0.0);
     std::copy(y.begin(), y.end(), yr.begin());
     std::copy(h.begin(), h.end(), hr.begin());
@@ -153,17 +170,13 @@ inline std::vector<double> deconvolve(const std::vector<double>& y, const std::v
     fft.init((int)N);
     fft.forward(yr.data(), yi.data());
     fft.forward(hr.data(), hi.data());
-    double mx = 0;
-    for (size_t k = 0; k < N; ++k) mx = std::max(mx, std::hypot(hr[k], hi[k]));
+    double mx2 = 0;
+    for (size_t k = 0; k < N; ++k) mx2 = std::max(mx2, hr[k] * hr[k] + hi[k] * hi[k]);
+    double reg = threshold * threshold * mx2;
     for (size_t k = 0; k < N; ++k) {
-        double ar = yr[k], ai = yi[k], br = hr[k], bi = hi[k];
-        if (std::hypot(br, bi) > threshold * mx) {
-            double d = br * br + bi * bi;
-            yr[k] = (ar * br + ai * bi) / d;
-            yi[k] = (ai * br - ar * bi) / d;
-        } else {
-            yr[k] = yi[k] = 0;
-        }
+        double ar = yr[k], ai = yi[k], br = hr[k], bi = hi[k], d = br * br + bi * bi + reg;
+        if (d > 0) { yr[k] = (ar * br + ai * bi) / d; yi[k] = (ai * br - ar * bi) / d; }
+        else yr[k] = yi[k] = 0;
     }
     fft.inverse(yr.data(), yi.data());
     std::vector<double> x(y.size());

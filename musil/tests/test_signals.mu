@@ -70,6 +70,18 @@ check (near? (max (magnitude-spectrum (sine sr 1000 0.032))) 1 1e-9) "magnitude-
 check (equal? (fixed (conv (vec 1 2 3) (vec 1 1)) 10) (vec 1 3 5 3)) "conv"
 check (equal? (fixed (conv (vec 1 2) (vec 3)) 10) (vec 3 6)) "conv: scalar kernel"
 check (== (length (conv (ones 100) (ones 50))) 149) "conv: length"
+; conv is C++ now (overlap-add for a long x): the same as the FFT convolution written in Musil it replaced
+function conv-mu (x h) {
+    var n (+ (length x) (length h) -1)
+    return (take (ifft (complex-mul (fft (vec x (zeros (- n (length x))))) (fft (vec h (zeros (- n (length h))))))) n)
+}
+var cx (osc sr (+ (zeros 5000) 330) (gen 512 (vec 1 0.5 0.3)))
+var ch (* (noise 37) (exp (* -0.1 (range 37))))
+check (near? (conv cx ch) (conv-mu cx ch) 1e-9) "conv: a long x, overlap-add"
+check (near? (conv ch cx) (conv-mu ch cx) 1e-9) "conv: a long h"
+check (equal? (conv-fast cx ch) (conv cx ch)) "conv-fast is conv"
+check (equal? (conv (vec 2) (vec 3)) (vec 6)) "conv: one sample each"
+check (== (length (conv (vec) (vec 1 2))) 0) "conv: empty"
 var cm (complex-mul (list (vec 0) (vec 1)) (list (vec 0) (vec 1)))
 check (equal? (list (head cm) (last cm)) (list (vec -1) (vec 0))) "complex-mul: i * i = -1"
 
@@ -92,11 +104,14 @@ check (near? (cepstrum (ones 8)) (zeros 8) 1e-9) "cepstrum: flat spectrum has ze
 ; --- stft ---
 var sig (sine sr 200 0.1)
 var frames (stft sig 256 64)
-check (== (length frames) 9) "stft: frame count"
+check (== (length frames) 10) "stft: frame count, the last reaching the end (padded)"
 check (== (length (head (head frames))) 256) "stft: frame size"
 var y (istft frames 256 64)
-check (== (length y) (+ (* 64 8) 256)) "istft: length"
+check (== (length y) (+ (* 64 9) 256)) "istft: length"
+check (>= (length y) (length sig)) "istft: at least as long as the input"
 check (near? (slice y 256 300) (slice sig 256 300) 1e-12) "istft: exact reconstruction where frames fully overlap"
+check (near? (slice y 16 (- (length sig) 16)) (drop sig 16) 1e-9) "istft: the whole input back, its end included"
+check (== (length (stft (ones 100) 256 64)) 1) "stft: a signal shorter than a frame gives one frame"
 check (equal? (istft (list) 256 64) (vec)) "istft: no frames"
 check (== (length (head (stft-magnitudes frames))) 128) "stft-magnitudes"
 
@@ -228,9 +243,12 @@ check (contains? (error-of (function () (nebula sr 1 (list (list "nope" 1))))) "
 ; --- deconv, svf, lores ---
 var dry (* (noise 2000) (hann 2000))
 var ir (vec 1 0 0 0.5 0 0.25)
-check (near? (deconv (take (conv dry ir) 2000) ir) dry 1e-6) "deconv: undoes conv"
+check (near? (deconv (take (conv dry ir) 2000) ir 0) dry 1e-6) "deconv: undoes conv (threshold 0: the plain inverse)"
+check (near? (deconv (take (conv dry ir) 2000) ir) dry 1e-4) "deconv: undoes conv (the default regularisation)"
+check (near? (deconv (vec 2 4 6 0) (vec 2) 1) (vec 0.5 1 1.5 0) 1e-9) "deconv: Tikhonov, half the inverse at threshold times the peak"
 check (== (length (deconv (vec 1 2 3) (vec 1))) 3) "deconv: as long as y"
-check (near? (deconv (vec 2 4 6 0) (vec 2)) (vec 1 2 3 0) 1e-9) "deconv: by a gain"
+check (near? (deconv (vec 2 4 6 0) (vec 2) 0) (vec 1 2 3 0) 1e-12) "deconv: by a gain"
+check (near? (deconv (vec 2 4 6 0) (vec 2)) (vec 1 2 3 0) 1e-5) "deconv: by a gain, regularised"
 var wn (noise 4096)
 check (< (centroid-of (svf wn sr 300 0.5 "low")) (* 0.5 (centroid-of wn))) "svf low lowers the centroid"
 check (> (centroid-of (svf wn sr 2000 0.5 "high")) (centroid-of wn)) "svf high raises it"
@@ -414,6 +432,9 @@ check (and (near? (getidx bf 0) (getidx bf 1) 1e-6) (near? (/ (getidx bf 0) (get
 var br (vec (map (binaural-decode (ambi-encode click 1 -90 0) sr) rms))
 check (> (getidx br 1) (* 1.5 (getidx br 0))) "binaural-decode: a right source is louder at the right ear"
 check (== (length (moving-source sx 1 (vec 0 90 180) (vec 0 0 0) 800)) 4) "moving-source: B-format"
+; the blocks are crossfaded: a still source is ambi-encode, a moving one glides without a step at the block edges
+check (all? (zip (moving-source (ones 1024) 1 (vec 30 30 30 30) (vec 10 10 10 10) 256) (ambi-encode (ones 1024) 1 30 10)) (function (p) (near? (head p) (last p) 1e-12))) "moving-source: a still source is encoded as one"
+check (< (max (abs (diff (getidx (moving-source (ones 512) 1 (vec 0 90) (vec 0 0) 256) 1)))) 0.02) "moving-source: no click where the direction changes"
 check (equal? (channel (list sx (* 2 sx)) 1) (* 2 sx)) "channel"
 check (equal? (channel sx 1) sx) "channel: a vector is its own channel"
 check (== (max (head (normalize-peak-stereo (list (* 3 sx) sx)))) 1) "normalize-peak-stereo"
@@ -423,7 +444,7 @@ var slow (sine sr 100 0.02)
 check (== (length (resample slow 2)) 320) "resample: length"
 check (near? (drop (take (resample slow 2) 300) 40) (drop (take (sine (* 2 sr) 100 0.02) 300) 40) 1e-3) "resample x2 matches the sine at the higher rate"
 check (near? (drop (take (resample slow 1.5) 200) 40) (drop (take (sine (* 1.5 sr) 100 0.02) 200) 40) 1e-3) "resample x1.5: any ratio"
-check (near? (slice (resample (ones 100) 0.7) 30 4) (ones 4) 1e-9) "resample: a constant stays a constant"
+check (near? (slice (resample (ones 400) 0.7) 130 4) (ones 4) 1e-9) "resample: a constant stays a constant (away from the edges)"
 check (near? (acf-f0 (resample (sine sr 1000 0.5) 0.5) 4000) 1000 1) "resample: downsampling keeps a tone below the new Nyquist"
 check (== (length (resample-to slow sr 4000)) 80) "resample-to"
 check (contains? (error-of (function () (resample slow 0))) "> 0") "resample: factor"
