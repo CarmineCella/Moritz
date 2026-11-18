@@ -5,6 +5,7 @@
 #include "gui.h"
 #include "zoom.h"
 #include "objects.h"
+#include "settings.h"
 
 #include <FL/Fl_Menu_Item.H>
 #include <FL/fl_draw.H>
@@ -23,6 +24,37 @@ double segDist(double px, double py, double ax, double ay, double bx, double by)
     double t = L > 0 ? std::clamp(((px - ax) * dx + (py - ay) * dy) / L, 0.0, 1.0) : 0.0;
     double cx = ax + t * dx - px, cy = ay + t * dy - py;
     return std::sqrt(cx * cx + cy * cy);
+}
+
+// A cable from an outlet at (ax, ay) to an inlet at (bx, by), as points: a cubic Bézier that leaves the
+// outlet downwards and enters the inlet from above, bending more the further apart they are, and
+// looping out when the inlet is above the outlet; or the straight segment, as the settings say.
+const std::vector<std::pair<double, double>>& cablePath(double ax, double ay, double bx, double by) {
+    static std::vector<std::pair<double, double>> pts;
+    pts.clear();
+    if (!settings().curvedCables) {
+        pts = {{ax, ay}, {bx, by}};
+        return pts;
+    }
+    double dx = bx - ax, dy = by - ay;
+    double bend = dy >= 0 ? std::clamp(dy * 0.45 + std::fabs(dx) * 0.12, 10.0, 140.0)
+                          : std::clamp(-dy * 0.2 + std::fabs(dx) * 0.08 + 24.0, 24.0, 110.0);
+    double c1x = ax, c1y = ay + bend, c2x = bx, c2y = by - bend;
+    int n = std::clamp((int)((std::fabs(dx) + std::fabs(dy) + 2 * bend) / 8), 8, 80);
+    for (int i = 0; i <= n; ++i) {
+        double t = (double)i / n, u = 1 - t;
+        double a = u * u * u, b = 3 * u * u * t, c = 3 * u * t * t, d = t * t * t;
+        pts.push_back({a * ax + b * c1x + c * c2x + d * bx, a * ay + b * c1y + c * c2y + d * by});
+    }
+    return pts;
+}
+
+double cableDist(double px, double py, double ax, double ay, double bx, double by) {
+    const auto& pts = cablePath(ax, ay, bx, by);
+    double best = 1e30;
+    for (size_t k = 1; k < pts.size(); ++k)
+        best = std::min(best, segDist(px, py, pts[k - 1].first, pts[k - 1].second, pts[k].first, pts[k].second));
+    return best;
 }
 
 void flashTimer(void* data) { static_cast<Canvas*>(data)->redraw(); }
@@ -548,17 +580,18 @@ void Canvas::draw() {
         ax += ox() + kPortW / 2; bx += ox() + kPortW / 2;
         ay += oy(); by += oy();
         bool sig = c.from->outs[c.outlet] != Port::Control;   // signal and tap links
+        const auto& path = cablePath(ax, ay, bx, by);
         if (sig) {
             fl_color(c.selected ? kSelect : kSignal);
-            zd::line_style(FL_SOLID | FL_CAP_ROUND, 3);
-            zd::line(ax, ay, bx, by);
+            zd::line_style(FL_SOLID | FL_CAP_ROUND | FL_JOIN_ROUND, 3);
+            zd::polyline(path);
             fl_color(c.selected ? fl_rgb_color(30, 70, 140) : kSignalDim);
             zd::line_style(FL_DASH, 1);
-            zd::line(ax, ay, bx, by);
+            zd::polyline(path);
         } else {
             fl_color(c.selected ? kSelect : kCable);
-            zd::line_style(FL_SOLID | FL_CAP_ROUND, c.selected ? 2 : 1);
-            zd::line(ax, ay, bx, by);
+            zd::line_style(FL_SOLID | FL_CAP_ROUND | FL_JOIN_ROUND, c.selected ? 2 : 1);
+            zd::polyline(path);
         }
         zd::line_style(0);
     }
@@ -576,8 +609,8 @@ void Canvas::draw() {
         int ax, ay;
         portPos(dragBox_, true, dragPort_, ax, ay);
         fl_color(kSelect);
-        zd::line_style(FL_SOLID, 2);
-        zd::line(ox() + ax + kPortW / 2, oy() + ay, ox() + curX_, oy() + curY_);
+        zd::line_style(FL_SOLID | FL_CAP_ROUND | FL_JOIN_ROUND, 2);
+        zd::polyline(cablePath(ox() + ax + kPortW / 2, oy() + ay, ox() + curX_, oy() + curY_));
         zd::line_style(0);
     } else if (drag_ == Drag::Rubber) {
         fl_color(kSelect);
@@ -713,7 +746,7 @@ Canvas::Hit Canvas::hitTest(int mx, int my) const {
         int ax, ay, bx, by;
         portPos(c.from, true, c.outlet, ax, ay);
         portPos(c.to, false, c.inlet, bx, by);
-        if (segDist(mx, my, ax + kPortW / 2, ay, bx + kPortW / 2, by) < 4.0) {
+        if (cableDist(mx, my, ax + kPortW / 2, ay, bx + kPortW / 2, by) < 4.0) {
             h.what = Hit::Cable;
             h.cable = k;
             return h;

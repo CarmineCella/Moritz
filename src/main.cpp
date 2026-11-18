@@ -18,6 +18,7 @@
 #include "codewindow.h"
 #include "session.h"
 #include "gui.h"
+#include "settings.h"
 #include "reference.h"
 #include "maximport.h"
 
@@ -243,6 +244,7 @@ int main(int argc, char** argv) {
         }
     }
 #endif
+    moritz::loadSettings();      // the fonts the boxes and the code are drawn with (settings.h)
     if (argc >= 2 && std::string(argv[1]) == "--render") return renderCli(argc, argv);
     if (argc >= 2 && (std::string(argv[1]) == "--run" || std::string(argv[1]) == "--repl")) {
         moritz::setupSearchPaths();
@@ -310,7 +312,7 @@ int main(int argc, char** argv) {
     // --window-png out.png [patch] [zoom=z]: draws the first document window
     // (toolbar, canvas, status bar) into an image, without showing it: for tests.
     // With a code file (or open=<id> of a code box): its editor; run: runs it first; console=out2.png: the
-    // Console too
+    // Console too; settings=out3.png: the Settings dialog too
     auto writePng = [](Fl_Window* w, const char* file) {
         Fl_Image_Surface surf(w->w(), w->h());
         Fl_Surface_Device::push_current(&surf);
@@ -347,7 +349,9 @@ int main(int argc, char** argv) {
                 for (int t = 0; t < 5; ++t) Fl::wait(0.05);
                 r |= writePng(app.consoleWindow(), console.c_str());
             }
-            return r == 0 ? 0 : 1;
+            // the session's interpreter thread may still hold its lock: leave without static destructors
+            std::fflush(nullptr);
+            std::_Exit(r == 0 ? 0 : 1);
         }
     for (int k = 1; k + 1 < argc; ++k)
         if (std::string(argv[k]) == "--window-png") {
@@ -362,6 +366,12 @@ int main(int argc, char** argv) {
             Fl_RGB_Image* img = surf.image();
             int r = fl_write_png(argv[k + 1], img);
             delete img;
+            for (int j = 1; j < argc; ++j)
+                if (std::string(argv[j]).rfind("settings=", 0) == 0) {
+                    moritz::showSettings();
+                    for (int t = 0; t < 5; ++t) Fl::wait(0.05);
+                    r |= writePng(moritz::settingsWindow(), argv[j] + 9);
+                }
             return r == 0 ? 0 : 1;
         }
     bool opened = !app.docs.empty();

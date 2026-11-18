@@ -178,6 +178,7 @@ public:
     void detach();                 // the patch is being destroyed
     void applyNow();               // apply a pending text edit
     void refresh(bool force);      // show the patch's current text
+    void applyFont();              // the code font and size of the settings
     Fl_Text_Editor* editor() const { return editor_; }
     Patch* patch;
 
@@ -267,6 +268,7 @@ public:
     void addRecent(const std::string& path);
     void showBanner();                  // Shift+Cmd+J: Max und Moritz
     void showConsole();
+    void settingsChanged();             // the settings changed: every window shows them
     void ensureConsole();               // shows the console if it is hidden, without raising it
     // the code editors (code.cpp): Musil scripts (.mu)
     CodeWindow* newCode();

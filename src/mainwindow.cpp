@@ -3,6 +3,7 @@
 // setup, console) and the windows of subpatchers.
 
 #include "gui.h"
+#include "settings.h"
 #include "codewindow.h"
 #include "reference.h"
 #include "session.h"
@@ -297,6 +298,10 @@ void App::init() {
     buildMenu(sysMenu_);
     static_cast<Fl_Sys_Menu_Bar*>(sysMenu_)->create_window_menu();
     fl_mac_set_about([](Fl_Widget*, void*) { App::get().about(); }, nullptr);
+    static const Fl_Menu_Item appItems[] = {
+        {"Settings…", FL_COMMAND + ',', [](Fl_Widget*, void*) { showSettings(); }, nullptr, 0, 0, 0, 0, 0},
+        {nullptr, 0, nullptr, nullptr, 0, 0, 0, 0, 0}};
+    Fl_Mac_App_Menu::custom_application_menu_items(appItems);   // Moritz > Settings…, as macOS has it
 #endif
     log("Moritz " MORITZ_VERSION " - created by Carmine-Emanuele Cella (2026)");
     log("this console shows print objects, errors, audio and file events");
@@ -358,6 +363,10 @@ void App::buildMenu(Fl_Menu_Bar* m) {
            nullptr, FL_MENU_DIVIDER);
     m->add("Edit/Select All", FL_COMMAND + 'a',
            TEXT_OR(kf_select_all, if (auto* c = App::get().activeCanvas()) c->selectAll()), nullptr);
+#ifndef __APPLE__
+    m->add("Edit/Settings...", FL_COMMAND + ',', [](Fl_Widget*, void*) { showSettings(); }, nullptr,
+           FL_MENU_DIVIDER);       // (on macOS: Moritz > Settings…)
+#endif
 #undef TEXT_OR
 
     static std::vector<std::unique_ptr<NewItem>> items;
@@ -689,8 +698,8 @@ void App::showConsole() {
         consoleView_->box(FL_FLAT_BOX);
         consoleView_->color(fl_rgb_color(20, 21, 24));
         consoleView_->textcolor(kText);
-        consoleView_->textfont(FL_COURIER);
-        consoleView_->textsize(12);
+        consoleView_->textfont(kCodeFontSlot);
+        consoleView_->textsize(settings().codeSize - 1);
         console_->resizable(consoleView_);
         console_->end();
         for (auto& line : consoleLines_) consoleBuf_->append((line + "\n").c_str());
@@ -1814,6 +1823,17 @@ void App::showBanner() {
     auto* b = new Banner(img);
     centerOnScreen(b, frontDoc());
     b->show();
+}
+
+// the settings changed (settings.cpp): every window shows them now
+void App::settingsChanged() {
+    for (auto* w : codeWindows_) w->applyFont();
+    for (auto* w : textWindows_) w->applyFont();
+    if (consoleView_) {
+        consoleView_->textfont(kCodeFontSlot);
+        consoleView_->textsize(settings().codeSize - 1);
+    }
+    for (Fl_Window* w = Fl::first_window(); w; w = Fl::next_window(w)) w->redraw();
 }
 
 void App::about() {

@@ -105,12 +105,13 @@ Documents.
 **Musil on its own.** Musil is the language its author wrote before Moritz,
 and it lives in [`musil/`](musil/), complete and independent: nothing in it
 uses Moritz (CI checks it). On its own (`musil` in the downloads, or
-`make musil`) it also has its live audio engine, plot windows, sliders and
+`build/musil/musil`) it also has its live audio engine, plot windows, sliders and
 score roll; inside Moritz those are left out, since Moritz plays and draws,
 and a script renders into a buffer that a patch plays. Musil is the
-reference for what is computed offline: the analyses, Maple, SoundTypes and
-k-means of Moritz's objects run Musil's code, and tests check that the other
-objects agree with Musil's functions.
+reference: where an object and a Musil function do the same thing, the object
+runs Musil's code (the analyses, Maple, SoundTypes, k-means and NMF; the phase
+vocoder of `sparkle~`, the grains of `nebula~`, `svf~`, `lores~`, `conv~`,
+`condec` and the ambisonic objects), and tests check that each pair agrees.
 
 ## The name
 
@@ -169,6 +170,9 @@ Moritz follows Max's conventions:
 - **Editing**: select by clicking or dragging a rectangle; Option-drag copies;
   Cmd+X, Cmd+C, Cmd+V and Cmd+D cut, copy, paste and duplicate, also between
   patches; Cmd+Z undoes.
+- **Settings** (Moritz > Settings, Cmd+,; Edit > Settings on Linux and
+  Windows): the font and size of the boxes' text and of code (the code
+  editor, the Console, the code view), and curved or straight cables.
 - **Help and reference**: right-click any box and choose Help (or
   Option-click it in locked mode) for a working example, or Reference for
   every argument, message, inlet and outlet. Help windows have a Reference
@@ -227,13 +231,21 @@ A patch is a text file that is easy to read and to write by hand:
 
 ## Building from source
 
-Moritz builds with `make`; the first run downloads FLTK 1.4.4, miniaudio and
-RtMidi into `deps/`.
+One CMake build (`CMakeLists.txt`) makes Moritz and Musil on every system; the
+first configure downloads FLTK 1.4.4, miniaudio and RtMidi into `deps/`, and
+FLTK is built with the program.
 
-- **macOS** (Xcode command line tools, cmake, curl): `make` builds
-  `Moritz.app`, a universal bundle; `make run` opens it.
-- **Linux** (a C++17 compiler, cmake, curl, the ALSA and X11 development
-  packages): `make` builds `build/linux/Moritz/moritz`. On Debian or Ubuntu:
+```sh
+cmake -B build && cmake --build build -j8     # or just: make
+ctest --test-dir build                        # every test (make test)
+cmake --build build --target dist             # the download of this system (make dist)
+cmake --install build                         # Moritz and Musil into the system (make install)
+```
+
+- **macOS** (Xcode command line tools, cmake): `build/Moritz.app`, a universal
+  bundle, and `build/musil/musil`; `make run` opens Moritz.
+- **Linux** (a C++17 compiler, cmake, the ALSA and X11 development
+  packages): `build/Moritz/moritz`, with Musil in `build/Moritz/musil/`. On Debian or Ubuntu:
 
   ```sh
   sudo apt install build-essential cmake curl libasound2-dev libx11-dev libxext-dev \
@@ -241,14 +253,15 @@ RtMidi into `deps/`.
   ```
 
 - **Windows**: in the MSYS2 MINGW64 shell, after
-  `pacman -S make curl zip mingw-w64-x86_64-gcc mingw-w64-x86_64-cmake`,
-  `make` builds `build/windows/Moritz/moritz.exe` (static, no DLLs). It can
-  also be cross-compiled from a Mac or Linux with MinGW-w64: `make windows`.
+  `pacman -S make mingw-w64-x86_64-gcc mingw-w64-x86_64-cmake`,
+  `make` (or `cmake -G "MSYS Makefiles" -B build`) builds `build/Moritz/moritz.exe`
+  (static, no DLLs). It can also be cross-compiled from a Mac or Linux with
+  MinGW-w64: `make windows` (`cmake -B build/windows -DCMAKE_TOOLCHAIN_FILE=cmake/mingw-w64.cmake`).
 
-`make musil` builds Musil on its own (`build/musil/musil`), and
-`make test-musil` runs Musil's tests on it and on Musil in Moritz.
-`make dist`, `make linux-dist` and `make windows-zip` package each system,
-with Musil on its own in the `musil` folder.
+`cmake --install` puts Moritz in `/Applications` (macOS), `<prefix>/lib/moritz`
+with `<prefix>/bin/moritz` (Linux) or `<prefix>/Moritz` (Windows), and Musil in
+`<prefix>/bin/musil` with its libraries in `~/.musil`. Musil also builds on its
+own, from `musil/` (`cmake -S musil -B build-musil`).
 `make notarize SIGN_ID="Developer ID Application: Name (TEAMID)"` signs and
 notarizes the Mac app for distribution.
 
@@ -256,8 +269,7 @@ Every push to GitHub builds Moritz and Musil on all three systems, runs every
 example, help patch, tutorial, library abstraction and cross-test (an object
 against Musil's function) through `tools/test-patches.sh`, and runs Musil's
 tests through `tools/test-musil.sh`; a tag `v<version>` publishes a release.
-The same tests run locally: `tools/test-patches.sh ./moritz`,
-`make test-musil`.
+The same tests run locally: `make test`.
 
 ## Command line
 

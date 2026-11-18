@@ -75,6 +75,14 @@ inline void line_style(int style, int w = 0, char* dashes = nullptr) {
     fl_line_style(style, ww, dashes);
 }
 inline void line(double x, double y, double x1, double y1) { fl_line(X(x), Y(y), X(x1), Y(y1)); }
+// a line through points (pairs of x, y), in the current line style
+template <class Points>
+inline void polyline(const Points& pts) {
+    const Transform& t = current();
+    fl_begin_line();
+    for (auto& p : pts) fl_vertex(t.ox + (p.first - t.ox) * t.z, t.oy + (p.second - t.oy) * t.z);
+    fl_end_line();
+}
 inline void line(double x, double y, double x1, double y1, double x2, double y2) {
     fl_line(X(x), Y(y), X(x1), Y(y1), X(x2), Y(y2));
 }

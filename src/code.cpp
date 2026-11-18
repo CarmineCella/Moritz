@@ -6,6 +6,7 @@
 
 #include "gui.h"
 #include "theme.h"
+#include "settings.h"
 
 #include <FL/Fl.H>
 #include <FL/Fl_Box.H>
@@ -52,31 +53,21 @@ const std::set<std::string>& documented() {
 
 // Styles: A plain, B comment, C string, D keyword, E bracket, F number, G quoted symbol, H a documented
 // name, I the line of an error, J the lines just run.
-Fl_Font codeFont() {
-    static Fl_Font f = [] {
-#if defined(__APPLE__)
-        Fl::set_font(FL_FREE_FONT + 7, "Menlo");
-#elif defined(_WIN32)
-        Fl::set_font(FL_FREE_FONT + 7, "Consolas");
-#else
-        Fl::set_font(FL_FREE_FONT + 7, "DejaVu Sans Mono");
-#endif
-        return (Fl_Font)(FL_FREE_FONT + 7);
-    }();
-    return f;
-}
+Fl_Font codeFont() { return kCodeFontSlot; }    // named by the settings (settings.cpp)
 
 Fl_Text_Display::Style_Table_Entry* styleTable() {
     static Fl_Text_Display::Style_Table_Entry s[10];
     static bool made = false;
+    for (auto& e : s) e.size = settings().codeSize;      // the size may have changed since
     if (!made) {
         Fl_Font f = codeFont();
         const Fl_Color c[8] = {fl_rgb_color(214, 216, 222), fl_rgb_color(120, 160, 128), fl_rgb_color(231, 174, 115),
                                fl_rgb_color(199, 146, 234), fl_rgb_color(124, 127, 136), fl_rgb_color(247, 140, 108),
                                fl_rgb_color(127, 219, 202), fl_rgb_color(130, 170, 255)};
-        for (int k = 0; k < 8; ++k) s[k] = {c[k], f, 13, 0, 0};
-        s[8] = {fl_rgb_color(255, 214, 214), f, 13, Fl_Text_Display::ATTR_BGCOLOR_EXT, fl_rgb_color(110, 40, 46)};
-        s[9] = {fl_rgb_color(214, 216, 222), f, 13, Fl_Text_Display::ATTR_BGCOLOR_EXT, fl_rgb_color(45, 58, 85)};
+        const int z = settings().codeSize;
+        for (int k = 0; k < 8; ++k) s[k] = {c[k], f, z, 0, 0};
+        s[8] = {fl_rgb_color(255, 214, 214), f, z, Fl_Text_Display::ATTR_BGCOLOR_EXT, fl_rgb_color(110, 40, 46)};
+        s[9] = {fl_rgb_color(214, 216, 222), f, z, Fl_Text_Display::ATTR_BGCOLOR_EXT, fl_rgb_color(45, 58, 85)};
         made = true;
     }
     return s;
@@ -328,7 +319,7 @@ CodeWindow::CodeWindow() : Fl_Double_Window(1060, 680, "Untitled — code") {
     editor_->highlight_data(style_, styleTable(), 10, 'A', nullptr, nullptr);
     editor_->color(fl_rgb_color(30, 31, 35));
     editor_->textfont(codeFont());
-    editor_->textsize(13);
+    editor_->textsize(settings().codeSize);
     editor_->textcolor(kText);
     editor_->cursor_color(kText);
     editor_->selection_color(fl_rgb_color(60, 80, 120));
@@ -410,6 +401,12 @@ bool CodeWindow::load(const std::string& path) {
     refreshOutline();
     refreshTitle();
     return true;
+}
+
+void CodeWindow::applyFont() {
+    editor_->highlight_data(style_, styleTable(), 10, 'A', nullptr, nullptr);   // the sizes, measured again
+    editor_->textsize(settings().codeSize);
+    redraw();
 }
 
 void CodeWindow::bind(CodeSource* s) {

@@ -4,12 +4,15 @@
 
 #include <FL/Enumerations.H>
 
+#include "settings.h"
+
 namespace moritz {
 
-constexpr int kPortW = 8, kPortH = 3, kBoxH = 22, kFontSize = 12, kRadius = 6;
+constexpr int kPortW = 8, kPortH = 3, kRadius = 6;
+inline int kFontSize = 12, kBoxH = 22;   // the boxes' text size and height: from the settings (settings.cpp)
 constexpr int kPortInset = 4;            // keeps ports clear of the rounded corners
 constexpr int kSuggRowH = 20, kSuggMax = 8;
-constexpr Fl_Font kFont = FL_HELVETICA;
+constexpr Fl_Font kFont = kPatchFontSlot;   // the font the settings name
 
 // dark theme
 const Fl_Color kBgLocked  = fl_rgb_color(34, 35, 39);

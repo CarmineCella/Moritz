@@ -37,6 +37,7 @@ public:
     CodeSource* source() const { return source_; }
     void setText(const std::string& t);
     Fl_Text_Editor* editor() { return editor_; }
+    void applyFont();                             // the code font and size of the settings
 
     void runBlock();                              // the selection, or the paragraph at the cursor
     void runFile();

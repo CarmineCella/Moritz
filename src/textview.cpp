@@ -8,6 +8,7 @@
 // go into the patch's undo history like any other edit.
 
 #include "gui.h"
+#include "settings.h"
 
 #include <FL/Fl_Text_Editor.H>
 #include <FL/fl_draw.H>
@@ -20,13 +21,19 @@ namespace moritz {
 
 namespace {
 
-const Fl_Text_Display::Style_Table_Entry kStyles[] = {
-    {fl_rgb_color(214, 216, 222), FL_COURIER, 13, 0, 0},          // A plain
-    {fl_rgb_color(120, 160, 120), FL_COURIER_ITALIC, 13, 0, 0},   // B ; comment
-    {fl_rgb_color(226, 170, 110), FL_COURIER, 13, 0, 0},          // C "string"
-    {fl_rgb_color(120, 170, 240), FL_COURIER_BOLD, 13, 0, 0},     // D obj, connect, patch, pos
-    {fl_rgb_color(130, 132, 140), FL_COURIER, 13, 0, 0},          // E parentheses
+// in the code font of the settings, at its size (codeStyles() refreshes both)
+Fl_Text_Display::Style_Table_Entry kStyles[] = {
+    {fl_rgb_color(214, 216, 222), kCodeFontSlot, 13, 0, 0},       // A plain
+    {fl_rgb_color(120, 160, 120), kCodeFontSlot, 13, 0, 0},       // B ; comment
+    {fl_rgb_color(226, 170, 110), kCodeFontSlot, 13, 0, 0},       // C "string"
+    {fl_rgb_color(120, 170, 240), kCodeFontSlot, 13, 0, 0},       // D obj, connect, patch, pos
+    {fl_rgb_color(130, 132, 140), kCodeFontSlot, 13, 0, 0},       // E parentheses
 };
+constexpr int kNumStyles = (int)(sizeof kStyles / sizeof kStyles[0]);
+Fl_Text_Display::Style_Table_Entry* codeStyles() {
+    for (auto& e : kStyles) e.size = settings().codeSize;
+    return kStyles;
+}
 
 std::string highlight(const std::string& t) {
     std::string st(t.size(), 'A');
@@ -68,7 +75,7 @@ PatchTextWindow::PatchTextWindow(MainWindow* doc, Patch* p, const std::string& t
     style_ = new Fl_Text_Buffer();
     editor_ = new Fl_Text_Editor(0, 0, 560, 640 - 22);
     editor_->buffer(text_);
-    editor_->highlight_data(style_, kStyles, (int)(sizeof kStyles / sizeof kStyles[0]), 'A', nullptr, nullptr);
+    editor_->highlight_data(style_, codeStyles(), kNumStyles, 'A', nullptr, nullptr);
     editor_->box(FL_FLAT_BOX);
     editor_->color(fl_rgb_color(24, 25, 28));
     editor_->selection_color(fl_rgb_color(52, 72, 110));
@@ -77,8 +84,8 @@ PatchTextWindow::PatchTextWindow(MainWindow* doc, Patch* p, const std::string& t
     editor_->linenumber_bgcolor(fl_rgb_color(32, 33, 37));
     editor_->linenumber_fgcolor(fl_rgb_color(110, 112, 120));
     editor_->linenumber_size(11);
-    editor_->textfont(FL_COURIER);
-    editor_->textsize(13);
+    editor_->textfont(kCodeFontSlot);
+    editor_->textsize(settings().codeSize);
     if (readOnly_) editor_->deactivate();
     status_ = new Fl_Box(0, 640 - 22, 560, 22);
     status_->box(FL_FLAT_BOX);
@@ -96,6 +103,12 @@ PatchTextWindow::PatchTextWindow(MainWindow* doc, Patch* p, const std::string& t
     refresh(true);
     text_->add_modify_callback(modified, this);
     Fl::add_timeout(0.25, poll, this);
+}
+
+void PatchTextWindow::applyFont() {
+    editor_->highlight_data(style_, codeStyles(), kNumStyles, 'A', nullptr, nullptr);
+    editor_->textsize(settings().codeSize);
+    redraw();
 }
 
 PatchTextWindow::~PatchTextWindow() {
