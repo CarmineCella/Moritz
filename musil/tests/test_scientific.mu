@@ -157,6 +157,11 @@ check (== (accuracy preds training) 1) "accuracy: perfect"
 check (== (accuracy (list "a" "a" "a" "a") training) 0.5) "accuracy: half"
 check (contains? (error-of (function () (knn training 1 (list (vec 1 2 3))))) "features") "knn: query dimension"
 check (contains? (error-of (function () (knn (list) 1 (list (vec 1))))) "empty") "knn: empty training set"
+; ties are broken the same way everywhere: equal distances by the order of the training set, equal votes by the label
+; whose nearest member is nearest
+check (equal? (knn (list (list (vec 0) "a") (list (vec 2) "b")) 2 (list (vec 1))) (list "a")) "knn: a tie goes to the first neighbour"
+check (equal? (knn (list (list (vec 2) "b") (list (vec 0) "a")) 2 (list (vec 1))) (list "b")) "knn: a tie, in the order of the training set"
+check (equal? (knn (list (list (vec 0) "a") (list (vec 4) "b") (list (vec 1.4) "c") (list (vec 5) "b")) 3 (list (vec 2))) (list "c")) "knn: equal votes, the nearest label"
 seed 1
 var s (shuffle (list 1 2 3 4 5 6 7 8))
 check (equal? (sort-list s) (list 1 2 3 4 5 6 7 8)) "shuffle keeps the elements"

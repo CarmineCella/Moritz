@@ -83,24 +83,20 @@ public:
             dists.emplace_back(acc, static_cast<int>(i));
         }
 
-        std::nth_element(dists.begin(),
-                         dists.begin() + k_eff,
-                         dists.end(),
-        [](const auto& a, const auto& b) {
-            return a.first < b.first;
-        });
+        // the k nearest, ordered by distance and then by insertion order: the same neighbours on every system
+        auto closer = [](const std::pair<T, int>& a, const std::pair<T, int>& b) {
+            return a.first < b.first || (a.first == b.first && a.second < b.second);
+        };
+        std::partial_sort(dists.begin(), dists.begin() + k_eff, dists.end(), closer);
 
-        // Vote among k nearest neighbors
-        std::unordered_map<std::string, int> votes;
-        votes.reserve(k_eff * 2);
-
+        // Vote among the k nearest; a tie goes to the label whose nearest member is nearest
+        std::vector<std::pair<std::string, int>> votes;           // label, count, in order of first appearance
         for (int i = 0; i < k_eff; ++i) {
-            const auto& pair  = dists[i];
-            const auto* obs   = m_observations[pair.second];
-            votes[obs->classlabel] += 1;
+            const std::string& label = m_observations[dists[i].second]->classlabel;
+            auto it = std::find_if(votes.begin(), votes.end(), [&](const auto& v) { return v.first == label; });
+            if (it == votes.end()) votes.push_back({label, 1});
+            else ++it->second;
         }
-
-        // Select label with maximum vote (ties broken arbitrarily)
         std::string best_label;
         int best_count = -1;
         for (const auto& kv : votes) {
