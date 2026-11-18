@@ -15,6 +15,15 @@ endif()
 
 option(MUSIL_READLINE "Use GNU readline in the REPL when available" ON)
 option(MUSIL_TESTS    "Build the test targets" ON)
+# -DMUSIL_SANITIZE=address (ASan + UBSan) or thread (TSan), when Musil is built on its own
+set(MUSIL_SANITIZE "" CACHE STRING "sanitizer build: address or thread (empty: none)")
+if(MUSIL_SANITIZE STREQUAL "address")
+  add_compile_options(-fsanitize=address,undefined -fno-omit-frame-pointer -g)
+  add_link_options(-fsanitize=address,undefined)
+elseif(MUSIL_SANITIZE STREQUAL "thread")
+  add_compile_options(-fsanitize=thread -fno-omit-frame-pointer -g)
+  add_link_options(-fsanitize=thread)
+endif()
 
 
 # --- Uninstall ------------------------------------------------------------------

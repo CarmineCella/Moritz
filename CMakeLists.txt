@@ -40,6 +40,18 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+# -DMORITZ_SANITIZE=address (ASan + UBSan) or thread (TSan): every target, FLTK included
+set(MORITZ_SANITIZE "" CACHE STRING "sanitizer build: address or thread (empty: none)")
+if(MORITZ_SANITIZE STREQUAL "address")
+  add_compile_options(-fsanitize=address,undefined -fno-omit-frame-pointer -g)
+  add_link_options(-fsanitize=address,undefined)
+elseif(MORITZ_SANITIZE STREQUAL "thread")
+  add_compile_options(-fsanitize=thread -fno-omit-frame-pointer -g)
+  add_link_options(-fsanitize=thread)
+elseif(NOT MORITZ_SANITIZE STREQUAL "")
+  message(FATAL_ERROR "MORITZ_SANITIZE is address or thread")
+endif()
+
 if(APPLE)
   set(MORITZ_PLATFORM macos)
 elseif(WIN32)
