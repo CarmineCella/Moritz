@@ -230,7 +230,7 @@ public:
     int bins() const { return bins_; }
 
     void dsp(int n) override {
-        std::vector<const float*> in((size_t)nIn_);
+        std::vector<const float*>& in = in_;             // sized with the ports: nothing allocated here
         for (int k = 0; k < nIn_; ++k) in[(size_t)k] = sigIn(k, n);
         for (int i = 0; i < n; ++i) {
             for (int k = 0; k < nIn_; ++k) ring_[(size_t)k][(size_t)w_] = in[(size_t)k][i];
@@ -291,6 +291,7 @@ private:
     dsp::FFT fft_;
     std::vector<float> win_, re_, im_;
     std::vector<std::vector<float>> ring_, acc_, sre_, sim_, ore_, oim_;
+    std::vector<const float*> in_;
 };
 
 // fftin~ n: outlets real, imaginary, bin index of pfft~ signal inlet n (1-based)
@@ -373,6 +374,7 @@ void PfftBox::syncPorts() {
         nIn_ = nin;
         nOut_ = nout;
         ring_.assign((size_t)nIn_, std::vector<float>((size_t)N_, 0.f));
+        in_.assign((size_t)nIn_, nullptr);
         sre_.assign((size_t)nIn_, std::vector<float>((size_t)bins_, 0.f));
         sim_ = sre_;
         acc_.assign((size_t)nOut_, std::vector<float>((size_t)N_, 0.f));
@@ -619,14 +621,17 @@ public:
 // Per-bin memory: inside pfft~ it holds one value per bin, so each bin is
 // compared with the same bin of the previous frame; elsewhere one value.
 class FrameMemory : public Box {
-protected:
-    float& slot(int i) {
+public:
+    // sized at compile (one value per bin), never in dsp()
+    void resolve() override {
         const Patch::Spectral* sp = patch->spectralContext();
-        int size = sp ? sp->bins : 1;
-        if ((int)mem_.size() != size) mem_.assign((size_t)size, 0.f);
-        return mem_[(size_t)(sp ? i % size : 0)];
+        size_t size = sp ? (size_t)sp->bins : 1;
+        if (mem_.size() != size) mem_.assign(size, 0.f);
     }
-    std::vector<float> mem_;
+
+protected:
+    float& slot(int i) { return mem_[mem_.size() > 1 ? (size_t)i % mem_.size() : 0]; }
+    std::vector<float> mem_ = std::vector<float>(1, 0.f);
 };
 
 // framedelta~: difference from the previous frame (phase -> frequency)
@@ -687,10 +692,16 @@ public:
     void message(int in, const Message& m) override {
         if (m[0].isFloat()) setScalar(in, m[0].f);
     }
+    // the memory of a whole frame (or block), made at compile, never in dsp()
+    void resolve() override {
+        size_t vs = (size_t)patch->vectorSize();
+        if (prev_.size() != vs) prev_.assign(vs, 0.f);
+        peaks_.reserve(vs);
+    }
     void dsp(int n) override {
         const float *a = sigIn(0, n), *ph = sigIn(1, n), *d = sigIn(2, n), *rs = sigIn(3, n);
         float* y = sigOut(0);
-        if ((int)prev_.size() != n) prev_.assign((size_t)n, 0.f);
+        n = std::min(n, (int)prev_.size());
         bool reset = false;
         for (int k = 0; k < n && !reset; ++k) reset = rs[k] != 0.f;
         if (reset) {

@@ -38,17 +38,21 @@ public:
         if (in == 1 && m[0].isFloat()) order_.store(std::max(1, (int)m[0].f));
         else if (m[0].is("iterations")) iters_.store(std::clamp((int)argf(m, 1, 12.f), 0, 100));
     }
+    // sized at compile for the frame (pfft~'s bins), never in dsp()
+    void resolve() override {
+        const int M = pow2At(2 * patch->vectorSize());
+        if ((int)target_.size() == M) return;
+        fft_.init(M);
+        target_.assign((size_t)M, 0.f);
+        cur_.assign((size_t)M, 0.f);
+        re_.assign((size_t)M, 0.f);
+        im_.assign((size_t)M, 0.f);
+    }
     void dsp(int n) override {
         const float* amp = sigIn(0, n);
         float *env = sigOut(0), *fine = sigOut(1);
-        const int M = pow2At(2 * n);
-        if ((int)target_.size() != M) {
-            fft_.init(M);
-            target_.assign((size_t)M, 0.f);
-            cur_.assign((size_t)M, 0.f);
-            re_.assign((size_t)M, 0.f);
-            im_.assign((size_t)M, 0.f);
-        }
+        const int M = (int)target_.size();          // 2 frames, or more for a block shorter than the vector
+        n = std::min(n, M / 2);
         float peak = 0.f;
         for (int i = 0; i < n; ++i) peak = std::max(peak, amp[i]);
         const float floorv = std::max(peak * 1e-4f, 1e-12f);

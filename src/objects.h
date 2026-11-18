@@ -289,6 +289,10 @@ private:
 
 BufferBox* findBuffer(Patch* p, const std::string& name);   // searches the whole patch tree
 
+// Musil's spherical harmonics (sh_gains) into g, without allocating: for the audio thread
+// (objects_spatial.cpp; the engine tests check it against Musil's)
+void shGainsLive(int order, double az, double el, float* g);
+
 // "cycle~ · inlet 1 (signal)\nfrequency in Hz ...": help for a port (ports.cpp)
 std::string portHelp(const Box* b, bool outlet, int index);
 

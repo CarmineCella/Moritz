@@ -33,6 +33,45 @@ void shGains(int order, double az, double el, float* g) {
     for (size_t k = 0; k < v.size(); ++k) g[k] = (float)v[k];
 }
 
+}  // namespace
+
+// The same gains as Musil's sh_gains, into g ((order+1)^2 values) without allocating: for the
+// audio thread (ambienc~ follows moving sources every block). Musil's returns a std::vector;
+// the engine tests compare the two (shGainsLive against musil::dsp::sh_gains).
+void shGainsLive(int order, double az, double el, float* g) {
+    const double pi = 3.14159265358979323846;
+    double a = az * pi / 180.0, e = el * pi / 180.0;
+    double x = std::cos(e) * std::cos(a), y = std::cos(e) * std::sin(a), z = std::sin(e);
+    double r = std::sqrt(x * x + y * y);
+    double fact[2 * kMaxOrder + 2];
+    fact[0] = 1;
+    for (int k = 1; k < 2 * kMaxOrder + 2; ++k) fact[k] = fact[k - 1] * k;
+    for (int n = 0; n <= order; n++)
+        for (int m = -n; m <= n; m++) {
+            int am = std::abs(m);
+            double pmm = 1;
+            for (int k = 1; k <= am; k++) pmm *= (2 * k - 1) * r;
+            double p = pmm;
+            if (n != am) {
+                double p1 = z * (2 * am + 1) * pmm;
+                if (n == am + 1) p = p1;
+                else {
+                    double pk2 = pmm, pk1 = p1;
+                    for (int k = am + 2; k <= n; k++) {
+                        p = ((2 * k - 1) * z * pk1 - (k + am - 1) * pk2) / (k - am);
+                        pk2 = pk1;
+                        pk1 = p;
+                    }
+                }
+            }
+            double norm = std::sqrt((m == 0 ? 1.0 : 2.0) * fact[n - am] / fact[n + am]);
+            double azf = m > 0 ? std::cos(m * a) : m < 0 ? std::sin(am * a) : 1.0;
+            g[n * n + n + m] = (float)(norm * p * azf);
+        }
+}
+
+namespace {
+
 int orderArg(const Message& a, size_t i, float def) { return std::clamp((int)argf(a, i, def), 0, kMaxOrder); }
 
 // ---- the KEMAR set at a sample rate, shared by every hrtf~ and binaural~
@@ -163,7 +202,7 @@ public:
     void dsp(int n) override {
         const float *x = sigIn(0, n), *az = sigIn(1, n), *el = sigIn(2, n);
         float g1[36];
-        shGains(order_, az[n - 1], el[n - 1], g1);
+        shGainsLive(order_, az[n - 1], el[n - 1], g1);       // nothing allocated on the audio thread
         if (!started_) { std::copy(g1, g1 + nch_, g0_); started_ = true; }
         for (int k = 0; k < nch_; ++k) {
             float* y = sigOut(k);

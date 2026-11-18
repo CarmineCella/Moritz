@@ -203,8 +203,8 @@ public:
         if (c == 2) rec_ = false;
         SampleBuffer* b = b_ ? &b_->buf : nullptr;
         float* sync = sigOut(0);
-        std::vector<const float*> in((size_t)numIns());
-        for (int k = 0; k < numIns(); ++k) in[(size_t)k] = sigIn(k, n);
+        const float* in[8];                       // at most 8 channels: nothing allocated here
+        for (int k = 0; k < numIns() && k < 8; ++k) in[k] = sigIn(k, n);
         for (int i = 0; i < n; ++i) {
             if (rec_ && b && b->frames > 0) {
                 if (pos_ >= b->frames) {
@@ -213,7 +213,7 @@ public:
                 }
                 if (rec_) {
                     for (int k = 0; k < b->channels; ++k)
-                        b->data[(size_t)pos_ * b->channels + k] = in[(size_t)(k % numIns())][i];
+                        b->data[(size_t)pos_ * b->channels + k] = in[k % numIns()][i];
                     ++pos_;
                 }
             }
