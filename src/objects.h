@@ -261,6 +261,34 @@ void eventPieces(Box& b, int n, Piece piece, Ev event) {
     if (from < n) piece(from, n);
 }
 
+// HopFrames: the frames of a live analysis (descriptors~, melbands~ ...)
+// aligned to the sample count. The audio thread marks the end of every hop
+// (a position in the box's ring); the GUI analyses the frames ending exactly
+// there when its timer comes, not wherever the ring happens to be then.
+class HopFrames {
+public:
+    explicit HopFrames(int hop) : hop_(std::max(1, hop)) {}
+    void setHop(int h) { hop_.store(std::max(1, h), std::memory_order_relaxed); }   // GUI
+    int hop() const { return hop_.load(std::memory_order_relaxed); }
+    // audio thread: n samples were written, the ring's write position is now end
+    void advance(size_t end, int n) {
+        const long h = hop_.load(std::memory_order_relaxed);
+        count_ += n;
+        while (count_ >= h) {
+            count_ -= h;
+            if (!ends_.push(end - (size_t)count_)) break;   // the GUI is far behind: frames skipped
+        }
+    }
+    bool next(size_t& end) { return ends_.pop(end); }    // GUI: the next frame's end
+    // GUI: how often to look (the hop, at most every 20 ms)
+    double interval(double sr) const { return std::min(0.02, hop() / (sr > 0 ? sr : 44100.0)); }
+
+private:
+    std::atomic<int> hop_;
+    long count_ = 0;                                     // audio side
+    dsp::Spsc<size_t, 512> ends_;
+};
+
 // ---------------------------------------------------------------- samples (shared with index~/poke~)
 struct SampleBuffer {
     std::vector<float> data;   // interleaved

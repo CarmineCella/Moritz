@@ -367,14 +367,14 @@ public:
 // acfF0Estimate, with the autocorrelation computed by FFT.
 class DescriptorsBox : public Box {
 public:
-    explicit DescriptorsBox(const Message& a) : ring_(new std::atomic<float>[kRing]) {
+    explicit DescriptorsBox(const Message& a) : ring_(new std::atomic<float>[kRing]), hops_(1024) {
         std::vector<float> nums;
         for (auto& x : a) {
             if (x.isFloat()) nums.push_back(x.f);
             else if (index(x.s) >= 0) which_.push_back(index(x.s));
         }
         n_ = std::clamp(nextPow2((long)(nums.size() > 0 ? nums[0] : 2048)), 256, kRing / 2);
-        hop_ = std::clamp((int)(nums.size() > 1 ? nums[1] : 1024), 32, 65536);
+        hops_.setHop(std::clamp((int)(nums.size() > 1 ? nums[1] : 1024), 32, 65536));
         if (which_.empty())
             for (int k = 0; k < kCount; ++k) which_.push_back(k);
         setPorts({P::Signal}, std::vector<Port>(which_.size(), P::Control));
@@ -384,14 +384,15 @@ public:
     }
     void attached() override { tick(); }
     void message(int, const Message& m) override {
-        if (m[0].is("bang")) analyse();
-        else if (m[0].is("hop") && m.size() > 1) hop_ = std::clamp((int)argf(m, 1, 1024.f), 32, 65536);
+        if (m[0].is("bang")) analyse(wpos_.load(std::memory_order_acquire));
+        else if (m[0].is("hop") && m.size() > 1) hops_.setHop(std::clamp((int)argf(m, 1, 1024.f), 32, 65536));
     }
     void dsp(int n) override {
         const float* x = sigIn(0, n);
         size_t w = wpos_.load(std::memory_order_relaxed);
         for (int i = 0; i < n; ++i) ring_[(w + i) & (kRing - 1)].store(x[i], std::memory_order_relaxed);
         wpos_.store(w + n, std::memory_order_release);
+        hops_.advance(w + n, n);                         // hops counted in samples, not GUI time
     }
     static const char* name(int k) {
         static const char* const names[kCount] = {"rms", "centroid", "spread", "skewness", "kurtosis", "flux",
@@ -400,20 +401,23 @@ public:
     }
 
 private:
-    static constexpr int kRing = 16384, kCount = 11;
+    static constexpr int kRing = 65536, kCount = 11;
     static int index(const std::string& s) {
         for (int k = 0; k < kCount; ++k)
             if (s == name(k)) return k;
         return -1;
     }
+    // the frames that ended since the last look, each analysed where it ended (every hop samples)
     void tick() {
-        if (patch->root()->dspRunning) analyse();
-        double sr = patch->root()->sampleRate.load();
-        patch->schedule(this, hop_ / (sr > 0 ? sr : 44100.0), [this] { tick(); });
+        size_t end;
+        while (hops_.next(end)) {
+            size_t w = wpos_.load(std::memory_order_acquire);
+            if (patch->root()->dspRunning && w - end + (size_t)n_ <= (size_t)kRing) analyse(end);
+        }
+        patch->schedule(this, hops_.interval(patch->root()->sampleRate.load()), [this] { tick(); });
     }
-    void analyse() {
+    void analyse(size_t end) {
         double sr = patch->root()->sampleRate.load();
-        size_t end = wpos_.load(std::memory_order_acquire);
         int N = n_, H = N / 2;
         std::vector<float> x((size_t)N);
         for (int i = 0; i < N; ++i) x[(size_t)i] = ring_[(end - N + (size_t)i) & (kRing - 1)].load(std::memory_order_relaxed);
@@ -484,7 +488,8 @@ private:
 
     std::unique_ptr<std::atomic<float>[]> ring_;
     std::atomic<size_t> wpos_{0};
-    int n_, hop_;
+    HopFrames hops_;
+    int n_;
     std::vector<int> which_;
     std::vector<float> prevAmp_;
     musil::dsp::FFT<float> fft_;

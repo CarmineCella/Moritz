@@ -601,9 +601,8 @@ private:
 // analyses now). As descriptors~.
 class LiveBox : public Box {
 public:
-    LiveBox(int size, int hop, int outlets) : ring_(new std::atomic<float>[kRing]) {
+    LiveBox(int size, int hop, int outlets) : ring_(new std::atomic<float>[kRing]), hops_(std::clamp(hop, 16, 65536)) {
         n_ = std::clamp(size, 64, kRing / 2);
-        hop_ = std::clamp(hop, 16, 65536);
         setPorts({P::Signal}, std::vector<Port>((size_t)outlets, P::Control));
         for (int i = 0; i < kRing; ++i) ring_[i].store(0.f);
         spec_.init(n_);
@@ -614,10 +613,11 @@ public:
         size_t w = wpos_.load(std::memory_order_relaxed);
         for (int i = 0; i < n; ++i) ring_[(w + i) & (kRing - 1)].store(x[i], std::memory_order_relaxed);
         wpos_.store(w + n, std::memory_order_release);
+        hops_.advance(w + n, n);                         // hops counted in samples, not GUI time
     }
     void message(int, const Message& m) override {
-        if (m[0].is("bang")) analyse();
-        else if (m[0].is("hop") && m.size() > 1) hop_ = std::clamp((int)argf(m, 1, 512.f), 16, 65536);
+        if (m[0].is("bang")) analyse(wpos_.load(std::memory_order_acquire));
+        else if (m[0].is("hop") && m.size() > 1) hops_.setHop(std::clamp((int)argf(m, 1, 512.f), 16, 65536));
         else option(m);
     }
 
@@ -626,15 +626,20 @@ protected:
     virtual void option(const Message&) {}
     virtual void frame(const std::vector<float>& x, const Vec& mag, double sr) = 0;
     double sampleRate() const { double sr = patch->root()->sampleRate.load(); return sr > 0 ? sr : 44100.0; }
-    int n_, hop_;
+    int n_;
+    int hopSize() const { return hops_.hop(); }
 
 private:
+    // the frames that ended since the last look, each analysed where it ended
     void tick() {
-        if (patch->root()->dspRunning) analyse();
-        patch->schedule(this, hop_ / sampleRate(), [this] { tick(); });
+        size_t end;
+        while (hops_.next(end)) {
+            size_t w = wpos_.load(std::memory_order_acquire);
+            if (patch->root()->dspRunning && w - end + (size_t)n_ <= (size_t)kRing) analyse(end);
+        }
+        patch->schedule(this, hops_.interval(sampleRate()), [this] { tick(); });
     }
-    void analyse() {
-        size_t end = wpos_.load(std::memory_order_acquire);
+    void analyse(size_t end) {
         std::vector<float> x((size_t)n_);
         for (int i = 0; i < n_; ++i) x[(size_t)i] = ring_[(end - (size_t)n_ + (size_t)i) & (kRing - 1)].load(std::memory_order_relaxed);
         spec_.magnitudes(x.data(), mag_);
@@ -642,6 +647,7 @@ private:
     }
     std::unique_ptr<std::atomic<float>[]> ring_;
     std::atomic<size_t> wpos_{0};
+    HopFrames hops_;
     mir::FrameSpectrum spec_;
     Vec mag_;
 };
@@ -727,7 +733,7 @@ private:
             Vec sorted(hist_.begin(), hist_.end());
             std::nth_element(sorted.begin(), sorted.begin() + (long)(sorted.size() / 2), sorted.end());
             double level = thr_ * (sorted[sorted.size() / 2] + .01 * peak_);
-            double t = frames_ * (double)hop_ / sr;
+            double t = frames_ * (double)hopSize() / sr;
             if (b > a && b >= c && b > level && prevDb_ > gate_ && (t - last_) * 1000.0 >= gap_) {
                 last_ = t;
                 outletBang(0);
