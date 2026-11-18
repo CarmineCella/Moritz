@@ -39,6 +39,12 @@ endif()
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+# -DMORITZ_SANITIZE=address (or thread, undefined): the whole build with that sanitizer, for the tests
+set(MORITZ_SANITIZE "" CACHE STRING "build with a sanitizer: address, thread or undefined")
+if(MORITZ_SANITIZE)
+  add_compile_options(-fsanitize=${MORITZ_SANITIZE} -fno-omit-frame-pointer -g)
+  add_link_options(-fsanitize=${MORITZ_SANITIZE})
+endif()
 
 # -DMORITZ_SANITIZE=address (ASan + UBSan) or thread (TSan): every target, FLTK included
 set(MORITZ_SANITIZE "" CACHE STRING "sanitizer build: address or thread (empty: none)")
@@ -212,6 +218,9 @@ if(MORITZ_SH)
   # it runs Musil's tests in Moritz, which write the same temporary files as Musil's own: alone
   set_tests_properties(moritz-musil PROPERTIES RUN_SERIAL TRUE)
   add_test(NAME musil-stands-alone COMMAND ${MORITZ_SH} tools/check-musil.sh WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+  # the interface driven as a user would (windows, undo, the code view, saving): in a scratch HOME
+  add_test(NAME moritz-gui COMMAND ${MORITZ_SH} tools/test-gui.sh ${MORITZ_RUN}
+           WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 endif()
 
 # ---------------------------------------------------------------- install

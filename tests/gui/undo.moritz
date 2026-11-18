@@ -1,0 +1,8 @@
+; undo.moritz - a buffer~ filled at load and a code box: undo keeps both (tools/test-gui.sh)
+(patch
+  (obj lb loadbang (pos 20 20))
+  (obj m message "read Vox.wav" (pos 20 60))
+  (obj b buffer~ snd (pos 20 100))
+  (obj c1 code (pos 200 20) (script "(out 1 42)"))
+  (connect lb 0 m 0)
+  (connect m 0 b 0))

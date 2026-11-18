@@ -1,0 +1,3 @@
+; missing.moritz - a code box naming a script that is not there (tools/test-gui.sh)
+(patch
+  (obj c1 code missing-script.mu (pos 20 20)))

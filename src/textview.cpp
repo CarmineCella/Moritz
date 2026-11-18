@@ -162,6 +162,8 @@ void PatchTextWindow::modified(int, int nIns, int nDel, int, const char*, void* 
     Fl::add_timeout(0.7, applyLater, w);    // apply once typing pauses
 }
 
+void PatchTextWindow::replaceText(const std::string& t) { text_->text(t.c_str()); }
+
 void PatchTextWindow::applyLater(void* d) { static_cast<PatchTextWindow*>(d)->applyNow(); }
 
 void PatchTextWindow::poll(void* d) {

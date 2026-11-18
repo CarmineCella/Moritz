@@ -30,6 +30,7 @@ public:
     bool save();
     bool saveAs();
     bool confirmDiscard();                        // asks to save when edited; false: cancel
+    bool dirty() const { return dirty_; }
     const std::string& path() const { return path_; }
     // the script of a code box: Save puts it back into the box (or into the file the box names), and it
     // runs in the box's interpreter

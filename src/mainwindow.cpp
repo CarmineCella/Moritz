@@ -25,6 +25,8 @@
 #include <chrono>
 #include <functional>
 #include <cstring>
+#include <cstdarg>
+#include <cstdio>
 #include <cstdlib>
 #include <ctime>
 #include <cmath>
@@ -541,7 +543,7 @@ MainWindow* App::importMax(const std::string& path) {
     std::string text, err;
     MaxImportReport rep;
     if (!importMaxPatch(path, true, text, rep, err)) {
-        fl_alert("Can't import %s:\n%s", baseName(path).c_str(), err.c_str());
+        alertUser("Can't import %s:\n%s", baseName(path).c_str(), err.c_str());
         return nullptr;
     }
     std::string name = baseName(path);
@@ -1454,7 +1456,7 @@ bool MainWindow::confirmDiscard() {
     canvas->commitEdit();
     if (!dirty_) return true;
     std::string name = path_.empty() ? "Untitled" : baseName(path_);
-    int r = fl_choice("Save changes to \"%s\"?", "Cancel", "Save", "Don't Save", name.c_str());
+    int r = askUser("Save changes to \"%s\"?", "Cancel", "Save", "Don't Save", name.c_str());
     if (r == 0) return false;
     if (r == 1) return save();
     return true;
@@ -1463,7 +1465,7 @@ bool MainWindow::confirmDiscard() {
 bool MainWindow::openFile(const std::string& path) {
     std::string src, err;
     if (!readFile(path, src)) {
-        fl_alert("Can't read %s", path.c_str());
+        alertUser("Can't read %s", path.c_str());
         return false;
     }
     canvas->reset();
@@ -1472,7 +1474,7 @@ bool MainWindow::openFile(const std::string& path) {
     patch.dir = dirOf(path);
     if (!patch.load(src, err)) {
         patch.dir = oldDir;
-        fl_alert("Can't open %s:\n%s", baseName(path).c_str(), err.c_str());
+        alertUser("Can't open %s:\n%s", baseName(path).c_str(), err.c_str());
         return false;
     }
     path_ = path;
@@ -1497,7 +1499,7 @@ bool MainWindow::loadConverted(const std::string& src, const std::string& dir, c
     closeAllSubwindows();
     patch.dir = dir;                   // abstractions converted next to the original
     if (!patch.load(src, err)) {
-        fl_alert("Can't load the converted patch:\n%s", err.c_str());
+        alertUser("Can't load the converted patch:\n%s", err.c_str());
         return false;
     }
     path_.clear();
@@ -1523,7 +1525,7 @@ bool MainWindow::save() {
             if (p->isAbstraction && !p->file.empty()) {
                 std::ofstream f(p->file, std::ios::binary);
                 if (!(f << p->serialize())) {
-                    fl_alert("Can't write %s", p->file.c_str());
+                    alertUser("Can't write %s", p->file.c_str());
                     return false;
                 }
                 log("saved abstraction " + p->file);
@@ -1535,7 +1537,7 @@ bool MainWindow::save() {
     if (path_.empty()) return saveAs();
     std::ofstream f(path_, std::ios::binary);
     if (!(f << patch.serialize())) {
-        fl_alert("Can't write %s", path_.c_str());
+        alertUser("Can't write %s", path_.c_str());
         return false;
     }
     dirty_ = false;
@@ -1755,6 +1757,46 @@ int PatchWindow::handle(int e) {
 }
 
 // ---- dialogs
+
+namespace {
+bool gBatch = false;
+int gBatchAnswer = 0;
+}  // namespace
+
+void setBatchMode(bool on) { gBatch = on; }
+bool batchMode() { return gBatch; }
+void setBatchAnswer(int a) { gBatchAnswer = a; }
+
+int askUser(const char* fmt, const char* b0, const char* b1, const char* b2, ...) {
+    char text[4096];
+    va_list ap;
+    va_start(ap, b2);
+    std::vsnprintf(text, sizeof text, fmt, ap);
+    va_end(ap);
+    if (gBatch) {
+        const char* b[3] = {b0, b1, b2};
+        int a = std::clamp(gBatchAnswer, 0, 2);
+        std::printf("ask: %s -> %s\n", text, b[a] ? b[a] : "?");
+        std::fflush(stdout);
+        return a;
+    }
+    return fl_choice("%s", b0, b1, b2, text);
+}
+
+void alertUser(const char* fmt, ...) {
+    char text[4096];
+    va_list ap;
+    va_start(ap, fmt);
+    std::vsnprintf(text, sizeof text, fmt, ap);
+    va_end(ap);
+    if (gBatch) {
+        std::printf("alert: %s\n", text);
+        std::fflush(stdout);
+        return;
+    }
+    fl_alert("%s", text);
+}
+
 namespace {
 // Shift+Cmd+J, from any window: a little homage to Wilhelm Busch
 int eggHandler(int e) {

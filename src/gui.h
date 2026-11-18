@@ -37,6 +37,16 @@ inline std::string examplesDir() { return resourceDir("examples"); }
 // (~/Documents/Moritz/library) first, then the bundled library and examples.
 void setupSearchPaths();
 
+// Questions and alerts that wait for the user (fl_choice, fl_alert). In batch mode (--window-png, the
+// tests) nothing waits: the text is printed, and askUser answers batchAnswer (answer=<n>, default 0).
+void setBatchMode(bool on);
+bool batchMode();
+void setBatchAnswer(int a);
+int askUser(const char* fmt, const char* b0, const char* b1, const char* b2, ...);
+void alertUser(const char* fmt, ...);
+// --window-png ... act=...: the actions of a test, in order (guitest.cpp); the number that failed
+int runTestActions(int argc, char** argv);
+
 
 class Canvas : public Fl_Group {
 public:
@@ -79,6 +89,9 @@ public:
     void setZoom(double z);
     void zoomBy(int steps);  // one step of the zoom ladder up or down; 0: back to 100%
     std::function<void()> onZoom;
+    // a patch position in window coordinates (tests click there)
+    int screenX(int px) const { return x() + (int)std::lround((px - sx_) * zoom_); }
+    int screenY(int py) const { return y() + (int)std::lround((py - sy_) * zoom_); }
 
 private:
     struct Hit {
@@ -107,9 +120,6 @@ private:
     // a mouse position (window coordinates) in patch coordinates
     int patchX(int ex) const { return (int)std::floor((ex - x()) / zoom_) + sx_; }
     int patchY(int ey) const { return (int)std::floor((ey - y()) / zoom_) + sy_; }
-    // a patch position in window coordinates
-    int screenX(int px) const { return x() + (int)std::lround((px - sx_) * zoom_); }
-    int screenY(int py) const { return y() + (int)std::lround((py - sy_) * zoom_); }
     int viewW() const { return (int)std::ceil(w() / zoom_); }   // the view, in patch units
     int viewH() const { return (int)std::ceil(h() / zoom_); }
     double zoom_ = 1;
@@ -179,6 +189,7 @@ public:
     void applyNow();               // apply a pending text edit
     void refresh(bool force);      // show the patch's current text
     void applyFont();              // the code font and size of the settings
+    void replaceText(const std::string& t);   // as if typed (tests)
     Fl_Text_Editor* editor() const { return editor_; }
     Patch* patch;
 
@@ -362,6 +373,9 @@ public:
     bool confirmDiscard();
     bool isEmptyUntitled() const { return path_.empty() && !dirty_ && patch.boxes.empty(); }
     const std::string& path() const { return path_; }
+    bool edited() const { return dirty_; }
+    bool canUndo() const { return !undo_.empty(); }
+    bool canRedo() const { return !redo_.empty(); }
     // Edit
     void pushUndo();
     void dropUndo();     // discard the last pushUndo() when nothing changed

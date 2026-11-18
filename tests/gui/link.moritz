@@ -1,0 +1,5 @@
+; link.moritz - a link banged at load: it must not open anything by itself (tools/test-gui.sh)
+(patch
+  (obj lb loadbang (pos 20 20))
+  (obj l link "a document" "no-such-document.pdf" (pos 20 60))
+  (connect lb 0 l 0))

@@ -443,7 +443,7 @@ bool CodeWindow::save() {
     std::ofstream f(path_, std::ios::binary);
     bool ok = f && (f << t);
     std::free(t);
-    if (!ok) { fl_alert("Can't write %s", path_.c_str()); return false; }
+    if (!ok) { alertUser("Can't write %s", path_.c_str()); return false; }
     dirty_ = false;
     refreshTitle();
     App::get().addRecent(path_);
@@ -467,7 +467,7 @@ bool CodeWindow::saveAs() {
 bool CodeWindow::confirmDiscard() {
     if (!dirty_) return true;
     std::string name = source_ && path_.empty() ? source_->title() : path_.empty() ? "Untitled" : path_.substr(path_.find_last_of("/\\") + 1);
-    int r = fl_choice("Save the changes to %s?", "Cancel", "Save", "Don't Save", name.c_str());
+    int r = askUser("Save the changes to %s?", "Cancel", "Save", "Don't Save", name.c_str());
     if (r == 0) return false;
     if (r == 1) return save();
     return true;

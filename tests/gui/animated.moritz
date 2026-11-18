@@ -1,0 +1,5 @@
+; animated.moritz - a meter~ that is animated while shown (tools/test-gui.sh)
+(patch
+  (obj osc cycle~ 440 (pos 20 20))
+  (obj m meter~ (pos 20 60))
+  (connect osc 0 m 0))

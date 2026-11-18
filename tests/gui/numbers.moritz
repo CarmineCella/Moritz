@@ -1,0 +1,5 @@
+; numbers.moritz - a number box, typed into after the code view replaced it (tools/test-gui.sh)
+(patch
+  (obj n1 number (pos 20 20))
+  (obj p print (pos 20 80))
+  (connect n1 0 p 0))

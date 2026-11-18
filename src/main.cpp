@@ -301,6 +301,11 @@ int main(int argc, char** argv) {
     Fl::set_color(FL_SELECTION_COLOR, 52, 92, 160);
     moritz::setupSearchPaths();
     auto& app = moritz::App::get();
+    bool windowPng = false;
+    for (int k = 1; k < argc; ++k)
+        if (std::string(argv[k]) == "--window-png") windowPng = true;
+    // --window-png: drawn for tests, never waiting for an answer (dialogs answer answer=<n>, default 0)
+    if (windowPng) moritz::setBatchMode(true);
     app.init();
 #ifdef __APPLE__
     fl_open_callback(openFromFinder);    // double-clicked .moritz files in the Finder
@@ -314,8 +319,10 @@ int main(int argc, char** argv) {
     // --window-png out.png [patch] [zoom=z]: draws the first document window
     // (toolbar, canvas, status bar) into an image, without showing it: for tests.
     // With a code file (or open=<id> of a code box): its editor; run: runs it first; console=out2.png: the
-    // Console too; settings=out3.png: the Settings dialog too
+    // Console too; settings=out3.png: the Settings dialog too. act=... are done first, in order
+    // (guitest.cpp); out.png "none": no image.
     auto writePng = [](Fl_Window* w, const char* file) {
+        if (std::string(file) == "none") return 0;
         Fl_Image_Surface surf(w->w(), w->h());
         Fl_Surface_Device::push_current(&surf);
         surf.draw(w);
@@ -329,8 +336,11 @@ int main(int argc, char** argv) {
     for (int k = 1; k < argc; ++k)
         if (std::string(argv[k]).rfind("open=", 0) == 0 && !app.docs.empty())
             if (moritz::Box* b = app.docs.front()->patch.find(argv[k] + 5)) b->message(0, {moritz::Atom("open")});
+    int failed = windowPng ? moritz::runTestActions(argc, argv) : 0;
+    bool acts = false;
+    for (int k = 1; k < argc; ++k) acts = acts || std::string(argv[k]).rfind("act=", 0) == 0;
     for (int k = 1; k + 1 < argc; ++k)
-        if (std::string(argv[k]) == "--window-png" && !app.codeWindows().empty()) {
+        if (std::string(argv[k]) == "--window-png" && !acts && !app.codeWindows().empty()) {
             moritz::CodeWindow* cw = app.codeWindows().front();
             bool run = false;
             std::string console;
@@ -361,20 +371,16 @@ int main(int argc, char** argv) {
             moritz::MainWindow* w = app.docs.front();
             for (int j = 1; j < argc; ++j)
                 if (std::string(argv[j]).rfind("zoom=", 0) == 0) w->canvas->setZoom(std::atof(argv[j] + 5));
-            Fl_Image_Surface surf(w->w(), w->h());
-            Fl_Surface_Device::push_current(&surf);
-            surf.draw(w);
-            Fl_Surface_Device::pop_current();
-            Fl_RGB_Image* img = surf.image();
-            int r = fl_write_png(argv[k + 1], img);
-            delete img;
+            int r = writePng(w, argv[k + 1]);
             for (int j = 1; j < argc; ++j)
                 if (std::string(argv[j]).rfind("settings=", 0) == 0) {
                     moritz::showSettings();
                     for (int t = 0; t < 5; ++t) Fl::wait(0.05);
                     r |= writePng(moritz::settingsWindow(), argv[j] + 9);
                 }
-            return r == 0 ? 0 : 1;
+            std::fflush(nullptr);
+            if (acts) std::_Exit(r == 0 && failed == 0 ? 0 : 1);   // code boxes may still be running
+            return r == 0 && failed == 0 ? 0 : 1;
         }
     bool opened = !app.docs.empty();
     if (app.docs.empty()) app.newDocument();
