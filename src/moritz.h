@@ -518,6 +518,9 @@ public:
     int maxOutputChannel() const;         // the highest dac~ channel in it, its inner patches and extras
     std::string dspError;   // non-empty when the signal graph has a loop
     std::atomic<bool> dspRunning{false};
+    // the device stopped, or is about to start (GUI thread, while no callback runs): the clock is
+    // anchored again by the first callback; until then a message is stamped for the next block
+    void resetClock() { anchored_.store(false, std::memory_order_release); }
     uint64_t blockCount = 0;  // audio thread: 64-sample blocks processed
     // set by the audio engine on the root, for dspstate~
     std::atomic<int> ioBufferFrames{0};   // device buffer (I/O vector) size; kept while off

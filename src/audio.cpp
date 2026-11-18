@@ -128,6 +128,7 @@ bool AudioEngine::open(std::string& err) {
         patch_.rateChanged();     // boxes prepared for another rate prepare again, before audio starts
         patch_.ioBufferFrames = (int)device_.playback.internalPeriodSizeInFrames;
         patch_.cpuLoad = 0.f;
+        patch_.resetClock();      // the anchor of the last run is stale: the clock went on meanwhile
         if (ma_device_start(&device_) != MA_SUCCESS) {
             ma_device_uninit(&device_);
             err = "could not start the audio device";
@@ -150,6 +151,7 @@ void AudioEngine::close() {
     running_ = false;
     duplex_ = false;
     patch_.dspRunning = false;
+    patch_.resetClock();
 }
 
 // bursts of pink-ish noise on the channel under test: 160 ms on, 90 ms off

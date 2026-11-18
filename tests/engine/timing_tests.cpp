@@ -89,3 +89,37 @@ TEST(signal_values_change_on_their_sample) {
         if (y[i] != y[i - 1]) steps = steps && i % 441 == 0;
     CHECK(steps);
 }
+
+// Audio stopped, the clock goes on, audio starts again: a message sent before the first callback of the
+// new run lands in that callback. The anchor of the last run was kept: it was stamped as many samples
+// later as the pause was long (at most a second), and the box's later events waited behind it.
+TEST(a_message_after_audio_restarts_lands_at_once) {
+    const int P = 512, sr = 44100;
+    double wall = 0;
+    Rig r("");
+    r.p.offline = false;
+    r.p.clock = [&wall] { return wall; };
+    r.p.ioBufferFrames = P;
+    std::string err;
+    r.p.load("(patch (obj c click~) (obj o dac~ 1) (connect c 0 o 0))", err);
+    std::vector<float> buf((size_t)P * 2);
+    long S = 0;
+    const double pause = 3.0;                      // the wall clock is that much ahead after the restart
+    auto callback = [&](double shift) {
+        wall = (double)S / sr + shift;
+        r.p.process(nullptr, 0, buf.data(), 2, P);
+        S += P;
+        return clicks(etest::channel(buf, 2, 0));
+    };
+    for (int k = 0; k < 20; ++k) callback(0);
+    r.p.dspRunning = false;                        // the audio engine stops (AudioEngine::close)
+    r.p.resetClock();
+    r.p.resetClock();                              // and starts again three seconds later (open)
+    r.p.dspRunning = true;
+    wall = (double)S / sr + pause;                 // a bang before the first callback
+    r.box("c")->message(0, {Atom("bang")});
+    long first = -1;
+    for (int k = 0; k < 4 && first < 0; ++k)
+        if (auto at = callback(pause); !at.empty()) first = k * P + at[0];
+    CHECK(first == 0);                             // at the start of the first callback, not a second later
+}
