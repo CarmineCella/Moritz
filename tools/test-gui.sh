@@ -53,6 +53,14 @@ expect "Patch > New in a help window" "state: help in front yes"
 run "$G/numbers.moritz" --window-png none act=click:n1 "act=text:$G/numbers-edited.txt" act=keys:5, act=boxes
 expect "typing after the code view" "state: box n1"
 
+# 4. a save the disk refuses (a file size limit) leaves the file as it was
+cp "$HERE/examples/03-generative-music/techno.moritz" "$T/big.moritz"
+cp "$T/big.moritz" "$T/big-original.moritz"
+( trap '' XFSZ; ulimit -f 8; "$MORITZ" "$T/big.moritz" --window-png none act=save > "$out" 2>&1 )
+status=0
+if cmp -s "$T/big.moritz" "$T/big-original.moritz" && grep -q "alert: Can't save" "$out" &&
+   [ -z "$(ls -A "$T" | grep '\.tmp$')" ]; then ok; else fail "a failed save keeps the file"; fi
+
 rm -rf "$T"
 echo "$count interface cases, $fails failed"
 [ $fails -eq 0 ]

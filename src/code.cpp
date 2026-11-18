@@ -4,6 +4,7 @@
 
 #include "codewindow.h"
 
+#include "fileio.h"
 #include "gui.h"
 #include "theme.h"
 #include "settings.h"
@@ -25,9 +26,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstring>
-#include <fstream>
 #include <set>
-#include <sstream>
 
 namespace moritz {
 
@@ -387,11 +386,8 @@ CodeWindow::~CodeWindow() {
 }
 
 bool CodeWindow::load(const std::string& path) {
-    std::ifstream f(path, std::ios::binary);
-    if (!f) return false;
-    std::stringstream ss;
-    ss << f.rdbuf();
-    std::string t = ss.str();
+    std::string t;
+    if (!fileio::read(path, t)) return false;
     t.erase(std::remove(t.begin(), t.end(), '\r'), t.end());
     text_->text(t.c_str());
     path_ = path;
@@ -440,10 +436,10 @@ bool CodeWindow::save() {
     }
     if (path_.empty()) return saveAs();
     char* t = text_->text();
-    std::ofstream f(path_, std::ios::binary);
-    bool ok = f && (f << t);
+    std::string err;
+    bool ok = fileio::writeAtomic(path_, t, &err);   // a failed write leaves the file as it was
     std::free(t);
-    if (!ok) { alertUser("Can't write %s", path_.c_str()); return false; }
+    if (!ok) { alertUser("Can't save %s:\n%s", path_.c_str(), err.c_str()); return false; }
     dirty_ = false;
     refreshTitle();
     App::get().addRecent(path_);
@@ -460,8 +456,10 @@ bool CodeWindow::saveAs() {
     if (fc.show() != 0) return false;
     std::string p = portablePath(fc.filename());
     if (p.size() < 3 || p.compare(p.size() - 3, 3, ".mu") != 0) p += ".mu";
+    std::string old = path_;
     path_ = p;
-    return save();
+    if (!save()) { path_ = old; return false; }   // the editor stays as it was
+    return true;
 }
 
 bool CodeWindow::confirmDiscard() {

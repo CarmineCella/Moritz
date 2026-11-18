@@ -10,6 +10,7 @@
 
 #include "maximport.h"
 
+#include "fileio.h"
 #include "json.h"
 #include "moritz.h"
 
@@ -17,7 +18,6 @@
 #include <cctype>
 #include <cmath>
 #include <cstdio>
-#include <fstream>
 #include <map>
 #include <set>
 #include <sstream>
@@ -112,7 +112,7 @@ public:
 
     bool convertFile(const std::string& path, std::string& out, std::string& err) {
         std::string src;
-        if (!readFile(path, src)) { err = "can't read " + path; return false; }
+        if (!fileio::read(path, src)) { err = "can't read " + path; return false; }
         Value root;
         if (!json::Parser(src).parse(root, err)) { err = "not a Max patch (" + err + ")"; return false; }
         const Value* p = root.get("patcher");
@@ -142,10 +142,9 @@ private:
         if (name.empty() || isClassName(name) || visiting_.count(name)) return;
         std::string maxFile = dir_ + "/" + name + ".maxpat";
         std::string mFile = dir_ + "/" + name + ".moritz";
-        std::ifstream probe(maxFile);
-        if (!probe) return;
+        if (!fileio::isFile(maxFile)) return;
         visiting_.insert(name);
-        if (std::ifstream(mFile)) {
+        if (fileio::exists(mFile)) {
             report.kept.push_back(name + ".moritz");
             return;
         }
@@ -155,9 +154,9 @@ private:
             return;
         }
         if (!write_) { report.abstractions.push_back(name + ".moritz (not written)"); return; }
-        std::ofstream f(mFile, std::ios::binary);
-        if (f << text) report.abstractions.push_back(name + ".moritz");
-        else report.problems.push_back("can't write " + mFile);
+        std::string werr;
+        if (fileio::writeAtomic(mFile, text, &werr)) report.abstractions.push_back(name + ".moritz");
+        else report.problems.push_back(werr);
     }
 
     // parentIns: for a subpatcher, which of its inlets receive signals in the parent
@@ -323,8 +322,8 @@ private:
                         line += "\n" + pad + "    " + patcher(*inner, indent + 4, &sigIns);
                     } else if (!isClassName(cls)) {
                         abstraction(cls);
-                        std::ifstream m(dir_ + "/" + cls + ".moritz");
-                        if (!m && !findAbstractionFile(cls)) note(report.unknown, cls);
+                        if (!fileio::isFile(dir_ + "/" + cls + ".moritz") && !findAbstractionFile(cls))
+                            note(report.unknown, cls);
                     }
                     line += ")";
                 } else {

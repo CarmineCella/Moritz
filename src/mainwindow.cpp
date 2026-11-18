@@ -8,6 +8,7 @@
 #include "reference.h"
 #include "session.h"
 #include "maximport.h"
+#include "fileio.h"
 #include "objects.h"
 
 #include <FL/Fl_Choice.H>
@@ -1264,7 +1265,7 @@ void App::openHelp(const std::string& cls) {
     for (auto* w : helpWindows_)                        // already open: bring it forward
         if (w->patch && w->patch->file == path) { w->show(); return; }
     std::string src, err;
-    if (!readFile(path, src)) { print("can't read " + path); return; }
+    if (!fileio::read(path, src)) { print("can't read " + path); return; }
     auto hp = std::make_unique<Patch>();
     hp->dir = dirOf(path);
     Patch* p = host.addExtra(std::move(hp));
@@ -1464,7 +1465,7 @@ bool MainWindow::confirmDiscard() {
 
 bool MainWindow::openFile(const std::string& path) {
     std::string src, err;
-    if (!readFile(path, src)) {
+    if (!fileio::read(path, src)) {
         alertUser("Can't read %s", path.c_str());
         return false;
     }
@@ -1523,9 +1524,10 @@ bool MainWindow::save() {
         // inside an abstraction (or a p inside one): Save writes that file
         for (Patch* p = active->patch(); p; p = p->parent)
             if (p->isAbstraction && !p->file.empty()) {
-                std::ofstream f(p->file, std::ios::binary);
-                if (!(f << p->serialize())) {
-                    alertUser("Can't write %s", p->file.c_str());
+                std::string err;
+                if (!fileio::writeAtomic(p->file, p->serialize(), &err)) {   // the file stays as it was
+                    alertUser("Can't save the abstraction %s:\n%s\n\nThe file on the disk is as it was.",
+                              baseName(p->file).c_str(), err.c_str());
                     return false;
                 }
                 log("saved abstraction " + p->file);
@@ -1535,9 +1537,12 @@ bool MainWindow::save() {
             }
     }
     if (path_.empty()) return saveAs();
-    std::ofstream f(path_, std::ios::binary);
-    if (!(f << patch.serialize())) {
-        alertUser("Can't write %s", path_.c_str());
+    // a temporary file in the same folder, renamed over the old one once written: a full disk or a
+    // crash leaves the old file whole
+    std::string err;
+    if (!fileio::writeAtomic(path_, patch.serialize(), &err)) {
+        alertUser("Can't save %s:\n%s\n\nThe file on the disk is as it was.", baseName(path_).c_str(), err.c_str());
+        log("can't save: " + err);
         return false;
     }
     dirty_ = false;
@@ -1561,10 +1566,19 @@ bool MainWindow::saveAs() {
     std::string p = portablePath(fc.filename());
     const char* ext = fl_filename_ext(p.c_str());
     if (!ext || !*ext) p += std::string(".") + kExt;
+    std::string err;
+    if (!fileio::writeAtomic(p, patch.serialize(), &err)) {   // the document keeps its file and folder
+        alertUser("Can't save %s:\n%s", baseName(p).c_str(), err.c_str());
+        log("can't save: " + err);
+        return false;
+    }
     path_ = p;
     suggested_.clear();
     patch.dir = dirOf(p);
-    if (!save()) return false;
+    dirty_ = false;
+    updateTitle();
+    log("saved " + path_);
+    setStatus("saved " + baseName(path_));
     App::get().addRecent(p);
     return true;
 }

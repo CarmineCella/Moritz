@@ -21,6 +21,7 @@
 #include "settings.h"
 #include "reference.h"
 #include "maximport.h"
+#include "fileio.h"
 
 #include <FL/Fl_Image_Surface.H>
 #include <FL/Fl_PNG_Image.H>
@@ -261,9 +262,8 @@ int main(int argc, char** argv) {
         }
         std::fprintf(stderr, "%s\n", rep.summary().c_str());
         if (!write) { std::fputs(text.c_str(), stdout); return 0; }
-        FILE* f = std::fopen(argv[3], "wb");
-        if (!f || std::fputs(text.c_str(), f) < 0) { std::fprintf(stderr, "can't write %s\n", argv[3]); return 1; }
-        std::fclose(f);
+        std::string werr;
+        if (!moritz::fileio::writeAtomic(argv[3], text, &werr)) { std::fprintf(stderr, "%s\n", werr.c_str()); return 1; }
         return 0;
     }
     // --code-names: every name a code box can call (tests/code-names.txt holds the expected list)
