@@ -564,11 +564,12 @@ struct Interp {
     std::vector<std::weak_ptr<Env>> tracked_envs;
     size_t compact_at = 1024, gc_threshold = 4096;
     bool gc_enabled = true;
-    std::unordered_set<std::string> loaded_files;   // ran to completion; a second load is a no-op
+    std::unordered_set<std::string> loaded_files;   // ran to completion; a second load is a no-op unless the file changed
+    std::unordered_map<std::string, std::pair<fs::file_time_type, std::uintmax_t>> loaded_stamps;   // when and how large it was then
     std::unordered_set<std::string> loading_files;  // currently running; a load from inside is a cycle and is skipped
     std::unordered_set<std::string> library_files;  // the files that run in the library environment
-    std::vector<std::string> load_path;     // extra directories searched by load (after the local ones)
-    std::string home_path;                  // ~/.musil, searched last
+    std::vector<std::string> load_path;     // extra directories searched by load (after the loading file's own)
+    std::string home_path;                  // ~/.musil, searched after load_path
     sptr current_file; int current_line = 0;
     sptr main_file;                         // the program that was started (the first file run, not loaded)
     std::mt19937_64 rng;
@@ -661,6 +662,7 @@ struct Interp {
     vptr run(const std::string& src, const std::string& filename = "<input>");
     vptr run_in(const std::string& src, const std::string& filename, eptr env);
     void load(const std::string& path);
+    void reload(const std::string& path);   // run a file again even if it did not change
     std::string find_file(const std::string& path, bool* in_library = nullptr);   // the resolved path load would use, or ""
     void set_stack_floor(std::uintptr_t here) {
         const thread_stack& t = this_thread_stack();
@@ -1318,8 +1320,9 @@ inline vptr fn_exit(vlist& a, Interp& i) { i.require_exit(); throw Exit_signal{ 
 // (copy x) a shallow copy: a new list or vector with the same elements
 // (error x ...) raise an error with the arguments as message
 // (clock) seconds from a monotonic clock, for timing
-// (load "file.mu") run a file once, searched next to the loading file, in the current directory,
-//   in MUSIL_PATH and in ~/.musil
+// (load "file.mu") run a file, searched next to the loading file, then in MUSIL_PATH and ~/.musil (the
+//   libraries), then in the current directory; once: a second load of the same file does nothing, unless the
+//   file changed since (then it runs again: edit a module, load it again)
 // (defined? 'name) is name bound?
 // (vars) the global names, sorted
 // (help name) print the documentation of a builtin or library function (from help.txt)
@@ -1495,12 +1498,10 @@ inline size_t Interp::collect() {
 }
 // load: search order for a relative path:
 //   1. the directory of the file doing the loading
-//   2. the current directory
-//   3. each entry of load_path (MUSIL_PATH, plus whatever the host adds)
-//   4. ~/.musil
+//   2. each entry of load_path (MUSIL_PATH, plus whatever the host adds), then ~/.musil: the libraries
+//   3. the current directory
 // A file found on the load path (or next to a library that loads it) is a library: it runs in the library
-// environment, so a program's own names never change what the library's functions mean; its reading is not
-// checked against the capabilities (Interp::caps), which concern the program's own files.
+// environment, so a program's own names never change what the library's functions mean.
 inline std::string Interp::find_file(const std::string& path, bool* in_library) {
     fs::path p(path), resolved; bool lib = false;
     auto try_path = [&](const fs::path& q, bool is_lib) { std::error_code ec; if (resolved.empty() && !q.empty() && fs::is_regular_file(q, ec)) { resolved = q; lib = is_lib; } };
@@ -1508,11 +1509,12 @@ inline std::string Interp::find_file(const std::string& path, bool* in_library) 
     else {
         if (current_file) {
             fs::path base = fs::path(*current_file).parent_path();
-            if (!base.empty()) try_path(base / p, library_files.count(*current_file) > 0);
+            bool from_lib = library_files.count(*current_file) > 0;
+            if (!base.empty()) try_path(base / p, from_lib);
         }
-        try_path(p, false);
         for (auto& d : load_path) try_path(fs::path(d) / p, true);
         if (!home_path.empty()) try_path(fs::path(home_path) / p, true);
+        try_path(p, false);
     }
     if (in_library) *in_library = lib;
     if (resolved.empty()) return "";
@@ -1524,7 +1526,9 @@ inline void Interp::load(const std::string& path) {
     bool lib = false;
     std::string canon = find_file(path, &lib);
     if (canon.empty()) err("load: not found: " + path);
-    if (loaded_files.count(canon) || loading_files.count(canon)) return;
+    std::error_code sec; auto stamp = std::make_pair(fs::last_write_time(canon, sec), fs::file_size(canon, sec));
+    if (loading_files.count(canon)) return;
+    if (loaded_files.count(canon)) { auto it = loaded_stamps.find(canon); if (it == loaded_stamps.end() || it->second == stamp) return; }
     if (!lib) { who_scope ws(*this, "load"); require_read(canon); }
     std::ifstream f(canon); if (!f) err("load: cannot open " + canon);
     std::stringstream ss; ss << f.rdbuf();
@@ -1532,9 +1536,16 @@ inline void Interp::load(const std::string& path) {
     loading_files.insert(canon);
     if (lib) library_files.insert(canon);
     struct guard { Interp& i; std::string c; sptr f; int l; bool ok = false;
-        ~guard() { i.loading_files.erase(c); if (ok) i.loaded_files.insert(c); i.current_file = f; i.current_line = l; } } g{*this, canon, sf, sl};
+        std::pair<fs::file_time_type, std::uintmax_t> st;
+        ~guard() { i.loading_files.erase(c); if (ok) { i.loaded_files.insert(c); i.loaded_stamps[c] = st; } i.current_file = f; i.current_line = l; } } g{*this, canon, sf, sl, false, stamp};
     run_in(ss.str(), canon, lib ? library : global);
     g.ok = true;   // a module that fails is not cached: the next load runs it again and reports the error again
+}
+inline void Interp::reload(const std::string& path) {
+    std::string canon = find_file(path);
+    if (canon.empty()) err("reload: not found: " + path);
+    loaded_files.erase(canon);
+    load(path);
 }
 inline vptr Interp::run(const std::string& src, const std::string& filename) { return run_in(src, filename, global); }
 inline vptr Interp::run_in(const std::string& src, const std::string& filename, eptr env) {

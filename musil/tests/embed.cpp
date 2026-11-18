@@ -162,6 +162,27 @@ int main() {
         expect(!refused("write " + q(outside / "a.txt") + " \"ok\""), "full: writing anywhere");
         fs::remove_all(root, ec);
     }
+    // load: the loading file's own folder first, then the library path, then the current directory
+    {
+        namespace fs = std::filesystem;
+        fs::path root = fs::temp_directory_path() / "musil_embed_load", lib = root / "lib", cwd = root / "cwd", own = root / "own";
+        std::error_code ec; fs::remove_all(root, ec); fs::create_directories(lib); fs::create_directories(cwd); fs::create_directories(own);
+        auto put = [](const fs::path& p, const std::string& s) { std::ofstream f(p); f << s; };
+        put(lib / "mod.mu", "var from \"lib\"\n"); put(cwd / "mod.mu", "var from \"cwd\"\n");
+        put(own / "mod.mu", "var from \"own\"\n"); put(own / "main.mu", "load \"mod.mu\"\n");
+        fs::path was = fs::current_path(); fs::current_path(cwd);
+        {
+            Interp I; make_env(I); I.load_path = { lib.string() };
+            I.run("load \"mod.mu\"\n", "<input>");
+            expect(I.global->find("from")->s == "lib", "load: the library path before the current directory");
+        }
+        {
+            Interp I; make_env(I); I.load_path = { lib.string() };
+            I.load((own / "main.mu").string());
+            expect(I.global->find("from")->s == "own", "load: the loading file's own folder first");
+        }
+        fs::current_path(was); fs::remove_all(root, ec);
+    }
     std::cerr << "embed: per-interpreter state\n" << std::flush;   // where it stopped, if it crashes
     // the state of the libraries is each interpreter's: idle hooks and the evaluation port of one are not the other's
     {

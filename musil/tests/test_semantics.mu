@@ -57,4 +57,17 @@ set tau 7
 check (== tau 7) "set changes a library variable"
 check (contains? (str (vars)) "mean") "vars lists the library's names"
 
+; --- load runs a module again when it changed ------------------------------------------------------------
+var mod "/tmp/musil_test_robust_mod.mu"
+write mod "var mod-version 1\n"
+load mod
+check (== mod-version 1) "load: the module ran"
+set mod-version 0
+load mod
+check (== mod-version 0) "load: a second load of the same file does nothing"
+write mod "var mod-version 2\nvar mod-extra 1\n"
+load mod
+check (== mod-version 2) "load: a module that changed runs again"
+remove mod
+
 report "test_semantics"

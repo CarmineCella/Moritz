@@ -54,8 +54,8 @@ inline vptr sys_exec(vlist& a, Interp& i) {
 // (getenv "NAME") => value or nil
 inline vptr sys_getenv(vlist& a, Interp& i) { const char* v = std::getenv(i.str(a[0]).c_str()); return v ? v_str(v) : v_nil(); }
 // (sleep seconds)
-// (find-file "name") => the path of a file as load resolves it (the current directory, the file being run, the
-//   load path: MUSIL_PATH, ~/.musil, the libraries), or "" when not found
+// (find-file "name") => the path of a file as load resolves it (the file being run, the load path: MUSIL_PATH,
+//   ~/.musil, the libraries; then the current directory), or "" when not found
 inline vptr sys_find_file(vlist& a, Interp& i) { return v_str(i.find_file(i.str(a[0]))); }
 // (resolve-path "name") => the path a reading function would open for a relative name: as given if it exists from the
 //   current directory, else next to the file being run, else next to the program that was started
