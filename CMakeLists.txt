@@ -51,13 +51,6 @@ elseif(NOT MORITZ_SANITIZE STREQUAL "")
   message(FATAL_ERROR "MORITZ_SANITIZE is address or thread")
 endif()
 
-# -DMORITZ_SANITIZE=address or thread: everything built with that sanitizer (in its own build folder)
-set(MORITZ_SANITIZE "" CACHE STRING "build with a sanitizer: address or thread")
-if(MORITZ_SANITIZE)
-  add_compile_options(-fsanitize=${MORITZ_SANITIZE} -fno-omit-frame-pointer -g)
-  add_link_options(-fsanitize=${MORITZ_SANITIZE})
-endif()
-
 if(APPLE)
   set(MORITZ_PLATFORM macos)
 elseif(WIN32)
