@@ -167,11 +167,12 @@ jobs:
           ASAN_OPTIONS: detect_leaks=0:abort_on_error=1
           UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
           TSAN_OPTIONS: halt_on_error=1:second_deadlock_stack=1
-        # robust nests 100,000 calls deep on a large stack, which ThreadSanitizer cannot follow (it runs in
-        # the address build); the examples and timings are long and covered by the other jobs
+        # under TSan: robust (100,000 calls deep, which TSan cannot follow) and the 219 patches (too slow) are left
+        # to the address build, and the engine stress test covers threads; the examples and timings are long and
+        # covered by the other jobs
         run: |
           skip='^(perf-|example-)'
-          if [ "${{ matrix.sanitizer }}" = thread ]; then skip='^(perf-|example-|robust$)'; fi
+          if [ "${{ matrix.sanitizer }}" = thread ]; then skip='^(perf-|example-|robust$|moritz-patches$)'; fi
           xvfb-run -a ctest --test-dir build -j2 --output-on-failure -E "$skip"
 
   musil-alone:                     # Musil built from musil/ alone, with and without FLTK
