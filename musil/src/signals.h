@@ -24,6 +24,7 @@
 #include "signals/hrtf.h"
 #include "signals/convolution.h"
 #include "signals/filters.h"
+#include "signals/denormal.h"
 #include <map>
 #include <memory>
 #include <mutex>
@@ -85,6 +86,7 @@ inline vptr sig_osc(vlist& a, Interp& i) {
 // (iir x b a) => y with a0 y[n] = sum b[k] x[n-k] - sum a[k>0] y[n-k]; a[0] need not be 1
 struct iir_state { std::vector<double> xs, ys; };   // the last nb inputs and na outputs, newest first
 inline void iir_run(const double* x, double* y, size_t n, const double* b, size_t nb, const double* a, size_t na, iir_state& st) {
+    dsp::DenormalGuard ftz;                                // the decaying tail: no denormals (x86)
     if (st.xs.size() != nb) st.xs.assign(nb, 0.0);
     if (st.ys.size() != na) st.ys.assign(na, 0.0);
     for (size_t k = 0; k < n; k++) {
@@ -259,12 +261,14 @@ inline vptr sig_add_at_inplace(vlist& a, Interp& i) {
 struct comb_state { std::vector<double> ring; size_t w = 0; };
 // y[n] = x[n] + g y[n-d]
 inline void comb_run(const double* x, double* y, size_t n, size_t d, double g, comb_state& st) {
+    dsp::DenormalGuard ftz;                                // the decaying tail: no denormals (x86)
     if (st.ring.size() != d) { st.ring.assign(d, 0.0); st.w = 0; }
     for (size_t k = 0; k < n; k++) { double out = x[k] + g * st.ring[st.w]; st.ring[st.w] = out; st.w = (st.w + 1) % d; y[k] = out; }
 }
 struct allpass_state { std::vector<double> xin, yout; size_t w = 0; };
 // y[n] = -g x[n] + x[n-d] + g y[n-d]
 inline void allpass_run(const double* x, double* y, size_t n, size_t d, double g, allpass_state& st) {
+    dsp::DenormalGuard ftz;                                // the decaying tail: no denormals (x86)
     if (st.xin.size() != d) { st.xin.assign(d, 0.0); st.yout.assign(d, 0.0); st.w = 0; }
     for (size_t k = 0; k < n; k++) { double out = -g * x[k] + st.xin[st.w] + g * st.yout[st.w]; st.xin[st.w] = x[k]; st.yout[st.w] = out; st.w = (st.w + 1) % d; y[k] = out; }
 }
@@ -399,7 +403,7 @@ inline vptr sig_svf(vlist& a, Interp& i) {
     const varr& x = i.num(a[0]); double sr = i.scalar(a[1]); const varr& f = i.num(a[2]); const varr& q = i.num(a[3]); int type = svf_type(i, a[4]);
     if (sr <= 0) i.bad("sr must be > 0");
     if ((f.size() != 1 && f.size() != x.size()) || (q.size() != 1 && q.size() != x.size())) i.bad("freq and q are numbers or vectors as long as x");
-    dsp::Svf flt; varr y(0.0, x.size());
+    dsp::Svf flt; varr y(0.0, x.size()); dsp::DenormalGuard ftz;
     bool moving = f.size() > 1 || q.size() > 1;
     if (!moving && f.size() && q.size()) flt.set(f[0], q[0], sr);
     for (size_t k = 0; k < x.size(); k++) {
@@ -489,6 +493,7 @@ inline vptr sig_nebula(vlist& a, Interp& i) {
 // exponential segments, so it sounds even; the same code runs in the live engine's adsr node.
 struct adsr_state { double level = 0; int stage = 0; };   // stages: 0 idle, 1 attack, 2 decay/sustain, 3 release
 inline void adsr_run(const double* gate, double* out, size_t n, double a, double d, double s, double r, double sr, adsr_state& st) {
+    dsp::DenormalGuard ftz;                                // the decaying tail: no denormals (x86)
     auto coef = [&](double secs) { return secs <= 0 ? 0.0 : std::exp(-1.0 / (std::max(secs, 1e-4) * sr)); };
     double ca = coef(a), cd = coef(d), cr = coef(r);
     for (size_t k = 0; k < n; k++) {
@@ -513,6 +518,7 @@ inline vptr sig_adsr(vlist& a, Interp& i) {
 // smoothing, envelope following); the live engine's lag node
 struct lag_state { double y = 0; };
 inline void lag_run(const double* x, double* out, size_t n, double coef, lag_state& st) {
+    dsp::DenormalGuard ftz;                                // the decaying tail: no denormals (x86)
     for (size_t k = 0; k < n; k++) { st.y += (x[k] - st.y) * (1 - coef); out[k] = st.y; }
 }
 inline vptr sig_lag(vlist& a, Interp& i) {

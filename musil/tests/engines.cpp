@@ -147,7 +147,22 @@ static void test_threads() {
     expect(!a.empty() && a == b, "db-index-size on two threads");
 }
 
+// --- the flush-to-zero guard sets the mode for its scope and gives the caller's back ---
+static void test_denormals() {
+    bool before = dsp::DenormalGuard::active();
+    {
+        dsp::DenormalGuard g;
+#if defined(MUSIL_FTZ_SSE) || defined(MUSIL_FTZ_ARM64)
+        expect(dsp::DenormalGuard::active(), "denormals: flushed inside the guard");
+        volatile double tiny = 1e-300, f = 1e-10;
+        expect(tiny * f == 0.0, "denormals: a denormal result is 0 inside the guard");
+#endif
+    }
+    expect(dsp::DenormalGuard::active() == before, "denormals: the caller's mode is restored");
+}
+
 int main() {
+    test_denormals();
     test_threads();
     test_resample();
     test_midi();

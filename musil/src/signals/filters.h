@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cmath>
 
+#include "denormal.h"
 
 namespace musil {
 namespace dsp {
@@ -44,6 +45,7 @@ public:
     // n samples with the current settings; any output may be null
     template <class T>
     void process(const T* in, T* lo, T* hi, T* band, T* notch, int n) {
+        DenormalGuard ftz;                         // a decaying resonance: no denormals (x86)
         for (int i = 0; i < n; ++i) {
             double l, h, b, no;
             tick((double)in[i], l, h, b, no);

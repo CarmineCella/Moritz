@@ -5,6 +5,7 @@
 // Copyright (c) 2024-2026 Carmine-Emanuele Cella. SPDX-License-Identifier: BSD-2-Clause
 #pragma once
 
+#include "denormal.h"
 #include "fft.h"
 
 #include <algorithm>
@@ -58,6 +59,7 @@ public:
     long latency() const { return 0; }
 
     void process(const T* in, T* out, int n) {
+        DenormalGuard ftz;                             // a reverberation tail decays through denormals (x86)
         for (int i = 0; i < n; ++i) {
             T x = in[i];
             // head: direct convolution over the last B inputs (history kept twice for a straight loop)

@@ -281,6 +281,10 @@ function band-gain (q) (/ (rms (drop (svf s700 sr 700 q "band") 4000)) (rms (dro
 check (near? (band-gain 0) 0.5 0.01) "svf: band gain 0.5 at q 0"
 check (near? (band-gain 0.5) (/ 1 1.01) 0.01) "svf: band gain about 1 at q 0.5"
 check (near? (band-gain 1) 50 1) "svf: band gain 50 (+34 dB) at q 1"
+; the recursive loops flush denormals to zero (x86 and AArch64): a decaying tail reaches 0 instead of crawling
+; through the denormal numbers (0.5^1050 is one)
+check (== (getidx (iir (impulse 1100) (vec 1) (vec 1 -0.5)) 1050) 0) "iir: no denormals in the tail"
+check (> (getidx (iir (impulse 1100) (vec 1) (vec 1 -0.5)) 1000) 0) "iir: the tail itself is kept"
 check (near? (lores wn sr 1000 0) (lowpass wn sr 1000 0.707) 1e-12) "lores: res 0 is a plain lowpass"
 check (> (rms (lores (osc sr (+ (zeros 8000) 1000) table) sr 1000 1)) (* 5 (rms (lores (osc sr (+ (zeros 8000) 1000) table) sr 1000 0)))) "lores: res 1 resonates at the cutoff"
 
