@@ -306,7 +306,7 @@ inline vptr sig_pvoc(vlist& a, Interp& i) {
     const varr& x = i.num(a[0]); vlist& opts = i.list(a[1]);
     pvoc_opts o;
     for (auto& e : opts) {
-        vlist& kv = i.list(e); if (kv.size() != 2 || (kv[0]->t != Value::STR && kv[0]->t != Value::SYM)) i.bad("an option is (list key value), the key a string or a symbol");
+        vlist& kv = i.list(e); if (kv.size() != 2 || kv[0]->t != Value::STR) i.bad("an option is (list \"key\" value)");
         const std::string& k = kv[0]->s; const vptr& v = kv[1];
         if (k == "stretch") pvoc_ramp(i, v, o.stretch0, o.stretch1);
         else if (k == "pitch") pvoc_ramp(i, v, o.pitch0, o.pitch1);
@@ -466,7 +466,7 @@ inline vptr sig_nebula(vlist& a, Interp& i) {
     std::string window = "hann";
     bool seeded = false;
     for (auto& e : opts) {
-        vlist& kv = i.list(e); if (kv.size() != 2 || (kv[0]->t != Value::STR && kv[0]->t != Value::SYM)) i.bad("an option is (list key value), the key a string or a symbol");
+        vlist& kv = i.list(e); if (kv.size() != 2 || kv[0]->t != Value::STR) i.bad("an option is (list \"key\" value)");
         const std::string& k = kv[0]->s; const vptr& v = kv[1];
         auto ramp = [&](double& to) { double x0, x1; pvoc_ramp(i, v, x0, x1); to = x0; ramps.push_back({ x0, x1, &to }); };
         if (k == "proto1" || k == "proto2") {
@@ -869,8 +869,8 @@ inline vptr sig_mfcc_gram(vlist& a, Interp& i) {
 }
 // (key-scores chroma)      every key against a pitch-class distribution (a vector of 12, C first: chroma-mean of a
 //   chromagram): the correlation of the distribution with the Krumhansl-Kessler profile of each major and minor key
-//   (Krumhansl 1990; mir.h's keyScores, as Moritz's keyfind); => (list (list "D" 'minor r) ...), best first. Key
-//   names with sharps (C C# D D# E F F# G G# A A# B)
+//   (Krumhansl 1990; mir.h's keyScores, as Moritz's keyfind); => (list (list "D" 'minor r) ...), best first. Keys
+//   are spelled as musicians spell them: Db Eb F# Ab Bb major, C# Eb F# G# Bb minor
 inline vptr sig_key_scores(vlist& a, Interp& i) {
     const varr& c = i.num(a[0]); if (c.size() != 12) i.bad("a pitch-class distribution of 12 values");
     auto r = mir::keyScores(mir::Vec(std::begin(c), std::end(c)));

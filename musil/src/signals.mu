@@ -171,7 +171,7 @@ function fftshift (v) {
 }
 ; (pvoc x opts)            the phase vocoder (signals.h): analysis, phase-locked resynthesis and
 ;                          every transformation in one pass, as sparkle did. opts is a list of
-;                          (list key value), the key a string or a symbol; a value given as (list start end)
+;                          (list "key" value); a value given as (list start end)
 ;                          ramps over the file. The sound is padded with a window of zeros at both ends, so an
 ;                          attack at its very start and its end come out whole (not faded by the first and last window).
 ;                            "stretch"   time-stretch ratio (2 = twice as long)              default 1
@@ -778,7 +778,8 @@ var minor-profile (vec (list 6.33 2.68 3.52 5.38 2.60 3.53 2.54 4.75 3.98 2.69 3
 function chroma-mean (C) (vec (map C mean))
 ; (rotate-vec v k)         the vector rotated right by k (v[0] goes to position k)
 function rotate-vec (v k) (vec (map (vec->list (range (length v))) (function (j) (getidx v (mod (- j k) (length v))))))
-; (key-scores chroma) is C++ (signals.h, mir.h's keyScores: Moritz's keyfind too); key names with sharps
+; (key-scores chroma) is C++ (signals.h, mir.h's keyScores: Moritz's keyfind too); keys spelled as musicians
+;                          spell them (Eb major, C# minor); key-names are the pitch classes, with sharps
 ; (correlation a b)        Pearson's correlation of two vectors
 function correlation (a b) {
     var da (- a (mean a))

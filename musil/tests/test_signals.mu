@@ -249,7 +249,6 @@ check (< (abs (db-ratio (pvoc-pitch lt 1.37) lt)) 0.5) "pvoc-pitch: any ratio ke
 var at0 (pvoc lt (list))
 check (> (/ (rms (take at0 400)) (rms (take lt 400))) 0.9) "pvoc: an attack at the start is kept (padded)"
 check (> (/ (rms (slice at0 (- (length lt) 400) 400)) (rms (drop lt (- (length lt) 400)))) 0.9) "pvoc: the end is kept (padded)"
-check (equal? (pvoc lt (list (list 'pitch 1.5))) (pvoc lt (list (list "pitch" 1.5)))) "pvoc: options with symbol keys"
 check (contains? (error-of (function () (pvoc tone (list (list "nope" 1))))) "unknown option") "pvoc: unknown option"
 check (contains? (error-of (function () (pvoc tone (list (list "cross" (list 2 0.5 tone)))))) "needs an envelope") "pvoc: cross mode 2 needs an envelope"
 var voiced (bandpass (osc sr (+ (zeros 8000) 200) (gen 512 (ones 12))) sr 900 3)
@@ -300,7 +299,6 @@ var sqm (magnitude-spectrum (* (slice sq 4000 8192) (hann 8192)))
 function band-peak (m f) (max (slice m (- (round (/ (* f 8192) 44100)) 3) 7))
 check (< (amp->db (/ (band-peak sqm 19100) (band-peak sqm 5000))) -60) "nebula: a high square grain does not alias"
 check (> (amp->db (/ (band-peak sqm 15000) (band-peak sqm 5000))) -15) "nebula: its harmonics below Nyquist are kept"
-check (equal? (nebula sr 0.2 (list (list 'freq 300) (list 'seed 3))) (nebula sr 0.2 (list (list "freq" 300) (list "seed" 3)))) "nebula: option keys as symbols"
 
 ; --- deconv, svf, lores ---
 var dry (* (noise 2000) (hann 2000))
@@ -630,11 +628,13 @@ check (equal? (mat-log1p (list (vec 0 (- (exp 1) 1))) 1) (list (vec 0 1))) "mat-
 
 
 ; --- the analyses are mir.h's (as Moritz's objects): the same as the Musil they replaced ---
+var major-keys-mu (list "C" "Db" "D" "Eb" "E" "F" "F#" "G" "Ab" "A" "Bb" "B")
+var minor-keys-mu (list "C" "C#" "D" "Eb" "E" "F" "F#" "G" "G#" "A" "Bb" "B")
 function key-scores-mu (chroma) {
     var out (list)
     each (vec->list (range 12)) (function (k) {
-        push out (list (getidx key-names k) 'major (correlation chroma (rotate-vec major-profile k)))
-        push out (list (getidx key-names k) 'minor (correlation chroma (rotate-vec minor-profile k)))
+        push out (list (getidx major-keys-mu k) 'major (correlation chroma (rotate-vec major-profile k)))
+        push out (list (getidx minor-keys-mu k) 'minor (correlation chroma (rotate-vec minor-profile k)))
     })
     return (reverse (sort-by out last))
 }
@@ -655,7 +655,8 @@ function tempo-estimate-with-mu (flux fps centre width) {
     return best-bpm
 }
 var pcd (vec 0.9 0.1 0.5 0.1 0.7 0.6 0.1 0.8 0.1 0.5 0.1 0.4)
-check (all? (zip (key-scores pcd) (key-scores-mu pcd)) (function (p) (and (equal? (head (head p)) (head (last p))) (equal? (getidx (head p) 1) (getidx (last p) 1)) (near? (last (head p)) (last (last p)) 1e-12)))) "key-scores: as written in Musil (sharps)"
+check (all? (zip (key-scores pcd) (key-scores-mu pcd)) (function (p) (and (equal? (head (head p)) (head (last p))) (equal? (getidx (head p) 1) (getidx (last p) 1)) (near? (last (head p)) (last (last p)) 1e-12)))) "key-scores: as written in Musil (keys spelled as musicians spell them)"
+check (equal? (head (head (key-scores (rotate-vec pcd 3)))) "Eb") "key-scores: a key a minor third above C is Eb"
 check (equal? (key-name (key-estimate pcd)) "C major") "key-estimate: C major"
 var pulse (vec (map (vec->list (range 600)) (function (k) (if (== (mod k 25) 0) 1 (* 0.1 (mod (* k 7) 3))))))
 check (== (tempo-estimate-with pulse 50 100 0.6) (tempo-estimate-with-mu pulse 50 100 0.6)) "tempo-estimate-with: as written in Musil"

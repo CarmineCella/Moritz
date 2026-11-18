@@ -962,8 +962,8 @@
   (key-scores chroma)
   every key against a pitch-class distribution (a vector of 12, C first: chroma-mean of a
   chromagram): the correlation of the distribution with the Krumhansl-Kessler profile of each major and minor key
-  (Krumhansl 1990; mir.h's keyScores, as Moritz's keyfind); => (list (list "D" 'minor r) ...), best first. Key
-  names with sharps (C C# D D# E F F# G G# A A# B)
+  (Krumhansl 1990; mir.h's keyScores, as Moritz's keyfind); => (list (list "D" 'minor r) ...), best first. Keys
+  are spelled as musicians spell them: Db Eb F# Ab Bb major, C# Eb F# G# Bb minor
 #tempo-estimate-with
   (tempo-estimate-with flux fps centre width)
   the tempo of an onset strength (a vector, fps values a second): its

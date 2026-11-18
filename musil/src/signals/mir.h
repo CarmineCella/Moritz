@@ -7,7 +7,7 @@
 // live, use it: a script and a patch get the same numbers. The spectra are computed in double precision
 // whatever the samples are (float or double). It needs nothing but the standard library.
 //
-// Key names are spelled with sharps, as Musil's pitch names: C C# D D# E F F# G G# A A# B.
+// Keys are named as musicians spell them: Eb major, C# minor (keyName); pitch classes keep Musil's sharps.
 //
 // A spectrogram has a frame every hop samples; frame f is centred on sample
 // f * hop (the signal is padded with n/2 zeros on both sides), so its time
@@ -441,11 +441,12 @@ inline Mat tempogram(const Vec& flux, double fps, int win, int step) {
 }
 
 // ------------------------------------------------------------------ key
-// the tonic of a key, with sharps (as Musil's pitch names): C C# D D# E F F# G G# A A# B, major and minor alike
+// the tonic of a key as musicians usually spell it: the major keys with the fewest accidentals
+// (Db Eb F# Ab Bb), the minor keys as their relative majors' signatures read (C# Eb F# G# Bb)
 inline const char* keyName(int k, bool minor = false) {
-    static const char* const names[12] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
-    (void)minor;
-    return names[((k % 12) + 12) % 12];
+    static const char* const major[12] = {"C", "Db", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"};
+    static const char* const minorNames[12] = {"C", "C#", "D", "Eb", "E", "F", "F#", "G", "G#", "A", "Bb", "B"};
+    return (minor ? minorNames : major)[((k % 12) + 12) % 12];
 }
 // Krumhansl & Kessler's profiles (probe-tone experiments, Krumhansl 1990)
 inline const std::array<double, 12>& majorProfile() {
