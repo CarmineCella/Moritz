@@ -142,7 +142,7 @@ inline vptr fn_read(vlist& a, Interp& i) {
     if (!fs::is_regular_file(fn, ec)) i.err("read: not a regular file: " + fn);
     auto size = fs::file_size(fn, ec);
     if (!ec && size > (1ull << 30)) i.err("read: " + fn + " is larger than 1 GB");
-    std::ifstream f(fn, std::ios::binary); if (!f) i.err("read: cannot open " + fn);
+    std::ifstream f(fn); if (!f) i.err("read: cannot open " + fn);       // text, as write writes (\r\n on Windows)
     std::stringstream ss; ss<<f.rdbuf(); return v_str(ss.str());
 }
 // (write path x) write x (printed) to a file, replacing it

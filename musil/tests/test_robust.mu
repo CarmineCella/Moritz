@@ -84,7 +84,8 @@ function multi-line-call () (+ 1
 check (contains? (error-of multi-line-call) "test_robust.mu:81:") (concat "a call over several lines: its first line " (error-of multi-line-call))
 
 ; --- files: only regular files are read ------------------------------------------------------------------
-check (contains? (error-of (function () (read "/dev/zero"))) "not a regular file") "read /dev/zero: refused"
+var zero-error (error-of (function () (read "/dev/zero")))      ; Windows has no /dev/zero: there, cannot open
+check (or (contains? zero-error "not a regular file") (contains? zero-error "cannot open")) "read /dev/zero: refused"
 check (contains? (error-of (function () (read "/tmp"))) "not a regular file") "read a directory: refused"
 
 
