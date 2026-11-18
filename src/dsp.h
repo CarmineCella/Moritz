@@ -12,6 +12,8 @@
 #include <cstdint>
 #include <vector>
 
+#include "signals/biquad.h"   // Musil's RBJ biquads
+
 #if defined(__x86_64__) || defined(_M_X64)
 #include <xmmintrin.h>
 #endif
@@ -332,14 +334,11 @@ public:
     void set(double a0, double a1, double a2, double b1, double b2) {
         a0_ = a0; a1_ = a1; a2_ = a2; b1_ = b1; b2_ = b2;
     }
-    // RBJ cookbook low-pass
+    // RBJ cookbook low-pass (Musil's signals/biquad.h)
     void lowpass(double f, double q, double sr) {
-        f = std::clamp(f, 1.0, sr * 0.49);
-        q = std::max(q, 0.1);
-        double w = kTwoPi * f / sr, c = std::cos(w), al = std::sin(w) / (2.0 * q);
-        double n = 1.0 / (1.0 + al);
-        set((1.0 - c) * 0.5 * n, (1.0 - c) * n, (1.0 - c) * 0.5 * n, -2.0 * c * n,
-            (1.0 - al) * n);
+        const musil::dsp::BiquadCoeffs k = musil::dsp::rbj(musil::dsp::BiquadType::Lowpass, sr, std::clamp(f, 1.0, sr * 0.49),
+                                                           std::max(q, 0.1)).normalized();
+        set(k.b0, k.b1, k.b2, k.a1, k.a2);
     }
     void process(const float* in, float* out, int n) {
         double x1 = x1_, x2 = x2_, y1 = y1_, y2 = y2_;

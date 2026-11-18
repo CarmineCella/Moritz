@@ -157,6 +157,9 @@ var lp (biquad "lowpass" sr 1000 0.707 0)
 check (== (length (head lp)) 3) "biquad: b"
 check (== (length (last lp)) 3) "biquad: a"
 check (near? (sum (head lp)) (sum (last lp)) 1e-12) "biquad lowpass: unity gain at DC"
+var ap (biquad "allpass" sr 1000 0.707 0)
+function alt-sum (v) (+ (- (getidx v 0) (getidx v 1)) (getidx v 2))
+check (and (near? (sum (head ap)) (sum (last ap)) 1e-12) (near? (abs (alt-sum (head ap))) (abs (alt-sum (last ap))) 1e-12)) "biquad allpass: unity gain at DC and Nyquist"
 var hp (biquad "highpass" sr 1000 0.707 0)
 check (near? (sum (head hp)) 0 1e-12) "biquad highpass: zero gain at DC"
 check (contains? (error-of (function () (biquad "weird" sr 1 1 0))) "unknown type") "biquad: unknown type"

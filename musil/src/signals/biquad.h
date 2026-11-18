@@ -15,18 +15,18 @@
 namespace musil {
 namespace dsp {
 
-enum class BiquadType { Lowpass, Highpass, Bandpass, Notch, Peak, Lowshelf, Highshelf };
+enum class BiquadType { Lowpass, Highpass, Bandpass, Notch, Peak, Lowshelf, Highshelf, Allpass };
 
 struct BiquadCoeffs {
     double b0 = 1, b1 = 0, b2 = 0, a0 = 1, a1 = 0, a2 = 0;
     BiquadCoeffs normalized() const { return {b0 / a0, b1 / a0, b2 / a0, 1.0, a1 / a0, a2 / a0}; }
 };
 
-// "lowpass" "highpass" "bandpass" (constant 0 dB peak gain) "notch" "peak" "lowshelf" "highshelf"
+// "lowpass" "highpass" "bandpass" (constant 0 dB peak gain) "notch" "peak" "lowshelf" "highshelf" "allpass"
 inline bool biquad_type(const std::string& name, BiquadType& t) {
     static const struct { const char* n; BiquadType t; } names[] = {
         {"lowpass", BiquadType::Lowpass}, {"highpass", BiquadType::Highpass}, {"bandpass", BiquadType::Bandpass},
-        {"notch", BiquadType::Notch}, {"peak", BiquadType::Peak}, {"lowshelf", BiquadType::Lowshelf}, {"highshelf", BiquadType::Highshelf}};
+        {"notch", BiquadType::Notch}, {"peak", BiquadType::Peak}, {"lowshelf", BiquadType::Lowshelf}, {"highshelf", BiquadType::Highshelf}, {"allpass", BiquadType::Allpass}};
     for (auto& e : names) if (name == e.n) { t = e.t; return true; }
     return false;
 }
@@ -39,6 +39,7 @@ inline BiquadCoeffs rbj(BiquadType type, double sr, double f0, double q, double 
         case BiquadType::Highpass: return {(1 + c) / 2, -(1 + c), (1 + c) / 2, 1 + alpha, -2 * c, 1 - alpha};
         case BiquadType::Bandpass: return {alpha, 0, -alpha, 1 + alpha, -2 * c, 1 - alpha};
         case BiquadType::Notch:    return {1, -2 * c, 1, 1 + alpha, -2 * c, 1 - alpha};
+        case BiquadType::Allpass:  return {1 - alpha, -2 * c, 1 + alpha, 1 + alpha, -2 * c, 1 - alpha};
         case BiquadType::Peak:     return {1 + alpha * A, -2 * c, 1 - alpha * A, 1 + alpha / A, -2 * c, 1 - alpha / A};
         case BiquadType::Lowshelf:
             return {A * ((A + 1) - (A - 1) * c + 2 * sA * alpha), 2 * A * ((A - 1) - (A + 1) * c), A * ((A + 1) - (A - 1) * c - 2 * sA * alpha),

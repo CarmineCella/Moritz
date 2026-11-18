@@ -12,6 +12,7 @@
 #include "offline.h"
 #include "signals/fft.h"   // Musil's FFT
 #include "scientific/nmf.h"    // Musil's nmf
+#include "signals/hpss.h"      // Musil's hpss
 
 #include <fstream>
 #include <map>
@@ -453,46 +454,18 @@ private:
             [chans, n, kernel, harm, perc](Job& job) {
                 int C = (int)chans->size();
                 for (int c = 0; c < C; ++c) {
-                    float from = (float)c / C, to = (float)(c + 1) / C;
-                    Stft s;
-                    s.analyse((*chans)[(size_t)c], n, n / 4, &job, from, from + .3f * (to - from));
-                    int F = s.bins, T = s.frames, half = kernel / 2;
-                    std::vector<float> M((size_t)T * F), Hm((size_t)T * F), Pm((size_t)T * F), buf;
-                    for (int t = 0; t < T; ++t)
-                        for (int q = 0; q < F; ++q) M[(size_t)t * F + q] = s.mag(t, q);
-                    auto median = [&buf]() {
-                        size_t m = buf.size() / 2;
-                        std::nth_element(buf.begin(), buf.begin() + (long)m, buf.end());
-                        return buf[m];
-                    };
-                    for (int q = 0; q < F; ++q) {
-                        if (job.cancelled()) return;
-                        for (int t = 0; t < T; ++t) {
-                            buf.clear();
-                            for (int u = t - half; u <= t + half; ++u) buf.push_back(u >= 0 && u < T ? M[(size_t)u * F + q] : 0.f);
-                            Hm[(size_t)t * F + q] = median();
-                        }
-                    }
-                    job.progress(from + .6f * (to - from));
-                    for (int t = 0; t < T; ++t) {
-                        if (job.cancelled()) return;
-                        for (int q = 0; q < F; ++q) {
-                            buf.clear();
-                            for (int v = q - half; v <= q + half; ++v) buf.push_back(v >= 0 && v < F ? M[(size_t)t * F + v] : 0.f);
-                            Pm[(size_t)t * F + q] = median();
-                        }
-                    }
-                    job.progress(from + .8f * (to - from));
-                    auto mask = [&](bool harmonic) {
-                        return [&, harmonic](int t, int q) {
-                            float h2 = Hm[(size_t)t * F + q] * Hm[(size_t)t * F + q], p2 = Pm[(size_t)t * F + q] * Pm[(size_t)t * F + q];
-                            float d = h2 + p2 + 1e-12f;
-                            return (harmonic ? h2 : p2) / d;
-                        };
-                    };
-                    harm->push_back(s.synthesise(mask(true)));
-                    perc->push_back(s.synthesise(mask(false)));
-                    job.progress(to);
+                    const std::vector<float>& x = (*chans)[(size_t)c];
+                    std::vector<float> h, p;
+                    int calls = 0;
+                    // Musil's hpss (signals/hpss.h): progress and Stop at each of its pauses
+                    bool done = musil::dsp::hpss<float>(x.data(), x.size(), (size_t)n, (size_t)n / 4, kernel, h, p, [&] {
+                        job.progress(((float)c + std::min(0.9f, 0.1f * (float)++calls)) / (float)C);
+                        return !job.cancelled();
+                    });
+                    if (!done) return;
+                    harm->push_back(std::move(h));
+                    perc->push_back(std::move(p));
+                    job.progress((float)(c + 1) / (float)C);
                 }
             },
             [this, hname, pname, harm, perc, sr] {

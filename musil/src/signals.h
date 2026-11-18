@@ -410,7 +410,7 @@ inline vptr sig_spectral_envelope(vlist& a, Interp& i) {
 }
 
 // (biquad type sr f0 q gain-db) => (list b a) of an RBJ biquad (the cookbook's coefficients, a[0] not 1: iir takes
-//   them as they are); type is one of "lowpass" "highpass" "bandpass" "notch" "peak" "lowshelf" "highshelf"; gain-db
+//   them as they are); type is one of "lowpass" "highpass" "bandpass" "notch" "peak" "lowshelf" "highshelf" "allpass"; gain-db
 //   is for peak and the shelves (signals/biquad.h, the coefficients of Moritz's biquad objects and of mir.h too)
 inline vptr sig_biquad(vlist& a, Interp& i) {
     for (size_t k = 2; k < 5; ++k) if (a[k]->t == Value::NUM && a[k]->num.size() > 1) i.bad("biquad: a moving cutoff, q or gain is a streaming feature (a synth); offline they are single numbers");

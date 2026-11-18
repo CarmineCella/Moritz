@@ -8,6 +8,7 @@
 
 #include "objects.h"
 #include "zoom.h"
+#include "signals/biquad.h"   // Musil's RBJ biquads
 
 #include <FL/Fl.H>
 #include <FL/fl_draw.H>
@@ -21,40 +22,14 @@ namespace {
 
 const char* const kTypes[] = {"lowpass", "highpass", "bandpass", "notch", "peak", "lowshelf", "highshelf", "allpass"};
 
-// RBJ cookbook biquad; returns false for an unknown type
+// the RBJ cookbook biquad of Musil's biquad (signals/biquad.h); returns false for an unknown type
 bool designBiquad(const std::string& type, double sr, double f0, double q, double gainDb, float c[5]) {
-    f0 = std::clamp(f0, 1.0, sr * 0.499);
-    q = std::max(q, 0.01);
-    double w0 = 2 * dsp::kPi * f0 / sr, cs = std::cos(w0), sn = std::sin(w0), alpha = sn / (2 * q);
-    double A = std::pow(10.0, gainDb / 40.0), sA = std::sqrt(A);
-    double b0, b1, b2, a0, a1, a2;
-    if (type == "lowpass") { b0 = (1 - cs) / 2; b1 = 1 - cs; b2 = b0; a0 = 1 + alpha; a1 = -2 * cs; a2 = 1 - alpha; }
-    else if (type == "highpass") { b0 = (1 + cs) / 2; b1 = -(1 + cs); b2 = b0; a0 = 1 + alpha; a1 = -2 * cs; a2 = 1 - alpha; }
-    else if (type == "bandpass") { b0 = alpha; b1 = 0; b2 = -alpha; a0 = 1 + alpha; a1 = -2 * cs; a2 = 1 - alpha; }
-    else if (type == "notch") { b0 = 1; b1 = -2 * cs; b2 = 1; a0 = 1 + alpha; a1 = -2 * cs; a2 = 1 - alpha; }
-    else if (type == "allpass") { b0 = 1 - alpha; b1 = -2 * cs; b2 = 1 + alpha; a0 = 1 + alpha; a1 = -2 * cs; a2 = 1 - alpha; }
-    else if (type == "peak") {
-        b0 = 1 + alpha * A; b1 = -2 * cs; b2 = 1 - alpha * A;
-        a0 = 1 + alpha / A; a1 = -2 * cs; a2 = 1 - alpha / A;
-    } else if (type == "lowshelf") {
-        b0 = A * ((A + 1) - (A - 1) * cs + 2 * sA * alpha);
-        b1 = 2 * A * ((A - 1) - (A + 1) * cs);
-        b2 = A * ((A + 1) - (A - 1) * cs - 2 * sA * alpha);
-        a0 = (A + 1) + (A - 1) * cs + 2 * sA * alpha;
-        a1 = -2 * ((A - 1) + (A + 1) * cs);
-        a2 = (A + 1) + (A - 1) * cs - 2 * sA * alpha;
-    } else if (type == "highshelf") {
-        b0 = A * ((A + 1) + (A - 1) * cs + 2 * sA * alpha);
-        b1 = -2 * A * ((A - 1) + (A + 1) * cs);
-        b2 = A * ((A + 1) + (A - 1) * cs - 2 * sA * alpha);
-        a0 = (A + 1) - (A - 1) * cs + 2 * sA * alpha;
-        a1 = 2 * ((A - 1) - (A + 1) * cs);
-        a2 = (A + 1) - (A - 1) * cs - 2 * sA * alpha;
-    } else {
-        return false;
-    }
-    c[0] = (float)(b0 / a0); c[1] = (float)(b1 / a0); c[2] = (float)(b2 / a0);
-    c[3] = (float)(a1 / a0); c[4] = (float)(a2 / a0);
+    musil::dsp::BiquadType t;
+    if (!musil::dsp::biquad_type(type, t)) return false;
+    const musil::dsp::BiquadCoeffs k =
+        musil::dsp::rbj(t, sr, std::clamp(f0, 1.0, sr * 0.499), std::max(q, 0.01), gainDb).normalized();
+    c[0] = (float)k.b0; c[1] = (float)k.b1; c[2] = (float)k.b2;
+    c[3] = (float)k.a1; c[4] = (float)k.a2;
     return true;
 }
 
