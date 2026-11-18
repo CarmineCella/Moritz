@@ -117,6 +117,7 @@ int main() {
         std::ostringstream out; I.out = &out;
         I.caps = Capabilities::sandboxed({ inside.string() });
         auto refused = [&](const std::string& code) {
+            std::cerr << "  " << code.substr(0, 60) << "\n" << std::flush;     // where it stopped, if it crashes
             try { I.run(code, "<caps>"); return false; }
             catch (const Error& e) { return std::string(e.what()).find("not allowed here") != std::string::npos; }
         };
@@ -125,7 +126,8 @@ int main() {
         expect(refused("write " + q(outside / "a.txt") + " \"no\""), "sandboxed: writing outside the root is refused");
         expect(!fs::exists(outside / "a.txt"), "...and nothing was written");
         expect(refused("write " + q(inside / ".." / "outside" / "b.txt") + " \"no\""), "sandboxed: .. cannot step out");
-        expect(refused("write " + q(inside / "link" / "c.txt") + " \"no\""), "sandboxed: a symbolic link cannot step out");
+        if (fs::is_symlink(inside / "link", ec))           // Windows lets only administrators make links
+            expect(refused("write " + q(inside / "link" / "c.txt") + " \"no\""), "sandboxed: a symbolic link cannot step out");
         expect(refused("append-file " + q(outside / "a.txt") + " \"no\""), "sandboxed: append-file");
         expect(refused("mkdir " + q(outside / "d")), "sandboxed: mkdir");
         expect(refused("remove " + q(outside)), "sandboxed: remove");
