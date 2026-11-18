@@ -98,6 +98,21 @@ inline bool remove(const std::string& path) {
 #endif
 }
 
+// Renames a complete temporary file over `path` in one step (an existing file is replaced, on Windows
+// too: never removed first). On failure `path` is as it was, the temporary file is left to the caller and
+// err says why.
+inline bool replace(const std::string& tmp, const std::string& path, std::string* err = nullptr) {
+#ifdef _WIN32
+    if (MoveFileExW(wide(tmp).c_str(), wide(path).c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
+        return true;
+    if (err) *err = "can't replace " + path;
+#else
+    if (::rename(tmp.c_str(), path.c_str()) == 0) return true;
+    if (err) *err = "can't replace " + path + ": " + std::strerror(errno);
+#endif
+    return false;
+}
+
 // Writes `data` into `path` through a temporary file in the same folder, renamed over `path` once it is
 // complete on the disk. On failure `path` is untouched, the temporary file is removed and err says why.
 // A symbolic link is followed: the file it points to is replaced, the link stays.
@@ -162,18 +177,11 @@ inline bool writeAtomic(const std::string& pathIn, const std::string& data, std:
         fileio::remove(tmp);
         return fail("can't write " + path + (why ? std::string(": ") + std::strerror(why) : std::string()));
     }
-#ifdef _WIN32
-    if (!MoveFileExW(wide(tmp).c_str(), wide(path).c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+    std::string failed;
+    if (!fileio::replace(tmp, path, &failed)) {
         fileio::remove(tmp);
-        return fail("can't replace " + path);
+        return fail(failed);
     }
-#else
-    if (::rename(tmp.c_str(), path.c_str()) != 0) {
-        int e = errno;
-        fileio::remove(tmp);
-        return fail("can't replace " + path + ": " + std::strerror(e));
-    }
-#endif
     return true;
 }
 

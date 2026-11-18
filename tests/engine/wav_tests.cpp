@@ -64,3 +64,23 @@ TEST(wav_writer_round_trip) {
     }
     CHECK(!exists(path) && !exists(path + ".part"));
 }
+
+#ifndef _WIN32
+// The rename at the end fails (here: the temporary file was taken away under the writer): the file that
+// was there is kept. finish() removed it before renaming, on every system, so a failed rename lost it.
+TEST(wav_writer_keeps_the_old_file_when_the_rename_fails) {
+    std::string path = temp("moritz-engine-keep.wav");
+    { std::ofstream(path) << "the old file"; }
+    WavWriter w;
+    CHECK(w.open(path, 1, 44100, 16));
+    float v = 0.5f;
+    w.write(&v, 1);
+    std::remove((path + ".part").c_str());
+    std::string err;
+    CHECK(!w.finish(&err) && !err.empty());
+    std::string kept;
+    std::getline(std::ifstream(path), kept);
+    CHECK(kept == "the old file");
+    std::remove(path.c_str());
+}
+#endif

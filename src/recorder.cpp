@@ -2,6 +2,7 @@
 // recorder.cpp — WavWriter and the quick recorder (recorder.h)
 
 #include "recorder.h"
+#include "fileio.h"
 
 #include <algorithm>
 #include <chrono>
@@ -38,11 +39,11 @@ void header(unsigned char* h, int channels, int sr, int bits, uint32_t dataBytes
 WavWriter::~WavWriter() {
     if (!f_) return;
     std::fclose(f_);
-    std::remove(temp_.c_str());
+    fileio::remove(temp_);
 }
 
 bool WavWriter::open(const std::string& path, int channels, int sr, int bits, std::string* err) {
-    if (f_) { std::fclose(f_); std::remove(temp_.c_str()); f_ = nullptr; }
+    if (f_) { std::fclose(f_); fileio::remove(temp_); f_ = nullptr; }
     path_ = path;
     temp_ = path + ".part";                             // in the same folder: the rename is atomic
     channels_ = std::max(1, channels);
@@ -50,7 +51,7 @@ bool WavWriter::open(const std::string& path, int channels, int sr, int bits, st
     bits_ = bits == 24 ? 24 : 16;
     frames_ = bytes_ = 0;
     ok_ = true;
-    f_ = std::fopen(temp_.c_str(), "wb");
+    f_ = fileio::open(temp_, "wb");
     if (!f_) {
         if (err) *err = "can't write " + path;
         return false;
@@ -89,13 +90,12 @@ bool WavWriter::finish(std::string* err) {
     ok_ = ok_ && std::fflush(f_) == 0 && std::fseek(f_, 0, SEEK_SET) == 0 && std::fwrite(h, 1, 44, f_) == 44;
     ok_ = std::fclose(f_) == 0 && ok_;
     f_ = nullptr;
-    if (ok_) {
-        std::remove(path_.c_str());                    // Windows does not rename over a file
-        ok_ = std::rename(temp_.c_str(), path_.c_str()) == 0;
-    }
+    std::string why = "can't write " + path_;
+    // renamed over the old file in one step: if that fails, the old file is still there
+    if (ok_) ok_ = fileio::replace(temp_, path_, &why);
     if (!ok_) {
-        std::remove(temp_.c_str());
-        if (err) *err = "can't write " + path_;
+        fileio::remove(temp_);
+        if (err) *err = why;
     }
     return ok_;
 }
