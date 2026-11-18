@@ -79,3 +79,28 @@ TEST(edits_while_audio_runs) {
     CHECK(blocks.load() > 0);
     CHECK(silent.load() == 0);             // an edit never silences the audio (it used to: try_lock)
 }
+
+// line~ lists sent while the audio thread starts them: a new list replaces the one in use, which goes back
+// to this thread to be freed, so the audio thread must be done reading it (the jumps left at its head were
+// read after it was handed back). Under ThreadSanitizer: clean.
+TEST(line_lists_while_audio_runs) {
+    Rig r("(patch (obj ln line~) (obj o dac~ 1 2) (connect ln 0 o 0))");
+    std::atomic<bool> stop{false};
+    std::atomic<long> blocks{0};
+    std::thread audio([&] {
+        std::vector<float> buf(2 * 16);
+        while (!stop) {
+            r.p.process(nullptr, 0, buf.data(), 2, 16);
+            blocks.fetch_add(1);
+        }
+    });
+    Message jumps;                                    // 100 jumps: one a sample, so a list lasts 100 samples
+    for (int k = 0; k < 100; ++k) { jumps.push_back(Atom((float)(k % 2))); jumps.push_back(Atom(0.f)); }
+    for (int k = 0; k < 60000; ++k) {
+        r.box("ln")->message(0, jumps);
+        if (k % 4 == 0) std::this_thread::sleep_for(std::chrono::microseconds(20));
+    }
+    stop = true;
+    audio.join();
+    CHECK(blocks.load() > 0);
+}

@@ -470,8 +470,10 @@ public:
         eventPieces(*this, n, [&](int a, int b) { ramp_.process(y + a, yd ? yd + a : nullptr, b - a, sr); },
                     [&](const Event& e) {
                         if (e.kind == kStop) ramp_.stop();
-                        else if (e.kind == kList)
-                            if (const std::vector<Seg>* l = lists_.take()) ramp_.start(l->data(), (int)l->size(), sr);
+                        else if (e.kind == kList) {
+                            ramp_.settle(sr);     // the old list's leading jumps first: take() hands it back to be freed
+                            if (const std::vector<Seg>* l = lists_.take()) ramp_.start(l->data(), (int)l->size());
+                        }
                     });
     }
 

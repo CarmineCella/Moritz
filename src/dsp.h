@@ -215,10 +215,13 @@ public:
     struct Seg {
         float target = 0.f, ms = 0.f;
     };
-    void start(const Seg* segs, int count, double sr) {
-        // jumps at the head of the list before are taken first: "0, 1 100" at one
-        // sample starts the ramp from 0
+    // before a new list replaces this one: the jumps at the head of what is left of it are taken now ("0, 1 100"
+    // at one sample starts the ramp from 0). Called while the list is still the caller's: once replaced, it may be
+    // freed by another thread (line~'s mailbox hands it back), so start() never reads it.
+    void settle(double sr) {
         while (left_ <= 0 && idx_ < count_ && segs_[idx_].ms * sr < 1000.0) value_ = target_ = segs_[idx_++].target;
+    }
+    void start(const Seg* segs, int count) {
         segs_ = segs;
         count_ = count;
         idx_ = 0;

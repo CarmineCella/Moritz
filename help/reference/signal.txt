@@ -71,7 +71,7 @@ see: line~ snapshot~ +~
 @ line~
 syntax: line~ [value]
 Signal ramps. A list of target-time pairs makes segments: `1 10 0 300` goes
-to 1 in 10 ms, then to 0 in 300 ms (up to 64 segments). A float alone jumps
+to 1 in 10 ms, then to 0 in 300 ms (a list as long as you like). A float alone jumps
 to that value, or ramps to it over the time last sent to the right inlet,
 which is used once and then reset to 0. A new message drops the segments
 still pending and starts from the current value.
