@@ -50,14 +50,16 @@ mathematics, sound, and imagination are not separate disciplines but different f
 
 ## Build and test
 
-From the root of Moritz's tree, with the FLTK that Moritz builds:
+From the root of Moritz's tree, Musil is built with Moritz (one CMake build, one FLTK):
 
 ```sh
-make musil                              # build/musil/musil (Linux: build/linux/musil/musil)
+cmake -B build && cmake --build build -j8     # build/musil/musil (Linux, Windows: build/Moritz/musil/musil)
 MUSIL_PATH=musil/src build/musil/musil musil/examples/reference.mu    # tour of the core language
-make test-musil                         # every test, golden reference and example, on Musil and on Musil in Moritz
-make embed-test                         # Musil inside another program, built from musil/ alone
+ctest --test-dir build                        # every test, golden reference and example, on Musil and on Musil in Moritz
+ctest --test-dir build -R '^embed$'           # Musil inside another program
 ```
+
+or on its own, from `musil/` alone: `cmake -S musil -B build-musil && cmake --build build-musil && ctest --test-dir build-musil`.
 
 The `musil` program finds its libraries in a `src` folder next to it (as in Moritz's downloads,
 `musil/musil` beside `musil/src`), in `MUSIL_PATH`, or in `~/.musil`.

@@ -279,10 +279,10 @@ as the common time model.
 Musil is the scripting language of Moritz. Its code lives in this repository,
 in `musil/`, complete (the IDE of 0.9.1 aside), and evolves here from 0.10,
 released with Moritz under one tag. It stays independent: nothing in `musil/`
-uses Moritz (`tools/check-musil.sh`, and `make musil` and `make embed-test`
+uses Moritz (`tools/check-musil.sh`, and Musil's own CMake build and its `embed` test
 build from `musil/` alone). Changes since 0.9.1 are in `musil/CHANGES.md`.
 
-- **Musil on its own is complete**: the command line (`make musil`, shipped
+- **Musil on its own is complete**: the command line (built with Moritz by the one CMake build, shipped
   in the downloads) with its live audio, plots, sliders and score roll (for
   display and playback). **Moritz hosts Musil without its devices**: the
   live, plot and controls libraries are left out (Moritz plays and draws);
@@ -309,7 +309,7 @@ build from `musil/` alone). Changes since 0.9.1 are in `musil/CHANGES.md`.
   messages and buffers. The sounds and data of both are in `data/`.
 - Tests: `tools/test-musil.sh musil` (Musil on its own, the reference: every
   test, golden reference and example) and `tools/test-musil.sh moritz`
-  (Musil in Moritz, without the devices), `make embed-test`,
+  (Musil in Moritz, without the devices), the `embed` test,
   `tools/test-patches.sh` (with the cross-tests and the code-box names).
 - **One score model, Musil's; one editable roll, Moritz's** (later, with the
   timeline and the waveform editor): a Moritz roll reads a score through

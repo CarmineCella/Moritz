@@ -4,8 +4,14 @@
 #
 #   tools/test-patches.sh [path/to/moritz] [folder with examples, help, library]
 #
+# Without a path, the program of the CMake build in build/ (ctest runs it so).
 # Used by CI on macOS, Linux and Windows; run it locally after changes.
-MORITZ=${1:-./moritz}
+MORITZ=$1
+if [ -z "$MORITZ" ]; then
+    for m in build/Moritz.app/Contents/MacOS/moritz build/Moritz/moritz build/Moritz/moritz.exe; do
+        [ -x "$m" ] && MORITZ=$m && break
+    done
+fi
 ROOT=${2:-.}
 OUT=$(mktemp -d 2>/dev/null || mktemp -d -t moritz)
 fails=0

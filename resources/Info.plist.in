@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleName</key><string>Moritz</string>
+  <key>CFBundleDisplayName</key><string>Moritz</string>
+  <key>CFBundleExecutable</key><string>moritz</string>
+  <key>CFBundleIdentifier</key><string>org.moritz.moritz</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleVersion</key><string>@MORITZ_VERSION@</string>
+  <key>CFBundleShortVersionString</key><string>@MORITZ_VERSION@</string>
+  <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
+  <key>LSMinimumSystemVersion</key><string>@MACOS_MIN@</string>
+  <key>NSHighResolutionCapable</key><true/>
+  <key>CFBundleIconFile</key><string>moritz</string>
+  <key>NSHumanReadableCopyright</key><string>Created by Carmine-Emanuele Cella (2026). BSD 2-Clause License.</string>
+  <key>NSMicrophoneUsageDescription</key><string>Moritz uses audio input for the adc~ object.</string>
+  <key>CFBundleDocumentTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleTypeName</key><string>Moritz patch</string>
+      <key>CFBundleTypeRole</key><string>Editor</string>
+      <key>CFBundleTypeExtensions</key><array><string>moritz</string><string>mlsp</string></array>
+    </dict>
+  </array>
+</dict>
+</plist>

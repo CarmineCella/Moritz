@@ -5,7 +5,7 @@
 #   ./moritz --reference-md > OBJECTS.md && tools/objects-pdf.sh      (the result is committed)
 set -e
 cd "$(dirname "$0")/.."
-VERSION=$(sed -n 's/^VERSION *:= *//p' Makefile)
+VERSION=$(head -1 VERSION)
 TMP=$(mktemp -d 2>/dev/null || mktemp -d -t objects)
 # the title and the list of links become the PDF's title page and table of contents
 awk 'NR == 1 && /^# / { next } /^- \[/ { next } { print }' OBJECTS.md > "$TMP/objects.md"

@@ -1,5 +1,5 @@
 # Builds Moritz and Musil on its own on macOS, Linux and Windows (each on its
-# own system, with the same make targets a user runs), renders every patch on
+# own system, with the same CMake build a user runs), renders every patch on
 # each system (tools/test-patches.sh), runs Musil's tests on Musil itself and
 # on Musil in Moritz (tools/test-musil.sh), and keeps the downloads as artifacts.
 # Pushing a tag v<version> also publishes them as a GitHub release.
@@ -23,22 +23,25 @@ jobs:
       - name: Version and cache key
         id: v
         run: |
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then echo "MAKEFLAGS=VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"; fi
-          echo "deps=$(grep -E '^(FLTK|MA|RTMIDI)_VER' Makefile | shasum | cut -c1-12)" >> "$GITHUB_OUTPUT"
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then echo "VERSION_ARG=-DMORITZ_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"; fi
+          echo "deps=$(grep -E 'FLTK_(VERSION|SHA256) |set\((MA|RTMIDI)_VERSION' CMakeLists.txt musil/cmake/fltk.cmake | shasum | cut -c1-12)" >> "$GITHUB_OUTPUT"
       - uses: actions/cache@v4
         with:
           path: deps
           key: deps-macos-${{ steps.v.outputs.deps }}
       - name: Build
-        run: make -j4 && make dist
+        run: |
+          cmake -B build $VERSION_ARG
+          cmake --build build -j4
+          cmake --build build --target dist
       - name: Render every patch
-        run: tools/test-patches.sh ./moritz
+        run: tools/test-patches.sh build/Moritz.app/Contents/MacOS/moritz
       - name: Test Musil
         run: |
           tools/check-musil.sh
           tools/test-musil.sh musil build/musil/musil
-          tools/test-musil.sh moritz ./moritz
-          make embed-test
+          tools/test-musil.sh moritz build/Moritz.app/Contents/MacOS/moritz
+          ctest --test-dir build -R '^embed$' --output-on-failure
       - uses: actions/upload-artifact@v4
         with:
           name: macos
@@ -57,22 +60,25 @@ jobs:
       - name: Version and cache key
         id: v
         run: |
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then echo "MAKEFLAGS=VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"; fi
-          echo "deps=$(grep -E '^(FLTK|MA|RTMIDI)_VER' Makefile | sha1sum | cut -c1-12)" >> "$GITHUB_OUTPUT"
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then echo "VERSION_ARG=-DMORITZ_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"; fi
+          echo "deps=$(grep -E 'FLTK_(VERSION|SHA256) |set\((MA|RTMIDI)_VERSION' CMakeLists.txt musil/cmake/fltk.cmake | sha1sum | cut -c1-12)" >> "$GITHUB_OUTPUT"
       - uses: actions/cache@v4
         with:
           path: deps
           key: deps-linux-${{ steps.v.outputs.deps }}
       - name: Build
-        run: make -j4 linux-dist
+        run: |
+          cmake -B build $VERSION_ARG
+          cmake --build build -j4
+          cmake --build build --target dist
       - name: Render every patch
-        run: xvfb-run -a tools/test-patches.sh build/linux/Moritz/moritz build/linux/Moritz
+        run: xvfb-run -a tools/test-patches.sh build/Moritz/moritz build/Moritz
       - name: Test Musil
         run: |
           tools/check-musil.sh
-          xvfb-run -a tools/test-musil.sh musil build/linux/Moritz/musil/musil
-          xvfb-run -a tools/test-musil.sh moritz build/linux/Moritz/moritz
-          make embed-test
+          xvfb-run -a tools/test-musil.sh musil build/Moritz/musil/musil
+          xvfb-run -a tools/test-musil.sh moritz build/Moritz/moritz
+          ctest --test-dir build -R '^embed$' --output-on-failure
       - uses: actions/upload-artifact@v4
         with:
           name: linux
@@ -94,25 +100,28 @@ jobs:
         id: v
         shell: bash
         run: |
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then echo "MAKEFLAGS=VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"; fi
-          echo "deps=$(grep -E '^(FLTK|MA|RTMIDI)_VER' Makefile | sha1sum | cut -c1-12)" >> "$GITHUB_OUTPUT"
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then echo "VERSION_ARG=-DMORITZ_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"; fi
+          echo "deps=$(grep -E 'FLTK_(VERSION|SHA256) |set\((MA|RTMIDI)_VERSION' CMakeLists.txt musil/cmake/fltk.cmake | sha1sum | cut -c1-12)" >> "$GITHUB_OUTPUT"
       - uses: actions/cache@v4
         with:
           path: deps
           key: deps-windows-${{ steps.v.outputs.deps }}
       - name: Build
-        run: make -j4 && make windows-zip
+        run: |
+          cmake -G "MSYS Makefiles" -B build $VERSION_ARG
+          cmake --build build -j4
+          cmake --build build --target dist
       - name: Render every patch
         run: |
-          build/windows/Moritz/moritz.exe --version
-          tools/test-patches.sh build/windows/Moritz/moritz.exe build/windows/Moritz
+          build/Moritz/moritz.exe --version
+          tools/test-patches.sh build/Moritz/moritz.exe build/Moritz
       - name: Test Musil
         run: |
           mkdir -p /c/tmp /d/tmp     # /tmp is on the drive of the working directory
           tools/check-musil.sh
-          tools/test-musil.sh musil build/windows/Moritz/musil/musil.exe
-          tools/test-musil.sh moritz build/windows/Moritz/moritz.exe
-          make embed-test
+          tools/test-musil.sh musil build/Moritz/musil/musil.exe
+          tools/test-musil.sh moritz build/Moritz/moritz.exe
+          ctest --test-dir build -R '^embed$' --output-on-failure
       - uses: actions/upload-artifact@v4
         with:
           name: windows

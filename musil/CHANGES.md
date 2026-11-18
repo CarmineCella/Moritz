@@ -1,6 +1,6 @@
 # Changes
 
-## 0.11 (not yet released)
+## 0.10b
 
 Musil is the reference of Moritz's signal processing: where Moritz has an object for what a Musil
 function does, the object runs Musil's code. The engines are in `src/signals/` (and
@@ -23,6 +23,9 @@ function does, the object runs Musil's code. The engines are in `src/signals/` (
 - **`nmf` and `nmf-with-parts` are C++** (`src/scientific/nmf.h`, the factorisation of Moritz's
   `nmf` box), about five times faster than the Musil they were; `nmf-separate` and the supervised
   separation are faster with them. The starting point is drawn the same way on every system.
+- **One build with Moritz**: Moritz's CMake build includes Musil's (`musil/CMakeLists.txt`), and
+  both fetch the same FLTK, 1.4.4 (`cmake/fltk.cmake`); Musil still builds on its own from
+  `musil/`.
 - **The ambisonic harmonics and decoders** (`src/signals/ambisonics.h`) and the reader of
   head-response sets (`src/signals/hrtf.h`) are shared with `ambienc~`, `ambidec~`, `binaural~`
   and `hrtf~`; `src/signals/fft.h` is the FFT of all the engines and of `mir.h`.

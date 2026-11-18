@@ -80,8 +80,13 @@ for lib, files in LIBS:
 version = re.search(r'#define MUSIL_VERSION "([^"]+)"', (ROOT / "src/core.h").read_text()).group(1)
 (ROOT / "docs/generated/version.tex").write_text("\\newcommand{\\musilversion}{%s}\n" % version)
 pkg = ROOT / "editors/vscode/musil/package.json"
+def semver(v):      # VS Code wants major.minor.patch: 0.10 -> 0.10.0, 0.10b -> 0.10.2 (the second of 0.10)
+    m = re.match(r"(\d+)\.(\d+)(?:\.(\d+))?([a-z]?)$", v)
+    if not m: return v
+    patch = int(m.group(3) or 0) + (ord(m.group(4)) - ord("a") + 1 if m.group(4) else 0)
+    return "%s.%s.%d" % (m.group(1), m.group(2), patch)
 if pkg.exists():   # the extension carries the same version
-    t = pkg.read_text(); t2 = re.sub(r'"version": "[^"]+"', '"version": "%s"' % version, t, count=1)
+    t = pkg.read_text(); t2 = re.sub(r'"version": "[^"]+"', '"version": "%s"' % semver(version), t, count=1)
     if t2 != t: pkg.write_text(t2)
 
 # the VS Code grammar: special forms, then every documented name, as a TextMate grammar

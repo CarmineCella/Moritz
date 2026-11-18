@@ -141,8 +141,8 @@ section~\ref{sec:ide}.
 From the root of Moritz's tree:
 
 \begin{lstlisting}[numbers=none]
-make musil                      ; build/musil/musil, with Moritz's FLTK
-make test-musil                 ; every test, reference and example, on Musil and on Musil in Moritz
+cmake -B build && cmake --build build   ; Moritz, and build/musil/musil
+ctest --test-dir build          ; every test, reference and example, on Musil and on Musil in Moritz
 \end{lstlisting}
 
 \noindent or on its own, from \texttt{musil/}:
@@ -156,7 +156,7 @@ cmake --install build           ; musil -> /usr/local/bin,  *.mu and help.txt ->
 
 The \texttt{musil} program finds its libraries in a \texttt{src} folder next to it, as
 in Moritz's downloads (\texttt{musil/musil} beside \texttt{musil/src}). The CMake build
-fetches FLTK~1.4, the one external dependency, used by the plot library and the controls
+fetches FLTK~1.4.4 (the same as Moritz's), the one external dependency, used by the plot library and the controls
 window; \texttt{-DMUSIL\_FLTK=OFF} builds everything else with no
 dependency at all. Libraries are found by \musil{load} in \texttt{\textasciitilde/.musil}
 after installing, in any directory listed in the \texttt{MUSIL\_PATH} environment
@@ -1885,7 +1885,7 @@ into \texttt{help.txt} and into this manual. A library is complete when it has
 % ═════════════════════════════════════════════════════════════════════════════
 \section{Examples}
 
-All in \texttt{musil/examples/}, all run by \texttt{ctest} and \texttt{make test-musil}. Run them from that directory.
+All in \texttt{musil/examples/}, all run by \texttt{ctest}. Run them from that directory.
 
 \begin{center}
 \begin{tabular}{@{}ll@{}}

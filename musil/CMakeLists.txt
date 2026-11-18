@@ -2,7 +2,8 @@ cmake_minimum_required(VERSION 3.15)
 # the version is defined once, in src/core.h (MUSIL_VERSION); everything else reads it from there
 file(STRINGS src/core.h MUSIL_VERSION_LINE REGEX "#define MUSIL_VERSION \"")
 string(REGEX REPLACE ".*MUSIL_VERSION \"([^\"]+)\".*" "\\1" MUSIL_VERSION "${MUSIL_VERSION_LINE}")
-project(Musil VERSION ${MUSIL_VERSION} LANGUAGES CXX)
+string(REGEX MATCH "^[0-9]+(\\.[0-9]+)*" MUSIL_VERSION_NUMBER "${MUSIL_VERSION}")   # 0.10b -> 0.10 for CMake
+project(Musil VERSION ${MUSIL_VERSION_NUMBER} LANGUAGES CXX)
 message(STATUS "Musil ${MUSIL_VERSION}")
 
 set(CMAKE_CXX_STANDARD 17)
@@ -27,45 +28,12 @@ else()
   set(MUSIL_HOME "$ENV{HOME}/.musil")
 endif()
 
-# --- FLTK: the one external dependency (plots, controls, the IDE) -------------------------
-option(MUSIL_FLTK "Fetch FLTK and build the plot library, the controls window and the IDE" ON)
+# --- FLTK: the one external dependency (plots, controls) -----------------------------------
+# Fetched and built with Musil (cmake/fltk.cmake); inside Moritz's build, Moritz's FLTK is used.
+option(MUSIL_FLTK "Fetch FLTK and build the plot library and the controls window" ON)
 if(MUSIL_FLTK)
-  include(FetchContent)
-  set(FLTK_BUILD_TEST OFF CACHE BOOL "" FORCE)
-  set(FLTK_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
-  set(FLTK_BUILD_FLUID OFF CACHE BOOL "" FORCE)
-  set(FLTK_BUILD_FLTK_OPTIONS OFF CACHE BOOL "" FORCE)
-  set(FLTK_BUILD_GL OFF CACHE BOOL "" FORCE)
-  set(FLTK_BUILD_FORMS OFF CACHE BOOL "" FORCE)
-  set(FLTK_BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
-  set(FLTK_USE_SYSTEM_LIBPNG OFF CACHE BOOL "" FORCE)
-  set(FLTK_USE_SYSTEM_LIBJPEG OFF CACHE BOOL "" FORCE)
-  set(FLTK_USE_SYSTEM_ZLIB OFF CACHE BOOL "" FORCE)
-  set(FLTK_USE_PANGO OFF CACHE BOOL "" FORCE)
-  set(FLTK_BACKEND_WAYLAND OFF CACHE BOOL "" FORCE)
-  if(POLICY CMP0135)
-    cmake_policy(SET CMP0135 NEW)
-  endif()
-  # EXCLUDE_FROM_ALL keeps FLTK out of `cmake --install`: it is linked statically. The patch renames
-  # FLTK's own `uninstall` target (fltk-uninstall), so `uninstall` stays ours.
-  set(FLTK_PATCH sed -i.bak "s/add_custom_target(uninstall/add_custom_target(fltk-uninstall/" CMake/install.cmake)
-  if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.28)
-    FetchContent_Declare(fltk
-      URL https://github.com/fltk/fltk/archive/refs/tags/release-1.4.3.tar.gz
-      PATCH_COMMAND ${FLTK_PATCH}
-      URL_HASH SHA256=6a11c0bf91b7b193a87a1928c32a953f36d7dd4b65fef3e9d0c40a51882f97a6
-      EXCLUDE_FROM_ALL)
-    FetchContent_MakeAvailable(fltk)
-  else()
-    FetchContent_Declare(fltk URL https://github.com/fltk/fltk/archive/refs/tags/release-1.4.3.tar.gz
-      URL_HASH SHA256=6a11c0bf91b7b193a87a1928c32a953f36d7dd4b65fef3e9d0c40a51882f97a6)
-    FetchContent_GetProperties(fltk)
-    if(NOT fltk_POPULATED)
-      FetchContent_Populate(fltk)
-      add_subdirectory(${fltk_SOURCE_DIR} ${fltk_BINARY_DIR} EXCLUDE_FROM_ALL)
-    endif()
-  endif()
-  message(STATUS "FLTK 1.4.3 fetched: plot library, controls and the IDE enabled")
+  include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/fltk.cmake)
+  musil_fetch_fltk()
 endif()
 
 add_custom_target(uninstall
@@ -83,11 +51,17 @@ if(MSVC)
   target_compile_options(musil_base INTERFACE /W3)
 else()
   target_compile_options(musil_base INTERFACE -Wall -Wextra -Wno-unused-parameter)
+  if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")     # one-line ifs, by design
+    target_compile_options(musil_base INTERFACE -Wno-misleading-indentation)
+  endif()
 endif()
 
 # --- The command-line interpreter ---------------------------------------------
 add_executable(musil cli/main.cpp)
 target_link_libraries(musil PRIVATE musil_base)
+if(MUSIL_OUTPUT_DIR)        # set by a build that ships Musil in a folder of its own (Moritz's)
+  set_target_properties(musil PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${MUSIL_OUTPUT_DIR})
+endif()
 # the audio device (miniaudio, in src/live) needs these system libraries
 if(APPLE)
   target_link_libraries(musil_base INTERFACE "-framework CoreAudio" "-framework CoreFoundation" "-framework AudioToolbox")
@@ -98,6 +72,7 @@ elseif(WIN32)
 endif()
 if(MINGW)   # one .exe that runs without the MinGW runtime DLLs, with an 8 MB stack as on macOS and Linux
   target_link_options(musil_base INTERFACE -static -static-libgcc -static-libstdc++ -Wl,--stack,8388608)
+  target_link_options(musil PRIVATE -s)      # stripped, as it ships
 endif()
 if(MUSIL_FLTK)
   target_compile_definitions(musil PRIVATE MUSIL_HAS_FLTK)

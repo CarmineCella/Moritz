@@ -1,7 +1,7 @@
 #!/bin/sh
 # check-musil.sh — Musil stays independent of Moritz: every file that musil/ includes with quotes is found
-# inside musil/ (next to the file, or in musil/src), never in Moritz's src/. make musil and make embed-test
-# build from musil/ alone as well; this check names the offending line instead of a compiler error.
+# inside musil/ (next to the file, or in musil/src), never in Moritz's src/. musil/ also builds alone
+# (cmake -S musil -B build-musil); this check names the offending line instead of a compiler error.
 #
 #   tools/check-musil.sh        (CI runs it)
 cd "$(dirname "$0")/../musil" || exit 1
