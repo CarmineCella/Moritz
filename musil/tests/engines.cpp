@@ -198,7 +198,30 @@ static void test_denormals() {
     expect(dsp::DenormalGuard::active() == before, "denormals: the caller's mode is restored");
 }
 
+// --- conv~'s engine: zero latency, the same as the whole convolution, whatever the callback sizes ---
+static void test_partconv() {
+    std::mt19937 g(5);
+    std::vector<double> ir(3000), x(6000);
+    for (size_t k = 0; k < ir.size(); ++k) ir[k] = rnd::gaussian(g) * std::exp(-(double)k / 800.0);
+    for (auto& v : x) v = rnd::gaussian(g);
+    std::vector<double> want = dsp::convolve(x, ir);
+    dsp::PartConv<double> pc;
+    pc.setIR(ir.data(), (long)ir.size(), 1, 1.0);
+    std::vector<double> got(x.size());
+    size_t at = 0; int sizes[] = {1, 64, 37, 300, 256, 5, 512, 64};
+    for (int s = 0; at < x.size(); ++s) { int n = (int)std::min<size_t>((size_t)sizes[s % 8], x.size() - at); pc.process(x.data() + at, got.data() + at, n); at += (size_t)n; }
+    double err = 0; for (size_t k = 0; k < x.size(); ++k) err = std::max(err, std::fabs(got[k] - want[k]));
+    expect(err < 1e-9, "PartConv: the whole convolution, no latency, any callback size (" + std::to_string(err) + ")");
+    dsp::PartConv<float> pf;                                   // as conv~ runs it
+    std::vector<float> irf(ir.begin(), ir.end()), xf(x.begin(), x.end()), yf(x.size());
+    pf.setIR(irf.data(), (long)irf.size(), 1, 1.f);
+    for (size_t k = 0; k < xf.size(); k += 64) pf.process(xf.data() + k, yf.data() + k, (int)std::min<size_t>(64, xf.size() - k));
+    double ef = 0; for (size_t k = 0; k < x.size(); ++k) ef = std::max(ef, std::fabs(yf[k] - want[k]));
+    expect(ef < 1e-3, "PartConv<float>: the whole convolution");
+}
+
 int main() {
+    test_partconv();
     test_denormals();
     test_threads();
     test_fft();

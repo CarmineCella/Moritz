@@ -17,9 +17,12 @@ namespace dsp {
 
 // PartConv (after pconv's BlockConv): the impulse response is cut into partitions of B samples. The
 // first one is applied directly, sample by sample, so the output has no delay; the others use
-// uniformly partitioned FFT convolution (overlap-save, FFT size 2B): partition p only needs input
-// that is at least p blocks old, so every B samples the whole tail for the next block is computed
-// from the blocks already complete.
+// uniformly partitioned FFT convolution (overlap-save, real FFTs of 2B): partition p only needs input
+// that is at least p blocks old. The tail of the next block is the sum over the partitions of the
+// spectra of the blocks before times theirs; all its terms but the newest block's are known while
+// the current block fills, so they are accumulated a share at a time as its samples come in (the
+// work is spread over the callbacks of a block instead of landing in one), and only the newest
+// block's FFT, its product with the first partition and the inverse FFT are left for the block's end.
 template <class T>
 class PartConv {
 public:
@@ -33,15 +36,16 @@ public:
         P_ = len > B ? (int)((len - B + B - 1) / B) : 0;          // tail partitions
         fft_.init(2 * B);
         H_.assign((size_t)P_, Spec());
+        std::vector<T> buf(2 * B);
         for (int p = 0; p < P_; ++p) {
-            std::vector<T> re(2 * B, (T)0), im(2 * B, (T)0);
+            std::fill(buf.begin(), buf.end(), (T)0);
             for (int k = 0; k < B; ++k) {
                 long t = (long)(p + 1) * B + k;
-                if (t < len) re[(size_t)k] = ir[t * stride] * gain;
+                if (t < len) buf[(size_t)k] = ir[t * stride] * gain;
             }
-            fft_.forward(re.data(), im.data());
-            H_[(size_t)p].re.assign(re.begin(), re.begin() + B + 1);
-            H_[(size_t)p].im.assign(im.begin(), im.begin() + B + 1);
+            H_[(size_t)p].re.assign(B + 1, (T)0);
+            H_[(size_t)p].im.assign(B + 1, (T)0);
+            fft_.forward(buf.data(), H_[(size_t)p].re.data(), H_[(size_t)p].im.data());
         }
         fdl_.assign((size_t)std::max(1, P_), Spec{std::vector<T>(B + 1, (T)0), std::vector<T>(B + 1, (T)0)});
         hist_.assign(2 * B, (T)0);
@@ -51,8 +55,10 @@ public:
         fill_ = 0;
         fdlPos_ = 0;
         histPos_ = 0;
-        re_.assign(2 * B, (T)0);
-        im_.assign(2 * B, (T)0);
+        done_ = 1;
+        buf_.assign(2 * B, (T)0);
+        accRe_.assign(B + 1, (T)0);
+        accIm_.assign(B + 1, (T)0);
         ready_ = true;
     }
     bool ready() const { return ready_; }
@@ -60,18 +66,24 @@ public:
 
     void process(const T* in, T* out, int n) {
         DenormalGuard ftz;                             // a reverberation tail decays through denormals (x86)
-        for (int i = 0; i < n; ++i) {
-            T x = in[i];
-            // head: direct convolution over the last B inputs (history kept twice for a straight loop)
-            hist_[(size_t)histPos_] = x;
-            hist_[(size_t)histPos_ + B] = x;
-            const T* h = hist_.data() + histPos_ + B;   // h[-k] = x[n - k]
-            T y = 0;
-            for (int k = 0; k < B; ++k) y += head_[(size_t)k] * h[-k];
-            histPos_ = (histPos_ + 1) % B;
-            out[i] = y + tail_[(size_t)fill_];
-            curBlock_[(size_t)fill_] = x;
-            if (++fill_ == B) blockDone();
+        int i = 0;
+        while (i < n) {
+            int run = std::min(n - i, B - fill_);          // up to the end of the block
+            for (int e = i + run; i < e; ++i) {
+                T x = in[i];
+                // head: direct convolution over the last B inputs (history kept twice for a straight loop)
+                hist_[(size_t)histPos_] = x;
+                hist_[(size_t)histPos_ + B] = x;
+                const T* h = hist_.data() + histPos_ + B;   // h[-k] = x[n - k]
+                T y = 0;
+                for (int k = 0; k < B; ++k) y += head_[(size_t)k] * h[-k];
+                histPos_ = (histPos_ + 1) % B;
+                out[i] = y + tail_[(size_t)fill_];
+                curBlock_[(size_t)fill_++] = x;
+            }
+            // the share of the older partitions that is due by now
+            accumulate(1 + (int)((long)(P_ - 1) * fill_ / B));
+            if (fill_ == B) blockDone();
         }
     }
 
@@ -79,47 +91,50 @@ private:
     struct Spec {
         std::vector<T> re, im;
     };
-    // a block of input is complete: add its spectrum to the delay line and
-    // compute the tail for the next block
+    // the terms X[j - p] H[p] for p in [done_, upto), the blocks already in the delay line (X[j - p] is at
+    // fdlPos_ - p: fdlPos_ is where the block filling now goes)
+    void accumulate(int upto) {
+        upto = std::min(upto, P_);
+        const int L = (int)fdl_.size();
+        for (; done_ < upto; ++done_) {
+            const Spec& x = fdl_[(size_t)((fdlPos_ - done_ + L) % L)];
+            const Spec& h = H_[(size_t)done_];
+            mac(x, h);
+        }
+    }
+    void mac(const Spec& x, const Spec& h) {
+        const T *xr = x.re.data(), *xi = x.im.data(), *hr = h.re.data(), *hi = h.im.data();
+        T *ar = accRe_.data(), *ai = accIm_.data();
+        for (int k = 0; k <= B; ++k) {
+            ar[k] += xr[k] * hr[k] - xi[k] * hi[k];
+            ai[k] += xr[k] * hi[k] + xi[k] * hr[k];
+        }
+    }
+    // a block of input is complete: its spectrum into the delay line, its term added, the tail of the next block
     void blockDone() {
         fill_ = 0;
         if (P_ == 0) { std::fill(tail_.begin(), tail_.end(), (T)0); prevBlock_ = curBlock_; return; }
-        std::copy(prevBlock_.begin(), prevBlock_.end(), re_.begin());
-        std::copy(curBlock_.begin(), curBlock_.end(), re_.begin() + B);
-        std::fill(im_.begin(), im_.end(), (T)0);
-        fft_.forward(re_.data(), im_.data());
+        accumulate(P_);                                   // (all done already, unless a call ended exactly here)
+        std::copy(prevBlock_.begin(), prevBlock_.end(), buf_.begin());
+        std::copy(curBlock_.begin(), curBlock_.end(), buf_.begin() + B);
         Spec& X = fdl_[(size_t)fdlPos_];
-        std::copy(re_.begin(), re_.begin() + B + 1, X.re.begin());
-        std::copy(im_.begin(), im_.begin() + B + 1, X.im.begin());
+        fft_.forward(buf_.data(), X.re.data(), X.im.data());
         prevBlock_ = curBlock_;
-        // next block j: sum over p >= 1 of X[j - p] H[p - 1]; X[j - 1] is the block just done
-        std::fill(re_.begin(), re_.end(), (T)0);
-        std::fill(im_.begin(), im_.end(), (T)0);
-        int L = (int)fdl_.size();
-        for (int p = 0; p < P_; ++p) {
-            const Spec& x = fdl_[(size_t)((fdlPos_ - p + L) % L)];
-            const Spec& h = H_[(size_t)p];
-            for (int k = 0; k <= B; ++k) {
-                re_[(size_t)k] += x.re[(size_t)k] * h.re[(size_t)k] - x.im[(size_t)k] * h.im[(size_t)k];
-                im_[(size_t)k] += x.re[(size_t)k] * h.im[(size_t)k] + x.im[(size_t)k] * h.re[(size_t)k];
-            }
-        }
-        for (int k = 1; k < B; ++k) {                       // a real signal: mirror the spectrum
-            re_[(size_t)(2 * B - k)] = re_[(size_t)k];
-            im_[(size_t)(2 * B - k)] = -im_[(size_t)k];
-        }
-        fft_.inverse(re_.data(), im_.data());
-        for (int k = 0; k < B; ++k) tail_[(size_t)k] = re_[(size_t)(B + k)] / (T)(2 * B);   // overlap-save
-        fdlPos_ = (fdlPos_ + 1) % L;
+        mac(X, H_[0]);
+        fft_.inverse(accRe_.data(), accIm_.data(), buf_.data());
+        for (int k = 0; k < B; ++k) tail_[(size_t)k] = buf_[(size_t)(B + k)] / (T)(2 * B);   // overlap-save
+        std::fill(accRe_.begin(), accRe_.end(), (T)0);
+        std::fill(accIm_.begin(), accIm_.end(), (T)0);
+        done_ = 1;
+        fdlPos_ = (fdlPos_ + 1) % (int)fdl_.size();
     }
 
-    FFT<T> fft_;
-    int P_ = 0, fill_ = 0, fdlPos_ = 0, histPos_ = 0;
+    RealFFT<T> fft_;
+    int P_ = 0, fill_ = 0, fdlPos_ = 0, histPos_ = 0, done_ = 1;
     bool ready_ = false;
-    std::vector<T> head_, hist_, prevBlock_, curBlock_, tail_, re_, im_;
+    std::vector<T> head_, hist_, prevBlock_, curBlock_, tail_, buf_, accRe_, accIm_;
     std::vector<Spec> H_, fdl_;
 };
-
 
 // y = x * h, the whole linear convolution (n + m - 1 samples, n and m the lengths of x and h), by real FFTs:
 // one transform when x is not much longer than h, else overlap-add over blocks (FFTs of about 8 times h's
