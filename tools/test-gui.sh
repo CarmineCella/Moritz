@@ -114,8 +114,9 @@ run "$G/numbers.moritz" --window-png none act=menu:patch.edit act=state
 expect "Edit Mode on a document" "state: front"
 
 # 13. a code window comes to the front after a help window: Save (Cmd+S) is active again, Undo acts on its text
-run "$G/undo.moritz" --window-png none open=c1 act=help:metro act=menuitem:file.save act=menuitem:edit.undo \
-    act=raise:code act=wait:0.1 act=menuitem:file.save act=menuitem:edit.undo
+# (the waits let the windows come to the front first: slower under a sanitizer or on X11)
+run "$G/undo.moritz" --window-png none open=c1 act=help:metro act=wait:0.5 act=menuitem:file.save act=menuitem:edit.undo \
+    act=raise:code act=wait:0.5 act=menuitem:file.save act=menuitem:edit.undo
 expect "Save with a help window in front" "state: menu item file.save inactive"
 expect "Undo with a help window in front" "state: menu item edit.undo inactive"
 if [ "$(grep -c "state: menu item file.save active" "$out")" = 1 ] &&
