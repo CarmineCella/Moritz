@@ -1433,7 +1433,7 @@ void MainWindow::updateTitle() {
     copy_label(t.c_str());
 }
 
-void MainWindow::markDirty() {
+void MainWindow::markDirty(Patch*) {
     if (!dirty_) {
         dirty_ = true;
         updateTitle();
@@ -1571,7 +1571,7 @@ bool MainWindow::saveAs() {
 
 // ---- Edit
 
-void MainWindow::pushUndo() {
+void MainWindow::pushUndo(Patch*) {
     undo_.push_back(patch.serialize());
     if (undo_.size() > 500) undo_.erase(undo_.begin());
     redo_.clear();

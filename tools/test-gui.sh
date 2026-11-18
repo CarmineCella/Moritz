@@ -41,6 +41,18 @@ expect() {   # expect <name> <text the output must contain>
 }
 
 
+# 1. a window closed while a box in it is animated: its timers must not find it gone
+run "$G/animated.moritz" --window-png none act=draw act=close act=wait:0.3 act=state
+expect "close with an animated box" "state: documents 0"
+
+# 2. Patch > New with a help window in front: help patches are read-only (it crashed)
+run --window-png none act=help:metro act=state act=new:print act=state
+expect "Patch > New in a help window" "state: help in front yes"
+
+# 3. the code view replaces the number box being typed into; typing goes on (it wrote into freed memory)
+run "$G/numbers.moritz" --window-png none act=click:n1 "act=text:$G/numbers-edited.txt" act=keys:5, act=boxes
+expect "typing after the code view" "state: box n1"
+
 rm -rf "$T"
 echo "$count interface cases, $fails failed"
 [ $fails -eq 0 ]

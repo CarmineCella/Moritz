@@ -51,6 +51,7 @@ int runTestActions(int argc, char** argv);
 class Canvas : public Fl_Group {
 public:
     Canvas(int x, int y, int w, int h, MainWindow* win, Patch* patch);
+    ~Canvas() override;
     Patch* patch() const { return patch_; }
 
     void draw() override;
@@ -92,6 +93,8 @@ public:
     // a patch position in window coordinates (tests click there)
     int screenX(int px) const { return x() + (int)std::lround((px - sx_) * zoom_); }
     int screenY(int py) const { return y() + (int)std::lround((py - sy_) * zoom_); }
+    // the box a pointer the canvas kept still names (nullptr when it was deleted or replaced)
+    Box* alive(Box* b) const;
 
 private:
     struct Hit {
@@ -133,6 +136,8 @@ private:
     Patch* patch_;
     bool locked_ = false;
     Fl_Input* editor_;
+    // Pointers to boxes the canvas keeps between events: an edit elsewhere (the code view, undo, a
+    // message) can delete or replace the box, so each is checked with alive() before use.
     Box* editing_ = nullptr;
     bool editingNew_ = false;
 
@@ -376,12 +381,12 @@ public:
     bool edited() const { return dirty_; }
     bool canUndo() const { return !undo_.empty(); }
     bool canRedo() const { return !redo_.empty(); }
-    // Edit
-    void pushUndo();
+    // Edit: p is the patch edited (a subpatcher, an abstraction, or the document's own)
+    void pushUndo(Patch* p = nullptr);
     void dropUndo();     // discard the last pushUndo() when nothing changed
     void undo();
     void redo();
-    void markDirty();
+    void markDirty(Patch* p = nullptr);
     // Patch
     void toggleLock();
 
