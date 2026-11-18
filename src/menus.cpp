@@ -59,7 +59,9 @@ namespace {
 // the text editor the Edit menu should act on: the focused one, or the
 // editor of a text view that is the front window
 Fl_Text_Editor* frontTextEditor() {
-    if (auto* ed = dynamic_cast<Fl_Text_Editor*>(Fl::focus())) return ed;
+    // the focused editor only if its window is in front: a code window behind a help window can keep the
+    // keyboard focus (X11 without a window manager moves it to no one), and Undo must not change its hidden text
+    if (auto* ed = dynamic_cast<Fl_Text_Editor*>(Fl::focus()); ed && ed->top_window() == Fl::first_window()) return ed;
     if (auto* tw = dynamic_cast<PatchTextWindow*>(Fl::first_window())) return tw->editor();
     return nullptr;
 }
