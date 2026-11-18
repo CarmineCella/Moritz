@@ -139,7 +139,7 @@ public:
         if (m[0].is("loop") && m.size() > 1) loop_.store(m[1].isFloat() && m[1].f != 0.f);
         else if (m[0].is("set") && m.size() > 1) { name_ = m[1].str(); patch->rebuild(); }
         else if (m[0].is("startloop")) jumpMs_.store(scalar(1));
-        else if (m[0].isFloat()) jumpMs_.store(std::max(0.f, m[0].f));
+        else if (m[0].isFloat() && std::isfinite(m[0].f)) jumpMs_.store(std::max(0.f, m[0].f));
     }
     void dsp(int n) override {
         int ch = numOuts() - 1;
@@ -167,6 +167,7 @@ public:
             for (int k = 0; k < ch; ++k) sigOut(k)[i] = inside ? b->interp(pos_, k) : 0.f;
             sync[i] = (float)std::clamp((pos_ - ls) / (le - ls), 0.0, 1.0);
             pos_ += rate[i] * ratio;
+            if (!std::isfinite(pos_)) pos_ = loop ? ls : 0.0;   // a NaN or infinite rate: start again
             if (!loop) pos_ = std::clamp(pos_, -1.0, (double)b->frames);
         }
     }

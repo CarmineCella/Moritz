@@ -41,3 +41,16 @@ public:
 }
 
 }  // namespace
+
+// groove~: a NaN rate made its position NaN for good (the clamp let it through): silence forever
+TEST(groove_recovers_from_a_nan_rate) {
+    Rig r("(patch (obj b buffer~ snd data/Vox.wav) (obj s sig~ 1) (obj g groove~ snd 1) (obj o dac~ 1)"
+          " (connect s 0 g 0) (connect g 0 o 0))");
+    r.box("g")->message(0, {Atom("loop"), Atom(1.f)});
+    r.run(4410);
+    r.box("s")->message(0, {Atom(std::nanf(""))});
+    r.run(640);
+    r.box("s")->message(0, {Atom(1.f)});
+    auto out = r.run(8820);
+    CHECK(peak(etest::channel(out, 2, 0), 4410) > 0.f);
+}
