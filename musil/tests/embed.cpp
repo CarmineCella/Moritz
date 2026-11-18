@@ -19,6 +19,7 @@ static void expect(bool ok, const std::string& what) {
 
 int main() {
     const long v0 = live_values().load(), e0 = live_envs().load();
+    std::cerr << "embed: threads\n" << std::flush;   // where it stopped, if it crashes
     // eight threads, each making and destroying interpreters that load the libraries and run code
     std::vector<std::thread> threads;
     std::atomic<int> errors{0};
@@ -50,6 +51,7 @@ int main() {
                                        std::to_string(live_values().load() - v0) + ")");
     expect(live_envs().load() == e0, "every environment is freed when the interpreters are gone (left: " +
                                      std::to_string(live_envs().load() - e0) + ")");
+    std::cerr << "embed: blocking\n" << std::flush;   // where it stopped, if it crashes
     // a host refuses builtins that wait
     {
         Interp I;
@@ -59,6 +61,7 @@ int main() {
         try { I.run("sleep 10", "<embed>"); } catch (const Error& e) { refused = std::string(e.what()).find("not allowed") != std::string::npos; }
         expect(refused, "sleep is refused when blocking is not allowed");
     }
+    std::cerr << "embed: thread stack\n" << std::flush;   // where it stopped, if it crashes
     // an interpreter on a std::thread (512 KB of stack on macOS) stops a deep recursion with an error: the
     // stack it measures is the thread's own, not the main thread's
     {
@@ -74,6 +77,7 @@ int main() {
         th.join();
         expect(what.find("stack overflow") != std::string::npos, "a recursion on a small thread ends with a stack overflow error (" + what.substr(0, 80) + ")");
     }
+    std::cerr << "embed: stop\n" << std::flush;   // where it stopped, if it crashes
     // Stop: request_stop from another thread ends a loop that catches every error; try does not catch it, and
     // the request stays until clear_stop
     {
@@ -102,6 +106,7 @@ int main() {
         expect(in_sleep, "a stop requested before sleep ends it at once");
         I.clear_stop();
     }
+    std::cerr << "embed: capabilities\n" << std::flush;   // where it stopped, if it crashes
     // the capability profile: checked inside each builtin, whatever the names
     {
         namespace fs = std::filesystem;
@@ -115,7 +120,7 @@ int main() {
             try { I.run(code, "<caps>"); return false; }
             catch (const Error& e) { return std::string(e.what()).find("not allowed here") != std::string::npos; }
         };
-        auto q = [](const fs::path& p) { return "\"" + p.string() + "\""; };
+        auto q = [](const fs::path& p) { return "\"" + p.generic_string() + "\""; };   // '/': no escapes in Musil's strings
         expect(!refused("write " + q(inside / "a.txt") + " \"ok\""), "sandboxed: writing under the root is allowed");
         expect(refused("write " + q(outside / "a.txt") + " \"no\""), "sandboxed: writing outside the root is refused");
         expect(!fs::exists(outside / "a.txt"), "...and nothing was written");
@@ -129,7 +134,9 @@ int main() {
         expect(refused("udp-send \"127.0.0.1\" 9 \"x\""), "sandboxed: udp-send");
         expect(refused("udp-receive \"127.0.0.1\" 47999 0.01"), "sandboxed: udp-receive");
         expect(refused("serve 47998"), "sandboxed: serve");
+#ifndef _WIN32                                       // OSC is not available on Windows
         expect(refused("osc-send \"127.0.0.1\" 9 \"/x\" 1"), "sandboxed: osc-send");
+#endif
         expect(refused("sleep 0.01"), "sandboxed: sleep");
         expect(refused("exit 0"), "sandboxed: exit");
         expect(!refused("read " + q(inside / "a.txt")), "sandboxed: reading is allowed");
@@ -144,6 +151,7 @@ int main() {
         expect(!refused("write " + q(outside / "a.txt") + " \"ok\""), "full: writing anywhere");
         fs::remove_all(root, ec);
     }
+    std::cerr << "embed: per-interpreter state\n" << std::flush;   // where it stopped, if it crashes
     // the state of the libraries is each interpreter's: idle hooks and the evaluation port of one are not the other's
     {
         Interp A, B; make_env(A); make_env(B);
@@ -156,6 +164,7 @@ int main() {
         A.run("serve-stop", "<A>");
 #endif
     }
+    std::cerr << "embed: done\n" << std::flush;
     if (failures == 0) std::cout << "embed: all checks passed\n";
     return failures == 0 ? 0 : 1;
 }

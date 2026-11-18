@@ -37,6 +37,7 @@
 
 #pragma once
 #include <algorithm>
+#include <cctype>
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -483,15 +484,22 @@ inline fs::path resolved_path(const std::string& path) {
     fs::path c = fs::weakly_canonical(p, ec);
     return (ec ? p.lexically_normal() : c);
 }
+// whether p is a root or inside one: compared as normalised text with '/' separators (and without regard to
+// case on Windows, whose file names ignore it), so "C:\\x" and "c:/x/" are the same folder
+inline std::string path_key(const fs::path& p) {
+    std::string s = p.lexically_normal().generic_string();
+#ifdef _WIN32
+    for (auto& c : s) c = (char)std::tolower((unsigned char)c);
+#endif
+    while (s.size() > 1 && s.back() == '/' && !(s.size() == 3 && s[1] == ':')) s.pop_back();
+    return s;
+}
 inline bool path_under(const fs::path& p, const std::vector<std::string>& roots) {
+    std::string k = path_key(p);
     for (auto& r : roots) {
-        fs::path root = resolved_path(r);
-        auto pi = p.begin(); bool inside = true;
-        for (auto ri = root.begin(); ri != root.end(); ++ri, ++pi) {
-            if (ri->empty()) continue;                     // a trailing separator
-            if (pi == p.end() || *pi != *ri) { inside = false; break; }
-        }
-        if (inside) return true;
+        std::string rk = path_key(resolved_path(r));
+        if (k == rk) return true;
+        if (k.size() > rk.size() && k.compare(0, rk.size(), rk) == 0 && (rk.back() == '/' || k[rk.size()] == '/')) return true;
     }
     return false;
 }
