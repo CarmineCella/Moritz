@@ -174,11 +174,20 @@ private:
         Patch* ip = inner_.get();
         run(
             [ip, frame, total, ch, in, inCh, result](Job& job) {
+                dsp::FlushDenormalsScope ftz;         // as the audio callback: no slow denormals
+                // the worker dispatches the patch's messages while it renders: what other
+                // threads send it (a code box's output) waits for the next block
+                struct Owner {
+                    Patch* p;
+                    explicit Owner(Patch* q) : p(q) { if (!jobsSynchronous) p->setDispatchThread(std::this_thread::get_id()); }
+                    ~Owner() { p->setDispatchThread(std::thread::id()); }
+                } owner(ip);
                 const int blk = dsp::kBlock;
                 std::vector<float> out((size_t)blk * ch), inBlock((size_t)blk * std::max(1, inCh), 0.f);
                 for (long f = 0; f < total; f += blk) {
                     if (job.cancelled()) return;
                     *frame = f;
+                    ip->drainForeign();
                     ip->runDue((double)f / ip->sampleRate.load());
                     int n = (int)std::min<long>(blk, total - f);
                     for (int i = 0; i < n * inCh; ++i) {

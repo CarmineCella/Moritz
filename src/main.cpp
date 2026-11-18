@@ -115,6 +115,7 @@ int renderCli(int argc, char** argv) {
     }
     std::string src, err, path = argv[2];
     if (!moritz::readFile(path, src)) { std::fprintf(stderr, "can't read %s\n", argv[2]); return 1; }
+    dsp::FlushDenormalsScope ftz;        // as the audio callback: recursive filters never hit denormals
     const int sr = 44100, blk = dsp::kBlock;
     int ch = 2;                          // as many as the highest dac~ channel (at least 2)
     long frame = 0;

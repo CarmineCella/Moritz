@@ -34,6 +34,46 @@ inline void flushDenormals() {
 #endif
 }
 
+// Flush-to-zero for the life of the scope, then the thread's mode as it was:
+// for the threads that run a patch besides the audio callback (moritz
+// --render, the render object's worker).
+class FlushDenormalsScope {
+public:
+    FlushDenormalsScope() {
+#if defined(__x86_64__) || defined(_M_X64)
+        saved_ = _mm_getcsr();
+#elif defined(__aarch64__)
+        asm volatile("mrs %0, fpcr" : "=r"(saved_));
+#endif
+        flushDenormals();
+    }
+    ~FlushDenormalsScope() {
+#if defined(__x86_64__) || defined(_M_X64)
+        _mm_setcsr((unsigned)saved_);
+#elif defined(__aarch64__)
+        asm volatile("msr fpcr, %0" ::"r"(saved_));
+#endif
+    }
+    FlushDenormalsScope(const FlushDenormalsScope&) = delete;
+    FlushDenormalsScope& operator=(const FlushDenormalsScope&) = delete;
+
+private:
+    uint64_t saved_ = 0;
+};
+
+// Whether denormals are flushed on this thread now (for the tests).
+inline bool denormalsFlushed() {
+#if defined(__x86_64__) || defined(_M_X64)
+    return (_mm_getcsr() & 0x8040) == 0x8040;
+#elif defined(__aarch64__)
+    uint64_t fpcr;
+    asm volatile("mrs %0, fpcr" : "=r"(fpcr));
+    return (fpcr & (1ULL << 24)) != 0;
+#else
+    return true;
+#endif
+}
+
 inline void fill(float* out, float v, int n) { std::fill(out, out + n, v); }
 
 // ------------------------------------------------------------------ cycle~

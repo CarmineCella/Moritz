@@ -16,6 +16,11 @@
 //     snapshot~) are atomics read by the GUI.
 //   * Timed objects (metro, delay, line, ...) use the patch's scheduler,
 //     which runs on the GUI thread (like Max with Overdrive off).
+//   * A patch the render object runs belongs to the render's worker thread
+//     while it renders (Patch::setDispatchThread): messages other threads
+//     send into it (a code box's output, its (send ...), a rebuild) are
+//     queued and dispatched by the worker between blocks, so one thread
+//     only ever dispatches its messages and touches its scheduler.
 //
 // Nesting
 //   * Subpatchers (p), abstractions and pfft~ own a child Patch. The top
@@ -33,6 +38,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "dsp.h"
@@ -332,6 +338,14 @@ public:
     void redraw() { if (onRedraw) onRedraw(); }
     void print(const std::string& s);
 
+    // ---- the thread that dispatches messages: the GUI thread, unless set
+    // (the render object's worker, for the patch it renders). From another
+    // thread, messages (outlet, sendTo, rebuild) are queued for it, and it
+    // runs them with drainForeign().
+    void setDispatchThread(std::thread::id t);           // std::thread::id(): the GUI's again
+    bool foreignThread() const;                          // the caller is not the dispatch thread
+    void runOnDispatchThread(std::function<void()> fn);
+    void drainForeign();
 
     // ---- scheduler (GUI thread). Times are in seconds on `clock`.
     std::function<double()> clock;     // set on the root
@@ -393,6 +407,11 @@ private:
     std::vector<Timer> timers_;
     uint64_t timerSeq_ = 0;
     bool inRunDue_ = false;
+    // messages from other threads for the dispatch thread (root)
+    std::atomic<std::thread::id> dispatch_{};
+    std::mutex foreignMutex_;
+    std::vector<std::function<void()>> foreign_;
+    std::atomic<bool> hasForeign_{false};
 };
 
 // The audio thread is inside Patch::process (for the allocation guard of

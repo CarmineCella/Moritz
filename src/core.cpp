@@ -16,6 +16,7 @@
 #include <limits>
 #include <set>
 #include <sstream>
+#include <thread>
 
 namespace moritz {
 
@@ -296,6 +297,10 @@ const float* Box::sigIn(int i, int n) {
 
 void Box::outlet(int i, const Message& m) {
     if (!patch || m.empty()) return;
+    if (Patch* r = patch->root(); r->foreignThread()) {   // another thread: the patch's own runs it
+        r->runOnDispatchThread([this, i, m] { outlet(i, m); });
+        return;
+    }
     if (patch->root()->depth > 256) {
         patch->status("stack overflow: message loop stopped at " + id);
         return;
@@ -725,6 +730,7 @@ void Patch::addSendReceiveEdges(const std::vector<Box*>& sig, std::map<Box*, std
 }
 
 void Patch::rebuild() {
+    if (foreignThread()) { runOnDispatchThread([this] { rebuild(); }); return; }
     {
         std::lock_guard<std::mutex> lk(mutex());
         recompile();
@@ -808,6 +814,32 @@ struct InProcess {
 
 bool inAudioProcess() { return tlInProcess > 0; }
 
+void Patch::setDispatchThread(std::thread::id t) { root()->dispatch_.store(t); }
+
+bool Patch::foreignThread() const {
+    std::thread::id d = root()->dispatch_.load(std::memory_order_relaxed);
+    return d != std::thread::id() && d != std::this_thread::get_id();
+}
+
+void Patch::runOnDispatchThread(std::function<void()> fn) {
+    Patch* r = root();
+    std::lock_guard<std::mutex> lk(r->foreignMutex_);
+    r->foreign_.push_back(std::move(fn));
+    r->hasForeign_.store(true, std::memory_order_release);
+}
+
+void Patch::drainForeign() {
+    Patch* r = root();
+    if (!r->hasForeign_.load(std::memory_order_acquire)) return;
+    std::vector<std::function<void()>> q;
+    {
+        std::lock_guard<std::mutex> lk(r->foreignMutex_);
+        q.swap(r->foreign_);
+        r->hasForeign_.store(false, std::memory_order_relaxed);
+    }
+    for (auto& fn : q) fn();
+}
+
 void Patch::process(const float* in, int inCh, float* out, int outCh, int frames) {
     InProcess inside;
     std::fill(out, out + (size_t)frames * outCh, 0.f);
@@ -833,6 +865,7 @@ void Patch::process(const float* in, int inCh, float* out, int outCh, int frames
 void Patch::sendTo(const std::string& name, const Message& m) {
     if (m.empty()) return;
     if (parent) { root()->sendTo(name, m); return; }   // names are global, as in Max
+    if (foreignThread()) { runOnDispatchThread([this, name, m] { sendTo(name, m); }); return; }
     if (name == "dsp") {                       // "; dsp start" / "; dsp stop"
         if (m[0].isFloat()) { if (onDsp) onDsp(m[0].f != 0.f); }
         else handleDspMessage(this, m);

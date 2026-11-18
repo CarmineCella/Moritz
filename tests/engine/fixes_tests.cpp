@@ -54,3 +54,68 @@ TEST(groove_recovers_from_a_nan_rate) {
     auto out = r.run(8820);
     CHECK(peak(etest::channel(out, 2, 0), 4410) > 0.f);
 }
+
+// A patch owned by another thread (the render object's worker): messages sent from elsewhere wait
+// for it, and it dispatches them, in order, between blocks
+TEST(foreign_messages_run_on_the_dispatch_thread) {
+    Rig r("(patch (obj r receive x (pos 0 0)))");
+    auto probe = std::make_unique<Probe>();
+    Probe* pr = probe.get();
+    Box* p = r.p.addBox(std::move(probe), 0, 40);
+    r.p.connect(r.box("r"), 0, p, 0);
+    std::atomic<bool> owned{false}, stop{false};
+    std::thread::id worker;
+    std::thread w([&] {
+        worker = std::this_thread::get_id();
+        r.p.setDispatchThread(worker);
+        owned = true;
+        std::vector<float> buf(128);
+        while (!stop) {
+            r.p.drainForeign();
+            r.p.process(nullptr, 0, buf.data(), 2, 64);
+            std::this_thread::yield();
+        }
+        r.p.drainForeign();
+        r.p.setDispatchThread(std::thread::id());
+    });
+    while (!owned) std::this_thread::yield();
+    for (int k = 0; k < 200; ++k) {
+        if (k % 2) r.p.sendTo("x", {Atom((float)k)});
+        else r.box("r")->outlet(0, {Atom((float)k)});
+    }
+    stop = true;
+    w.join();
+    CHECK(pr->values.size() == 200);
+    bool inOrder = true, onWorker = true;
+    for (size_t k = 0; k < pr->values.size(); ++k) inOrder = inOrder && pr->values[k] == (float)k;
+    for (auto& t : pr->threads) onWorker = onWorker && t == worker;
+    CHECK(inOrder);
+    CHECK(onWorker);
+}
+
+// The render object's worker flushes denormals, as the audio callback does: a decaying filter
+// gives zeros, not denormal floats
+TEST(render_worker_flushes_denormals) {
+    std::string inner = tempPath("moritz-engine-ftz.moritz");
+    {
+        std::ofstream f(inner);
+        f << "(patch (obj l loadbang) (obj c click~) (obj b biquad~ 1 0 0 -0.9 0) (obj o dac~ 1)"
+             " (connect l 0 c 0) (connect c 0 b 0) (connect b 0 o 0))\n";
+    }
+    bool sync = jobsSynchronous;
+    jobsSynchronous = false;
+    Rig r("(patch (obj buf buffer~ out) (obj rn render " + inner + " 1))");
+    r.box("rn")->message(0, {Atom("render"), Atom("out"), Atom(0.05f)});
+    BufferBox* b = findBuffer(&r.p, "out");
+    for (int k = 0; k < 2000 && b && b->buf.frames == 0; ++k) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        drainMain();
+    }
+    jobsSynchronous = sync;
+    CHECK(b && b->buf.frames > 1000);
+    bool denormal = false;
+    if (b)
+        for (float v : b->buf.data) denormal = denormal || (v != 0.f && std::fabs(v) < FLT_MIN);
+    CHECK(!denormal);
+    std::remove(inner.c_str());
+}
