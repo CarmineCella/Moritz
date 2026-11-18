@@ -372,7 +372,7 @@ Fl_Preferences& appPrefs() { return prefs(); }
 void App::showBrowser() {
     if (!gBrowser) gBrowser = new BrowserWindow();
     else gBrowser->refresh();
-    if (MainWindow* d = frontDoc())
+    if (DocumentWindow* d = frontDoc())
         gBrowser->position(d->x() + std::max(0, (d->w() - gBrowser->w()) / 2), d->y() + 40);
     gBrowser->show();
 }
@@ -416,6 +416,7 @@ void App::addRecent(const std::string& given) {
     Fl_Preferences r(prefs(), "recent");
     for (size_t k = 0; k < 10; ++k) r.set(std::to_string(k).c_str(), k < list.size() ? list[k].c_str() : "");
     prefs().flush();
+    rebuildRecentMenus();               // File > Open Recent
 }
 
 }  // namespace moritz

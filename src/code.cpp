@@ -273,25 +273,26 @@ CodeWindow::CodeWindow() : Fl_Double_Window(1060, 680, "Untitled — code") {
     auto* bar = new Fl_Group(0, 0, W, tb);
     bar->box(FL_FLAT_BOX);
     bar->color(fl_rgb_color(32, 33, 37));
-    auto button = [&](int x, int wd, const char* label, Fl_Callback* cb, const char* tip) {
+    auto button = [&](int x, int wd, const char* label, Fl_Callback* cb, const std::string& tip) {
         auto* b = new Fl_Button(x, 6, wd, 24, label);
         b->labelsize(12);
         b->box(FL_FLAT_BOX);
         b->color(fl_rgb_color(48, 50, 56));
         b->labelcolor(kText);
         b->callback(cb, this);
-        b->tooltip(tip);
+        b->copy_tooltip(tip.c_str());
         b->clear_visible_focus();
         return b;
     };
     button(8, 96, "Run block", [](Fl_Widget*, void* d) { static_cast<CodeWindow*>(d)->runBlock(); },
-           "Run the selection, or the paragraph at the cursor (Cmd-Enter)")->color(fl_rgb_color(40, 90, 190));
+           "Run the selection, or the paragraph at the cursor (" + shortcutText(FL_COMMAND + FL_Enter) + ")")
+        ->color(fl_rgb_color(40, 90, 190));
     button(108, 80, "Run file", [](Fl_Widget*, void* d) { static_cast<CodeWindow*>(d)->runFile(); },
-           "Run the whole file (Shift-Cmd-Enter)");
+           "Run the whole file (" + shortcutText(FL_COMMAND + FL_SHIFT + FL_Enter) + ")");
     button(192, 60, "Stop", [](Fl_Widget*, void* d) { static_cast<CodeWindow*>(d)->stop(); },
-           "Stop the code that is running (Cmd-. or Esc)");
+           "Stop the code that is running (" + shortcutText(FL_COMMAND + '.') + " or Esc)");
     button(262, 84, "Comment", [](Fl_Widget*, void* d) { static_cast<CodeWindow*>(d)->toggleComment(); },
-           "Comment or uncomment the lines (Cmd-/)");
+           "Comment or uncomment the lines (" + shortcutText(FL_COMMAND + '/') + ")");
     button(352, 76, "Console", [](Fl_Widget*, void*) { App::get().showConsole(); },
            "The Console: what the code prints, and a prompt");
     bar->end();
@@ -374,7 +375,8 @@ CodeWindow::CodeWindow() : Fl_Double_Window(1060, 680, "Untitled — code") {
         if (cw->confirmDiscard()) App::get().closeCode(cw);
     });
     refreshVariables();
-    setStatus("Cmd-Enter runs the block · Shift-Cmd-Enter the file · Esc stops · Tab completes · Cmd-/ comments");
+    setStatus(shortcutText(FL_COMMAND + FL_Enter) + " runs the block · " + shortcutText(FL_COMMAND + FL_SHIFT + FL_Enter) +
+              " the file · Esc stops · Tab completes · " + shortcutText(FL_COMMAND + '/') + " comments");
     helpBuf_->text("Move the cursor onto a name to read its help here.\n\nAbove: what the session defines, after each run.");
     refreshTitle();
 }
@@ -411,7 +413,8 @@ bool CodeWindow::startFile(const std::string& path) {
     restyle();
     refreshOutline();
     refreshTitle();
-    setStatus(path.substr(path.find_last_of("/\\") + 1) + " is not there yet: Cmd-S writes it");
+    setStatus(path.substr(path.find_last_of("/\\") + 1) + " is not there yet: " + shortcutText(FL_COMMAND + 's') +
+              " writes it");
     return true;
 }
 
@@ -427,12 +430,13 @@ void CodeWindow::bind(CodeSource* s) {
                     " defines, after each run (in1, in2... are its inlets).").c_str());
     refreshTitle();
     refreshVariables();
-    if (!s->file().empty() && !fileio::isFile(s->file())) {
-        setStatus(s->title() + " is not there yet: Cmd-S writes it · Cmd-Enter runs the block in the box");
-        return;
-    }
-    setStatus(s->file().empty() ? "the script of " + s->title() + ": Cmd-S puts it back into the box · Cmd-Enter runs the block in the box"
-                                : "the file of " + s->title() + " · Cmd-Enter runs the block in the box");
+    std::string run = shortcutText(FL_COMMAND + FL_Enter) + " runs the block in the box";
+    if (!s->file().empty() && !fileio::isFile(s->file()))
+        setStatus(s->title() + " is not there yet: " + shortcutText(FL_COMMAND + 's') + " writes it · " + run);
+    else
+        setStatus(s->file().empty() ? "the script of " + s->title() + ": " + shortcutText(FL_COMMAND + 's') +
+                                          " puts it back into the box · " + run
+                                    : "the file of " + s->title() + " · " + run);
 }
 
 void CodeWindow::unbind() {
@@ -470,7 +474,7 @@ bool CodeWindow::save() {
     if (source_ && path_.empty()) {                     // the script of a code box: into the box, an edit of its patch
         char* t = text_->text();
         Patch* p = source_->patchOf();
-        App::get().pushUndoFor(p);                      // undo takes the script back
+        App::get().pushUndoFor(p);
         source_->setScript(t);
         std::free(t);
         App::get().markEdited(p);

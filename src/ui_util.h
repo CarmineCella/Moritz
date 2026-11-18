@@ -50,7 +50,6 @@ inline void centerOnScreen(Fl_Window* w, Fl_Window* ref = nullptr, int dx = 0, i
 
 std::string exeDir();                       // the folder of the program (resources.cpp)
 int eggHandler(int e);                      // Shift+Cmd+J (dialogs.cpp)
-void setMenuCheck(Fl_Menu_Bar* m, const char* path, bool on);   // menus.cpp
 
 // Size of a window that shows all of a patch's boxes.
 inline void fitPatch(Patch* p, int& W, int& H) {

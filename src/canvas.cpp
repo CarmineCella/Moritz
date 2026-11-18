@@ -135,8 +135,8 @@ private:
 };
 }  // namespace
 
-Canvas::Canvas(int x, int y, int w, int h, MainWindow* win, Patch* patch)
-    : Fl_Group(x, y, w, h), win_(win), patch_(patch) {
+Canvas::Canvas(int x, int y, int w, int h, PatchEditor* editor, Patch* patch)
+    : Fl_Group(x, y, w, h), ed_(editor ? editor : &DetachedEditor::instance()), patch_(patch) {
     box(FL_FLAT_BOX);
     editor_ = new CompletingInput(x, y, 120, kBoxH, this);
     editor_->textfont(kFont);
@@ -535,16 +535,16 @@ void Canvas::drawPortTip() {
 
 void Canvas::duplicateSelection(int dx, int dy) {
     auto sel = selectedBoxes();
-    if (sel.empty() || readOnly) return;
-    if (win_) win_->pushUndo(patch_);
+    if (sel.empty() || readOnly()) return;
+    ed_->pushUndo(patch_);
     std::vector<Box*> added;
     std::string err;
     // through the clipboard format, so subpatchers are copied with their contents
-    if (!patch_->merge(patch_->serializeBoxes(sel), dx, dy, added, err)) { if (win_) win_->dropUndo(); return; }
+    if (!patch_->merge(patch_->serializeBoxes(sel), dx, dy, added, err)) { ed_->dropUndo(); return; }
     clearSelection();
     for (Box* b : added) b->selected = true;
     if (patch_->owner) patch_->rebuild();       // inlets/outlets follow positions
-    if (win_) win_->markDirty(patch_);
+    ed_->markDirty(patch_);
     redraw();
 }
 
@@ -554,19 +554,19 @@ void Canvas::copySelection() {
     if (sel.empty()) return;
     std::string t = patch_->serializeBoxes(sel);
     Fl::copy(t.c_str(), (int)t.size(), 1);
-    if (auto* d = doc()) d->setStatus("copied " + std::to_string(sel.size()) + (sel.size() == 1 ? " box" : " boxes"));
+    ed_->setStatus("copied " + std::to_string(sel.size()) + (sel.size() == 1 ? " box" : " boxes"));
 }
 
 void Canvas::cutSelection() {
     if (editing_) { editor_->copy(1); editor_->cut(); return; }
-    if (readOnly || selectedBoxes().empty()) return;
+    if (readOnly() || selectedBoxes().empty()) return;
     copySelection();
     deleteSelection();
 }
 
 void Canvas::paste() {
     if (editing_) { Fl::paste(*editor_, 1); return; }
-    if (readOnly) return;
+    if (readOnly()) return;
     Fl::paste(*this, 1, Fl::clipboard_plain_text);   // arrives as FL_PASTE
 }
 
@@ -578,17 +578,17 @@ void Canvas::pasteText(const std::string& text) {
         k = text.find('\n', k);
         if (k != std::string::npos) k = text.find_first_not_of(" \t\r\n", k);
     }
-    if (readOnly) return;
+    if (readOnly()) return;
     if (k == std::string::npos || text.compare(k, 6, "(patch") != 0) {
-        if (auto* d = doc()) d->setStatus("nothing to paste: the clipboard holds no Moritz boxes");
+        ed_->setStatus("nothing to paste: the clipboard holds no Moritz boxes");
         return;
     }
-    if (win_) win_->pushUndo(patch_);
+    ed_->pushUndo(patch_);
     std::vector<Box*> added;
     std::string err;
     if (!patch_->merge(text.substr(k), 0, 0, added, err) || added.empty()) {
-        if (win_) win_->dropUndo();
-        if (auto* d = doc()) d->print("paste: " + (err.empty() ? std::string("no boxes") : err));
+        ed_->dropUndo();
+        ed_->print("paste: " + (err.empty() ? std::string("no boxes") : err));
         return;
     }
     int minX = added[0]->x, minY = added[0]->y;
@@ -601,8 +601,8 @@ void Canvas::pasteText(const std::string& text) {
         b->selected = true;
     }
     if (patch_->owner) patch_->rebuild();
-    if (auto* d = doc(); d && !err.empty()) d->print("paste: " + err);
-    if (win_) win_->markDirty(patch_);
+    if (!err.empty()) ed_->print("paste: " + err);
+    ed_->markDirty(patch_);
     redraw();
 }
 
@@ -865,7 +865,7 @@ void Canvas::reset() {
 }
 
 void Canvas::setLocked(bool l) {
-    if (readOnly && !l) return;
+    if (readOnly() && !l) return;
     hidePortTip();
     commitEdit();
     locked_ = l;
@@ -873,7 +873,7 @@ void Canvas::setLocked(bool l) {
     typingBox_ = nullptr;
     typed_.clear();
     redraw();
-    if (win_) win_->refreshStatus();      // none when drawing a --render snapshot
+    ed_->lockChanged();
 }
 
 void Canvas::beginEdit(Box* b, bool isNew) {
@@ -936,22 +936,22 @@ void Canvas::commitEdit() {
 
     if (b->kind == BoxKind::Comment && t.empty() && editingNew_) {
         p.removeBoxes({b});
-        if (win_) win_->dropUndo();
+        ed_->dropUndo();
     } else if (b->kind == BoxKind::Message || b->kind == BoxKind::Comment) {
         // message and comment boxes keep their text verbatim
         if (splitTokens(t) != splitTokens(b->label()) ||
             (b->kind == BoxKind::Comment && t != b->label())) {
-            if (!editingNew_ && win_) win_->pushUndo(patch_);
+            if (!editingNew_) ed_->pushUndo(patch_);
             p.replaceBox(b, p.create(b->cls, {Atom(t)}));
-            if (win_) win_->markDirty(patch_);
+            ed_->markDirty(patch_);
         }
     } else if (t.empty()) {
         if (editingNew_) {
             p.removeBoxes({b});
-            if (win_) win_->dropUndo();
+            ed_->dropUndo();
         }
     } else if (editingNew_ || t != b->label()) {
-        if (!editingNew_ && win_) win_->pushUndo(patch_);
+        if (!editingNew_) ed_->pushUndo(patch_);
         Message m = parseMessage(t);
         std::string cls = m[0].str();
         auto made = p.create(cls, Message(m.begin() + 1, m.end()));
@@ -963,12 +963,9 @@ void Canvas::commitEdit() {
                 made->loadInner(form[0], warnings);
         }
         Box* nb = p.replaceBox(b, std::move(made));
-        if (nb->kind == BoxKind::Broken) {
-            if (auto* d = doc()) d->print("unknown object: " + cls + " (no class and no " + cls + ".moritz next to the patch)");
-        } else if (nb->inner()) {
-            nb->loadbang();                         // a new abstraction starts like a loaded one
-        }
-        if (win_) win_->markDirty(patch_);
+        if (nb->kind == BoxKind::Broken) ed_->print("unknown object: " + cls + " (no class and no " + cls + ".moritz next to the patch)");
+        else if (nb->inner()) nb->loadbang();       // a new abstraction starts like a loaded one
+        ed_->markDirty(patch_);
     }
     Fl::focus(this);
     redraw();
@@ -982,7 +979,7 @@ void Canvas::cancelEdit() {
     editor_->hide();
     if (b && editingNew_ && b->kind != BoxKind::Message) {
         patch_->removeBoxes({b});
-        if (win_) win_->dropUndo();
+        ed_->dropUndo();
     }
     Fl::focus(this);
     redraw();
@@ -990,17 +987,17 @@ void Canvas::cancelEdit() {
 
 void Canvas::newBoxAt(const std::string& cls, int bx, int by) {
     commitEdit();
-    if (readOnly || !win_) {                      // a help patch: nothing is added to it
-        if (auto* d = doc()) d->setStatus("a help patch can't be edited: copy its boxes into a patch of yours");
+    if (readOnly()) {                               // a help patch: nothing is added to it
+        ed_->setStatus("a help patch can't be edited: copy its boxes into a patch of yours");
         return;
     }
     if (locked_) setLocked(false);
     clearSelection();
-    if (win_) win_->pushUndo(patch_);
+    ed_->pushUndo(patch_);
     Patch& p = *patch_;
     Box* b = p.addBox(makeBox(cls, {}, patch_), std::max(0, bx), std::max(0, by));
     layout(b);
-    if (win_) win_->markDirty(patch_);
+    ed_->markDirty(patch_);
     if (b->kind == BoxKind::Number || b->kind == BoxKind::UI) {
         b->selected = true;                 // ready to use, nothing to type
         redraw();
@@ -1017,12 +1014,12 @@ void Canvas::deleteSelection() {
     for (int k = 0; k < (int)p.conns.size(); ++k)
         if (p.conns[k].selected) cables.push_back(k);
     auto bs = selectedBoxes();
-    if ((cables.empty() && bs.empty()) || readOnly || !win_) return;
-    if (win_) win_->pushUndo(patch_);
+    if ((cables.empty() && bs.empty()) || readOnly()) return;
+    ed_->pushUndo(patch_);
     if (!cables.empty()) p.removeConnections(cables);
     if (!bs.empty()) p.removeBoxes(bs);
     dragBox_ = typingBox_ = nullptr;
-    if (win_) win_->markDirty(patch_);
+    ed_->markDirty(patch_);
     redraw();
 }
 
@@ -1045,7 +1042,7 @@ int Canvas::handle(int e) {
     }
     switch (e) {
         case FL_PASTE:
-            if (editing_ || readOnly) return 0;
+            if (editing_ || readOnly()) return 0;
             pasteText(std::string(Fl::event_text(), (size_t)Fl::event_length()));
             return 1;
         case FL_LEAVE:
@@ -1116,7 +1113,7 @@ int Canvas::handle(int e) {
                 size_t pick = (size_t)(r - items.data());
                 if (pick == 0) App::get().openHelp(b->cls);
                 else if (pick == refAt) App::get().showReference(b->cls);
-                else if (pick == openAt) { if (auto* d = doc()) d->openSubpatch(b); }
+                else if (pick == openAt) ed_->openSubpatch(b);
                 else if (pick == showAt) openBufferWindow(patch_, buf);
                 else if (pick >= ownAt && pick < ownAt + own.size()) b->menuAction((int)(pick - ownAt));
                 redraw();
@@ -1162,7 +1159,7 @@ int Canvas::handle(int e) {
                 } else if (h.box && h.box->inner() && Fl::event_clicks()) {
                     Fl::event_clicks(0);
                     drag_ = Drag::None;
-                    if (auto* d = doc()) d->openSubpatch(h.box);     // like Max: double-click opens it
+                    ed_->openSubpatch(h.box);                       // like Max: double-click opens it
                     return 1;
                 }
                 redraw();
@@ -1170,14 +1167,21 @@ int Canvas::handle(int e) {
             }
 
             if (Fl::event_clicks()) {                       // double-click
-                if (h.box && h.box->inner() && Fl::event_state(FL_COMMAND)) {
+                // Shift+double-click (and Cmd+double-click on macOS) opens a subpatcher or a script in
+                // edit mode; a plain double-click edits the box's text. (Ctrl+click is the box's menu.)
+#ifdef __APPLE__
+                bool opens = Fl::event_state(FL_COMMAND | FL_SHIFT) != 0;
+#else
+                bool opens = Fl::event_state(FL_SHIFT) != 0;
+#endif
+                if (h.box && h.box->inner() && opens) {
                     Fl::event_clicks(0);
-                    if (auto* d = doc()) d->openSubpatch(h.box);   // Cmd+double-click opens in edit mode
+                    ed_->openSubpatch(h.box);
                     return 1;
                 }
-                if (h.box && h.box->cls == "code" && Fl::event_state(FL_COMMAND)) {
+                if (h.box && h.box->cls == "code" && opens) {
                     Fl::event_clicks(0);
-                    h.box->message(0, {Atom("open")});             // Cmd+double-click: the script, in edit mode too
+                    h.box->message(0, {Atom("open")});             // the script, in edit mode too
                     return 1;
                 }
                 if (h.box && h.what == Hit::Body && h.box->kind != BoxKind::Number) {
@@ -1227,12 +1231,12 @@ int Canvas::handle(int e) {
             curX_ = mouseX_ = mx;
             curY_ = mouseY_ = my;
             if (drag_ == Drag::Move && (dx || dy)) {
-                if (!moved_) { if (win_) win_->pushUndo(patch_); moved_ = true; }
+                if (!moved_) { ed_->pushUndo(patch_); moved_ = true; }
                 for (Box* b : selectedBoxes()) {
                     b->x = std::max(0, b->x + dx);
                     b->y = std::max(0, b->y + dy);
                 }
-                if (win_) win_->markDirty(patch_);
+                ed_->markDirty(patch_);
             } else if (drag_ == Drag::Number) {
                 if (my != pressY_) { moved_ = true; typed_.clear(); }
                 numberDrag(pressY_ - my);
@@ -1248,7 +1252,7 @@ int Canvas::handle(int e) {
             dragBox_ = alive(dragBox_);
             if (drag_ == Drag::UI && dragBox_) {
                 dragBox_->uiMouse(FL_RELEASE, mx - dragBox_->x, my - dragBox_->y);
-                if (win_ && alive(dragBox_) && messageToString(dragBox_->saveArgs()) != uiBefore_) win_->markDirty(patch_);
+                if (alive(dragBox_) && messageToString(dragBox_->saveArgs()) != uiBefore_) ed_->markDirty(patch_);
             }
             if (drag_ == Drag::Cable && dragBox_) {
                 Hit h = hitTest(mx, my);
@@ -1257,15 +1261,11 @@ int Canvas::handle(int e) {
                     std::string err;
                     Patch& p = *patch_;
                     if (canConnect(p.conns, dragBox_, dragPort_, h.box, in, &err)) {
-                        if (win_) win_->pushUndo(patch_);
-                        if (p.connect(dragBox_, dragPort_, h.box, in, &err)) {
-                            if (win_) win_->markDirty(patch_);
-                        } else {
-                            if (win_) win_->dropUndo();
-                            if (auto* d = doc()) d->print("can't connect: " + err);
-                        }
+                        ed_->pushUndo(patch_);
+                        if (p.connect(dragBox_, dragPort_, h.box, in, &err)) ed_->markDirty(patch_);
+                        else { ed_->dropUndo(); ed_->print("can't connect: " + err); }
                     } else if (err != "already connected") {
-                        if (auto* d = doc()) d->print("can't connect: " + err);
+                        ed_->print("can't connect: " + err);
                     }
                 }
             } else if (drag_ == Drag::Rubber) {
@@ -1328,7 +1328,5 @@ int Canvas::handle(int e) {
     return Fl_Group::handle(e);
 }
 
-
-MainWindow* Canvas::doc() const { return win_ ? win_ : App::get().frontDoc(); }
 
 }  // namespace moritz

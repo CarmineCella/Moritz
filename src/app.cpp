@@ -32,13 +32,26 @@ void midiTick(void*) {          // look for MIDI devices plugged in or out
     Fl::repeat_timeout(1.0, midiTick);
 }
 
-bool gInitialized = false;      // App::init done: there are windows to ask in
-
 void schedulerTimer(void*) {
     Patch& h = App::get().host;
     h.runDue(h.time());           // re-arms through onSchedule
 }
+
+bool gInitialized = false;      // App::init done: there are windows to ask in
+
+bool endsWith(const std::string& s, const char* tail) {
+    size_t n = std::char_traits<char>::length(tail);
+    return s.size() > n && s.compare(s.size() - n, n, tail) == 0;
+}
 }  // namespace
+
+// ---- the read-only editor of help patches (editor.h)
+
+void ReadOnlyEditor::print(const std::string& s) { App::get().print(s); }
+void ReadOnlyEditor::setStatus(const std::string& s) {
+    if (!s.empty()) App::get().log(s);
+}
+void ReadOnlyEditor::openSubpatch(Box* b) { App::get().openHelpSubpatch(b); }
 
 App& App::get() {
     static App* app = new App;      // never destroyed: windows may outlive main's scope
@@ -75,7 +88,7 @@ void App::init() {
     Patch::onDestroyed = [this](Patch* p) {
         for (auto* d : docs) {
             d->closeSubpatchWindows(p);
-            d->forget(p);
+            d->doc.forget(p);
         }
         closeText(p);
         for (auto* w : std::vector<PatchWindow*>(helpWindows_))
@@ -128,31 +141,60 @@ void App::init() {
         {"Settings…", FL_COMMAND + ',', [](Fl_Widget*, void*) { showSettings(); }, nullptr, 0, 0, 0, 0, 0},
         {nullptr, 0, nullptr, nullptr, 0, 0, 0, 0, 0}};
     Fl_Mac_App_Menu::custom_application_menu_items(appItems);   // Moritz > Settings…, as macOS has it
+    sysMenu_->update();
 #endif
     log("Moritz " MORITZ_VERSION " - created by Carmine-Emanuele Cella (2026)");
     log("this console shows print objects, errors, audio and file events");
     gInitialized = true;
 }
 
-MainWindow* App::frontDoc() {
+// ---- which window the commands act on
+
+DocumentWindow* App::frontDoc() {
     for (Fl_Window* w = Fl::first_window(); w; w = Fl::next_window(w)) {
-        if (auto mw = dynamic_cast<MainWindow*>(w)) return mw;
+        if (auto mw = dynamic_cast<DocumentWindow*>(w)) return mw;
         if (auto pw = dynamic_cast<PatchWindow*>(w); pw && pw->doc) return pw->doc;
     }
     return docs.empty() ? nullptr : docs.back();
 }
 
+Fl_Window* App::frontPatchWindow() {
+    for (Fl_Window* w = Fl::first_window(); w; w = Fl::next_window(w))
+        if (dynamic_cast<DocumentWindow*>(w) || dynamic_cast<PatchWindow*>(w)) return w;
+    return nullptr;
+}
+
+bool App::helpInFront() {
+    auto* pw = dynamic_cast<PatchWindow*>(frontPatchWindow());
+    return pw && pw->help;
+}
+
+DocumentWindow* App::targetDoc() {
+    Fl_Window* w = frontPatchWindow();
+    if (auto mw = dynamic_cast<DocumentWindow*>(w)) return mw;
+    if (auto pw = dynamic_cast<PatchWindow*>(w)) return pw->help ? nullptr : pw->doc;
+    return docs.empty() ? nullptr : docs.back();
+}
+
 Canvas* App::activeCanvas() {
-    for (Fl_Window* w = Fl::first_window(); w; w = Fl::next_window(w)) {
-        if (auto mw = dynamic_cast<MainWindow*>(w)) return mw->canvas;
-        if (auto pw = dynamic_cast<PatchWindow*>(w)) return pw->canvas;
-    }
+    Fl_Window* w = frontPatchWindow();
+    if (auto mw = dynamic_cast<DocumentWindow*>(w)) return mw->canvas;
+    if (auto pw = dynamic_cast<PatchWindow*>(w)) return pw->canvas;
     return docs.empty() ? nullptr : docs.back()->canvas;
 }
 
-MainWindow* App::newDocument() {
-    MainWindow* front = frontDoc();
-    auto* w = new MainWindow(960, 640);
+DocumentWindow* App::docOf(Patch* p) {
+    for (auto* d : docs)
+        for (Patch* q = p; q; q = q->parent)
+            if (q == &d->patch) return d;
+    return nullptr;
+}
+
+// ---- documents
+
+DocumentWindow* App::newDocument() {
+    DocumentWindow* front = frontDoc();
+    auto* w = new DocumentWindow(960, 640);
     if (front) {                                     // cascade from the front window
         int X, Y, W, H;
         Fl::screen_work_area(X, Y, W, H, Fl::screen_num(front->x(), front->y()));
@@ -167,15 +209,15 @@ MainWindow* App::newDocument() {
     return w;
 }
 
-MainWindow* App::openDocument(const std::string& given) {
-    std::string path = fileio::absolute(given);      // the same file however it was named
+DocumentWindow* App::openDocument(const std::string& given) {
+    std::string path = fileio::absolute(given);
     for (auto* d : docs)                              // already open: bring it forward
         if (!d->path().empty() && d->path() == path) { d->show(); return d; }
-    if (path.size() > 3 && path.compare(path.size() - 3, 3, ".mu") == 0) {   // a Musil script: the editor
+    if (endsWith(path, ".mu")) {                      // a Musil script: the editor
         openCode(path);
         return nullptr;
     }
-    MainWindow* d = frontDoc();
+    DocumentWindow* d = frontDoc();
     bool fresh = !(d && d->isEmptyUntitled());
     if (fresh) d = newDocument();
     if (!d->openFile(path)) {
@@ -203,7 +245,7 @@ void App::openDialog() {
     fc.title("Open");
     fc.type(Fl_Native_File_Chooser::BROWSE_FILE);
     fc.filter("Moritz patch or Musil script\t*.{moritz,mu,mlsp}\nAll files\t*");
-    MainWindow* front = frontDoc();
+    DocumentWindow* front = frontDoc();
     std::string dir = front && !front->path().empty() ? dirOf(front->path()) : examplesDir();
     if (!dir.empty()) fc.directory(dir.c_str());
     if (fc.show() != 0) return;
@@ -219,7 +261,7 @@ void App::importDialog() {
     importMax(portablePath(fc.filename()));
 }
 
-MainWindow* App::importMax(const std::string& path) {
+DocumentWindow* App::importMax(const std::string& path) {
     std::string text, err;
     MaxImportReport rep;
     if (!importMaxPatch(path, true, text, rep, err)) {
@@ -228,7 +270,7 @@ MainWindow* App::importMax(const std::string& path) {
     }
     std::string name = baseName(path);
     name = name.substr(0, name.find_last_of('.'));
-    MainWindow* d = frontDoc();
+    DocumentWindow* d = frontDoc();
     bool fresh = !(d && d->isEmptyUntitled());
     if (fresh) d = newDocument();
     if (!d->loadConverted(text, dirOf(path), name)) {
@@ -243,7 +285,7 @@ MainWindow* App::importMax(const std::string& path) {
     return d;
 }
 
-void App::closeDocument(MainWindow* w) {
+void App::closeDocument(DocumentWindow* w) {
     docs.erase(std::remove(docs.begin(), docs.end(), w), docs.end());
     w->closeAllSubwindows();
     w->hide();
@@ -253,12 +295,14 @@ void App::closeDocument(MainWindow* w) {
     p->onStatus = nullptr;
     p->onPrint = nullptr;
     p->onStructure = nullptr;
+    w->doc.onChanged = nullptr;
     Fl::delete_widget(w);              // later: the window must not touch the patch then
     host.removeExtra(p);               // stops its sound, timers and jobs
 #ifndef __APPLE__
     if (docs.empty()) quit();          // no menu bar is left to do anything else
 #endif
     refreshStatus();
+    refreshMenus();
 }
 
 void App::closeFront() {
@@ -270,14 +314,14 @@ void App::closeFront() {
     if (w && w == console_) { w->hide(); return; }
     if (auto tw = dynamic_cast<PatchTextWindow*>(w)) { tw->do_callback(); return; }
     if (auto cw = dynamic_cast<CodeWindow*>(w)) { cw->do_callback(); return; }
-    if (auto d = dynamic_cast<MainWindow*>(w)) {
+    if (auto d = dynamic_cast<DocumentWindow*>(w)) {
         if (d->confirmDiscard()) closeDocument(d);
     }
     else if (w && w->visible()) w->hide();        // the browser, an about box...
 }
 
 void App::quit() {
-    for (auto* d : std::vector<MainWindow*>(docs)) {
+    for (auto* d : std::vector<DocumentWindow*>(docs)) {
         d->show();
         if (!d->confirmDiscard()) return;
     }
@@ -289,7 +333,7 @@ void App::quit() {
     quitting = true;
     host.onDsp = nullptr;      // a dspstate~ reacting to the stop can't restart audio
     audio.stop();
-    for (auto* d : std::vector<MainWindow*>(docs)) d->closeAllSubwindows();
+    for (auto* d : std::vector<DocumentWindow*>(docs)) d->closeAllSubwindows();
     for (auto* w : helpWindows_) w->hide();
     for (auto* w : textWindows_) w->hide();
     hideBrowser();
@@ -297,28 +341,9 @@ void App::quit() {
     for (auto* d : docs) d->hide();
 }
 
-// ---- a patch asks to open something with the system (link, sysopen.h)
-
-void askToOpenWithSystem(Patch* from, const std::string& target, const std::string& who) {
-    if (!gInitialized) {                             // no window to ask in (--render): never
-        if (from) from->print(who + ": not opened (a message asked, and there is no window to ask in): " + target);
-        return;
-    }
-    struct Ask {
-        std::string target, who;
-    };
-    // later, from the event loop: the message may come in the middle of loading a patch
-    Fl::add_timeout(0, [](void* d) {
-        std::unique_ptr<Ask> a(static_cast<Ask*>(d));
-        int r = askUser("A patch asks to open:\n\n%s\n\n(%s, from a message, not a click)", "Don't Open", "Open",
-                        nullptr, a->target.c_str(), a->who.c_str());
-        if (r != 1) { App::get().log(a->who + ": not opened: " + a->target); return; }
-        if (!openWithSystem(a->target)) App::get().print(a->who + ": can't open " + a->target);
-    }, new Ask{target, who});
-}
-
 void App::refreshStatus() {
     for (auto* d : docs) d->refreshStatus();
+    refreshMenus();
 }
 
 void App::armTimer() {
@@ -327,6 +352,43 @@ void App::armTimer() {
     if (std::isfinite(next))
         Fl::add_timeout(std::max(0.0, next - host.time()), schedulerTimer);
 }
+
+// ---- edits that come from elsewhere than a canvas (a code editor, the code view)
+
+void App::markEdited(Patch* p) {
+    if (auto* d = docOf(p)) d->markDirty(p);
+}
+
+void App::pushUndoFor(Patch* p) {
+    if (auto* d = docOf(p)) d->pushUndo(p);
+}
+
+void App::abstractionSaved(Patch* a) {
+    std::string text = a->serialize();
+    for (auto* d : docs) {
+        std::vector<Patch*> copies;
+        d->patch.forEachBox([&](Box* b) {
+            for (Patch* q : b->inners())
+                if (q != a && q->isAbstraction && q->file == a->file) copies.push_back(q);
+        });
+        for (Patch* q : copies) {
+            if (d->doc.abstractionDirty(q)) {           // edited there too: it keeps its edits
+                print("abstraction " + baseName(a->file) + " was saved; a copy in " +
+                      (d->path().empty() ? std::string("Untitled") : baseName(d->path())) +
+                      " has edits of its own and was not updated");
+                continue;
+            }
+            std::string err;
+            if (q->applyText(text, err)) {              // the boxes that did not change go on
+                if (q->owner) q->rebuild();
+            } else {
+                print("abstraction " + baseName(a->file) + ": a copy could not follow: " + err);
+            }
+        }
+    }
+}
+
+// ---- the code editors
 
 CodeWindow* App::newCode() {
     auto* w = new CodeWindow();
@@ -387,7 +449,7 @@ void App::codeSourceClosed(CodeSource* s) {
         if (auto* b = dynamic_cast<Box*>(s)) {    // where it was: a box may take its place there
             o.id = b->id;
             o.doc = docOf(b->patch);              // nullptr when its document is closing
-            if (o.doc) o.where = pathOf(b->patch);
+            if (o.doc) o.where = o.doc->doc.where(b->patch);
         }
         w->unbind();
         orphans_.push_back(o);
@@ -404,7 +466,7 @@ void App::settleOrphans(void*) {
         if (std::find(app.codeWindows_.begin(), app.codeWindows_.end(), o.window) == app.codeWindows_.end()) continue;
         CodeSource* next = nullptr;
         if (o.doc && std::find(app.docs.begin(), app.docs.end(), o.doc) != app.docs.end())
-            if (Patch* p = o.doc->resolve(o.where))
+            if (Patch* p = o.doc->doc.resolve(o.where))
                 if (Box* b = p->find(o.id)) next = dynamic_cast<CodeSource*>(b);
         if (next) {
             // the box that took its place (undo, the code view): the editor follows it
@@ -420,46 +482,6 @@ void App::settleOrphans(void*) {
     }
 }
 
-MainWindow* App::docOf(Patch* p) {
-    for (auto* d : docs)
-        for (Patch* q = p; q; q = q->parent)
-            if (q == &d->patch) return d;
-    return nullptr;
-}
-
-void App::markEdited(Patch* p) {
-    if (auto* d = docOf(p)) d->markDirty(p);
-}
-
-void App::pushUndoFor(Patch* p) {
-    if (auto* d = docOf(p)) d->pushUndo(p);
-}
-
-void App::abstractionSaved(Patch* a) {
-    std::string text = a->serialize();
-    for (auto* d : docs) {
-        std::vector<Patch*> copies;
-        d->patch.forEachBox([&](Box* b) {
-            for (Patch* q : b->inners())
-                if (q != a && q->isAbstraction && q->file == a->file) copies.push_back(q);
-        });
-        for (Patch* q : copies) {
-            if (d->abstractionEdited(q)) {             // edited there too: it keeps its edits
-                print("abstraction " + baseName(a->file) + " was saved; a copy in " +
-                      (d->path().empty() ? std::string("Untitled") : baseName(d->path())) +
-                      " has edits of its own and was not updated");
-                continue;
-            }
-            std::string err;
-            if (q->applyText(text, err)) {             // the boxes that did not change go on
-                if (q->owner) q->rebuild();
-            } else {
-                print("abstraction " + baseName(a->file) + ": a copy could not follow: " + err);
-            }
-        }
-    }
-}
-
 void App::closeCode(CodeWindow* w) {
     codeWindows_.erase(std::remove(codeWindows_.begin(), codeWindows_.end(), w), codeWindows_.end());
     for (auto& o : orphans_)
@@ -471,6 +493,8 @@ void App::closeCode(CodeWindow* w) {
 CodeWindow* App::frontCode() {
     return dynamic_cast<CodeWindow*>(Fl::first_window());
 }
+
+// ---- audio
 
 void App::setAudio(bool on) {
     std::string err;
@@ -492,7 +516,30 @@ void App::setAudio(bool on) {
         refreshTester();
         for (auto* d : docs) d->setStatus("");
     }
+    refreshMenus();
 }
+
+// ---- a patch asks to open something with the system (link)
+
+void askToOpenWithSystem(Patch* from, const std::string& target, const std::string& who) {
+    if (!gInitialized) {                             // no window to ask in (--render): never
+        if (from) from->print(who + ": not opened (a message asked, and there is no window to ask in): " + target);
+        return;
+    }
+    struct Ask {
+        std::string target, who;
+    };
+    // later, from the event loop: the message may come in the middle of loading a patch
+    Fl::add_timeout(0, [](void* d) {
+        std::unique_ptr<Ask> a(static_cast<Ask*>(d));
+        int r = askUser("A patch asks to open:\n\n%s\n\n(%s, from a message, not a click)", "Don't Open", "Open",
+                        nullptr, a->target.c_str(), a->who.c_str());
+        if (r != 1) { App::get().log(a->who + ": not opened: " + a->target); return; }
+        if (!openWithSystem(a->target)) App::get().print(a->who + ": can't open " + a->target);
+    }, new Ask{target, who});
+}
+
+// ---- code views
 
 PatchTextWindow* App::textWindow(Patch* p) {
     for (auto* w : textWindows_)
@@ -503,7 +550,7 @@ PatchTextWindow* App::textWindow(Patch* p) {
 void App::showText() {
     for (Fl_Window* w = Fl::first_window(); w; w = Fl::next_window(w)) {
         if (auto tw = dynamic_cast<PatchTextWindow*>(w)) { tw->do_callback(); return; }   // toggles
-        if (auto mw = dynamic_cast<MainWindow*>(w)) {
+        if (auto mw = dynamic_cast<DocumentWindow*>(w)) {
             showText(mw, &mw->patch, mw->label() ? mw->label() : "patch", false);
             return;
         }
@@ -514,7 +561,7 @@ void App::showText() {
     }
 }
 
-void App::showText(MainWindow* doc, Patch* p, const std::string& title, bool readOnly) {
+void App::showText(DocumentWindow* doc, Patch* p, const std::string& title, bool readOnly) {
     PatchTextWindow* tw = textWindow(p);
     if (!tw) {
         std::string t = title;
@@ -523,7 +570,7 @@ void App::showText(MainWindow* doc, Patch* p, const std::string& title, bool rea
         textWindows_.push_back(tw);
         Fl_Window* beside = nullptr;                     // beside the patch's window
         for (Fl_Window* w = Fl::first_window(); w && !beside; w = Fl::next_window(w))
-            if (auto mw = dynamic_cast<MainWindow*>(w); mw && &mw->patch == p) beside = w;
+            if (auto mw = dynamic_cast<DocumentWindow*>(w); mw && &mw->patch == p) beside = w;
             else if (auto pw = dynamic_cast<PatchWindow*>(w); pw && pw->patch == p) beside = w;
         if (beside) {
             int X, Y, W, H;
@@ -548,6 +595,8 @@ void App::closeText(Patch* p) {
         }
 }
 
+// ---- help patches
+
 void App::openHelp(const std::string& cls) {
     std::string path = findHelp(cls);
     if (path.empty()) {
@@ -556,7 +605,7 @@ void App::openHelp(const std::string& cls) {
         return;
     }
     for (auto* w : helpWindows_)                        // already open: bring it forward
-        if (w->patch && w->patch->file == path) { w->show(); return; }
+        if (w->helpRoot && w->patch && w->patch->file == path) { w->show(); return; }
     std::string src, err;
     if (!fileio::read(path, src)) { print("can't read " + path); return; }
     auto hp = std::make_unique<Patch>();
@@ -583,10 +632,25 @@ void App::openHelp(const std::string& cls) {
     log("help: " + path);
 }
 
+void App::openHelpSubpatch(Box* b) {
+    Patch* p = b ? b->inner() : nullptr;
+    if (!p) return;
+    for (auto* w : helpWindows_)
+        if (w->patch == p) { w->show(); return; }
+    int W, H;
+    fitPatch(p, W, H);
+    auto* w = new PatchWindow(nullptr, p, patchTitle(p), true, false);
+    w->size(W, H);
+    centerOnScreen(w, frontDoc(), 60, 60);
+    helpWindows_.push_back(w);
+    w->show();
+}
+
 void App::closeHelp(Patch* p) {
     host.removeExtra(p);   // its destruction closes and deletes the window
 }
 
+// the settings changed (settings.cpp): every window shows them now
 void App::settingsChanged() {
     for (auto* w : codeWindows_) w->applyFont();
     for (auto* w : textWindows_) w->applyFont();

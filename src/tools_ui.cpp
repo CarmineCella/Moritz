@@ -124,13 +124,8 @@ void App::refreshTools() {
     double sec = rec ? r.seconds() : 0;
     std::snprintf(t, sizeof t, "%d:%02d.%d", (int)sec / 60, (int)sec % 60, (int)(sec * 10) % 10);
     for (auto* d : docs) {
-        d->recordBtn_->lit = rec;
-        d->recordBtn_->copy_label(rec ? t : "Record");
-        d->recordBtn_->redraw();
-        if (d->consoleBtn_->alert != consoleAlert) {
-            d->consoleBtn_->alert = consoleAlert;
-            d->consoleBtn_->redraw();
-        }
+        d->showRecording(rec, rec ? t : "Record");
+        d->showConsoleAlert(consoleAlert);
     }
     if (recorderWin_) {
         recorderBtn_->lit = rec;
@@ -380,7 +375,7 @@ void App::toolTimer(void*) {
     float cpu = app.audio.running() ? app.host.cpuLoad.load(std::memory_order_relaxed) : 0.f;
     std::vector<float> peaks((size_t)std::clamp(app.audio.channels(), 1, AudioEngine::kMeterChannels));
     for (size_t c = 0; c < peaks.size(); ++c) peaks[c] = app.audio.takePeak((int)c);
-    for (auto* d : app.docs) d->meters_->update(cpu, peaks);
+    for (auto* d : app.docs) d->updateMeters(cpu, peaks);
     if (app.audio.recorder.recording()) app.refreshTools();
     Fl::repeat_timeout(1.0 / 15, toolTimer);
 }

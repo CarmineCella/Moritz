@@ -1,13 +1,22 @@
 // Copyright (c) 2026 Carmine-Emanuele Cella. SPDX-License-Identifier: BSD-2-Clause
-// gui.h — FLTK editor: canvas, main window, subpatcher windows
+// gui.h — FLTK editor: canvas, document windows, subpatcher windows, the application
+//
+//   Document (document.h)        a patch file: the patch, its file, what is unsaved, undo; no interface
+//   PatchEditor (editor.h)       what a canvas asks of its document; read-only for help patches
+//   Canvas (canvas.cpp)          draws a patch, turns the mouse and keys into edits through its editor
+//   DocumentWindow               a document's window: toolbar, canvas, status bar (document_window.cpp)
+//   PatchWindow                  a subpatcher, abstraction or help patch (patch_window.cpp)
+//   App                          one per program: audio, MIDI, the windows (app.cpp, menus.cpp ...)
 #pragma once
 
 #include <cmath>
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <unordered_map>
-#include <set>
 
+#include "document.h"
+#include "editor.h"
 #include "jobs.h"
 #include "midi.h"
 #include "moritz.h"
@@ -28,7 +37,7 @@
 
 namespace moritz {
 
-class MainWindow;
+class DocumentWindow;
 class CodeWindow;
 class CodeSource;
 
@@ -55,12 +64,19 @@ void alertUser(const char* fmt, ...);
 // --window-png ... act=...: the actions of a test, in order (guitest.cpp); the number that failed
 int runTestActions(int argc, char** argv);
 
+// The name of the command key in texts: "Cmd" on macOS, "Ctrl" elsewhere; and a shortcut as text
+// ("Shift+Cmd+B" on macOS, "Ctrl+Shift+B" elsewhere)
+const char* commandKeyName();
+std::string shortcutText(int shortcut);
 
 class Canvas : public Fl_Group {
 public:
-    Canvas(int x, int y, int w, int h, MainWindow* win, Patch* patch);
+    // editor: what edits go through (nullptr: a detached canvas, as --render's snapshots)
+    Canvas(int x, int y, int w, int h, PatchEditor* editor, Patch* patch);
     ~Canvas() override;
     Patch* patch() const { return patch_; }
+    PatchEditor* editor() const { return ed_; }
+    bool readOnly() const { return !ed_->editable(); }   // help patches: always locked
 
     void draw() override;
     int handle(int e) override;
@@ -87,7 +103,6 @@ public:
     bool acceptSuggestion(bool commit);
     void clearSuggestions();
     void fitEditor();      // size the text field to what is being typed
-    bool readOnly = false;   // help patches: always locked
     // scrolling: the view's top-left corner in patch coordinates
     int scrollX() const { return sx_; }
     int scrollY() const { return sy_; }
@@ -123,9 +138,8 @@ private:
     void numberDrag(int dy);
     static void editCb(Fl_Widget* w, void* data);
     static void flashTimer(void* data);
-    void damageBox(Box* b);        // draw only that box's area again
+    void damageBox(Box* b);        // redraw only that box's area
 
-    MainWindow* doc() const;   // the document (for help patches: the front one)
     // the patch's origin in unzoomed screen units: drawing goes through the
     // zoom transform (zoom.h) centred on the canvas's corner
     int ox() const { return x() - sx_; }
@@ -142,7 +156,7 @@ private:
     int sx_ = 0, sy_ = 0;
     Fl_Scrollbar* hbar_;
     Fl_Scrollbar* vbar_;
-    MainWindow* win_;          // nullptr in help windows and --render snapshots
+    PatchEditor* ed_;          // never null
     Patch* patch_;
     bool locked_ = false;
     Fl_Input* editor_;
@@ -191,15 +205,17 @@ private:
 // A window showing a subpatcher, abstraction or pfft~ patch, or a help patch.
 class PatchWindow : public Fl_Double_Window {
 public:
-    // doc: the document the patch belongs to (nullptr for help patches)
-    PatchWindow(MainWindow* doc, Patch* p, const std::string& title, bool help = false);
+    // doc: the document the patch belongs to (nullptr for help patches, which are read-only);
+    // helpRoot: a help patch's own window (closing it stops the help patch)
+    PatchWindow(DocumentWindow* doc, Patch* p, const std::string& title, bool help = false, bool helpRoot = true);
     ~PatchWindow() override;
     int handle(int e) override;
     void detach();          // forget the patch (it is being destroyed)
     Canvas* canvas = nullptr;
     Patch* patch;
-    MainWindow* doc;
+    DocumentWindow* doc;
     bool help;
+    bool helpRoot;
     std::string helpClass;     // help windows: the object they are the help of
 };
 
@@ -207,7 +223,7 @@ public:
 // kept in sync both ways (see textview.cpp).
 class PatchTextWindow : public Fl_Double_Window {
 public:
-    PatchTextWindow(MainWindow* doc, Patch* p, const std::string& title, bool readOnly);
+    PatchTextWindow(DocumentWindow* doc, Patch* p, const std::string& title, bool readOnly);
     ~PatchTextWindow() override;
     void detach();                 // the patch is being destroyed
     void applyNow();               // apply a pending text edit
@@ -223,7 +239,7 @@ private:
     static void poll(void* d);
     void restyle(int from, int to);
     void setStatus(const std::string& s, bool error = false);
-    MainWindow* doc_;
+    DocumentWindow* doc_;
     bool readOnly_;
     Fl_Text_Buffer* text_;
     Fl_Text_Buffer* style_;
@@ -266,6 +282,22 @@ private:
 
 Fl_Preferences& appPrefs();      // the user's settings (browser.cpp)
 
+// A menu command (menus.cpp): the menus of every platform are built from the table of them, and
+// tooltips and hints name their shortcuts from it.
+struct Command {
+    const char* id;              // "file.save"
+    const char* path;            // where it is in the menu bar: "File/Save"
+    int shortcut;                // FL_COMMAND + 's'; 0: none
+    int flags;                   // FL_MENU_DIVIDER, FL_MENU_TOGGLE
+    void (*run)();
+    bool (*enabled)();           // nullptr: always
+    bool (*checked)();           // toggles: on or off
+};
+const std::vector<Command>& commands();
+const Command* findCommand(const std::string& id);
+// "Edit mode on/off (Cmd+E)": a text and the command's shortcut, the platform's way
+std::string withShortcut(const std::string& text, const std::string& commandId);
+
 // One per program: the audio and MIDI engines, the console, help windows
 // and the open documents. Every open patch (and help patch) is an extra of
 // `host`, so they all play through the same audio output and share the
@@ -276,24 +308,30 @@ public:
     Patch host;
     AudioEngine audio{host};
     MidiEngine midi;
-    std::vector<MainWindow*> docs;
+    std::vector<DocumentWindow*> docs;
     bool quitting = false;
     bool startAudio = true;     // --no-audio: start with audio off
-    bool ready = false;         // the command line is read: files the system asks for open at once
+    bool ready = false;         // init() done: files the system asks to open are opened at once
 
     void init();                                    // after FLTK is set up
-    MainWindow* newDocument();                      // File > New: an empty window
-    MainWindow* openDocument(const std::string& path);   // reuses an empty Untitled window
+    DocumentWindow* newDocument();                  // File > New: an empty window
+    DocumentWindow* openDocument(const std::string& path);   // reuses an empty Untitled window
     void openLater(const std::string& path);        // the system asked (Finder): opened once ready
     void setReady();                                // the command line is read: open what was asked
     void openDialog();                              // File > Open...
     void importDialog();                            // File > Import from Max...
-    MainWindow* importMax(const std::string& path);
-    void closeDocument(MainWindow* w);              // already confirmed
+    DocumentWindow* importMax(const std::string& path);
+    void closeDocument(DocumentWindow* w);          // already confirmed
     void closeFront();                              // Cmd+W
     void quit();                                    // asks about unsaved documents
-    MainWindow* frontDoc();                         // document of the front patch window
+    DocumentWindow* frontDoc();                     // document of the front patch window (help windows skipped)
+    // the document the commands act on: the front patch window's; nullptr when that is a help window
+    DocumentWindow* targetDoc();
+    Fl_Window* frontPatchWindow();                  // the front window showing a patch (any kind)
+    bool helpInFront();                             // the front patch window is a help patch
     Canvas* activeCanvas();                         // canvas of the front patch window
+    ReadOnlyEditor& helpEditor() { return helpEditor_; }
+    void openHelpSubpatch(Box* b);                  // a subpatcher inside a help patch
 
     void setAudio(bool on);
     void toggleAudio() { setAudio(!audio.running()); }
@@ -320,8 +358,8 @@ public:
     void codeSourceClosed(CodeSource* s);
     void markEdited(Patch* p);                       // the document showing p is now edited
     void pushUndoFor(Patch* p);                      // an undo step in the document showing p
-    void abstractionSaved(Patch* a);                 // the other copies of its file follow it
-    MainWindow* docOf(Patch* p);                     // the document p belongs to
+    DocumentWindow* docOf(Patch* p);                 // the document p belongs to
+    void abstractionSaved(Patch* a);                 // other copies of its file follow it
     void closeCode(CodeWindow* w);      // already confirmed
     CodeWindow* frontCode();            // the code window in front, if one is
     const std::vector<CodeWindow*>& codeWindows() const { return codeWindows_; }
@@ -350,27 +388,30 @@ public:
     void patchChanged() { ++changes_; }
 
     void showText();                         // Patch > Code View: the front patch as text
-    void showText(MainWindow* doc, Patch* p, const std::string& title, bool readOnly);
+    void showText(DocumentWindow* doc, Patch* p, const std::string& title, bool readOnly);
     void closeText(Patch* p);                // hide its text window, if any
     PatchTextWindow* textWindow(Patch* p);
     void openHelp(const std::string& cls);   // the object's help patch, or its description
     void showReference(const std::string& cls);   // the object's reference, in its window
     void closeHelp(Patch* p);
+    // the menus (menus.cpp)
     void buildMenu(Fl_Menu_Bar* m);
-    Fl_Menu_Bar* menuFor(MainWindow* w);     // the bar showing w's menu state
+    void refreshMenus();                     // enabled and checked items; the macOS bar only when they change
+    void rebuildRecentMenus();               // File > Open Recent follows the list
+    Fl_Menu_Bar* menuFor(DocumentWindow* w); // the bar showing w's menu state
+    void forgetMenu(Fl_Menu_Bar* m);         // its window is closing
 
 private:
     App() = default;
     std::vector<PatchWindow*> helpWindows_;
     std::vector<PatchTextWindow*> textWindows_;
     std::vector<CodeWindow*> codeWindows_;
-    uint64_t changes_ = 0;
-    std::vector<std::string> openLater_;      // asked to open before the command line was read
+    ReadOnlyEditor helpEditor_;
     Fl_Menu_Bar* sysMenu_ = nullptr;          // macOS: one menu bar for all windows
     Fl_Double_Window* console_ = nullptr;
     Fl_Text_Display* consoleView_ = nullptr;
     Fl_Text_Buffer* consoleBuf_ = nullptr;
-    std::vector<std::string> consoleLines_;   // kept until the console opens: a ring of the last 2000
+    std::vector<std::string> consoleLines_;   // kept until the console opens: a ring of kConsoleKeep
     size_t consoleFirst_ = 0;                 // the oldest line in consoleLines_, once it is full
     int consoleBufLines_ = 0;                 // lines in consoleBuf_
     Fl_Double_Window* referenceWin_ = nullptr;
@@ -395,84 +436,90 @@ private:
     ToolButton* recorderBtn_ = nullptr;
     std::string recordingsDir_;
     static void toolTimer(void* data);
+    uint64_t changes_ = 0;
+    std::vector<std::string> openLater_;     // asked to open before init() was done
     // code editors whose box went away while something was being rebuilt: settled from the event loop
     struct Orphan {
         CodeWindow* window;
-        MainWindow* doc;         // the document the box was in (nullptr: closing)
+        DocumentWindow* doc;     // the document the box was in (nullptr: closed)
         std::string where;       // the patch it was in, as a path of box ids
         std::string id;          // the box
     };
     std::vector<Orphan> orphans_;
     static void settleOrphans(void* data);
+    // menus: the items each bar has for the commands, and their last state
+    struct MenuState {
+        Fl_Menu_Bar* bar;
+        std::vector<int> index;            // per command, -1: not in this bar
+        std::vector<int> flags;            // per command, the active/checked flags last set
+    };
+    std::vector<MenuState> menus_;
+    void indexMenu(MenuState& s);
     friend class PatchWindow;
 };
 
 // A document: one patch file in its own window, with its subpatcher windows,
-// undo history and status bar.
-class MainWindow : public Fl_Double_Window {
+// undo history and status bar. It is the editor of its patches' canvases.
+class DocumentWindow : public Fl_Double_Window, public PatchEditor {
 public:
-    MainWindow(int w, int h);
-    ~MainWindow() override;
+    DocumentWindow(int w, int h);
+    ~DocumentWindow() override;
 
+    Document doc;
     Patch& patch;           // an extra of App::host, removed when the window closes
 
     // File
     bool openFile(const std::string& path);   // into this window
     // a patch converted from elsewhere: Untitled, edited, saved as name.moritz in dir
     bool loadConverted(const std::string& src, const std::string& dir, const std::string& name);
-    bool save();                              // the document's patch (Save As when it has no file)
-    bool saveAbstraction(Patch* a);           // an abstraction edited in its window, into its file
-    bool saveFront();                         // File > Save: the abstraction in front, or the patch
-    // the abstraction instance p is in (or is) inside this document, or nullptr
-    Patch* abstractionOf(Patch* p) const;
-    bool abstractionEdited(Patch* a) const { return absDirty_.count(a) > 0; }
-    void forget(Patch* p);                    // p is being destroyed
+    bool save();                              // the patch (Save As when it has no file yet)
     bool saveAs();
+    bool saveAbstraction(Patch* a);           // an abstraction edited in its window, into its file
+    bool saveFront();                         // File > Save: the abstraction of the front window, or the patch
+    void revert();                            // File > Revert: the file as saved (asks first)
+    // asks about each unsaved part (code editors of its boxes, abstractions, the patch): false: cancel
     bool confirmDiscard();
-    bool isEmptyUntitled() const { return path_.empty() && !edited() && patch.boxes.empty(); }
-    const std::string& path() const { return path_; }
-    bool edited() const { return dirty_ || !absDirty_.empty(); }   // the patch, or an abstraction in it
-    bool canUndo() const { return !undo_.empty(); }
-    bool canRedo() const { return !redo_.empty(); }
-    // Edit: p is the patch edited (a subpatcher, an abstraction, or the document's own)
-    void pushUndo(Patch* p = nullptr);
-    void dropUndo();     // discard the last pushUndo() when nothing changed
+    bool isEmptyUntitled() const { return doc.isEmptyUntitled(); }
+    const std::string& path() const { return doc.path(); }
+    // Edit
     void undo();
     void redo();
-    void markDirty(Patch* p = nullptr);
     // Patch
     void toggleLock();
 
+    // PatchEditor: what the canvases of its patches ask
+    bool editable() const override { return true; }
+    void pushUndo(Patch* p) override;
+    void dropUndo() override;
+    void markDirty(Patch* p) override;
+    void print(const std::string& s) override;   // append to the console and the status bar
+    void setStatus(const std::string& s) override;
+    void lockChanged() override { refreshStatus(); }
+    void openSubpatch(Box* b) override;
+
     // subpatcher windows
-    void openSubpatch(Box* b);
     void openHelp(const std::string& cls) { App::get().openHelp(cls); }
     void closeSubpatchWindows(Patch* p);    // p is being destroyed
     void closeAllSubwindows();
     void forgetWindow(PatchWindow* w);
     Canvas* activeCanvas();                 // this document's front canvas
+    PatchWindow* frontSubwindow();          // its front subpatcher window, if it is in front of it
 
-    void setStatus(const std::string& s);
     void refreshStatus();
-    void print(const std::string& s);   // append to the console and the status bar
     void log(const std::string& s) { App::get().log(s); }
     void updateTitle();
     int handle(int e) override;
+    // the toolbar, as the application sees it
+    void showRecording(bool on, const char* label);
+    void showConsoleAlert(bool on);
+    void updateMeters(float cpu, const std::vector<float>& peaks);
+    Fl_Menu_Bar* menuBar() const { return menu_; }
 
     Canvas* canvas = nullptr;
 
 private:
-    // An undo step: the text of the patch an edit changed (the document's, a subpatcher's or an
-    // abstraction's), found again by its path of box ids. Undo puts it back with Patch::applyText, which
-    // keeps every box whose line did not change, with its state.
-    struct UndoStep {
-        std::string where;      // "" the document's patch, "p1/fm2" a patch inside
-        std::string text;
-    };
-    bool restore(std::vector<UndoStep>& from, std::vector<UndoStep>& to, std::string& msg);
-    Patch* resolve(const std::string& where) const;   // the patch at a path of box ids, or nullptr
-
+    void afterRestore(Patch* restored);
     Fl_Menu_Bar* menu_ = nullptr;   // Windows and Linux: each window has its menu
-    friend class App;
     Fl_Box* statusBar_;
     ToolButton* audioBtn_;
     ToolButton* editBtn_;
@@ -485,12 +532,8 @@ private:
     std::vector<PatchWindow*> subwindows_;
     std::vector<std::string> openSubpatchPaths() const;
     void reopenSubpatches(const std::vector<std::string>& paths);
-    std::string path_;
-    std::string suggested_;          // Save As proposes this name (imported patches)
-    bool dirty_ = false;
-    std::set<Patch*> absDirty_;      // abstractions edited in their windows, not saved yet
-    std::vector<UndoStep> undo_, redo_;
     std::string message_;
+    std::string shownStatus_;
 };
 
 }  // namespace moritz

@@ -70,7 +70,7 @@ std::string highlight(const std::string& t, bool* open = nullptr) {
 
 }  // namespace
 
-PatchTextWindow::PatchTextWindow(MainWindow* doc, Patch* p, const std::string& title, bool readOnly)
+PatchTextWindow::PatchTextWindow(DocumentWindow* doc, Patch* p, const std::string& title, bool readOnly)
     : Fl_Double_Window(560, 640), patch(p), doc_(doc), readOnly_(readOnly) {
     copy_label((title + " — code").c_str());
     text_ = new Fl_Text_Buffer();
@@ -190,7 +190,9 @@ void PatchTextWindow::restyle(int from, int to) {
     editor_->redisplay_range(a, b);
 }
 
-void PatchTextWindow::replaceText(const std::string& t) { text_->text(t.c_str()); }
+void PatchTextWindow::replaceText(const std::string& t) {
+    text_->text(t.c_str());
+}
 
 void PatchTextWindow::applyLater(void* d) { static_cast<PatchTextWindow*>(d)->applyNow(); }
 

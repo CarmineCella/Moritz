@@ -1,5 +1,7 @@
 // Copyright (c) 2026 Carmine-Emanuele Cella. SPDX-License-Identifier: BSD-2-Clause
-// document_window.cpp — a document's window: toolbar, canvas, status bar; files, undo, subpatchers
+// document_window.cpp — a document's window: toolbar, canvas, status bar; and what the document does
+// through it (files, undo, subpatcher windows). The document itself, without the interface, is
+// document.h.
 
 #include "gui.h"
 #include "ui_util.h"
@@ -10,14 +12,12 @@
 #include <FL/fl_ask.H>
 #include <FL/filename.H>
 
-#include "fileio.h"
-
 #include <cmath>
 
 namespace moritz {
 
-MainWindow::MainWindow(int w, int h)
-    : Fl_Double_Window(w, h, "Moritz"), patch(*App::get().host.addExtra(std::make_unique<Patch>())) {
+DocumentWindow::DocumentWindow(int w, int h)
+    : Fl_Double_Window(w, h, "Moritz"), doc(*App::get().host.addExtra(std::make_unique<Patch>())), patch(doc.patch) {
 #ifndef __APPLE__
     menu_ = new Fl_Menu_Bar(0, 0, w, kMenuH);
     App::get().buildMenu(menu_);
@@ -25,35 +25,37 @@ MainWindow::MainWindow(int w, int h)
     auto* bar = new Fl_Group(0, kMenuH, w, kToolH);
     bar->box(FL_FLAT_BOX);
     bar->color(kStatusBg);
+    auto tip = [](Fl_Widget* wd, const std::string& text, const char* cmd) { wd->copy_tooltip(withShortcut(text, cmd).c_str()); };
     audioBtn_ = new ToolButton(8, kMenuH + 5, 104, kToolH - 10, ToolButton::Power, "Audio");
-    audioBtn_->tooltip("Start or stop audio (Cmd+/)");
+    tip(audioBtn_, "Start or stop audio", "patch.audio");
     audioBtn_->callback([](Fl_Widget*, void*) { App::get().toggleAudio(); });
     editBtn_ = new ToolButton(118, kMenuH + 5, 92, kToolH - 10, ToolButton::Pencil, "Edit");
-    editBtn_->tooltip("Edit mode on/off (Cmd+E)");
-    editBtn_->callback([](Fl_Widget*, void* d) { static_cast<MainWindow*>(d)->toggleLock(); }, this);
+    tip(editBtn_, "Edit mode on/off", "patch.edit");
+    editBtn_->callback([](Fl_Widget*, void* d) { static_cast<DocumentWindow*>(d)->toggleLock(); }, this);
     textBtn_ = new ToolButton(216, kMenuH + 5, 86, kToolH - 10, ToolButton::Code, "Code");
-    textBtn_->tooltip("The patch as code (its text), kept in sync with the drawing (Cmd+T)");
+    tip(textBtn_, "The patch as code (its text), kept in sync with the drawing", "patch.code");
     textBtn_->callback([](Fl_Widget*, void* d) {
-        auto* mw = static_cast<MainWindow*>(d);
+        auto* mw = static_cast<DocumentWindow*>(d);
         App& app = App::get();
         if (auto* tw = app.textWindow(&mw->patch); tw && tw->shown()) { tw->do_callback(); app.refreshStatus(); }
         else app.showText(mw, &mw->patch, mw->label() ? mw->label() : "patch", false);
     }, this);
     const int by = kMenuH + 5, bh = kToolH - 10;
     auto* zoomOut = new ToolButton(316, by, 28, bh, ToolButton::Minus, "", false);
-    zoomOut->tooltip("Zoom out (Cmd+-)");
-    zoomOut->callback([](Fl_Widget*, void* d) { static_cast<MainWindow*>(d)->canvas->zoomBy(-1); }, this);
+    tip(zoomOut, "Zoom out", "view.zoomout");
+    zoomOut->callback([](Fl_Widget*, void* d) { static_cast<DocumentWindow*>(d)->canvas->zoomBy(-1); }, this);
     zoomLabel_ = new ToolButton(346, by, 54, bh, ToolButton::None, "100%", false);
-    zoomLabel_->tooltip("The patch's zoom; click for 100% (Cmd+0)");
-    zoomLabel_->callback([](Fl_Widget*, void* d) { static_cast<MainWindow*>(d)->canvas->zoomBy(0); }, this);
+    tip(zoomLabel_, "The patch's zoom; click for 100%", "view.actual");
+    zoomLabel_->callback([](Fl_Widget*, void* d) { static_cast<DocumentWindow*>(d)->canvas->zoomBy(0); }, this);
     auto* zoomIn = new ToolButton(402, by, 28, bh, ToolButton::Plus, "", false);
-    zoomIn->tooltip("Zoom in (Cmd++)");
-    zoomIn->callback([](Fl_Widget*, void* d) { static_cast<MainWindow*>(d)->canvas->zoomBy(1); }, this);
+    tip(zoomIn, "Zoom in", "view.zoomin");
+    zoomIn->callback([](Fl_Widget*, void* d) { static_cast<DocumentWindow*>(d)->canvas->zoomBy(1); }, this);
     auto* browser = new ToolButton(442, by, 98, bh, ToolButton::Browser, "Browser", false);
-    browser->tooltip("Tutorials, examples, objects and recent files (Shift+Cmd+B)");
+    tip(browser, "Tutorials, examples, objects and recent files", "help.browser");
     browser->callback([](Fl_Widget*, void*) { App::get().showBrowser(); });
     consoleBtn_ = new ToolButton(546, by, 100, bh, ToolButton::Console, "Console", false);
-    consoleBtn_->tooltip("Messages, errors and print (Shift+Cmd+M); a red dot: an error since you last looked");
+    consoleBtn_->copy_tooltip((withShortcut("Messages, errors and print", "patch.console") +
+                               "; a red dot: an error since you last looked").c_str());
     consoleBtn_->callback([](Fl_Widget*, void*) { App::get().showConsole(); });
     recordBtn_ = new ToolButton(652, by, 96, bh, ToolButton::Record, "Record", false);
     recordBtn_->tooltip("Quick recorder: what goes to the dac, into a WAV file (Extras > Quick Recorder)");
@@ -75,6 +77,11 @@ MainWindow::MainWindow(int w, int h)
     resizable(canvas);
     size_range(400, 300);
 
+    doc.onChanged = [this] {
+        updateTitle();
+        App::get().patchChanged();
+        App::get().refreshMenus();
+    };
     patch.onRedraw = [this] {
         canvas->redraw();
         App::get().patchChanged();
@@ -90,28 +97,30 @@ MainWindow::MainWindow(int w, int h)
     callback([](Fl_Widget* w, void*) {
         // Escape must not close the window; everything else (close box) does.
         if (Fl::event() == FL_SHORTCUT && Fl::event_key() == FL_Escape) return;
-        auto* d = static_cast<MainWindow*>(w);
+        auto* d = static_cast<DocumentWindow*>(w);
         if (d->confirmDiscard()) App::get().closeDocument(d);
     });
 
     App::get().docs.push_back(this);
     updateTitle();
     canvas->setLocked(false);
-    setStatus("double-click to create an object · Cmd+E toggles edit mode");
+    setStatus(std::string("double-click to create an object · ") + shortcutText(FL_COMMAND + 'e') +
+              " toggles edit mode");
 }
 
-MainWindow::~MainWindow() {
+DocumentWindow::~DocumentWindow() {
     for (auto* w : subwindows_) w->detach();
+    if (menu_) App::get().forgetMenu(menu_);
 }
 
-void MainWindow::updateZoomLabel() {
+void DocumentWindow::updateZoomLabel() {
     char buf[16];
     std::snprintf(buf, sizeof buf, "%d%%", (int)std::lround(canvas->zoom() * 100));
     zoomLabel_->copy_label(buf);
     zoomLabel_->redraw();
 }
 
-void MainWindow::refreshStatus() {
+void DocumentWindow::refreshStatus() {
     App& app = App::get();
     std::string s = canvas->locked() ? "LOCKED" : "EDIT";
     if (app.audio.running())
@@ -124,58 +133,57 @@ void MainWindow::refreshStatus() {
         s += "   ·   audio off";
     if (!patch.dspError.empty()) s += "   ·   " + patch.dspError;
     if (!message_.empty()) s += "   ·   " + message_;
-    statusBar_->copy_label(("  " + s).c_str());
-    Fl_Menu_Bar* m = app.menuFor(this);
-    setMenuCheck(m, "Patch/Edit Mode", !canvas->locked());
-    setMenuCheck(m, "Patch/Audio On", app.audio.running());
-    audioBtn_->value(app.audio.running());
-    audioBtn_->copy_label(app.audio.running() ? "Audio On" : "Audio Off");
-    editBtn_->value(!canvas->locked());
-    editBtn_->copy_label(canvas->locked() ? "Locked" : "Edit");
+    if (s != shownStatus_) {
+        shownStatus_ = s;
+        statusBar_->copy_label(("  " + s).c_str());
+    }
+    auto set = [](ToolButton* b, bool on, const char* label) {
+        if (b->value() == (on ? 1 : 0) && b->label() && std::string(b->label()) == label) return;
+        b->value(on);
+        b->copy_label(label);
+        b->redraw();
+    };
+    set(audioBtn_, app.audio.running(), app.audio.running() ? "Audio On" : "Audio Off");
+    set(editBtn_, !canvas->locked(), canvas->locked() ? "Locked" : "Edit");
     auto* tw = app.textWindow(&patch);
-    textBtn_->value(tw && tw->shown());
-    audioBtn_->redraw();
-    editBtn_->redraw();
-    textBtn_->redraw();
+    set(textBtn_, tw && tw->shown(), "Code");
+    app.refreshMenus();
 }
 
-void MainWindow::print(const std::string& s) {
+void DocumentWindow::print(const std::string& s) {
     App::get().log(s);
     setStatus(s);
 }
 
-void MainWindow::setStatus(const std::string& s) {
+void DocumentWindow::setStatus(const std::string& s) {
     message_ = s;
     refreshStatus();
 }
 
-void MainWindow::updateTitle() {
-    std::string t = (path_.empty() ? (suggested_.empty() ? std::string("Untitled") : suggested_ + " (from Max)")
-                                   : baseName(path_)) +
-                    (edited() ? " — edited" : "") + " — Moritz";
-    copy_label(t.c_str());
+void DocumentWindow::updateTitle() {
+    const std::string& path = doc.path();
+    std::string t = (path.empty() ? (doc.suggested.empty() ? std::string("Untitled") : doc.suggested + " (from Max)")
+                                  : baseName(path)) +
+                    (doc.anyDirty() ? " — edited" : "") + " — Moritz";
+    if (!label() || t != label()) copy_label(t.c_str());
 }
 
-// An edit inside an abstraction (or a subpatcher in one) is unsaved in the abstraction's file, which is
-// saved on its own; any other edit is unsaved in the document.
-void MainWindow::markDirty(Patch* p) {
-    if (Patch* a = abstractionOf(p ? p : &patch)) absDirty_.insert(a);
-    else dirty_ = true;
-    updateTitle();
-    App::get().patchChanged();
+void DocumentWindow::showRecording(bool on, const char* label) {
+    if (recordBtn_->lit == on && recordBtn_->label() && std::string(recordBtn_->label()) == label) return;
+    recordBtn_->lit = on;
+    recordBtn_->copy_label(label);
+    recordBtn_->redraw();
 }
 
-Patch* MainWindow::abstractionOf(Patch* p) const {
-    for (Patch* q = p; q && q != &patch; q = q->parent)
-        if (q->isAbstraction && !q->file.empty()) return q;
-    return nullptr;
+void DocumentWindow::showConsoleAlert(bool on) {
+    if (consoleBtn_->alert == on) return;
+    consoleBtn_->alert = on;
+    consoleBtn_->redraw();
 }
 
-void MainWindow::forget(Patch* p) {
-    if (absDirty_.erase(p)) updateTitle();
-}
+void DocumentWindow::updateMeters(float cpu, const std::vector<float>& peaks) { meters_->update(cpu, peaks); }
 
-int MainWindow::handle(int e) {
+int DocumentWindow::handle(int e) {
     if (e == FL_SHORTCUT && Fl::event_key() == FL_Escape) {
         activeCanvas()->cancelEdit();
         return 1;
@@ -187,7 +195,7 @@ int MainWindow::handle(int e) {
 
 // ---- File
 
-bool MainWindow::confirmDiscard() {
+bool DocumentWindow::confirmDiscard() {
     canvas->commitEdit();
     for (auto* w : subwindows_) w->canvas->commitEdit();
     App& app = App::get();
@@ -199,44 +207,33 @@ bool MainWindow::confirmDiscard() {
         if (!cw->confirmDiscard()) return false;
     }
     // abstractions edited in their windows: each has its own file
-    for (Patch* a : std::vector<Patch*>(absDirty_.begin(), absDirty_.end())) {
+    for (Patch* a : doc.dirtyAbstractions()) {
         int r = askUser("Save the changes to the abstraction \"%s\"?", "Cancel", "Save", "Don't Save",
-                        baseName(a->file).c_str());
+                          baseName(a->file).c_str());
         if (r == 0) return false;
         if (r == 1 && !saveAbstraction(a)) return false;
     }
-    if (!dirty_) return true;
-    std::string name = path_.empty() ? "Untitled" : baseName(path_);
+    if (!doc.dirty()) return true;
+    std::string name = path().empty() ? "Untitled" : baseName(path());
     int r = askUser("Save changes to \"%s\"?", "Cancel", "Save", "Don't Save", name.c_str());
     if (r == 0) return false;
     if (r == 1) return save();
     return true;
 }
 
-bool MainWindow::openFile(const std::string& path) {
-    std::string src, err;
-    if (!fileio::read(path, src)) {
-        alertUser("Can't read %s", path.c_str());
-        return false;
-    }
+bool DocumentWindow::openFile(const std::string& path) {
+    std::string err;
     canvas->reset();
     closeAllSubwindows();
-    std::string oldDir = patch.dir;
-    patch.dir = dirOf(path);
-    if (!patch.load(src, err)) {
-        patch.dir = oldDir;
-        alertUser("Can't open %s:\n%s", baseName(path).c_str(), err.c_str());
+    if (!doc.load(path, err)) {
+        if (err.rfind("can't read", 0) == 0) alertUser("Can't read %s", path.c_str());
+        else alertUser("Can't open %s:\n%s", baseName(path).c_str(), err.c_str());
         return false;
     }
-    path_ = path;
-    undo_.clear();
-    redo_.clear();
-    dirty_ = false;
-    absDirty_.clear();
     canvas->setLocked(true);           // Max opens patches locked
     updateTitle();
-    log("opened " + path);
-    App::get().addRecent(path);
+    log("opened " + doc.path());
+    App::get().addRecent(doc.path());
     if (!err.empty()) print(baseName(path) + ":\n" + err);
     else setStatus("opened " + baseName(path));
     if (!patch.dspError.empty()) log(baseName(path) + ": " + patch.dspError);
@@ -245,21 +242,15 @@ bool MainWindow::openFile(const std::string& path) {
     return true;
 }
 
-bool MainWindow::loadConverted(const std::string& src, const std::string& dir, const std::string& name) {
+bool DocumentWindow::loadConverted(const std::string& src, const std::string& dir, const std::string& name) {
     std::string err;
     canvas->reset();
     closeAllSubwindows();
-    patch.dir = dir;                   // abstractions converted next to the original
-    if (!patch.load(src, err)) {
+    if (!doc.loadText(src, dir, err)) {    // abstractions converted next to the original
         alertUser("Can't load the converted patch:\n%s", err.c_str());
         return false;
     }
-    path_.clear();
-    suggested_ = name + "." + kExt;
-    undo_.clear();
-    redo_.clear();
-    dirty_ = true;                     // not saved yet
-    absDirty_.clear();
+    doc.suggested = name + "." + kExt;
     canvas->setLocked(false);
     updateTitle();
     if (!err.empty()) log(name + ":\n" + err);
@@ -268,146 +259,128 @@ bool MainWindow::loadConverted(const std::string& src, const std::string& dir, c
     return true;
 }
 
-bool MainWindow::saveFront() {
-    // inside an abstraction (or a p inside one) in front: Save writes that file
-    Canvas* active = activeCanvas();
-    if (active != canvas)
-        if (Patch* a = abstractionOf(active->patch())) return saveAbstraction(a);
-    return save();
-}
-
-bool MainWindow::saveAbstraction(Patch* a) {
-    for (auto* w : subwindows_) w->canvas->commitEdit();
-    std::string err;
-    if (!fileio::writeAtomic(a->file, a->serialize(), &err)) {   // the file stays as it was
-        alertUser("Can't save the abstraction %s:\n%s\n\nThe file on the disk is as it was.", baseName(a->file).c_str(),
-                  err.c_str());
-        log("can't save: " + err);
-        return false;
-    }
-    absDirty_.erase(a);
-    updateTitle();
-    log("saved abstraction " + a->file);
-    setStatus("saved abstraction " + baseName(a->file));
-    App::get().abstractionSaved(a);           // its other copies follow
-    return true;
-}
-
-bool MainWindow::save() {
+bool DocumentWindow::save() {
     canvas->commitEdit();
     for (auto* w : subwindows_) w->canvas->commitEdit();
-    if (path_.empty()) return saveAs();
-    // a temporary file in the same folder, renamed over the old one once written: a full disk or a
-    // crash leaves the old file whole
+    if (path().empty()) return saveAs();
     std::string err;
-    if (!fileio::writeAtomic(path_, patch.serialize(), &err)) {
-        alertUser("Can't save %s:\n%s\n\nThe file on the disk is as it was.", baseName(path_).c_str(), err.c_str());
-        log("can't save: " + err);
+    if (!doc.save(err)) {
+        alertUser("Can't save %s:\n%s\n\nThe file on the disk is as it was.", baseName(path()).c_str(), err.c_str());
+        print("can't save: " + err);
         return false;
     }
-    dirty_ = false;
-    updateTitle();
-    log("saved " + path_);
-    setStatus("saved " + baseName(path_));
+    log("saved " + path());
+    setStatus("saved " + baseName(path()));
     return true;
 }
 
-bool MainWindow::saveAs() {
+bool DocumentWindow::saveAs() {
     canvas->commitEdit();
     Fl_Native_File_Chooser fc;
     fc.title("Save Patch As");
     fc.type(Fl_Native_File_Chooser::BROWSE_SAVE_FILE);
     fc.filter("Moritz patch\t*.moritz");
     fc.options(Fl_Native_File_Chooser::SAVEAS_CONFIRM | Fl_Native_File_Chooser::USE_FILTER_EXT);
-    if (path_.empty() && !suggested_.empty() && !patch.dir.empty()) fc.directory(patch.dir.c_str());
-    fc.preset_file(path_.empty() ? (suggested_.empty() ? "Untitled.moritz" : suggested_.c_str())
-                                 : baseName(path_).c_str());
+    if (path().empty() && !doc.suggested.empty() && !patch.dir.empty()) fc.directory(patch.dir.c_str());
+    fc.preset_file(path().empty() ? (doc.suggested.empty() ? "Untitled.moritz" : doc.suggested.c_str())
+                                  : baseName(path()).c_str());
     if (fc.show() != 0) return false;
     std::string p = portablePath(fc.filename());
     const char* ext = fl_filename_ext(p.c_str());
     if (!ext || !*ext) p += std::string(".") + kExt;
     std::string err;
-    if (!fileio::writeAtomic(p, patch.serialize(), &err)) {   // the document keeps its file and folder
+    if (!doc.saveTo(p, err)) {          // the document keeps its file and folder
         alertUser("Can't save %s:\n%s", baseName(p).c_str(), err.c_str());
-        log("can't save: " + err);
+        print("can't save: " + err);
         return false;
     }
-    path_ = p;
-    suggested_.clear();
-    patch.dir = dirOf(p);
-    dirty_ = false;
-    updateTitle();
-    log("saved " + path_);
-    setStatus("saved " + baseName(path_));
-    App::get().addRecent(p);
+    log("saved " + path());
+    setStatus("saved " + baseName(path()));
+    App::get().addRecent(path());
     return true;
+}
+
+bool DocumentWindow::saveAbstraction(Patch* a) {
+    for (auto* w : subwindows_) w->canvas->commitEdit();
+    std::string err;
+    if (!doc.saveAbstraction(a, err)) {
+        alertUser("Can't save the abstraction %s:\n%s\n\nThe file on the disk is as it was.", baseName(a->file).c_str(),
+                 err.c_str());
+        print("can't save: " + err);
+        return false;
+    }
+    log("saved abstraction " + a->file);
+    setStatus("saved abstraction " + baseName(a->file));
+    App::get().abstractionSaved(a);
+    return true;
+}
+
+bool DocumentWindow::saveFront() {
+    // inside an abstraction (or a p inside one) in front: Save writes that file
+    if (PatchWindow* w = frontSubwindow(); w && w->patch)
+        if (Patch* a = doc.abstractionOf(w->patch)) return saveAbstraction(a);
+    return save();
+}
+
+void DocumentWindow::revert() {
+    if (path().empty()) return;
+    if (doc.anyDirty() &&
+        askUser("Revert to the saved \"%s\"?\nThe changes since it was saved will be lost.", "Cancel", "Revert",
+                  nullptr, baseName(path()).c_str()) != 1)
+        return;
+    std::string p = path();
+    openFile(p);
 }
 
 // ---- Edit
 
-void MainWindow::pushUndo(Patch* p) {
-    if (!p) p = &patch;
-    undo_.push_back({pathOf(p), p->serialize()});
-    if (undo_.size() > 500) undo_.erase(undo_.begin());
-    redo_.clear();
-}
+void DocumentWindow::pushUndo(Patch* p) { doc.pushUndo(p ? p : &patch); }
 
-void MainWindow::dropUndo() {
-    if (!undo_.empty()) undo_.pop_back();
-}
+void DocumentWindow::dropUndo() { doc.dropUndo(); }
 
-// Puts back the text of the last step of `from`, keeping what did not change (applyText): a buffer~'s
-// sound, a code box's interpreter and editor, the sound of everything else go on.
-bool MainWindow::restore(std::vector<UndoStep>& from, std::vector<UndoStep>& to, std::string& msg) {
-    canvas->commitEdit();
-    activeCanvas()->commitEdit();
-    auto open = openSubpatchPaths();
-    bool done = false;
-    while (!from.empty() && !done) {
-        UndoStep s = std::move(from.back());
-        from.pop_back();
-        Patch* p = resolve(s.where);
-        if (!p) { msg = "skipped an edit of " + s.where + ", which is gone"; continue; }
-        to.push_back({s.where, p->serialize()});
-        std::string err;
-        if (!p->applyText(s.text, err)) {     // can't happen with a text the patch wrote; nothing changed
-            to.pop_back();
-            msg = "can't restore: " + err;
-            break;
-        }
-        if (p->owner) p->rebuild();           // a subpatcher's inlets and outlets follow positions
-        markDirty(p);
-        done = true;
-    }
-    reopenSubpatches(open);                   // a subpatcher remade by it: its window again
+void DocumentWindow::markDirty(Patch* p) { doc.markDirty(p ? p : &patch); }
+
+void DocumentWindow::afterRestore(Patch* restored) {
+    (void)restored;
     canvas->reset();
     for (auto* w : subwindows_) w->canvas->reset();
     canvas->redraw();
-    return done;
 }
 
-void MainWindow::undo() {
+void DocumentWindow::undo() {
+    canvas->commitEdit();
+    activeCanvas()->commitEdit();
+    auto open = openSubpatchPaths();
     std::string msg;
-    bool ok = restore(undo_, redo_, msg);
-    setStatus(ok ? (msg.empty() ? "undo" : msg) : (msg.empty() ? "nothing to undo" : msg));
+    Patch* restored = nullptr;
+    doc.undo(msg, &restored);
+    reopenSubpatches(open);             // a subpatcher remade by the undo: its window again
+    afterRestore(restored);
+    setStatus(msg);
 }
 
-void MainWindow::redo() {
+void DocumentWindow::redo() {
+    canvas->commitEdit();
+    activeCanvas()->commitEdit();
+    auto open = openSubpatchPaths();
     std::string msg;
-    bool ok = restore(redo_, undo_, msg);
-    setStatus(ok ? (msg.empty() ? "redo" : msg) : (msg.empty() ? "nothing to redo" : msg));
+    Patch* restored = nullptr;
+    doc.redo(msg, &restored);
+    reopenSubpatches(open);
+    afterRestore(restored);
+    setStatus(msg);
 }
 
 // ---- Patch
 
-void MainWindow::toggleLock() {
+void DocumentWindow::toggleLock() {
     Canvas* c = activeCanvas();
     c->setLocked(!c->locked());
 }
 
 // ---- subpatcher windows
 
-Canvas* MainWindow::activeCanvas() {
+Canvas* DocumentWindow::activeCanvas() {
     for (Fl_Window* w = Fl::first_window(); w; w = Fl::next_window(w)) {
         if (w == this) return canvas;
         if (auto pw = dynamic_cast<PatchWindow*>(w); pw && pw->doc == this) return pw->canvas;
@@ -415,7 +388,15 @@ Canvas* MainWindow::activeCanvas() {
     return canvas;
 }
 
-void MainWindow::openSubpatch(Box* b) {
+PatchWindow* DocumentWindow::frontSubwindow() {
+    for (Fl_Window* w = Fl::first_window(); w; w = Fl::next_window(w)) {
+        if (w == this) return nullptr;
+        if (auto pw = dynamic_cast<PatchWindow*>(w); pw && pw->doc == this) return pw;
+    }
+    return nullptr;
+}
+
+void DocumentWindow::openSubpatch(Box* b) {
     Patch* p = b ? b->inner() : nullptr;
     if (!p) return;
     for (auto* w : subwindows_)
@@ -431,7 +412,7 @@ void MainWindow::openSubpatch(Box* b) {
     w->show();
 }
 
-void MainWindow::closeSubpatchWindows(Patch* p) {
+void DocumentWindow::closeSubpatchWindows(Patch* p) {
     for (auto* w : std::vector<PatchWindow*>(subwindows_))
         if (w->patch == p) {
             w->detach();
@@ -441,7 +422,7 @@ void MainWindow::closeSubpatchWindows(Patch* p) {
         }
 }
 
-void MainWindow::closeAllSubwindows() {
+void DocumentWindow::closeAllSubwindows() {
     for (auto* w : subwindows_) {
         w->detach();
         w->hide();
@@ -450,37 +431,23 @@ void MainWindow::closeAllSubwindows() {
     subwindows_.clear();
 }
 
-void MainWindow::forgetWindow(PatchWindow* w) {
+void DocumentWindow::forgetWindow(PatchWindow* w) {
     subwindows_.erase(std::remove(subwindows_.begin(), subwindows_.end(), w), subwindows_.end());
 }
 
-std::vector<std::string> MainWindow::openSubpatchPaths() const {
+std::vector<std::string> DocumentWindow::openSubpatchPaths() const {
     std::vector<std::string> v;
     for (auto* w : subwindows_)
-        if (w->patch && w->shown()) v.push_back(pathOf(w->patch));
+        if (w->patch && w->shown()) v.push_back(doc.where(w->patch));
     return v;
 }
 
-Patch* MainWindow::resolve(const std::string& where) const {
-    Patch* p = &patch;
-    size_t start = 0;
-    while (p && start < where.size()) {
-        size_t end = where.find('/', start);
-        std::string id = where.substr(start, end == std::string::npos ? std::string::npos : end - start);
-        Box* b = p->find(id);
-        p = b ? b->inner() : nullptr;
-        if (end == std::string::npos) break;
-        start = end + 1;
-    }
-    return p;
-}
-
-void MainWindow::reopenSubpatches(const std::vector<std::string>& paths) {
+void DocumentWindow::reopenSubpatches(const std::vector<std::string>& paths) {
     for (auto& path : paths) {
-        Patch* p = resolve(path);
+        Patch* p = doc.resolve(path);
         if (!p || !p->owner) continue;
-        bool open = false;                    // still open (its box was kept): left where it is
-        for (auto* w : subwindows_) open = open || (w->patch == p && w->shown());
+        bool open = false;
+        for (auto* w : subwindows_) open = open || w->patch == p;
         if (!open) openSubpatch(p->owner);
     }
 }

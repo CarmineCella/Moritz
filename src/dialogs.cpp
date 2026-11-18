@@ -128,7 +128,6 @@ void App::showBanner() {
     b->show();
 }
 
-
 void App::about() {
     Fl_Double_Window dlg(360, 330, "About Moritz");
     centerOnScreen(&dlg, frontDoc());

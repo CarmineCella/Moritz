@@ -366,7 +366,7 @@ int main(int argc, char** argv) {
     for (int k = 1; k + 1 < argc; ++k)
         if (std::string(argv[k]) == "--window-png") {
             if (app.docs.empty()) app.newDocument();
-            moritz::MainWindow* w = app.docs.front();
+            moritz::DocumentWindow* w = app.docs.front();
             for (int j = 1; j < argc; ++j)
                 if (std::string(argv[j]).rfind("zoom=", 0) == 0) w->canvas->setZoom(std::atof(argv[j] + 5));
             int r = writePng(w, argv[k + 1]);

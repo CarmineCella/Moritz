@@ -12,6 +12,7 @@
 //   act=save, act=undo, act=redo   File > Save, Edit > Undo, Redo on the front document
 //   act=opensub:<id>          the window of a subpatcher or abstraction box
 //   act=help:<class>          open the help patch of a class
+//   act=menu:<command>        run a menu command by its id (menus.cpp), if it is enabled now
 //   act=new:<class>           Patch > New: a box at the mouse in the front patch window
 //   act=text:<file>           the code view of the front document: its text replaced by the file's, applied
 //   act=click:<id>            a click on a box of the front document (left part)
@@ -25,6 +26,7 @@
 
 #include "gui.h"
 #include "codewindow.h"
+#include "fileio.h"
 #include "objects.h"
 
 #include <FL/Fl_Image_Surface.H>
@@ -45,16 +47,7 @@ void state(const char* fmt, const std::string& a = "", const std::string& b = ""
     std::fflush(stdout);
 }
 
-// the front window showing a patch is a help patch
-bool helpInFront() {
-    for (Fl_Window* w = Fl::first_window(); w; w = Fl::next_window(w)) {
-        if (dynamic_cast<MainWindow*>(w)) return false;
-        if (auto* pw = dynamic_cast<PatchWindow*>(w)) return pw->help;
-    }
-    return false;
-}
-
-MainWindow* front() {
+DocumentWindow* front() {
     App& app = App::get();
     return app.docs.empty() ? nullptr : app.docs.front();
 }
@@ -97,7 +90,7 @@ bool act(const std::string& a) {
     App& app = App::get();
     std::string verb = a.substr(0, a.find(':')), arg = a.find(':') == std::string::npos ? "" : a.substr(a.find(':') + 1);
     if (verb == "draw") {
-        MainWindow* d = front();
+        DocumentWindow* d = front();
         if (!d) return false;
         Fl_Image_Surface surf(d->w(), d->h());
         Fl_Surface_Device::push_current(&surf);
@@ -108,19 +101,19 @@ bool act(const std::string& a) {
     }
     if (verb == "wait") { waitFor(std::atof(arg.c_str())); return true; }
     if (verb == "close") {
-        MainWindow* d = front();
+        DocumentWindow* d = front();
         if (!d) return false;
         app.closeDocument(d);
         return true;
     }
     if (verb == "confirmclose") {          // the close box: asks, then closes (or not)
-        MainWindow* d = front();
+        DocumentWindow* d = front();
         if (!d) return false;
         if (d->confirmDiscard()) app.closeDocument(d);
         return true;
     }
     if (verb == "save" || verb == "undo" || verb == "redo") {
-        MainWindow* d = app.frontDoc();
+        DocumentWindow* d = app.frontDoc();
         if (!d) return false;
         if (verb == "save") d->saveFront();
         else if (verb == "undo") d->undo();
@@ -128,13 +121,21 @@ bool act(const std::string& a) {
         return true;
     }
     if (verb == "opensub") {
-        MainWindow* d = front();
+        DocumentWindow* d = front();
         Box* b = d ? d->patch.find(arg) : nullptr;
         if (!b || !b->inner()) return false;
         d->openSubpatch(b);
         return true;
     }
     if (verb == "help") { app.openHelp(arg); return true; }
+    if (verb == "menu") {
+        const Command* c = findCommand(arg);
+        if (!c || !c->run) return false;
+        if (c->enabled && !c->enabled()) { state("menu %s disabled", arg); return true; }
+        c->run();
+        app.refreshMenus();
+        return true;
+    }
     if (verb == "new") {
         Canvas* c = app.activeCanvas();
         if (!c) return false;
@@ -143,9 +144,9 @@ bool act(const std::string& a) {
         return true;
     }
     if (verb == "text") {
-        MainWindow* d = front();
+        DocumentWindow* d = front();
         std::string src;
-        if (!d || !readFile(arg, src)) return false;
+        if (!d || !fileio::read(arg, src)) return false;
         app.showText(d, &d->patch, "patch", false);
         PatchTextWindow* tw = app.textWindow(&d->patch);
         if (!tw) return false;
@@ -154,7 +155,7 @@ bool act(const std::string& a) {
         return true;
     }
     if (verb == "click" || verb == "dblclick") {
-        MainWindow* d = front();
+        DocumentWindow* d = front();
         Box* b = d ? d->patch.find(arg) : nullptr;
         if (!b) return false;
         Canvas* c = d->canvas;
@@ -165,13 +166,13 @@ bool act(const std::string& a) {
         return true;
     }
     if (verb == "keys") {
-        MainWindow* d = front();
+        DocumentWindow* d = front();
         if (!d) return false;
         for (char ch : arg) key(d->canvas, ch);
         return true;
     }
     if (verb == "send") {
-        MainWindow* d = front();
+        DocumentWindow* d = front();
         size_t k = arg.find(':');
         Box* b = d ? d->patch.find(arg.substr(0, k)) : nullptr;
         if (!b || k == std::string::npos) return false;
@@ -187,14 +188,14 @@ bool act(const std::string& a) {
         return true;
     }
     if (verb == "state") {
-        MainWindow* d = front();
+        DocumentWindow* d = front();
         state("documents %s", std::to_string(app.docs.size()));
         if (d) {
-            state("front %s edited %s", d->path().empty() ? "Untitled" : d->path(), d->edited() ? "yes" : "no");
-            state("undo %s redo %s", d->canUndo() ? "yes" : "no", d->canRedo() ? "yes" : "no");
+            state("front %s edited %s", d->path().empty() ? "Untitled" : d->path(), d->doc.anyDirty() ? "yes" : "no");
+            state("undo %s redo %s", d->doc.canUndo() ? "yes" : "no", d->doc.canRedo() ? "yes" : "no");
             state("boxes %s", std::to_string(d->patch.boxes.size()));
         }
-        state("help in front %s", helpInFront() ? "yes" : "no");
+        state("help in front %s", app.helpInFront() ? "yes" : "no");
         for (auto* cw : app.codeWindows()) {
             char* t = cw->editor()->buffer()->text();
             std::string text = t;
@@ -205,13 +206,13 @@ bool act(const std::string& a) {
         return true;
     }
     if (verb == "buffer") {
-        MainWindow* d = front();
+        DocumentWindow* d = front();
         BufferBox* b = d ? findBuffer(&d->patch, arg) : nullptr;
         state("buffer %s frames %s", arg, b ? std::to_string(b->buf.frames) : std::string("none"));
         return true;
     }
     if (verb == "boxes") {
-        MainWindow* d = front();
+        DocumentWindow* d = front();
         if (!d) return false;
         for (auto& b : d->patch.boxes) state("box %s %s", b->id, b->label());
         return true;

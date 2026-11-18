@@ -106,6 +106,13 @@ if [ $status -eq 0 ] && [ ! -e "$T/code/missing-script.mu" ]; then ok; else fail
 if grep -rq "numbers.moritz" "$HOME" 2>/dev/null && ! grep -rq "^0:numbers.moritz" "$HOME" 2>/dev/null; then ok
 else fail "recent files: absolute paths"; fi
 
+# 12. with a help window in front, Undo and Edit Mode act on nothing (not on a document behind it)
+run "$G/numbers.moritz" --window-png none act=help:metro act=menu:edit.undo act=menu:patch.edit act=menu:edit.paste
+expect "Undo with a help window in front" "state: menu edit.undo disabled"
+expect "Edit Mode with a help window in front" "state: menu patch.edit disabled"
+run "$G/numbers.moritz" --window-png none act=menu:patch.edit act=state
+expect "Edit Mode on a document" "state: front"
+
 rm -rf "$T"
 echo "$count interface cases, $fails failed"
 [ $fails -eq 0 ]

@@ -8,10 +8,12 @@
 
 namespace moritz {
 
-PatchWindow::PatchWindow(MainWindow* d, Patch* p, const std::string& title, bool isHelp)
-    : Fl_Double_Window(560, 420), patch(p), doc(d), help(isHelp) {
+PatchWindow::PatchWindow(DocumentWindow* d, Patch* p, const std::string& title, bool isHelp, bool isHelpRoot)
+    : Fl_Double_Window(560, 420), patch(p), doc(d), help(isHelp), helpRoot(isHelp && isHelpRoot) {
     copy_label(title.c_str());
-    canvas = new Canvas(0, 0, 560, 420 - kStatusH, d, p);
+    // a document's patches are edited through it; a help patch is read-only
+    PatchEditor* editor = d && !help ? static_cast<PatchEditor*>(d) : &App::get().helpEditor();
+    canvas = new Canvas(0, 0, 560, 420 - kStatusH, editor, p);
     auto* bar = new Fl_Group(0, 420 - kStatusH, 560, kStatusH);   // the status line (and Reference)
     auto* status = new Fl_Box(0, 420 - kStatusH, 560, kStatusH);
     status->box(FL_FLAT_BOX);
@@ -32,17 +34,17 @@ PatchWindow::PatchWindow(MainWindow* d, Patch* p, const std::string& title, bool
         });
         status->size(560 - 100, kStatusH);
     }
-    status->copy_label(help ? "  help · runs with your patches while open · right-click any box for its help"
-                       : p->isAbstraction
-                           ? "  abstraction · Cmd+S saves its file · Cmd+E toggles edit mode"
-                           : "  subpatcher · saved with the main patch · Cmd+E toggles edit mode");
+    std::string edit = shortcutText(FL_COMMAND + 'e') + " toggles edit mode";
+    status->copy_label((help ? std::string("  help · runs with your patches while open · right-click any box for its help")
+                        : p->isAbstraction
+                            ? "  abstraction · " + shortcutText(FL_COMMAND + 's') + " saves its file · " + edit
+                            : "  subpatcher · saved with the main patch · " + edit).c_str());
     bar->resizable(status);
     bar->end();
     end();
     resizable(canvas);
     size_range(300, 200);
     canvas->setLocked(true);
-    canvas->readOnly = help;
     p->onRedraw = [this] {
         canvas->redraw();
         App::get().patchChanged();
@@ -56,7 +58,7 @@ PatchWindow::PatchWindow(MainWindow* d, Patch* p, const std::string& title, bool
         auto* pw = static_cast<PatchWindow*>(w);
         pw->canvas->commitEdit();
         pw->hide();                       // a subpatcher is kept: reopening is instant
-        if (pw->help && pw->patch) App::get().closeHelp(pw->patch);   // stops its sound
+        if (pw->helpRoot && pw->patch) App::get().closeHelp(pw->patch);   // stops its sound
     });
 }
 
@@ -74,7 +76,9 @@ int PatchWindow::handle(int e) {
         canvas->cancelEdit();
         return 1;
     }
-    return Fl_Double_Window::handle(e);
+    int r = Fl_Double_Window::handle(e);
+    if (e == FL_FOCUS || e == FL_SHOW) App::get().refreshMenus();   // what the commands act on changed
+    return r;
 }
 
 }  // namespace moritz
