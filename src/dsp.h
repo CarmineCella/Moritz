@@ -403,6 +403,25 @@ inline void binop(Op op, const float* a, const float* b, float* out, int n) {
     }
 }
 
+// Two FIR filters (left, right) over the same history: x[j] = the input j samples ago. Eight
+// partial sums each, so the additions do not wait on one another (the compiler keeps a single
+// sum in order otherwise): about three times faster than one sum for the 128-139 taps of a head
+// response, and the same result to rounding.
+inline void firPair(const float* hl, const float* hr, const float* x, int T, float& l, float& r) {
+    float a[8] = {}, b[8] = {};
+    int j = 0;
+    for (; j + 8 <= T; j += 8)
+        for (int k = 0; k < 8; ++k) {
+            a[k] += hl[j + k] * x[j + k];
+            b[k] += hr[j + k] * x[j + k];
+        }
+    float sl = 0.f, sr = 0.f;
+    for (; j < T; ++j) { sl += hl[j] * x[j]; sr += hr[j] * x[j]; }
+    for (int k = 0; k < 8; ++k) { sl += a[k]; sr += b[k]; }
+    l = sl;
+    r = sr;
+}
+
 // wraps a phase into [-pi, pi]
 inline float wrapPhase(float p) {
     if (p >= -(float)kPi && p <= (float)kPi) return p;

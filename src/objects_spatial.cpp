@@ -74,6 +74,7 @@ namespace {
 
 int orderArg(const Message& a, size_t i, float def) { return std::clamp((int)argf(a, i, def), 0, kMaxOrder); }
 
+
 // ---- the KEMAR set at a sample rate, shared by every hrtf~ and binaural~
 
 std::vector<float> resampleIr(const float* h, int n, double f, int T) {
@@ -344,7 +345,7 @@ public:
                 h[p] = h[p + T] = x[i];
                 const float* hp = h + p;                    // hp[j] = x[i - j]
                 float sl = 0.f, sr2 = 0.f;
-                for (int j = 0; j < T; ++j) { sl += fl[j] * hp[j]; sr2 += fr[j] * hp[j]; }
+                dsp::firPair(fl, fr, hp, T, sl, sr2);
                 L[i] += sl;
                 R[i] += sr2;
             }
@@ -468,10 +469,10 @@ public:
             hist_[(size_t)pos_] = hist_[(size_t)(pos_ + T)] = x[i];
             const float* hp = &hist_[(size_t)pos_];
             float l = 0.f, r = 0.f;
-            for (int j = 0; j < T; ++j) { l += cl_[(size_t)j] * hp[j]; r += cr_[(size_t)j] * hp[j]; }
+            dsp::firPair(cl_.data(), cr_.data(), hp, T, l, r);
             if (move) {                                  // fade to the new direction over the block
                 float l2 = 0.f, r2 = 0.f;
-                for (int j = 0; j < T; ++j) { l2 += nl_[(size_t)j] * hp[j]; r2 += nr_[(size_t)j] * hp[j]; }
+                dsp::firPair(nl_.data(), nr_.data(), hp, T, l2, r2);
                 float t = (float)(i + 1) / n;
                 l += (l2 - l) * t;
                 r += (r2 - r) * t;

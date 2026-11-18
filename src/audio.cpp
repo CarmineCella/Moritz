@@ -183,12 +183,10 @@ void AudioEngine::renderMonitor(Monitor& m, const float* bus, int busCh, float* 
             h[m.pos] = x;
             h[m.pos + T] = x;
             const float* hx = h + m.pos + 1;                 // the last T samples, oldest first
-            const float* hl = &m.hl[(size_t)c * T];
-            const float* hr = &m.hr[(size_t)c * T];
-            for (int t = 0; t < T; ++t) {                    // hl reversed: newest sample, first tap
-                l += hl[T - 1 - t] * hx[t];
-                r += hr[T - 1 - t] * hx[t];
-            }
+            float a, b;                                      // the filters are kept reversed: last tap first
+            dsp::firPair(&m.hl[(size_t)c * T], &m.hr[(size_t)c * T], hx, T, a, b);
+            l += a;
+            r += b;
         }
         m.pos = m.pos + 1 == T ? 0 : m.pos + 1;
         for (int c = 0; c < outCh; ++c) out[(size_t)f * outCh + c] = 0.f;
@@ -209,6 +207,8 @@ void AudioEngine::setMonitor(const std::vector<std::pair<float, float>>& speaker
     std::vector<float> l, r;
     for (auto& sp : speakers) {
         hrirFor(sr, sp.first, sp.second, l, r);
+        std::reverse(l.begin(), l.end());                   // last tap first: the history runs oldest first
+        std::reverse(r.begin(), r.end());
         m->taps = (int)l.size();
         m->hl.insert(m->hl.end(), l.begin(), l.end());
         m->hr.insert(m->hr.end(), r.begin(), r.end());
