@@ -51,9 +51,40 @@ static void test_midi() {
     std::mt19937 g(7);
     for (int k = 0; k < 2000; ++k) {
         std::vector<unsigned char> bad = d;
-        for (int j = 0; j < 4; ++j) bad[14 + g() % (bad.size() - 14)] = (unsigned char)(g() % 256);
-        bad.resize(14 + g() % (bad.size() - 13));
+        for (int j = 0; j < 4; ++j) bad[14 + rnd::below(g, (uint32_t)(bad.size() - 14))] = (unsigned char)rnd::below(g, 256);
+        bad.resize(14 + rnd::below(g, (uint32_t)(bad.size() - 13)));
         try { parse_midi(bad, "corrupt"); } catch (std::exception&) {}
+    }
+}
+
+// --- Orchidea's genetic search keeps the best it has found (elitism) ---
+static void test_orchidea() {
+    std::mt19937 g(11);
+    std::vector<orchidea::entry> db;
+    const char* instr[3] = {"A", "B", "C"};
+    for (int k = 0; k < 60; ++k) {
+        orchidea::entry e; e.index = k; e.instr = instr[k % 3]; e.pitch = "C4"; e.midi = 60; e.tech = "ord"; e.dyn = "mf";
+        for (int j = 0; j < 24; ++j) e.features.push_back((float)rnd::uniform01(g));
+        db.push_back(e);
+    }
+    orchidea::segment seg; seg.length = 1;
+    seg.features.assign(24, 0.f);
+    for (int k : {4, 20, 41}) for (int j = 0; j < 24; ++j) seg.features[(size_t)j] += db[(size_t)k].features[(size_t)j] / 3;
+    orchidea::standardise(seg.features);
+    for (unsigned seed = 1; seed <= 4; ++seed) {
+        orchidea::model m;
+        orchidea::make_model(db, {"A", "B", "C"}, seg, {}, {}, {}, m);
+        orchidea::params p; p.pop_size = 24; p.max_epochs = 40; p.mutation_rate = 0.4; p.sparsity = 0.1; p.seed = seed;
+        // the first population, drawn as the search draws it, evaluated
+        orchidea::genetic first(p);
+        std::vector<orchidea::solution> pop((size_t)p.pop_size);
+        for (auto& id : pop) first.random_chromosome(m, id.indices);
+        std::vector<float> values(seg.features.size());
+        first.evaluate_population(pop, seg.features, m.database, values);
+        float best0 = 0; for (auto& s : pop) best0 = std::max(best0, s.fitness);
+        orchidea::genetic search(p);
+        search.search(m);
+        expect(!m.solutions.empty() && m.solutions[0].fitness >= best0, "orchidea: the best solution is never lost (seed " + std::to_string(seed) + ")");
     }
 }
 
@@ -100,6 +131,7 @@ static void test_threads() {
 int main() {
     test_threads();
     test_midi();
+    test_orchidea();
     if (failures == 0) std::cout << "engines: all checks passed\n";
     return failures == 0 ? 0 : 1;
 }

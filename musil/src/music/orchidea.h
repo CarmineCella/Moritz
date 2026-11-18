@@ -16,6 +16,7 @@
 #include <map>
 #include <string>
 #include <random>
+#include "../rng.h"
 #include <deque>
 #include <algorithm>
 #include <cmath>
@@ -160,8 +161,8 @@ struct genetic {
     }
     static const int MAX_EQUAL_EPOCHS = 150;
     genetic(const params& pr) : p(pr), rng(pr.seed) {}
-    double frand() { return std::uniform_real_distribution<double>(0.0, 1.0)(rng); }
-    int irand(int n) { return n <= 1 ? 0 : (int)(rng() % (unsigned)n); }
+    double frand() { return rnd::uniform01(rng); }                   // rng.h: the same draws on every system
+    int irand(int n) { return n <= 1 ? 0 : (int)rnd::below(rng, (uint32_t)n); }
     std::string instrument_of(const model& m, size_t slot) {   // the instrument a slot plays now (a doubling: one of them, drawn)
         const std::string& s = m.orchestra[slot];
         if (s.find('|') == std::string::npos) return s;
@@ -243,25 +244,35 @@ struct genetic {
         fresh.erase(std::remove_if(fresh.begin(), fresh.end(), [](const solution& s) { return s.is_empty(); }), fresh.end());
     }
     // the search of one segment: => the best total fitness reached; the model's solutions are the unique individuals
-    // of the best population, ranked, the best first
+    // of the best population (the evaluated one with the highest total fitness) and the best individuals of the
+    // last, ranked, the best first. Elitism: the best `elite` individuals of every generation pass to the next
+    // unchanged, so the best solution found is never lost
     float search(model& m) {
         const std::vector<float>& target = m.seg->features;
         std::vector<solution> population((size_t)p.pop_size);
         for (auto& id : population) { if (p.pursuit == 0) random_chromosome(m, id.indices); else { pursuit_chromosome(m, id.indices, target, p.pursuit); mutate(m, id); } }
         std::vector<float> values(target.size(), 0.0f);
         m.curve.clear(); m.solutions.clear(); cache.clear();
+        const size_t elite = std::min<size_t>(population.size(), (size_t)std::max(1, p.pop_size / 50));
         float max_fit = 0, old_fit = 0; int fit_count = 0; std::vector<solution> best_pop;
+        auto best_first = [](const solution& a, const solution& b) { return a.fitness > b.fitness; };
         for (int epoch = 0; epoch < p.max_epochs; epoch++) {
             if (p.progress && !p.progress(epoch, p.max_epochs)) break;
             float total = evaluate_population(population, target, m.database, values);
-            std::vector<solution> fresh; offspring(m, population, fresh, total);
-            for (size_t k = 0; k < population.size() && k < fresh.size(); k++) { population[k].indices = fresh[k].indices; population[k].fitness = fresh[k].fitness; }
-            if (max_fit < total) { max_fit = total; best_pop = fresh; }
+            if (max_fit < total) { max_fit = total; best_pop = population; }       // the evaluated population, not its children
             m.curve.push_back(total);
+            std::vector<solution> ranked = population;
+            std::stable_sort(ranked.begin(), ranked.end(), best_first);
+            std::vector<solution> fresh(ranked.begin(), ranked.begin() + (long)elite);
+            offspring(m, population, fresh, total);
+            for (size_t k = 0; k < population.size() && k < fresh.size(); k++) { population[k].indices = fresh[k].indices; population[k].fitness = fresh[k].fitness; }
             if (old_fit == max_fit) fit_count++; else fit_count = 0;
             if (fit_count > p.patience) break;
             old_fit = max_fit;
         }
+        evaluate_population(population, target, m.database, values);
+        std::stable_sort(population.begin(), population.end(), best_first);
+        for (size_t k = 0; k < elite && k < population.size(); k++) best_pop.push_back(population[k]);
         if (best_pop.empty()) best_pop = population;
         std::map<std::vector<int>, solution> uniques; for (auto& s : best_pop) uniques[s.indices] = s;
         for (auto& kv : uniques) m.solutions.push_back(kv.second);

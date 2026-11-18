@@ -22,6 +22,7 @@
 
 #include "music/maple.h"
 #include "signals/mir.h"
+#include "../rng.h"
 
 #include <algorithm>
 #include <cmath>
@@ -99,12 +100,12 @@ inline void kmeans(const std::vector<Vec>& x, int k, unsigned seed, std::vector<
     std::vector<Vec> bestC;
     for (int start = 0; start < 4; ++start) {
         std::vector<Vec> c;
-        c.push_back(x[std::uniform_int_distribution<size_t>(0, n - 1)(rng)]);
+        c.push_back(x[rnd::below(rng, (uint32_t)n)]);
         Vec dmin(n, 1e300);
         while ((int)c.size() < k) {
             double tot = 0;
             for (size_t i = 0; i < n; ++i) { dmin[i] = std::min(dmin[i], dist2(x[i], c.back())); tot += dmin[i]; }
-            double r = std::uniform_real_distribution<double>(0, tot)(rng);
+            double r = rnd::uniform(rng, 0, tot);
             size_t pick = 0;
             for (double acc = 0; pick < n; ++pick) { acc += dmin[pick]; if (acc >= r) break; }
             c.push_back(x[std::min(pick, n - 1)]);
@@ -126,7 +127,7 @@ inline void kmeans(const std::vector<Vec>& x, int k, unsigned seed, std::vector<
             for (size_t i = 0; i < n; ++i) { ++cnt[(size_t)l[i]]; for (size_t d = 0; d < x[i].size(); ++d) s[(size_t)l[i]][d] += x[i][d]; }
             for (int j = 0; j < k; ++j)
                 if (cnt[(size_t)j]) for (auto& v : s[(size_t)j]) v /= cnt[(size_t)j];
-                else s[(size_t)j] = x[std::uniform_int_distribution<size_t>(0, n - 1)(rng)];
+                else s[(size_t)j] = x[rnd::below(rng, (uint32_t)n)];
             c = s;
             if (!changed && it > 0) break;
         }
@@ -446,18 +447,17 @@ struct Oracle {
 // jumping after a place where the last `context` symbols repeat.
 inline int oracleStep(const Oracle& orc, int state, double continuity, int context, std::mt19937& rng) {
     int n = (int)orc.sfx.size() - 1;
-    std::uniform_real_distribution<double> uni(0, 1);
-    if (state < n && (uni(rng) < continuity || state == 0)) return state + 1;
+    if (state < n && (rnd::uniform01(rng) < continuity || state == 0)) return state + 1;
     // jump: to the suffix link, or to a state linking back to it, if the shared past is long enough
     std::vector<int> cand;
     int s = orc.sfx[(size_t)state];
     if (s >= 0 && orc.lrs[(size_t)state] >= context) cand.push_back(s);
     for (int j = 1; j <= n; ++j)
         if (orc.sfx[(size_t)j] == s && j != state && orc.lrs[(size_t)j] >= context) cand.push_back(j);
-    int from = cand.empty() ? std::uniform_int_distribution<int>(0, n - 1)(rng)
-                            : cand[std::uniform_int_distribution<size_t>(0, cand.size() - 1)(rng)];
+    int from = cand.empty() ? (int)rnd::below(rng, (uint32_t)n)
+                            : cand[rnd::below(rng, (uint32_t)cand.size())];
     int next = std::min(from + 1, n);
-    if (next == state) next = std::uniform_int_distribution<int>(1, n)(rng);
+    if (next == state) next = (int)rnd::between(rng, 1, n);
     return next;
 }
 
@@ -483,7 +483,7 @@ inline std::vector<int> generate(const Model& m, int level, double seconds, cons
     auto realise = [&](int type) {
         if (!out.empty() && out.back() + 1 < (int)n && sym[(size_t)out.back() + 1] == type) return out.back() + 1;
         const auto& in = instances[(size_t)type];
-        return in[std::uniform_int_distribution<size_t>(0, in.size() - 1)(rng)];
+        return in[rnd::below(rng, (uint32_t)in.size())];
     };
     if (o.method == Method::Oracle) {
         Oracle orc(sym);
@@ -516,7 +516,7 @@ inline std::vector<int> generate(const Model& m, int level, double seconds, cons
                 hist.clear();
             }
             if (!dist) {
-                int u = std::uniform_int_distribution<int>(0, (int)n - 1)(rng);
+                int u = (int)rnd::below(rng, (uint32_t)n);
                 for (int d = 0; d < D && u + d < (int)n; ++d) { hist.push_back(sym[(size_t)(u + d)]); push(u + d); }
                 continue;
             }
@@ -532,7 +532,7 @@ inline std::vector<int> generate(const Model& m, int level, double seconds, cons
         }
         int tot = 0;
         for (auto& kv : *dist) tot += kv.second;
-        int r = std::uniform_int_distribution<int>(0, tot - 1)(rng), type = dist->begin()->first;
+        int r = (int)rnd::below(rng, (uint32_t)tot), type = dist->begin()->first;
         for (auto& kv : *dist) { if (r < kv.second) { type = kv.first; break; } r -= kv.second; }
         hist.push_back(type);
         if ((int)hist.size() > D + 1) hist.erase(hist.begin());
