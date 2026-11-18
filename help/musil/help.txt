@@ -34,7 +34,7 @@
   run body; on an error bind its message to e and run handler
 #expr
   (expr (a op b ...)
-  ) infix arithmetic: + - * / % < > <= >= == != && ||; ( ) groups, (f x) calls
+  ) infix arithmetic: + - * / % < > <= >= == != && ||; ( ) groups, (f x) calls; && and || short-circuit
 #parse
   (parse "text")
   read Musil source into a form: (do line ...), the same reading a file gets; (eval (parse s)) runs it
@@ -140,8 +140,9 @@
   seconds from a monotonic clock, for timing
 #load
   (load "file.mu")
-  run a file once, searched next to the loading file, in the current directory,
-  in MUSIL_PATH and in ~/.musil
+  run a file, searched next to the loading file, then in MUSIL_PATH and ~/.musil (the
+  libraries), then in the current directory; once: a second load of the same file does nothing, unless the
+  file changed since (then it runs again: edit a module, load it again)
 #defined?
   (defined? 'name)
   is name bound?
@@ -455,8 +456,8 @@
   (sleep seconds)
 #find-file
   (find-file "name")
-  => the path of a file as load resolves it (the current directory, the file being run, the
-  load path: MUSIL_PATH, ~/.musil, the libraries), or "" when not found
+  => the path of a file as load resolves it (the file being run, the load path: MUSIL_PATH,
+  ~/.musil, the libraries; then the current directory), or "" when not found
 #resolve-path
   (resolve-path "name")
   => the path a reading function would open for a relative name: as given if it exists from the
@@ -836,8 +837,22 @@
 #deconv
   (deconv y h [threshold])
   => x such that (conv x h) ~ y, as long as y: the spectrum of y divided by that
-  of h where |H| is above threshold (0.001) times its peak, else 0 (signals/convolution.h, as Moritz's
-  condec): a recording un-reverberated by a measured response, or a response measured from a known sweep
+  of h, regularised (Tikhonov): Y conj(H) / (|H|^2 + threshold^2 max|H|^2), threshold 0.001 by default, so
+  where |H| is far above threshold times its peak it is Y / H, at that level half of it, and below it the
+  gain falls smoothly to 0 instead of being cut; threshold 0 is the plain inverse (signals/convolution.h, as
+  Moritz's condec): a recording un-reverberated by a measured response, or a response measured from a known sweep
+#spectral-envelope
+  (spectral-envelope mags order)
+  smooth envelope of a full magnitude spectrum (all n bins, n a power of two, as
+  magnitudes of an fft gives): the "true envelope", a cepstral smoothing (the first `order` coefficients) iterated
+  12 times so that it rides on the harmonic peaks instead of averaging peaks and valleys (signals/envelope.h, the
+  estimator of Moritz's specenv~). The order sets the resolution: about sr / (2 f0) of the sound, f0 its lowest
+  fundamental (150 for a voice at 44.1 kHz), follows the formants without rippling at the harmonics; lower is smoother
+#biquad
+  (biquad type sr f0 q gain-db)
+  => (list b a) of an RBJ biquad (the cookbook's coefficients, a[0] not 1: iir takes
+  them as they are); type is one of "lowpass" "highpass" "bandpass" "notch" "peak" "lowshelf" "highshelf" "allpass"; gain-db
+  is for peak and the shelves (signals/biquad.h, the coefficients of Moritz's biquad objects and of mir.h too)
 #svf
   (svf x sr freq q type)
   => x through a state-variable filter (signals/filters.h, as Moritz's svf~);
@@ -862,17 +877,20 @@
 #ambi-decoder
   (ambi-decoder order speakers)
   => the decoding matrix ambi-decode uses: a row of (order+1)^2 gains per speaker
-  (speakers: (list az el) or azimuths). All at ear height: a ring, the exact horizontal decoder with 2D max-rE
-  weights; with elevations: sampling of the sphere, SN3D-corrected (2n+1) with 3D max-rE weights
+  (speakers: (list az el) or azimuths). All at ear height: a ring; evenly spaced with at least 2N+1 speakers, the
+  exact horizontal decoder, else (irregular, as 5.0, or too few speakers) the energy-preserving decoder (EPAD) of
+  the circular harmonics, so every direction is about as loud; both with 2D max-rE weights. With elevations: the
+  energy-preserving decoder of the spherical harmonics with 3D max-rE weights (on a t-design, the sampling decoder)
 #ambi-rotate
   (ambi-rotate B yaw)
   => B turned by yaw degrees about the vertical axis (positive to the left):
   within each order, the pair (m, -m) rotates by m yaw, exactly; B is a list of (order+1)^2 channel vectors
-#conv-fast
-  (conv-fast x h)
-  => the linear convolution of x and h (length n + m - 1), by overlap-add over blocks the size
-  of h: the same result as conv, faster on long inputs, and the interpreter breathes between blocks (the
-  windows stay responsive while a long score goes through the hall)
+#conv conv-fast
+  (conv x h)  (conv-fast x h)
+  => the linear convolution of x and h (length n + m - 1, n and m their lengths), by real FFTs
+  (signals/convolution.h, as Moritz's condec): one transform when x is not much longer than h, else overlap-add
+  over blocks; the interpreter breathes between blocks (the windows stay responsive while a long score goes
+  through the hall). conv streams in a synth (h constant, partitioned); conv-fast is the same function offline
 #hrtf-load
   (hrtf-load path)
   load a set from a CSV: each row azimuth, elevation, then the left ear's samples and the right's
@@ -940,6 +958,18 @@
   => an ncoeff x frames matrix: the mel-frequency cepstral coefficients of every
   frame (the DCT-II of the mel spectrogram in dB, nmel filters, the first ncoeff coefficients: a smooth description of
   the spectral envelope, the timbre; coefficient 0 is the overall level)
+#key-scores
+  (key-scores chroma)
+  every key against a pitch-class distribution (a vector of 12, C first: chroma-mean of a
+  chromagram): the correlation of the distribution with the Krumhansl-Kessler profile of each major and minor key
+  (Krumhansl 1990; mir.h's keyScores, as Moritz's keyfind); => (list (list "D" 'minor r) ...), best first. Keys
+  are spelled as musicians spell them: Db Eb F# Ab Bb major, C# Eb F# G# Bb minor
+#tempo-estimate-with
+  (tempo-estimate-with flux fps centre width)
+  the tempo of an onset strength (a vector, fps values a second): its
+  autocorrelation (the mean removed) read at the lags of 30..300 bpm (half-bpm steps, a lag under half the curve's
+  length), weighted by a log-normal prior on the tempo a listener taps, centred on centre bpm, width octaves wide
+  (mir.h's tempoEstimate, as Moritz's beats); (tempo-estimate-with flux fps 120 10) is the autocorrelation's own peak
 #sine
   (sine sr freq dur)
   a sine of freq Hz lasting dur seconds
@@ -1015,19 +1045,9 @@
 #complex-mul
   (complex-mul a b)
   product of two (list re im) spectra
-#conv
-  (conv x h)
-  linear convolution through the FFT, length (+ (length x) (length h) -1)
 #cepstrum
   (cepstrum mags)
   real cepstrum of a full (symmetric) magnitude spectrum
-#spectral-envelope
-  (spectral-envelope mags order)
-  smooth envelope of a full magnitude spectrum: the "true envelope",
-  a cepstral smoothing (first `order` coefficients) iterated so that it rides
-  on the harmonic peaks instead of averaging peaks and valleys. The order sets
-  the resolution: about sr / (2 f0) of the sound (e.g. 150 for a voice at
-  44.1 kHz) follows the formants without rippling at the harmonics
 #flatten-spectrum
   (flatten-spectrum mags order)
   the magnitudes divided by their envelope: the fine structure alone
@@ -1036,7 +1056,9 @@
   mags reshaped to carry the spectral envelope of source
 #stft
   (stft x n hop)
-  => list of (list re im); (istft frames n hop) => signal by overlap-add
+  => list of (list re im): frames at 0, hop, 2 hop ... until one reaches the end of x (the last is
+  padded with zeros), so istft gives back at least the whole of x; (istft frames n hop) =>
+  signal by overlap-add
 #istft
   (istft frames n hop)
   the signal back from stft frames by windowed overlap-add
@@ -1060,7 +1082,7 @@
   pitch-shift by ratio at the same length (formants move too)
 #pvoc-pitch-formant
   (pvoc-pitch-formant x ratio order)
-  pitch-shift keeping the formants (order about sr/100: 400 at 44.1 kHz)
+  pitch-shift keeping the formants (order about sr / (2 f0): 150 for a voice at 44.1 kHz)
 #pvoc-formants
   (pvoc-formants x ratio order)
   move the formants by ratio, the pitch kept
@@ -1148,10 +1170,6 @@
 #acf-f0
   (acf-f0 x sr)
   fundamental by autocorrelation; 0 when no clear peak
-#biquad
-  (biquad type sr f0 q gain-db)
-  => (list b a) of an RBJ biquad; type is one of
-  "lowpass" "highpass" "bandpass" "notch" "peak" "lowshelf" "highshelf"
 #apply-filter
   (apply-filter x coeffs)
   run x through (list b a) as returned by biquad
@@ -1298,8 +1316,9 @@
   B-format to a list of speakers, each (list az el) or a bare azimuth, through the
   matrix of ambi-decoder: for speakers all at ear height the exact horizontal decoder of a
   ring (at least 2N+1 speakers, evenly spaced) with 2D max-rE weights, whose energy vector
-  reaches 0.71 at order 1 and 0.87 at order 2; with elevations, sampling of the sphere with
-  the SN3D correction (2n+1) and 3D max-rE weights
+  reaches 0.71 at order 1 and 0.87 at order 2, and the energy-preserving decoder (EPAD) for
+  any other ring (5.0, too few speakers); with elevations, the energy-preserving decoder of
+  the sphere with 3D max-rE weights
 #max-re-weights
   (max-re-weights order)
   the per-channel 2D max-rE weights of an order (Zotter & Frank), cos(n pi / (2N + 2)) for
@@ -1317,7 +1336,7 @@
 #binaural-decode
   (binaural-decode B sr)
   B-format for headphones: decoded to 17 virtual speakers spread over the sphere (8 at ear
-  height, 4 above, 4 below, 1 overhead, the sphere-sampling decoder of ambi-decoder), each
+  height, 4 above, 4 below, 1 overhead, the energy-preserving decoder of ambi-decoder), each
   rendered with the head responses of its direction (hrir), summed; at order 1 a front
   source has the broadband level of the front head response itself (low frequencies come out
   louder, high ones softer, as with any decoding to virtual speakers); => (list left right). One expression, so it streams in a synth too.
@@ -1330,7 +1349,13 @@
 #moving-source
   (moving-source x order az-curve el-curve blocks)
   a signal whose direction changes: encoded block by block
-  (blocks samples each) at the azimuth and elevation curves (vectors, one value per block)
+  (blocks samples each) at the azimuth and elevation curves (vectors, one value per block),
+  the blocks crossfaded: each is a Hann window of two blocks centred on it (at 50% overlap
+  they sum to 1), so the direction glides from block to block without clicks
+#hann-fade
+  (hann-fade seg)
+  a periodic Hann window as long as seg (a vector or a length): the crossfade of moving-source,
+  whose windows of two blocks at a block's hop sum to 1
 #nmf-separate
   (nmf-separate x n hop k iterations)
   x split into k sources: NMF of its magnitude spectrogram
@@ -1361,11 +1386,6 @@
 #rotate-vec
   (rotate-vec v k)
   the vector rotated right by k (v[0] goes to position k)
-#key-scores
-  (key-scores chroma)
-  every key against a pitch-class distribution (a vector of 12, C first: chroma-mean of a
-  chromagram): the correlation of the distribution with the Krumhansl-Kessler profile of each
-  major and minor key (Krumhansl 1990); => (list (list "D" 'minor r) ...), best first
 #correlation
   (correlation a b)
   Pearson's correlation of two vectors
@@ -1378,13 +1398,9 @@
 #tempo-estimate
   (tempo-estimate flux fps)
   the tempo of an onset strength (a vector, fps values a second): the autocorrelation
-  of the flux read at the lags of 30..300 bpm, weighted by a log-normal prior on the tempo a
+  of the flux read at the lags of 30..300 bpm (tempo-estimate-with), weighted by a log-normal prior on the tempo a
   listener taps, centred on 100 bpm and 0.6 octaves wide (the pulse of the eighths or the
   bars is often as periodic as the beat's: the prior decides between the octaves); => bpm
-#tempo-estimate-with
-  (tempo-estimate-with flux fps centre width)
-  the same with the prior's centre (bpm) and width (octaves) given;
-  (tempo-estimate-with flux fps 120 10) is the autocorrelation's own peak
 #beats
   (beats x sr n hop)
   the beat times of a recording in seconds: the onset strength (n, hop as onset-strength),
