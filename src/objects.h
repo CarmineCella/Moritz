@@ -202,7 +202,7 @@ private:
 };
 
 // Mailbox<T>: objects handed to the audio thread one after the other (a
-// click~ shape, a line~ list). send() on the GUI thread; take() on the audio
+// line~ list). send() on the GUI thread; take() on the audio
 // thread makes the next one current and hands the one it replaces back,
 // to be freed by the next send() (or by the destructor, when the box goes).
 template <class T, size_t N = 32>
@@ -217,12 +217,12 @@ public:
         collect();
         delete cur_;
     }
-    bool send(std::unique_ptr<T> v) {                     // GUI thread; false when full (v dropped)
+    bool send(std::unique_ptr<T> v) { return trySend(v); }   // GUI thread; false when full (v dropped)
+    bool trySend(std::unique_ptr<T>& v) {                 // GUI thread; false when full (v kept)
         collect();
-        T* p = v.release();
-        if (in_.push(p)) return true;
-        delete p;
-        return false;
+        if (!in_.push(v.get())) return false;
+        v.release();
+        return true;
     }
     void collect() {                                      // GUI thread: frees what came back
         T* p;
@@ -236,6 +236,14 @@ public:
         return p;
     }
     T* current() const { return cur_; }                   // audio thread
+    T* next() const {                                     // audio thread: what take() would make current
+        T* p;
+        return in_.front(p) ? p : nullptr;
+    }
+    void skip() {                                         // audio thread: that one, never used, goes back
+        T* p;
+        if (in_.pop(p)) back_.push(p);                    // never full: one push for each pop, as take()
+    }
 
 private:
     dsp::Spsc<T*, N> in_, back_;

@@ -386,11 +386,13 @@ void Box::beginBlock(uint64_t t0, int n, bool untimed) {
     q->ndue = 0;
     Event e;
     if (q->resync.load(std::memory_order_relaxed) && q->resync.exchange(false, std::memory_order_acq_rel)) {
+        // all at once, the newest kDue of them (in order): what was sent last is what counts
+        int n = 0;
         while (q->q.pop(e))
-            if (e.kind != kEvScalar && q->ndue < Inbox::kDue) {
-                q->due[q->ndue] = e;
-                q->off[q->ndue++] = 0;
-            }
+            if (e.kind != kEvScalar) q->due[n++ % Inbox::kDue] = e;
+        if (n > Inbox::kDue) std::rotate(q->due, q->due + n % Inbox::kDue, q->due + Inbox::kDue);
+        q->ndue = std::min(n, (int)Inbox::kDue);
+        std::fill(q->off, q->off + q->ndue, 0);
         if (Scalars* s = scal_.load(std::memory_order_acquire))
             for (int i = 0; i < s->n; ++i) s->cur[i] = s->latest[i].load(std::memory_order_relaxed);
         return;

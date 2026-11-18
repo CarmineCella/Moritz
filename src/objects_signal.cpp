@@ -438,7 +438,8 @@ private:
 // line~: signal ramp. "target time" pairs make segments ("1 10 0 300");
 // a float alone jumps, or ramps over the time given in the right inlet. A
 // list starts at the sample the message is for; its length has no limit
-// (the list goes to the audio thread whole, through a mailbox). Fed
+// (the list goes to the audio thread whole, through a mailbox), nor has the
+// number of lists sent with audio off (the newest is what plays). Fed
 // directly into play~, its value reaches it in double precision.
 class LineSigBox : public Box {
 public:
@@ -474,20 +475,46 @@ public:
                         if (e.kind == kStop) ramp_.stop();
                         else if (e.kind == kList) {
                             ramp_.settle(sr);     // the old list's leading jumps first: take() hands it back to be freed
-                            if (const std::vector<Seg>* l = lists_.take()) ramp_.start(l->data(), (int)l->size());
+                            if (const List* l = takeList((uint32_t)e.a)) ramp_.start(l->segs.data(), (int)l->segs.size());
                         }
                     });
     }
 
 private:
     enum : uint8_t { kList = kEvUser, kStop };
-    void send(std::vector<Seg> list) {
-        if (lists_.send(std::make_unique<std::vector<Seg>>(std::move(list)))) post(kList);
-        else if (patch)       // never silently: the audio thread has not taken the ones before
-            patch->print("line~: a ramp dropped: " + std::to_string(kLists - 1) + " are waiting already (is audio on?)");
+    // Each list has a number, and its event carries it: an event dropped (a full queue) never puts the
+    // lists out of step with the events. When the mailbox is full (audio off, or the audio thread far
+    // behind), the newest list waits in a slot, replacing the one there: every list in the mailbox is
+    // older than the one in the slot.
+    struct List {
+        uint32_t seq = 0;
+        std::vector<Seg> segs;
+    };
+    static constexpr uint32_t kSeqMask = 0xFFFFFF;               // a float holds it exactly
+    static bool before(uint32_t a, uint32_t b) {                 // a was sent before b (modulo kSeqMask + 1)
+        uint32_t d = (b - a) & kSeqMask;
+        return d != 0 && d < 0x800000;
+    }
+    void send(std::vector<Seg> segs) {
+        auto l = std::make_unique<List>();
+        seq_ = (seq_ + 1) & kSeqMask;
+        l->seq = seq_;
+        l->segs = std::move(segs);
+        if (newest_.pending() || !lists_.trySend(l)) newest_.send(std::move(l));
+        post(kList, (float)seq_);
+    }
+    // audio thread, at the event of list s: the lists sent before it are dropped unused; then s itself,
+    // or (it was in the slot) the newest list, at once
+    const List* takeList(uint32_t s) {
+        const List* f;
+        while ((f = lists_.next()) && before(f->seq, s)) lists_.skip();
+        if (f) return f->seq == s ? lists_.take() : nullptr;    // newer than s: s went already
+        return newest_.take();
     }
     static constexpr size_t kLists = 64;
-    Mailbox<std::vector<Seg>, kLists> lists_;
+    Mailbox<List, kLists> lists_;
+    Latest<List> newest_;
+    uint32_t seq_ = 0;                                           // GUI side
     dsp::Ramp ramp_;
     float time_ = 0.f;
 };

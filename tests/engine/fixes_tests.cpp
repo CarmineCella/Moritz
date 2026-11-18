@@ -161,8 +161,8 @@ TEST(buffer_gets_its_memory_before_record_writes_it) {
 }
 
 // line~ kept at most 64 segments of a list and dropped the rest without a word; now a list goes to
-// the audio thread whole (no limit), and a list that cannot be handed over is reported
-TEST(line_keeps_long_lists_and_reports_what_it_drops) {
+// the audio thread whole (no limit), and however many lists wait, the newest is played
+TEST(line_keeps_long_lists_and_the_newest_list) {
     Rig r("(patch (obj l line~) (obj o dac~ 1) (connect l 0 o 0))");
     Message m;
     for (int k = 1; k <= 2000; ++k) {
@@ -173,8 +173,40 @@ TEST(line_keeps_long_lists_and_reports_what_it_drops) {
     auto y = etest::channel(r.run(44100 / 2), 2, 0);
     CHECK(std::fabs(y.back() - 1.f) < 1e-4f);
     CHECK(!r.printedSomething("dropped"));
-    for (int k = 0; k < 70; ++k) r.box("l")->message(0, {Atom(0.5f)});   // nothing takes them meanwhile
-    CHECK(r.printedSomething("line~: a ramp dropped"));
+    for (int k = 1; k <= 70; ++k) r.box("l")->message(0, {Atom(k * 0.01f)});   // nothing takes them meanwhile
+    y = etest::channel(r.run(256), 2, 0);
+    CHECK(std::fabs(y.back() - 0.70f) < 1e-6f);
+    CHECK(!r.printedSomething("line~"));
+}
+
+// line~ with audio off: more lists than its mailbox holds (the newest wait in a slot), and more events
+// than the box's queue holds (it catches up at once: the events dropped are not missed); it ends on the
+// last list's target
+TEST(line_ends_on_the_newest_list_sent_with_audio_off) {
+    for (int lists : {100, 300}) {
+        Rig r("(patch (obj l line~) (obj o dac~ 1) (connect l 0 o 0))");
+        r.p.dspRunning = false;
+        for (int k = 1; k <= lists; ++k) r.box("l")->message(0, {Atom(k * 0.001f), Atom(k % 2 ? 0.f : 1.f)});
+        r.p.dspRunning = true;
+        auto y = etest::channel(r.run(4410), 2, 0);
+        CHECK(std::fabs(y.back() - lists * 0.001f) < 1e-6f);
+    }
+}
+
+// The queue of line~'s events overflowed: it caught up keeping 64 events, and each list whose event was
+// dropped stayed in the mailbox: line~ then played, at each new list, an old one
+TEST(line_stays_in_step_with_its_lists_after_a_resync) {
+    Rig r("(patch (obj l line~) (obj o dac~ 1) (connect l 0 o 0))");
+    for (int k = 0; k < 250; ++k) r.box("l")->message(0, {Atom("stop")});
+    for (int k = 1; k <= 10; ++k) r.box("l")->message(0, {Atom(k * 0.001f)});   // the last events find it full
+    auto first = etest::channel(r.run(256), 2, 0);
+    CHECK(std::fabs(first.back() - 0.005f) < 1e-6f);     // the newest 64 events are kept: lists 1 to 5
+    r.box("l")->message(0, {Atom(0.77f)});
+    auto y = etest::channel(r.run(256), 2, 0);
+    CHECK(std::fabs(y.back() - 0.77f) < 1e-6f);
+    r.box("l")->message(0, {Atom(0.5f), Atom(10.f)});
+    y = etest::channel(r.run(4410), 2, 0);
+    CHECK(std::fabs(y.back() - 0.5f) < 1e-6f);
 }
 
 // click~ and sfplay~ hand the newest shape or file to the audio thread: with audio off, a mailbox of 16
