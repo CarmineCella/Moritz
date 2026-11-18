@@ -138,3 +138,24 @@ TEST(recorder_restarts_while_the_audio_thread_pushes) {
     CHECK(ok);
     std::remove(path.c_str());
 }
+
+// buffer~ joined the patch (and record~ found it) before it had its memory: frames were set before
+// the data, without the lock, while record~ wrote. Buffers come and go while one records.
+TEST(buffer_gets_its_memory_before_record_writes_it) {
+    Rig r("(patch (obj s sig~ 0.5) (obj rec record~ tape) (connect s 0 rec 0))");
+    r.box("rec")->message(0, {Atom("loop"), Atom(1.f)});
+    r.box("rec")->message(0, {Atom(1.f)});
+    std::atomic<bool> stop{false};
+    std::thread audio([&] {
+        std::vector<float> buf(2 * 64);
+        while (!stop) r.p.process(nullptr, 0, buf.data(), 2, 64);
+    });
+    for (int k = 0; k < 40; ++k) {
+        Box* b = r.p.addBox(r.p.create("buffer~", {Atom("tape"), Atom(50.f + k)}), 0, 100);
+        std::this_thread::sleep_for(std::chrono::microseconds(300));
+        r.p.removeBoxes({b});
+    }
+    stop = true;
+    audio.join();
+    CHECK(true);
+}

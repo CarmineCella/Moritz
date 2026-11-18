@@ -215,9 +215,24 @@ public:
     }
     void attached() override {
         if (!file_.empty()) { read(file_); return; }
-        buf.sr = patch->root()->sampleRate.load();     // an empty buffer runs at the audio rate
-        buf.frames = (long)(ms_ / 1000.0 * buf.sr);
-        buf.data.assign((size_t)buf.frames * buf.channels, 0.f);
+        // made aside, then swapped in under the lock: record~ or poke~ may already have found this
+        // buffer~ (it joined the patch first) and never see frames without the data
+        SampleBuffer b;
+        b.channels = buf.channels;
+        b.sr = patch->root()->sampleRate.load();      // an empty buffer runs at the audio rate
+        b.frames = std::max(0L, (long)(ms_ / 1000.0 * b.sr));
+        b.data.assign((size_t)b.frames * b.channels, 0.f);
+        replace(std::move(b));
+    }
+    // New contents (GUI thread): made aside, swapped in under the lock (O(1)), the old ones
+    // freed after unlocking.
+    void replace(SampleBuffer&& b) {
+        {
+            std::lock_guard<std::mutex> lk(patch->mutex());
+            std::swap(buf, b);
+            ++version;
+        }
+        b = SampleBuffer();
     }
     void message(int, const Message& m) override {
         std::string err;
@@ -265,11 +280,7 @@ private:
         SampleBuffer b;
         std::string err;
         if (!decodeAudioFile(patch->resolvePath(file), b, err)) { patch->print("buffer~ " + name + ": " + err); return; }
-        {
-            std::lock_guard<std::mutex> lk(patch->mutex());
-            buf = std::move(b);
-            ++version;
-        }
+        replace(std::move(b));
         patch->rebuild();        // objects that prepare the data (conv~) reload it
     }
     std::string file_;
