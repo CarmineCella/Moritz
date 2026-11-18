@@ -563,6 +563,7 @@ var harm (mix (map (vec->list (range 1 8)) (function (k) (list 0 (* (/ 0.5 k) (s
 var hprof (chroma-mean (chromagram harm msr 4096 1024))
 check (and (near? (getidx hprof 9) 1 1e-9) (< (getidx hprof 4) 0.1) (< (getidx hprof 1) 0.1)) "chromagram: the 3rd and 5th partials of a tone count little (no fifth, no third)"
 check (== (max (chroma-mean (chromagram (zeros 8192) msr 4096 1024))) 0) "chromagram: silence stays 0"
+if (not (equal? (take (key-estimate prof) 2) (list "A" 'major))) { print "key-estimate differs: profile" prof "scores" (take (key-scores prof) 4) }
 check (equal? (take (key-estimate prof) 2) (list "A" 'major)) "key-estimate: A major"
 check (== (length (key-scores prof)) 24) "key-scores: the 24 keys"
 check (>= (last (head (key-scores prof))) (last (getidx (key-scores prof) 1))) "key-scores: best first"
