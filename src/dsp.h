@@ -1,9 +1,8 @@
 // Copyright (c) 2026 Carmine-Emanuele Cella. SPDX-License-Identifier: BSD-2-Clause
 // dsp.h — signal-processing building blocks for Moritz
 //
-// Self-contained: no GUI, no audio-device code. Every unit processes one
-// block of at most kBlock samples. Units are driven from the audio thread;
-// anything the GUI thread may touch while audio runs is atomic.
+// Self-contained: no GUI, no audio-device code. Units are driven from the
+// audio thread; the GUI reaches them through the boxes' timed events.
 
 #pragma once
 
@@ -93,12 +92,10 @@ struct CosTable {
 
 class Cycle {
 public:
-    // Sets the phase (0..1); safe to call from the GUI thread.
-    void setPhase(float p) { pendingPhase_.store(p - std::floor(p)); }
+    // Sets the phase (0..1): the audio thread (or before the box runs).
+    void setPhase(float p) { phase_ = p - std::floor(p); }
 
     void process(const float* freq, float* out, int n, double sr) {
-        float p = pendingPhase_.exchange(-1.f);
-        if (p >= 0.f) phase_ = p;
         const float* t = CosTable::get().t;
         const double inv = 1.0 / sr;
         for (int i = 0; i < n; ++i) {
@@ -114,7 +111,6 @@ public:
 
 private:
     double phase_ = 0.0;
-    std::atomic<float> pendingPhase_{-1.f};
 };
 
 // ------------------------------------------------------------------ reson~
@@ -178,30 +174,6 @@ private:
     uint32_t s_;
 };
 
-// ------------------------------------------------------------------ click~
-// Plays its impulse shape (default: a single sample of 1.0) each time it is
-// triggered. trigger() may be called from any thread; setShape() must be
-// called while the audio thread is excluded (the patch's DSP lock).
-class Click {
-public:
-    void trigger() { pending_.fetch_add(1); }
-    void setShape(std::vector<float> s) {
-        shape_ = s.empty() ? std::vector<float>{1.f} : std::move(s);
-        pos_ = shape_.size();
-    }
-
-    void process(float* out, int n) {
-        if (pending_.exchange(0) > 0) pos_ = 0;
-        for (int i = 0; i < n; ++i)
-            out[i] = pos_ < shape_.size() ? shape_[pos_++] : 0.f;
-    }
-
-private:
-    std::vector<float> shape_{1.f};
-    size_t pos_ = 1;
-    std::atomic<int> pending_{0};
-};
-
 // ------------------------------------------------------------------ SPSC queue
 // Lock-free single-producer / single-consumer queue: GUI thread pushes,
 // audio thread pops. No allocation after construction.
@@ -222,6 +194,12 @@ public:
         tail_.store((t + 1) % N, std::memory_order_release);
         return true;
     }
+    bool front(T& v) const {              // the consumer: the next one, left in the queue
+        size_t t = tail_.load(std::memory_order_relaxed);
+        if (t == head_.load(std::memory_order_acquire)) return false;
+        v = buf_[t];
+        return true;
+    }
 
 private:
     T buf_[N];
@@ -229,39 +207,36 @@ private:
 };
 
 // ------------------------------------------------------------------ line~
-// Piecewise-linear ramp. The GUI posts Begin (drop pending segments, keep
-// the current value), then Segment commands; Stop freezes the ramp. A list
-// holds as many segments as the queue holds commands (the caller reports
-// what it sends beyond them), and post() says when the queue is full.
+// Piecewise-linear ramp, run by the audio thread. start() begins a list of
+// segments (dropping what was pending, from the current value); the list
+// must stay valid until the next start() or stop(). stop() freezes the ramp.
 class Ramp {
 public:
-    static constexpr int kMax = 1023;          // segments of one list: the queue's room
-    struct Cmd {
-        enum Kind : uint8_t { Begin, Segment, Stop } kind = Segment;
+    struct Seg {
         float target = 0.f, ms = 0.f;
     };
-    bool post(const Cmd& c) { return q_.push(c); }
-
-    void process(float* out, int n, double sr) {
-        Cmd c;
-        while (q_.pop(c)) {
-            if (c.kind == Cmd::Segment) {
-                if (c.ms * sr < 1000.0 && idx_ == count_ && left_ <= 0)
-                    value_ = target_ = c.target;   // a jump with nothing pending: now, so a
-                                                   // "0, 1 100" pair in one block keeps both
-                else if (count_ < kMax)
-                    segs_[count_++] = c;
-            } else {
-                count_ = idx_ = 0;
-                left_ = 0;
-            }
-        }
+    void start(const Seg* segs, int count, double sr) {
+        // jumps at the head of the list before are taken first: "0, 1 100" at one
+        // sample starts the ramp from 0
+        while (left_ <= 0 && idx_ < count_ && segs_[idx_].ms * sr < 1000.0) value_ = target_ = segs_[idx_++].target;
+        segs_ = segs;
+        count_ = count;
+        idx_ = 0;
+        left_ = 0;
+    }
+    void stop() {
+        segs_ = nullptr;
+        count_ = idx_ = 0;
+        left_ = 0;
+    }
+    // out: the ramp; outD (optional): the same in double precision
+    void process(float* out, double* outD, int n, double sr) {
         for (int i = 0; i < n; ++i) {
             if (left_ <= 0 && idx_ < count_) {
-                const Cmd& s = segs_[idx_++];
+                const Seg& s = segs_[idx_++];
                 double len = s.ms * sr / 1000.0;
                 target_ = s.target;
-                if (len < 1.0) {
+                if (len < 1.0) {                   // a jump: now
                     value_ = target_;
                 } else {
                     left_ = (long)len;
@@ -271,12 +246,13 @@ public:
             if (left_ > 0 && --left_ == 0) value_ = target_;
             else if (left_ > 0) value_ += inc_;
             out[i] = (float)value_;
+            if (outD) outD[i] = value_;
         }
     }
+    double value() const { return value_; }
 
 private:
-    Spsc<Cmd, kMax + 1> q_;
-    Cmd segs_[kMax];
+    const Seg* segs_ = nullptr;
     int count_ = 0, idx_ = 0;
     long left_ = 0;
     double value_ = 0.0, inc_ = 0.0, target_ = 0.0;
@@ -286,10 +262,8 @@ private:
 // phasor~: non-band-limited 0..1 ramp (as in MSP; used as a control ramp).
 class Phasor {
 public:
-    void setPhase(float p) { pending_.store(p - std::floor(p)); }
+    void setPhase(float p) { ph_ = p - std::floor(p); }   // the audio thread (or before the box runs)
     void process(const float* freq, float* out, int n, double sr) {
-        float p = pending_.exchange(-1.f);
-        if (p >= 0.f) ph_ = p;
         const double inv = 1.0 / sr;
         for (int i = 0; i < n; ++i) {
             out[i] = (float)ph_;
@@ -301,7 +275,6 @@ public:
 
 private:
     double ph_ = 0.0;
-    std::atomic<float> pending_{-1.f};
 };
 
 // PolyBLEP residual for band-limited discontinuities.

@@ -55,6 +55,7 @@ struct Rig {
         p.clock = [this] { return (double)frame / sr; };
         p.sampleRate = sr;
         p.dspRunning = true;
+        p.offline = true;
         p.ioBufferFrames = dsp::kBlock;
         if (!text.empty()) {
             if (!p.load(text, error)) std::printf("  rig: %s\n", error.c_str());
@@ -68,7 +69,7 @@ struct Rig {
         std::vector<float> all, buf((size_t)block * ch);
         for (long done = 0; done < frames; done += block) {
             int n = (int)std::min<long>(block, frames - done);
-            p.runDue((double)frame / sr);
+            p.runDue((double)(frame + n) / sr);
             p.process(nullptr, 0, buf.data(), ch, n);
             all.insert(all.end(), buf.begin(), buf.begin() + (long)n * ch);
             frame += n;

@@ -130,6 +130,7 @@ int renderCli(int argc, char** argv) {
     p.clock = [&frame] { return (double)frame / sr; };     // the scheduler follows sample time
     p.sampleRate = sr;
     p.dspRunning = true;
+    p.offline = true;                      // the clock is the sample count: events land on their sample
     p.ioBufferFrames = blk;
     moritz::jobsSynchronous = true;        // background jobs finish before the next message
     p.dir = moritz::dirOf(path);
@@ -213,8 +214,8 @@ int renderCli(int argc, char** argv) {
     for (; frame < total; frame += blk) {
         for (auto& l : later)                     // timed bang= and send=
             if (l.box && l.at <= (double)frame / sr) { l.box->message(0, l.msg); l.box = nullptr; }
-        p.runDue((double)frame / sr);
         int n = (int)std::min<long>(blk, total - frame);
+        p.runDue((double)(frame + n) / sr);   // the timers due in this block: their events land inside it
         p.process(nullptr, 0, buf.data(), ch, n);
         all.insert(all.end(), buf.begin(), buf.begin() + n * ch);
     }

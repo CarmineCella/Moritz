@@ -30,14 +30,13 @@ class InletBox : public Box {
 public:
     explicit InletBox(bool sig) : sig_(sig) { setPorts({}, {sig ? P::Signal : P::Control}); }
     bool isSig() const { return sig_; }
-    int index = -1;
+    std::atomic<int> index{-1};        // set at compile; the audio thread reads it
     void receive(const Message& m) { outlet(0, m); }
     void dsp(int n) override {
-        Box* o = patch->owner;
-        if (o && index >= 0 && index < o->numIns() && o->ins[index] == P::Signal)
-            std::copy_n(o->sigIn(index, n), n, sigOut(0));
-        else
-            dsp::fill(sigOut(0), 0.f, n);
+        Box* o = patch->owner;             // its owner is running (it runs this patch): its inputs
+        int k = index.load(std::memory_order_relaxed);
+        if (o && k >= 0) std::copy_n(o->sigIn(k, n), n, sigOut(0));   // zeros for a control inlet
+        else dsp::fill(sigOut(0), 0.f, n);
     }
 
 private:
@@ -49,16 +48,17 @@ class OutletBox : public Box {
 public:
     explicit OutletBox(bool sig) : sig_(sig) { setPorts({sig ? P::Signal : P::Control}, {}); }
     bool isSig() const { return sig_; }
-    int index = -1;
+    std::atomic<int> index{-1};        // set at compile; the audio thread reads it
     void message(int, const Message& m) override {
         Box* o = patch->owner;
-        if (!sig_ && o && index >= 0 && index < o->numOuts()) o->outlet(index, m);
+        int k = index.load();
+        if (!sig_ && o && k >= 0 && k < o->numOuts()) o->outlet(k, m);
     }
     void dsp(int n) override {
         Box* o = patch->owner;
-        if (o && index >= 0 && index < o->numOuts() && o->outs[index] == P::Signal) {
+        int k = index.load(std::memory_order_relaxed);
+        if (float* y = o && k >= 0 ? o->sigOutIf(k) : nullptr) {   // the owner's outlet, in its plan
             const float* x = sigIn(0, n);
-            float* y = o->sigOut(index);
             for (int i = 0; i < n; ++i) y[i] += x[i];
         }
     }
@@ -105,7 +105,7 @@ public:
         else if (!err.empty()) warnings.push_back(err);
         syncPorts();
     }
-    void attached() override { child_->parent = patch; }
+    void attached() override { if (child_->parent != patch) child_->parent = patch; }
     void loadbang() override { child_->loadbangAll(); }
 
     // Ports follow the inner inlet/outlet boxes, ordered by x like Max.
@@ -115,11 +115,11 @@ public:
         collect(in, out);
         std::vector<Port> ip, op;
         for (size_t k = 0; k < in.size(); ++k) {
-            in[k]->index = (int)k;
+            in[k]->index.store((int)k);
             ip.push_back(in[k]->isSig() ? P::Signal : P::Control);
         }
         for (size_t k = 0; k < out.size(); ++k) {
-            out[k]->index = (int)k;
+            out[k]->index.store((int)k);
             op.push_back(out[k]->isSig() ? P::Signal : P::Control);
         }
         if (ip != ins || op != outs) setPorts(ip, op);
@@ -130,13 +130,14 @@ public:
         if (ins[in] == P::Signal && m[0].isFloat()) setScalar(in, m[0].f);
         for (auto& b : child_->boxes)
             if (auto ib = dynamic_cast<InletBox*>(b.get()))
-                if (ib->index == in && !ib->isSig()) ib->receive(m);
+                if (ib->index.load() == in && !ib->isSig()) ib->receive(m);
     }
 
+    // the outlets of the plan (the ports may be changing on the GUI thread), then the inner patch
     void dsp(int n) override {
-        for (int k = 0; k < numOuts(); ++k)
-            if (outs[k] == P::Signal) dsp::fill(sigOut(k), 0.f, n);
-        child_->runChain(n);
+        for (int k = 0; k < outCount(); ++k)
+            if (float* y = sigOutIf(k)) dsp::fill(y, 0.f, n);
+        runInner(0, n);
     }
 
 protected:
@@ -189,7 +190,10 @@ class FftoutBox;
 // pfft~ name [fftsize 512] [overlap 4]: analyses each signal inlet with a
 // Hann-windowed FFT every fftsize/overlap samples, runs the inner patch
 // over the frame (fftsize/2 bins, DC first) and resynthesises the spectra
-// written to fftout~ by overlap-add. Latency is fftsize samples.
+// written to fftout~ by overlap-add. The work of a frame (the FFT of each
+// inlet, the inner patch, the inverse FFT of each outlet) is spread over the
+// blocks of the next hop, so no block carries a whole frame: the latency is
+// fftsize + fftsize/overlap samples (one hop more than doing it all at once).
 class PfftBox : public SubpatchBox {
 public:
     PfftBox(const Message& a, Patch* context) : SubpatchBox(context) {
@@ -200,6 +204,7 @@ public:
         ov = std::clamp(ov, 1, N_);
         hop_ = std::max(1, N_ / ov);
         bins_ = N_ / 2;
+        L_ = N_ + hop_;
         child_->spectral.fftSize = N_;
         child_->spectral.bins = bins_;
         fft_.init(N_);
@@ -211,8 +216,6 @@ public:
         }
         // analysis and synthesis windows overlap-add to sumSq / hop per sample
         scale_ = (float)(hop_ / (sumSq * N_));
-        re_.resize((size_t)N_);
-        im_.resize((size_t)N_);
         std::string path = findAbstraction(name_, context);
         std::string err;
         if (path.empty()) child_->print("pfft~: can't find " + name_ + ".moritz");
@@ -223,76 +226,113 @@ public:
 
     void syncPorts() override;
 
-    // spectral I/O for fftin~ / fftout~ (audio thread)
-    const float* inRe(int k) const { return k < nIn_ ? sre_[(size_t)k].data() : nullptr; }
-    const float* inIm(int k) const { return k < nIn_ ? sim_[(size_t)k].data() : nullptr; }
-    float* outRe(int k) { return k < nOut_ ? ore_[(size_t)k].data() : nullptr; }
-    float* outIm(int k) { return k < nOut_ ? oim_[(size_t)k].data() : nullptr; }
+    // spectral I/O for fftin~ / fftout~ (audio thread, while the inner patch runs)
+    const float* inRe(int k) const { return cur_ && k < cur_->nIn ? cur_->sre[(size_t)k].data() : nullptr; }
+    const float* inIm(int k) const { return cur_ && k < cur_->nIn ? cur_->sim[(size_t)k].data() : nullptr; }
+    float* outRe(int k) { return cur_ && k < cur_->nOut ? cur_->ore[(size_t)k].data() : nullptr; }
+    float* outIm(int k) { return cur_ && k < cur_->nOut ? cur_->oim[(size_t)k].data() : nullptr; }
     int bins() const { return bins_; }
 
     void dsp(int n) override {
-        std::vector<const float*>& in = in_;             // sized with the ports: nothing allocated here
-        for (int k = 0; k < nIn_; ++k) in[(size_t)k] = sigIn(k, n);
+        State* s = st_.get();
+        for (int j = 0; j < outCount(); ++j)
+            if (float* y = sigOutIf(j); y && (!s || j >= s->nOut)) dsp::fill(y, 0.f, n);
+        if (!s) return;
+        if (s != last_) { last_ = s; stage_ = -1; }        // new ports: a frame of the old ones is dropped
+        cur_ = s;
+        for (int k = 0; k < s->nIn; ++k) s->in[(size_t)k] = sigIn(k, n);
+        for (int j = 0; j < s->nOut; ++j) s->out[(size_t)j] = sigOut(j);
         for (int i = 0; i < n; ++i) {
-            for (int k = 0; k < nIn_; ++k) ring_[(size_t)k][(size_t)w_] = in[(size_t)k][i];
-            for (int j = 0; j < nOut_; ++j) {
-                float& s = acc_[(size_t)j][(size_t)w_];
-                sigOut(j)[i] = s;
-                s = 0.f;
+            for (int k = 0; k < s->nIn; ++k) s->ring[(size_t)k][(size_t)w_] = s->in[(size_t)k][i];
+            for (int j = 0; j < s->nOut; ++j) {
+                float& a = s->acc[(size_t)j][(size_t)w_];
+                s->out[(size_t)j][i] = a;
+                a = 0.f;
             }
-            w_ = (w_ + 1) % N_;
+            w_ = (w_ + 1) % L_;
             if (++count_ >= hop_) {
                 count_ = 0;
-                frame();
+                finish(*s);                              // the last frame is out before it is heard
+                capture(*s);
             }
         }
+        // the stages of the frame due by now, spread evenly over the hop
+        const int S = stages(*s);
+        const int due = (int)((long long)S * count_ / hop_);
+        while (stage_ >= 0 && stage_ < due) runStage(*s, stage_++);
+        cur_ = nullptr;
     }
 
 private:
-    void frame() {
-        for (int k = 0; k < nIn_; ++k) {
-            const float* r = ring_[(size_t)k].data();
-            for (int t = 0; t < N_; ++t) {               // oldest sample first
-                re_[(size_t)t] = r[(w_ + t) % N_] * win_[(size_t)t];
-                im_[(size_t)t] = 0.f;
+    // what depends on the ports (made on the GUI thread, published)
+    struct State {
+        int nIn = 0, nOut = 0;
+        std::vector<std::vector<float>> ring, acc, frame, sre, sim, ore, oim;
+        std::vector<const float*> in;
+        std::vector<float*> out;
+        std::vector<float> re, im;
+    };
+    int stages(const State& s) const { return s.nIn + 1 + s.nOut; }
+    void finish(State& s) {
+        if (stage_ >= 0)
+            while (stage_ < stages(s)) runStage(s, stage_++);
+        stage_ = -1;
+    }
+    // the last N samples of each inlet, windowed, oldest first
+    void capture(State& s) {
+        for (int k = 0; k < s.nIn; ++k) {
+            const float* r = s.ring[(size_t)k].data();
+            float* f = s.frame[(size_t)k].data();
+            for (int t = 0; t < N_; ++t) f[t] = r[(w_ + L_ - N_ + t) % L_] * win_[(size_t)t];
+        }
+        at_ = w_;
+        stage_ = 0;
+    }
+    // stage st of a frame: an inlet's FFT, the inner patch, or an outlet's inverse FFT
+    void runStage(State& s, int st) {
+        float *re = s.re.data(), *im = s.im.data();
+        if (st < s.nIn) {
+            std::copy_n(s.frame[(size_t)st].begin(), N_, re);
+            std::fill_n(im, N_, 0.f);
+            fft_.forward(re, im);
+            std::copy_n(re, bins_, s.sre[(size_t)st].begin());
+            std::copy_n(im, bins_, s.sim[(size_t)st].begin());
+        } else if (st == s.nIn) {
+            for (int j = 0; j < s.nOut; ++j) {
+                std::fill(s.ore[(size_t)j].begin(), s.ore[(size_t)j].end(), 0.f);
+                std::fill(s.oim[(size_t)j].begin(), s.oim[(size_t)j].end(), 0.f);
             }
-            fft_.forward(re_.data(), im_.data());
-            std::copy_n(re_.begin(), bins_, sre_[(size_t)k].begin());
-            std::copy_n(im_.begin(), bins_, sim_[(size_t)k].begin());
-        }
-        for (int j = 0; j < nOut_; ++j) {
-            std::fill(ore_[(size_t)j].begin(), ore_[(size_t)j].end(), 0.f);
-            std::fill(oim_[(size_t)j].begin(), oim_[(size_t)j].end(), 0.f);
-        }
-        child_->runChain(bins_);                         // the whole frame is one vector
-        for (int j = 0; j < nOut_; ++j) {
-            const float* r = ore_[(size_t)j].data();
-            const float* m = oim_[(size_t)j].data();
-            re_[0] = r[0];
-            im_[0] = 0.f;
+            runInner(0, bins_);                          // the whole frame is one vector
+        } else {
+            int j = st - s.nIn - 1;
+            const float* r = s.ore[(size_t)j].data();
+            const float* m = s.oim[(size_t)j].data();
+            re[0] = r[0];
+            im[0] = 0.f;
             for (int b = 1; b < bins_; ++b) {             // a real signal's spectrum
-                re_[(size_t)b] = r[b];
-                im_[(size_t)b] = m[b];
-                re_[(size_t)(N_ - b)] = r[b];
-                im_[(size_t)(N_ - b)] = -m[b];
+                re[b] = r[b];
+                im[b] = m[b];
+                re[N_ - b] = r[b];
+                im[N_ - b] = -m[b];
             }
-            re_[(size_t)bins_] = 0.f;
-            im_[(size_t)bins_] = 0.f;
-            fft_.inverse(re_.data(), im_.data());
-            float* a = acc_[(size_t)j].data();
-            for (int t = 0; t < N_; ++t) a[(w_ + t) % N_] += re_[(size_t)t] * win_[(size_t)t] * scale_;
+            re[bins_] = 0.f;
+            im[bins_] = 0.f;
+            fft_.inverse(re, im);
+            float* a = s.acc[(size_t)j].data();         // heard from the next hop on
+            for (int t = 0; t < N_; ++t) a[(at_ + hop_ + t) % L_] += re[t] * win_[(size_t)t] * scale_;
         }
     }
 
     std::string name_;
-    int N_ = 512, hop_ = 128, bins_ = 256;
-    int nIn_ = 0, nOut_ = 0;
-    int w_ = 0, count_ = 0;
+    int N_ = 512, hop_ = 128, bins_ = 256, L_ = 640;
+    int nIn_ = 0, nOut_ = 0;                             // GUI side: the ports of the published state
+    int w_ = 0, count_ = 0, at_ = 0, stage_ = -1;        // audio side
     float scale_ = 1.f;
     musil::dsp::FFT<float> fft_;
-    std::vector<float> win_, re_, im_;
-    std::vector<std::vector<float>> ring_, acc_, sre_, sim_, ore_, oim_;
-    std::vector<const float*> in_;
+    std::vector<float> win_;
+    Published<State> st_;
+    State* last_ = nullptr;                              // audio side
+    State* cur_ = nullptr;                               // the state of the frame being run
 };
 
 // fftin~ n: outlets real, imaginary, bin index of pfft~ signal inlet n (1-based)
@@ -302,10 +342,11 @@ public:
         setPorts({}, {P::Signal, P::Signal, P::Signal});
     }
     int number() const { return n_; }
-    void resolve() override { pf_ = findPfft(patch); }
+    void resolve() override { pf_.store(findPfft(patch), std::memory_order_relaxed); }
     void dsp(int n) override {
-        const float* re = pf_ ? pf_->inRe(n_ - 1) : nullptr;
-        const float* im = pf_ ? pf_->inIm(n_ - 1) : nullptr;
+        PfftBox* pf = pf_.load(std::memory_order_relaxed);
+        const float* re = pf ? pf->inRe(n_ - 1) : nullptr;
+        const float* im = pf ? pf->inIm(n_ - 1) : nullptr;
         float *yr = sigOut(0), *yi = sigOut(1), *yb = sigOut(2);
         for (int i = 0; i < n; ++i) {
             yr[i] = re ? re[i] : 0.f;
@@ -321,7 +362,7 @@ public:
 
 private:
     int n_;
-    PfftBox* pf_ = nullptr;
+    std::atomic<PfftBox*> pf_{nullptr};
 };
 
 // fftout~ n: inlets real, imaginary for pfft~ signal outlet n (1-based)
@@ -331,12 +372,12 @@ public:
         setPorts({P::Signal, P::Signal}, {});
     }
     int number() const { return n_; }
-    void resolve() override { pf_ = FftinBox::findPfft(patch); }
+    void resolve() override { pf_.store(FftinBox::findPfft(patch), std::memory_order_relaxed); }
     void dsp(int n) override {
-        const Patch::Spectral* sp = patch->spectralContext();
-        float* re = pf_ ? pf_->outRe(n_ - 1) : nullptr;
-        float* im = pf_ ? pf_->outIm(n_ - 1) : nullptr;
-        if (!re || !sp) return;
+        PfftBox* pf = pf_.load(std::memory_order_relaxed);
+        float* re = pf ? pf->outRe(n_ - 1) : nullptr;
+        float* im = pf ? pf->outIm(n_ - 1) : nullptr;
+        if (!re) return;
         const float* xr = sigIn(0, n);
         const float* xi = sigIn(1, n);
         for (int i = 0; i < n; ++i) {
@@ -347,7 +388,7 @@ public:
 
 private:
     int n_;
-    PfftBox* pf_ = nullptr;
+    std::atomic<PfftBox*> pf_{nullptr};
 };
 
 // pfft~ ports: signal inlets for fftin~ 1..n, then the control inlets of
@@ -363,25 +404,32 @@ void PfftBox::syncPorts() {
     collect(in, out);
     std::vector<Port> ip((size_t)nin, P::Signal), op((size_t)nout, P::Signal);
     for (auto* b : in) {
-        b->index = b->isSig() ? -1 : (int)ip.size();      // inlet~ has no meaning here
+        b->index.store(b->isSig() ? -1 : (int)ip.size());      // inlet~ has no meaning here
         if (!b->isSig()) ip.push_back(P::Control);
     }
     for (auto* b : out) {
-        b->index = b->isSig() ? -1 : (int)op.size();
+        b->index.store(b->isSig() ? -1 : (int)op.size());
         if (!b->isSig()) op.push_back(P::Control);
     }
     if (ip != ins || op != outs) setPorts(ip, op);
-    if (nin != nIn_ || nout != nOut_) {
-        nIn_ = nin;
-        nOut_ = nout;
-        ring_.assign((size_t)nIn_, std::vector<float>((size_t)N_, 0.f));
-        in_.assign((size_t)nIn_, nullptr);
-        sre_.assign((size_t)nIn_, std::vector<float>((size_t)bins_, 0.f));
-        sim_ = sre_;
-        acc_.assign((size_t)nOut_, std::vector<float>((size_t)N_, 0.f));
-        ore_.assign((size_t)nOut_, std::vector<float>((size_t)bins_, 0.f));
-        oim_ = ore_;
-    }
+    if (st_.get() && nin == nIn_ && nout == nOut_) return;
+    nIn_ = nin;
+    nOut_ = nout;
+    auto s = std::make_unique<State>();                  // made here, published: dsp() never resizes
+    s->nIn = nin;
+    s->nOut = nout;
+    s->ring.assign((size_t)nin, std::vector<float>((size_t)L_, 0.f));
+    s->frame.assign((size_t)nin, std::vector<float>((size_t)N_, 0.f));
+    s->sre.assign((size_t)nin, std::vector<float>((size_t)bins_, 0.f));
+    s->sim = s->sre;
+    s->acc.assign((size_t)nout, std::vector<float>((size_t)L_, 0.f));
+    s->ore.assign((size_t)nout, std::vector<float>((size_t)bins_, 0.f));
+    s->oim = s->ore;
+    s->in.assign((size_t)nin, nullptr);
+    s->out.assign((size_t)nout, nullptr);
+    s->re.assign((size_t)N_, 0.f);
+    s->im.assign((size_t)N_, 0.f);
+    st_.set(patch, std::move(s));
 }
 
 // ================================================================ poly~
@@ -433,7 +481,10 @@ public:
         for (auto& x : voices_) v.push_back(x->patch.get());
         return v;
     }
-    void attached() override { for (auto& v : voices_) v->patch->parent = patch; }
+    void attached() override {
+        for (auto& v : voices_)
+            if (v->patch->parent != patch) v->patch->parent = patch;
+    }
     void loadbang() override { for (auto& v : voices_) v->patch->loadbangAll(); }
 
     void syncPorts() override {
@@ -443,11 +494,11 @@ public:
             std::vector<OutletBox*> out;
             collectPorts(*voices_[k]->patch, in, out);
             for (size_t j = 0; j < in.size(); ++j) {
-                in[j]->index = (int)j;
+                in[j]->index.store((int)j);
                 if (k == 0) ip.push_back(in[j]->isSig() ? P::Signal : P::Control);
             }
             for (size_t j = 0; j < out.size(); ++j) {
-                out[j]->index = (int)j;
+                out[j]->index.store((int)j);
                 if (k == 0) op.push_back(out[j]->isSig() ? P::Signal : P::Control);
             }
         }
@@ -501,10 +552,10 @@ public:
     }
 
     void dsp(int n) override {
-        for (int k = 0; k < numOuts(); ++k)
-            if (outs[k] == P::Signal) dsp::fill(sigOut(k), 0.f, n);
-        for (auto& v : voices_)
-            if (!v->muted.load(std::memory_order_relaxed)) v->patch->runChain(n);
+        for (int k = 0; k < outCount(); ++k)
+            if (float* y = sigOutIf(k)) dsp::fill(y, 0.f, n);
+        for (size_t k = 0; k < voices_.size(); ++k)
+            if (!voices_[k]->muted.load(std::memory_order_relaxed)) runInner((int)k, n);
     }
 
     // for thispoly~
@@ -539,7 +590,7 @@ private:
         if (m.empty()) return;
         for (auto& b : voices_[(size_t)v]->patch->boxes)
             if (auto ib = dynamic_cast<InletBox*>(b.get()))
-                if (ib->index == in && !ib->isSig()) ib->receive(m);
+                if (ib->index.load() == in && !ib->isSig()) ib->receive(m);
     }
 
     std::string name_;
@@ -556,21 +607,24 @@ class ThispolyBox : public Box {
 public:
     ThispolyBox() { setPorts({P::Signal}, {P::Control}); }
     void resolve() override {
-        poly_ = nullptr;
-        for (Patch* p = patch; p && !poly_; p = p->parent) poly_ = dynamic_cast<PolyBox*>(p->owner);
-        voice_ = poly_ ? poly_->voiceOf(patch) : -1;
+        PolyBox* poly = nullptr;
+        for (Patch* p = patch; p && !poly; p = p->parent) poly = dynamic_cast<PolyBox*>(p->owner);
+        poly_.store(poly);
+        voice_.store(poly ? poly->voiceOf(patch) : -1);
     }
     void loadbang() override { outletFloat(0, (float)(voice_ + 1)); }
     void message(int, const Message& m) override {
         if (m[0].is("bang")) { outletFloat(0, (float)(voice_ + 1)); return; }
-        PolyBox::Voice* v = poly_ ? poly_->voice(voice_) : nullptr;
+        PolyBox* poly = poly_.load();
+        PolyBox::Voice* v = poly ? poly->voice(voice_) : nullptr;
         if (!v) return;
         if (m[0].isFloat()) v->busy.store(m[0].f != 0.f);
         else if (m[0].is("mute")) v->muted.store(argf(m, 1, 1.f) != 0.f);
     }
     void dsp(int n) override {
-        PolyBox::Voice* v = poly_ ? poly_->voice(voice_) : nullptr;
-        if (!v || inSrc[0].empty()) return;
+        PolyBox* poly = poly_.load(std::memory_order_relaxed);
+        PolyBox::Voice* v = poly ? poly->voice(voice_.load(std::memory_order_relaxed)) : nullptr;
+        if (!v || !connected(0)) return;
         const float* x = sigIn(0, n);
         bool sound = false;
         for (int i = 0; i < n && !sound; ++i) sound = std::fabs(x[i]) > 1e-6f;
@@ -583,8 +637,8 @@ public:
     }
 
 private:
-    PolyBox* poly_ = nullptr;
-    int voice_ = -1;
+    std::atomic<PolyBox*> poly_{nullptr};   // set at compile; the audio thread reads them
+    std::atomic<int> voice_{-1};
 };
 
 // ================================================================ spectral tools
@@ -623,16 +677,23 @@ public:
 // compared with the same bin of the previous frame; elsewhere one value.
 class FrameMemory : public Box {
 public:
-    // sized at compile (one value per bin), never in dsp()
+    // sized at compile (one value per bin) and published, never in dsp()
     void resolve() override {
         const Patch::Spectral* sp = patch->spectralContext();
         size_t size = sp ? (size_t)sp->bins : 1;
-        if (mem_.size() != size) mem_.assign(size, 0.f);
+        if (size_ != size) {
+            size_ = size;
+            mem_.set(patch, std::make_unique<std::vector<float>>(size, 0.f));
+        }
     }
 
 protected:
-    float& slot(int i) { return mem_[mem_.size() > 1 ? (size_t)i % mem_.size() : 0]; }
-    std::vector<float> mem_ = std::vector<float>(1, 0.f);
+    std::vector<float>* memory() { return mem_.get(); }   // audio thread: for this block
+    static float& slot(std::vector<float>& m, int i) { return m[m.size() > 1 ? (size_t)i % m.size() : 0]; }
+
+private:
+    Published<std::vector<float>> mem_;
+    size_t size_ = 0;
 };
 
 // framedelta~: difference from the previous frame (phase -> frequency)
@@ -642,8 +703,10 @@ public:
     void dsp(int n) override {
         const float* x = sigIn(0, n);
         float* y = sigOut(0);
+        std::vector<float>* mem = memory();
+        if (!mem) { dsp::fill(y, 0.f, n); return; }
         for (int i = 0; i < n; ++i) {
-            float& m = slot(i);
+            float& m = slot(*mem, i);
             y[i] = x[i] - m;
             m = x[i];
         }
@@ -667,8 +730,10 @@ public:
         const float* to = sigIn(1, n);
         const float* reset = sigIn(2, n);
         float* y = sigOut(0);
+        std::vector<float>* mem = memory();
+        if (!mem) { dsp::fill(y, 0.f, n); return; }
         for (int i = 0; i < n; ++i) {
-            float& m = slot(i);
+            float& m = slot(*mem, i);
             m = reset[i] != 0.f ? to[i] : m + x[i];
             if (wrap_) m = dsp::wrapPhase(m);
             y[i] = m;
@@ -693,15 +758,23 @@ public:
     void message(int in, const Message& m) override {
         if (m[0].isFloat()) setScalar(in, m[0].f);
     }
-    // the memory of a whole frame (or block), made at compile, never in dsp()
+    // the memory of a whole frame (or block), made at compile and published, never in dsp()
     void resolve() override {
         size_t vs = (size_t)patch->vectorSize();
-        if (prev_.size() != vs) prev_.assign(vs, 0.f);
-        peaks_.reserve(vs);
+        if (vs == size_) return;
+        size_ = vs;
+        auto m = std::make_unique<Memory>();
+        m->prev.assign(vs, 0.f);
+        m->peaks.reserve(vs);
+        mem_.set(patch, std::move(m));
     }
     void dsp(int n) override {
         const float *a = sigIn(0, n), *ph = sigIn(1, n), *d = sigIn(2, n), *rs = sigIn(3, n);
         float* y = sigOut(0);
+        Memory* mem = mem_.get();
+        if (!mem) { dsp::fill(y, 0.f, n); return; }
+        std::vector<float>& prev_ = mem->prev;
+        std::vector<int>& peaks_ = mem->peaks;
         n = std::min(n, (int)prev_.size());
         bool reset = false;
         for (int k = 0; k < n && !reset; ++k) reset = rs[k] != 0.f;
@@ -733,8 +806,12 @@ public:
     }
 
 private:
-    std::vector<float> prev_;
-    std::vector<int> peaks_;
+    struct Memory {
+        std::vector<float> prev;
+        std::vector<int> peaks;
+    };
+    Published<Memory> mem_;
+    size_t size_ = 0;
 };
 
 // lrshift~ n: shifts the signal vector n samples (positive = right); inside
@@ -843,44 +920,51 @@ private:
 };
 
 // count~ [min max loop]: a sample counter. bang starts it from min, a
-// number from that value, stop stops it. It wraps to min at max when loop
-// is 1 (default) and otherwise stops there. Inside pfft~ it restarts at a
-// frame boundary, so the count stays aligned to bins.
+// number from that value, stop stops it (at the sample the message is for).
+// It wraps to min at max when loop is 1 (default) and otherwise stops there.
+// Inside pfft~ it restarts at a frame boundary, so the count stays aligned
+// to bins. Its count is exact: an index~ or poke~ it feeds directly gets it
+// in double precision too, so they address every sample of a buffer longer
+// than 2^24 samples (6 minutes at 48 kHz), which a float signal cannot.
 class CountBox : public Box {
 public:
     explicit CountBox(const Message& a) {
         setPorts({P::Control}, {P::Signal});
-        min_ = (long)argf(a, 0, 0.f);
-        max_ = (long)argf(a, 1, 0.f);
+        min_ = (int64_t)argf(a, 0, 0.f);
+        max_ = (int64_t)argf(a, 1, 0.f);
         loop_ = argf(a, 2, 1.f) != 0.f;
         v_ = min_;
     }
+    bool preciseOut(int) const override { return true; }
     void message(int, const Message& m) override {
-        if (m[0].is("bang")) startAt_.store((double)min_);
-        else if (m[0].isFloat()) startAt_.store(m[0].f);
-        else if (m[0].is("stop")) stop_.store(true);
+        if (m[0].is("bang")) post(kStart, 0.f, 0.f, 1);           // inlet 1: from min
+        else if (m[0].isFloat()) post(kStart, m[0].f);
+        else if (m[0].is("stop")) post(kStop);
     }
     void dsp(int n) override {
-        double s = startAt_.exchange(-1e30);    // inside pfft~ a call is a whole frame
-        if (s > -1e29) { v_ = (long)s; running_ = true; }
-        if (stop_.exchange(false)) running_ = false;
         float* y = sigOut(0);
-        for (int i = 0; i < n; ++i) {
-            y[i] = (float)v_;
-            if (!running_) continue;
-            ++v_;
-            if (max_ > min_ && v_ >= max_) {
-                if (loop_) v_ = min_;
-                else { v_ = max_; running_ = false; }
+        double* yd = sigOutPrecise(0);
+        eventPieces(*this, n, [&](int from, int to) {
+            for (int i = from; i < to; ++i) {
+                y[i] = (float)v_;
+                if (yd) yd[i] = (double)v_;
+                if (!running_) continue;
+                ++v_;
+                if (max_ > min_ && v_ >= max_) {
+                    if (loop_) v_ = min_;
+                    else { v_ = max_; running_ = false; }
+                }
             }
-        }
+        }, [&](const Event& e) {
+            if (e.kind == kStart) { v_ = e.inlet == 1 ? min_ : (int64_t)e.a; running_ = true; }
+            else if (e.kind == kStop) running_ = false;
+        });
     }
 
 private:
-    long min_, max_, v_;
+    enum : uint8_t { kStart = kEvUser, kStop };
+    int64_t min_, max_, v_;                     // audio side (min, max: fixed)
     bool loop_, running_ = false;
-    std::atomic<double> startAt_{-1e30};
-    std::atomic<bool> stop_{false};
 };
 
 // index~ name [channel]: reads a buffer~ at a sample index (no interpolation)
@@ -896,9 +980,10 @@ public:
     }
     void dsp(int n) override {
         const float* x = sigIn(0, n);
+        const double* xd = sigInPrecise(0);      // straight from count~: every sample of a long buffer
         float* y = sigOut(0);
         const SampleBuffer* b = ref_.get();
-        for (int i = 0; i < n; ++i) y[i] = b ? b->at((long)x[i], std::max(0, ch_)) : 0.f;
+        for (int i = 0; i < n; ++i) y[i] = b ? b->at(xd ? (long)xd[i] : (long)x[i], std::max(0, ch_)) : 0.f;
     }
 
 private:
@@ -923,9 +1008,10 @@ public:
         if (!bp) return;
         SampleBuffer& b = *bp;
         const float *x = sigIn(0, n), *idx = sigIn(1, n);
+        const double* idxd = sigInPrecise(1);    // straight from count~: every sample of a long buffer
         int c = std::clamp(ch_, 0, b.channels - 1);
         for (int i = 0; i < n; ++i) {
-            long k = (long)idx[i];
+            long k = idxd ? (long)idxd[i] : (long)idx[i];
             if (k >= 0 && k < b.frames) b.data[(size_t)k * b.channels + c] = x[i];
         }
     }
@@ -943,6 +1029,7 @@ std::unique_ptr<Box> makeAbstraction(const std::string& path, const Message& arg
 
 void registerPatcherObjects(ClassTable& t) {
     using M = const Message&;
+    wholeTextClasses().insert("expr~");
     t.insert(t.end(), {
         {"p", "Patching", "subpatcher: p name", [](M, Patch* c) { return std::make_unique<SubpatchBox>(c); }},
         {"inlet", "Patching", "subpatcher inlet", [](M, Patch*) { return std::make_unique<InletBox>(false); }},

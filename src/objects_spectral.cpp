@@ -39,19 +39,27 @@ public:
         if (in == 1 && m[0].isFloat()) order_.store(std::max(1, (int)m[0].f));
         else if (m[0].is("iterations")) iters_.store(std::clamp((int)argf(m, 1, 12.f), 0, 100));
     }
-    // sized at compile for the frame (pfft~'s bins), never in dsp()
+    // sized at compile for the frame (pfft~'s bins) and published, never in dsp()
     void resolve() override {
         const int M = pow2At(2 * patch->vectorSize());
-        if ((int)target_.size() == M) return;
-        fft_.init(M);
-        target_.assign((size_t)M, 0.f);
-        cur_.assign((size_t)M, 0.f);
-        re_.assign((size_t)M, 0.f);
-        im_.assign((size_t)M, 0.f);
+        if (M == size_) return;
+        size_ = M;
+        auto w = std::make_unique<Work>();
+        w->fft.init(M);
+        w->target.assign((size_t)M, 0.f);
+        w->cur.assign((size_t)M, 0.f);
+        w->re.assign((size_t)M, 0.f);
+        w->im.assign((size_t)M, 0.f);
+        work_.set(patch, std::move(w));
     }
     void dsp(int n) override {
         const float* amp = sigIn(0, n);
         float *env = sigOut(0), *fine = sigOut(1);
+        Work* w = work_.get();
+        if (!w) { dsp::fill(env, 0.f, n); dsp::fill(fine, 0.f, n); return; }
+        auto& fft_ = w->fft;
+        std::vector<float>&target_ = w->target, &cur_ = w->cur, &re_ = w->re;
+        (void)fft_;
         const int M = (int)target_.size();          // 2 frames, or more for a block shorter than the vector
         n = std::min(n, M / 2);
         float peak = 0.f;
@@ -63,10 +71,10 @@ public:
             target_[(size_t)k] = std::log(std::max(amp[b], floorv));
         }
         const int order = std::min(order_.load(), M / 2 - 1);
-        smooth(target_.data(), cur_.data(), order);
+        smooth(*w, target_.data(), cur_.data(), order);
         for (int it = iters_.load(); it > 0; --it) {      // ride on the peaks
             for (int k = 0; k < M; ++k) re_[(size_t)k] = std::max(target_[(size_t)k], cur_[(size_t)k]);
-            smooth(re_.data(), cur_.data(), order);
+            smooth(*w, re_.data(), cur_.data(), order);
         }
         for (int i = 0; i < n; ++i) {
             float e = std::exp(cur_[(size_t)i]);
@@ -76,9 +84,15 @@ public:
     }
 
 private:
+    struct Work {
+        musil::dsp::FFT<float> fft;
+        std::vector<float> target, cur, re, im;
+    };
     // keeps the first `order` cepstral coefficients of the log spectrum in
-    void smooth(const float* in, float* out, int order) {
-        const int M = (int)target_.size();
+    static void smooth(Work& w, const float* in, float* out, int order) {
+        auto& fft_ = w.fft;
+        std::vector<float>&re_ = w.re, &im_ = w.im;
+        const int M = (int)w.target.size();
         for (int k = 0; k < M; ++k) { re_[(size_t)k] = in[k]; im_[(size_t)k] = 0.f; }
         fft_.inverse(re_.data(), im_.data());            // the real cepstrum (times M)
         for (int k = order + 1; k < M - order; ++k) re_[(size_t)k] = im_[(size_t)k] = 0.f;
@@ -87,8 +101,8 @@ private:
     }
 
     std::atomic<int> order_, iters_;
-    musil::dsp::FFT<float> fft_;
-    std::vector<float> target_, cur_, re_, im_;
+    Published<Work> work_;
+    int size_ = 0;                                  // GUI side
 };
 
 }  // namespace

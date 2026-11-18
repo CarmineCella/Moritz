@@ -149,6 +149,7 @@ private:
         p.dir = dirOf(path);
         p.sampleRate = sr;
         p.dspRunning = true;
+        p.offline = true;                     // the clock is the sample count
         p.ioBufferFrames = dsp::kBlock;
         p.renderDepth = depth() + 1;
         auto prints = std::make_shared<std::pair<std::mutex, std::vector<std::string>>>();
@@ -189,8 +190,8 @@ private:
                     if (job.cancelled()) return;
                     *frame = f;
                     ip->drainForeign();
-                    ip->runDue((double)f / ip->sampleRate.load());
                     int n = (int)std::min<long>(blk, total - f);
+                    ip->runDue((double)(f + n) / ip->sampleRate.load());   // timers due in the block
                     for (int i = 0; i < n * inCh; ++i) {
                         size_t s = (size_t)f * inCh + i;
                         inBlock[(size_t)i] = s < in.size() ? in[s] : 0.f;

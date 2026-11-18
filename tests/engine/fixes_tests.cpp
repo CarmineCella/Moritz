@@ -160,25 +160,19 @@ TEST(buffer_gets_its_memory_before_record_writes_it) {
     CHECK(true);
 }
 
-// line~ kept at most 64 segments of a list and dropped the rest without a word; now a list holds
-// as many as its queue (1023), and what does not fit is reported
+// line~ kept at most 64 segments of a list and dropped the rest without a word; now a list goes to
+// the audio thread whole (no limit), and a list that cannot be handed over is reported
 TEST(line_keeps_long_lists_and_reports_what_it_drops) {
     Rig r("(patch (obj l line~) (obj o dac~ 1) (connect l 0 o 0))");
     Message m;
-    for (int k = 1; k <= 100; ++k) {
-        m.push_back(Atom(k * 0.01f));          // dac~ clips at 1
-        m.push_back(Atom(1.f));
+    for (int k = 1; k <= 2000; ++k) {
+        m.push_back(Atom(k * 0.0005f));        // dac~ clips at 1
+        m.push_back(Atom(0.1f));
     }
     r.box("l")->message(0, m);
-    auto y = etest::channel(r.run(44100 / 5), 2, 0);
-
+    auto y = etest::channel(r.run(44100 / 2), 2, 0);
     CHECK(std::fabs(y.back() - 1.f) < 1e-4f);
     CHECK(!r.printedSomething("dropped"));
-    Message big;
-    for (int k = 0; k < 1100; ++k) {
-        big.push_back(Atom(0.f));
-        big.push_back(Atom(1.f));
-    }
-    r.box("l")->message(0, big);
-    CHECK(r.printedSomething("line~: 78 segments dropped"));
+    for (int k = 0; k < 70; ++k) r.box("l")->message(0, {Atom(0.5f)});   // nothing takes them meanwhile
+    CHECK(r.printedSomething("line~: a ramp dropped"));
 }

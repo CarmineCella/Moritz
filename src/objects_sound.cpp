@@ -228,15 +228,14 @@ public:
     explicit ConvBox(const Message& a) : ref_(argstr(a, 0)) {
         ch_ = std::clamp((int)argf(a, 1, 1.f), 1, 8);
         setPorts(std::vector<Port>((size_t)ch_, P::Signal), std::vector<Port>((size_t)ch_, P::Signal));
-        convs_.resize((size_t)ch_);
     }
-    // at compile (the lock held): the buffer~ looked up, the response prepared if it changed
+    // at compile: the buffer~ looked up, the response prepared if it changed (on the GUI thread,
+    // while the audio thread plays the one before) and published
     void resolve() override {
         ref_.resolve(patch);
-        std::vector<musil::dsp::PartConv<float>> next;
-        if (prepare(next)) convs_.swap(next);
+        reload();
     }
-    // a buffer~ changed, or a message: prepared aside, swapped in under the lock (nothing compiles)
+    // a buffer~ changed, or a message: prepared aside and published (nothing compiles)
     void buffersChanged() override { reload(); }
     void message(int in, const Message& m) override {
         if (m[0].is("set") && m.size() > 1) ref_.set(patch, m[1].str());
@@ -247,24 +246,20 @@ public:
         reload();
     }
     void dsp(int n) override {
+        std::vector<musil::dsp::PartConv<float>>* convs = convs_.get();
         const float* x = nullptr;
         for (int c = 0; c < ch_; ++c) {
-            if (c == 0 || !inSrc[(size_t)c].empty()) x = sigIn(c, n);   // unconnected: the channel before
-            auto& pc = convs_[(size_t)c];
-            if (pc.ready()) pc.process(x, sigOut(c), n);
+            if (c == 0 || connected(c)) x = sigIn(c, n);   // unconnected: the channel before
+            if (convs && (*convs)[(size_t)c].ready()) (*convs)[(size_t)c].process(x, sigOut(c), n);
             else dsp::fill(sigOut(c), 0.f, n);
         }
     }
 
 private:
     void reload() {
-        std::vector<musil::dsp::PartConv<float>> next;
-        if (!prepare(next)) return;
-        {
-            std::lock_guard<std::mutex> lk(patch->mutex());
-            convs_.swap(next);
-        }
-    }                                    // the old responses go here, after unlocking
+        auto next = std::make_unique<std::vector<musil::dsp::PartConv<float>>>();
+        if (prepare(*next)) convs_.set(patch, std::move(next));   // the old ones retired
+    }
     // the responses of the buffer~ into next; false if nothing changed since the last time
     bool prepare(std::vector<musil::dsp::PartConv<float>>& next) {
         BufferBox* b = ref_.box();
@@ -301,7 +296,7 @@ private:
     float gain_ = 1.f;
     bool normalize_ = true;
     Key key_;
-    std::vector<musil::dsp::PartConv<float>> convs_;
+    Published<std::vector<musil::dsp::PartConv<float>>> convs_;
 };
 
 // ---------------------------------------------------------------- condec
@@ -706,6 +701,11 @@ public:
         }
     }
     void dsp(int n) override {
+        if (!audioBuffersAvailable()) {        // the GUI holds the lock: it is changing neb_ (proto, window)
+            dsp::fill(sigOut(0), 0.f, n);
+            dsp::fill(sigOut(1), 0.f, n);
+            return;
+        }
         if (unsigned s = seed_.exchange(0)) neb_.seed(s);
         auto& p = neb_.p;
         p.on = on_.load(std::memory_order_relaxed);

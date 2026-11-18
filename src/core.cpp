@@ -17,6 +17,7 @@
 #include <set>
 #include <sstream>
 #include <thread>
+#include <unordered_set>
 
 namespace moritz {
 
@@ -245,6 +246,53 @@ static std::string scriptForm(const Box* b, const std::string& pad) {
 // 2. boxes
 // ============================================================================
 
+namespace {
+// the audio thread: where the block being run starts on the sample count,
+// whether this callback holds the buffer~ lock, and whether we are inside
+// Patch::process at all (the allocation guard of the tests looks at it)
+thread_local uint64_t tlBlockStart = 0;
+thread_local bool tlBuffers = false;
+thread_local int tlInProcess = 0;
+
+constexpr int kMaxVector = 16384;              // the largest pfft~ frame's bins, with room
+const float kZeros[kMaxVector] = {};
+}  // namespace
+
+bool audioBuffersAvailable() { return tlBuffers; }
+bool inAudioProcess() { return tlInProcess > 0; }
+
+// the values of a box's inlets: the latest given (GUI), and the one in force
+// at the start of the block being run (audio)
+struct Box::Scalars {
+    int n;
+    std::unique_ptr<std::atomic<float>[]> latest;
+    std::unique_ptr<float[]> cur;
+    explicit Scalars(int count) : n(count), latest(new std::atomic<float>[(size_t)count]), cur(new float[(size_t)count]) {
+        for (int i = 0; i < n; ++i) {
+            latest[i].store(0.f, std::memory_order_relaxed);
+            cur[i] = 0.f;
+        }
+    }
+};
+
+// a box's timed events: posted by the dispatch thread, taken by the audio
+// thread when they fall due (the ones of the block being run are in `due`)
+struct Box::Inbox {
+    static constexpr int kDue = 64;
+    dsp::Spsc<Event, 256> q;
+    std::atomic<bool> resync{false};     // full, or values given while audio was off: catch up at once
+    Event due[kDue];
+    int off[kDue] = {};
+    int ndue = 0;
+};
+
+Box::Box() = default;
+
+Box::~Box() {
+    delete scal_.load(std::memory_order_relaxed);
+    delete inbox_.load(std::memory_order_relaxed);
+}
+
 bool Box::isSignal() const {
     for (auto p : ins) if (p == Port::Signal) return true;
     for (auto p : outs) if (p == Port::Signal) return true;
@@ -264,56 +312,217 @@ std::string Box::label() const {
     return raw.empty() ? cls : cls + " " + raw;
 }
 
+// Ports may change after the box runs (a subpatcher's inlets): the values
+// only ever grow, and an old array is kept until the box goes, since the
+// audio thread may still be reading it. The signal buffers belong to the plan.
 void Box::setPorts(std::vector<Port> in, std::vector<Port> out) {
     ins = std::move(in);
     outs = std::move(out);
-    size_t n = std::max<size_t>(dsp::kBlock, outBuf_.empty() ? (inBuf_.empty() ? 0 : inBuf_[0].size())
-                                                             : outBuf_[0].size());
-    outBuf_.assign(outs.size(), std::vector<float>(n, 0.f));
-    inBuf_.assign(ins.size(), std::vector<float>(n, 0.f));
-    scalar_.reset(new std::atomic<float>[ins.size() ? ins.size() : 1]);
-    for (size_t i = 0; i < ins.size(); ++i) scalar_[i].store(0.f);
-    inSrc.assign(ins.size(), {});
+    int need = std::max(1, (int)ins.size());
+    Scalars* s = scal_.load(std::memory_order_relaxed);
+    if (s && s->n >= need) return;
+    auto ns = std::make_unique<Scalars>(need);
+    if (s)
+        for (int i = 0; i < s->n; ++i) {
+            float v = s->latest[i].load(std::memory_order_relaxed);
+            ns->latest[i].store(v, std::memory_order_relaxed);
+            ns->cur[i] = v;
+        }
+    scal_.store(ns.release(), std::memory_order_release);
+    if (s) oldScalars_.emplace_back(s);
 }
 
-void Box::ensureBlock(int n) {
-    for (auto& b : outBuf_) if ((int)b.size() < n) b.resize((size_t)n, 0.f);
-    for (auto& b : inBuf_) if ((int)b.size() < n) b.resize((size_t)n, 0.f);
+float Box::scalar(int i) const {
+    Scalars* s = scal_.load(std::memory_order_acquire);
+    return s && i >= 0 && i < s->n ? s->latest[i].load(std::memory_order_relaxed) : 0.f;
 }
+
+void Box::setScalar(int i, float v) {
+    Scalars* s = scal_.load(std::memory_order_acquire);
+    if (!s || i < 0 || i >= s->n) return;
+    s->latest[i].store(v, std::memory_order_relaxed);
+    if (!patch) {                    // not in a patch yet, so not running: the value in force too
+        s->cur[i] = v;
+        return;
+    }
+    if (i < numIns() && ins[(size_t)i] == Port::Signal) post(kEvScalar, v, 0.f, i);
+}
+
+Box::Inbox* Box::inbox() {
+    Inbox* q = inbox_.load(std::memory_order_acquire);
+    if (!q) {
+        q = new Inbox;
+        inbox_.store(q, std::memory_order_release);
+    }
+    return q;
+}
+
+void Box::post(uint8_t kind, float a, float b, int inlet) {
+    Inbox* q = inbox();
+    Patch* r = patch ? patch->root() : nullptr;
+    bool running = r && r->dspRunning.load(std::memory_order_relaxed);
+    if (!running && kind == kEvScalar) {        // nothing plays: the values are in force at once when it does
+        q->resync.store(true, std::memory_order_release);
+        return;
+    }
+    Event e;
+    e.kind = kind;
+    e.a = a;
+    e.b = b;
+    e.inlet = (int16_t)inlet;
+    if (running) {
+        uint64_t at = r->stamp();
+        // in the order sent: a message never lands before one sent earlier (within 0.1 s)
+        if (at < lastStamp_ && lastStamp_ - at < (uint64_t)(0.1 * r->sampleRate.load(std::memory_order_relaxed)))
+            at = lastStamp_;
+        e.at = lastStamp_ = at;
+    }
+    if (!q->q.push(e)) q->resync.store(true, std::memory_order_release);   // full: catch up at once
+}
+
+void Box::beginBlock(uint64_t t0, int n, bool untimed) {
+    Inbox* q = inbox_.load(std::memory_order_acquire);
+    if (!q) return;
+    q->ndue = 0;
+    Event e;
+    if (q->resync.load(std::memory_order_relaxed) && q->resync.exchange(false, std::memory_order_acq_rel)) {
+        while (q->q.pop(e))
+            if (e.kind != kEvScalar && q->ndue < Inbox::kDue) {
+                q->due[q->ndue] = e;
+                q->off[q->ndue++] = 0;
+            }
+        if (Scalars* s = scal_.load(std::memory_order_acquire))
+            for (int i = 0; i < s->n; ++i) s->cur[i] = s->latest[i].load(std::memory_order_relaxed);
+        return;
+    }
+    const uint64_t end = t0 + (uint64_t)n;
+    while (q->ndue < Inbox::kDue && q->q.front(e) && (untimed || e.at < end)) {
+        q->q.pop(e);
+        q->due[q->ndue] = e;
+        q->off[q->ndue++] = untimed || e.at <= t0 ? 0 : (int)(e.at - t0);
+    }
+}
+
+void Box::endBlock() {
+    Inbox* q = inbox_.load(std::memory_order_relaxed);
+    if (!q || q->ndue == 0) return;
+    Scalars* s = scal_.load(std::memory_order_acquire);
+    for (int k = 0; k < q->ndue; ++k) {
+        const Event& e = q->due[k];
+        if (e.kind == kEvScalar && s && e.inlet >= 0 && e.inlet < s->n) s->cur[e.inlet] = e.a;
+    }
+    q->ndue = 0;
+}
+
+int Box::events() const {
+    Inbox* q = inbox_.load(std::memory_order_relaxed);
+    return q ? q->ndue : 0;
+}
+
+const Event& Box::event(int k) const { return inbox_.load(std::memory_order_relaxed)->due[k]; }
+
+int Box::eventOffset(int k) const { return inbox_.load(std::memory_order_relaxed)->off[k]; }
 
 const float* Box::sigIn(int i, int n) {
-    auto& src = inSrc[i];
-    float* buf = inBuf_[i].data();
-    if (src.empty()) {
-        dsp::fill(buf, scalar(i), n);
+    const BoxIO* io = io_;
+    if (!io || i < 0 || i >= (int)io->src.size() || !io->scratch[(size_t)i]) return kZeros;
+    const auto& src = io->src[(size_t)i];
+    if (src.size() == 1) return src[0];
+    float* buf = io->scratch[(size_t)i];
+    if (src.empty()) {                               // the inlet's value, changing at its events
+        Scalars* s = scal_.load(std::memory_order_acquire);
+        dsp::fill(buf, s && i < s->n ? s->cur[i] : 0.f, n);
+        if (Inbox* q = inbox_.load(std::memory_order_relaxed))
+            for (int k = 0; k < q->ndue; ++k)
+                if (q->due[k].kind == kEvScalar && q->due[k].inlet == i && q->off[k] < n)
+                    dsp::fill(buf + q->off[k], q->due[k].a, n - q->off[k]);
         return buf;
     }
-    if (src.size() == 1) return src[0];
     std::copy(src[0], src[0] + n, buf);              // fan-in sums, as in MSP
     for (size_t k = 1; k < src.size(); ++k)
         for (int j = 0; j < n; ++j) buf[j] += src[k][j];
     return buf;
 }
 
+float* Box::sigOut(int i) {
+    const BoxIO* io = io_;
+    if (!io) return nullptr;
+    if (i < 0 || i >= (int)io->out.size() || !io->out[(size_t)i]) return io->sink;   // ports changed meanwhile
+    return io->out[(size_t)i];
+}
+
+double* Box::sigOutPrecise(int i) {
+    const BoxIO* io = io_;
+    return io && i >= 0 && i < (int)io->outD.size() ? io->outD[(size_t)i] : nullptr;
+}
+
+const double* Box::sigInPrecise(int i) {
+    const BoxIO* io = io_;
+    return io && i >= 0 && i < (int)io->srcD.size() ? io->srcD[(size_t)i] : nullptr;
+}
+
+int Box::outCount() const { return io_ ? (int)io_->out.size() : 0; }
+
+float* Box::sigOutIf(int i) {
+    const BoxIO* io = io_;
+    return io && i >= 0 && i < (int)io->out.size() ? io->out[(size_t)i] : nullptr;
+}
+
+bool Box::connected(int i) const {
+    return io_ && i >= 0 && i < (int)io_->src.size() && !io_->src[(size_t)i].empty();
+}
+
+int Box::innerCount() const { return io_ ? (int)io_->inner.size() : 0; }
+
+void Box::runInner(int k, int n) {
+    if (io_ && k >= 0 && k < (int)io_->inner.size() && io_->inner[(size_t)k]) io_->inner[(size_t)k]->run(n);
+}
+
+void PatchPlan::run(int n) const {
+    const uint64_t t0 = tlBlockStart;
+    for (const Step& s : steps) {
+        Box* b = s.box;
+        b->io_ = &s.io;
+        b->beginBlock(t0, n, spectral);
+        b->dsp(n);
+        b->endBlock();
+    }
+}
+
 void Box::outlet(int i, const Message& m) {
     if (!patch || m.empty()) return;
-    if (Patch* r = patch->root(); r->foreignThread()) {   // another thread: the patch's own runs it
+    Patch* r = patch->root();
+    if (r->foreignThread()) {                        // another thread: the patch's own runs it
         r->runOnDispatchThread([this, i, m] { outlet(i, m); });
         return;
     }
-    if (patch->root()->depth > 256) {
+    if (r->depth > 256) {
         patch->status("stack overflow: message loop stopped at " + id);
         return;
     }
+    if (targetsGen_ != patch->connGen_) {            // the cables changed: this box's outlets again
+        targets_.assign(outs.size(), {});
+        for (auto& c : patch->conns)
+            if (c.from == this && c.outlet >= 0 && c.outlet < (int)targets_.size())
+                targets_[(size_t)c.outlet].push_back({c.to, c.inlet});
+        targetsGen_ = patch->connGen_;
+    }
+    if (i < 0 || i >= (int)targets_.size() || targets_[(size_t)i].empty()) return;
     // Like Max: fan-out is delivered right-to-left by destination position.
-    std::vector<std::pair<Box*, int>> targets;
-    for (auto& c : patch->conns)
-        if (c.from == this && c.outlet == i) targets.push_back({c.to, c.inlet});
-    std::stable_sort(targets.begin(), targets.end(),
-                     [](auto& a, auto& b) { return a.first->x > b.first->x; });
-    ++patch->root()->depth;
-    for (auto& t : targets) t.first->message(t.second, m);
-    --patch->root()->depth;
+    // (Positions change as boxes are dragged, so they are sorted each time, on
+    // a copy: a message may change the cables.)
+    const auto& t = targets_[(size_t)i];
+    std::pair<Box*, int> local[16];
+    std::vector<std::pair<Box*, int>> many;
+    std::pair<Box*, int>* v = local;
+    size_t n = t.size();
+    if (n > 16) { many = t; v = many.data(); }
+    else std::copy(t.begin(), t.end(), local);
+    for (size_t a = 1; a < n; ++a)                   // insertion sort: stable, nothing allocated
+        for (size_t b = a; b > 0 && v[b].first->x > v[b - 1].first->x; --b) std::swap(v[b], v[b - 1]);
+    ++r->depth;
+    for (size_t k = 0; k < n; ++k) v[k].first->message(v[k].second, m);
+    --r->depth;
 }
 
 
@@ -326,26 +535,26 @@ std::function<void(Patch*)> Patch::onDestroyed;
 Patch::Patch() = default;
 
 Patch::~Patch() {
-    if (!extras.empty()) {                 // before the timers they may hold are gone
-        std::lock_guard<std::mutex> lk(dspMutex);
-        extras.clear();
+    if (!parent) {
+        // nothing of it may run any more: no plan, then wait for the audio thread to let go
+        plan_.store(nullptr, std::memory_order_seq_cst);
+        collectArmed_ = true;              // no timer for it: it is collected right here
+        if (current_) retire(std::move(current_));
+        timers_.clear();
+        collectGarbage(true);
     }
+    extras.clear();                        // before the timers they may hold are gone
     if (onDestroyed) onDestroyed(this);
     if (parent) {
-        // an inner patch dies with its owner box, while the root holds the
-        // DSP lock (or is being destroyed); its timers live in the root
+        // an inner patch dies with its owner box, which the audio thread no
+        // longer runs (it was retired); its timers live in the root
         Patch* r = root();
         for (auto& b : boxes) r->cancel(b.get());
-        chain_.clear();
-        conns.clear();
-        boxes.clear();
-        return;
     }
     timers_.clear();
-    std::lock_guard<std::mutex> lk(dspMutex);
-    chain_.clear();
     conns.clear();
     boxes.clear();
+    garbage_.clear();
 }
 
 void Patch::forEachBox(const std::function<void(Box*)>& fn) {
@@ -359,24 +568,23 @@ void Patch::forEachBox(const std::function<void(Box*)>& fn) {
 Patch* Patch::addExtra(std::unique_ptr<Patch> p) {
     Patch* raw = p.get();
     raw->parent = this;
-    std::lock_guard<std::mutex> lk(mutex());
     extras.push_back(std::move(p));
     return raw;
 }
 
 void Patch::removeExtra(Patch* p) {
     std::unique_ptr<Patch> gone;
-    {
-        std::lock_guard<std::mutex> lk(mutex());
-        for (auto it = extras.begin(); it != extras.end(); ++it)
-            if (it->get() == p) {
-                gone = std::move(*it);
-                extras.erase(it);
-                break;
-            }
-        recompile();          // nothing may point into it any more
+    for (auto it = extras.begin(); it != extras.end(); ++it)
+        if (it->get() == p) {
+            gone = std::move(*it);
+            extras.erase(it);
+            break;
+        }
+    recompile();                // a plan without it
+    if (gone) {
+        retire(std::shared_ptr<Patch>(gone.release()));
+        collectGarbage(true);   // gone now (its window with it), once the audio thread let go
     }
-    gone.reset();
     structureChanged();
 }
 
@@ -466,11 +674,8 @@ Box* Patch::addBox(std::unique_ptr<Box> b, int x, int y, const std::string& id) 
     b->y = y;
     b->id = (id.empty() || find(id)) ? uniqueId(b->cls) : id;
     Box* raw = b.get();
-    {
-        std::lock_guard<std::mutex> lk(mutex());
-        boxes.push_back(std::move(b));
-        recompile();
-    }
+    boxes.push_back(std::move(b));
+    recompile();
     raw->attached();
     structureChanged();
     return raw;
@@ -487,7 +692,7 @@ bool canConnect(const std::vector<Connection>& conns, Box* from, int o, Box* to,
     if (o < 0 || o >= from->numOuts() || i < 0 || i >= to->numIns()) return fail("no such port");
     if (from->outs[o] == Port::Signal && to->ins[i] == Port::Control)
         return fail("a signal outlet can't connect to a control inlet");
-    if (from->outs[o] == Port::Tap && (to->cls != "tapout~" || i != 0))
+    if (from->outs[o] == Port::Tap && !to->acceptsTap(i))
         return fail("tapin~ connects only to the left inlet of tapout~");
     for (auto& c : conns)
         if (c.from == from && c.outlet == o && c.to == to && c.inlet == i)
@@ -497,7 +702,7 @@ bool canConnect(const std::vector<Connection>& conns, Box* from, int o, Box* to,
 
 bool Patch::reaches(Box* a, Box* b) const {
     std::vector<Box*> todo{a};
-    std::set<Box*> seen;
+    std::unordered_set<Box*> seen;
     while (!todo.empty()) {
         Box* x = todo.back();
         todo.pop_back();
@@ -515,11 +720,9 @@ bool Patch::connect(Box* from, int o, Box* to, int i, std::string* err) {
         if (err) *err = "that would create a signal feedback loop";
         return false;
     }
-    {
-        std::lock_guard<std::mutex> lk(mutex());
-        conns.push_back({from, o, to, i});
-        recompile();
-    }
+    conns.push_back({from, o, to, i});
+    cablesChanged();
+    recompile();
     structureChanged();
     return true;
 }
@@ -527,32 +730,35 @@ bool Patch::connect(Box* from, int o, Box* to, int i, std::string* err) {
 void Patch::removeConnections(const std::vector<int>& idx) {
     std::vector<int> s = idx;
     std::sort(s.rbegin(), s.rend());
-    {
-        std::lock_guard<std::mutex> lk(mutex());
-        for (int k : s)
-            if (k >= 0 && k < (int)conns.size()) conns.erase(conns.begin() + k);
-        recompile();
-    }
+    s.erase(std::unique(s.begin(), s.end()), s.end());
+    for (int k : s)
+        if (k >= 0 && k < (int)conns.size()) conns.erase(conns.begin() + k);
+    cablesChanged();
+    recompile();
     structureChanged();
 }
 
+// Removed boxes are retired: the audio thread may still be running them in
+// the plan before; they are destroyed as soon as it has let go (the GUI
+// waits for that, at most a callback, so a removed box is gone on return).
+void Patch::retireBoxes(std::vector<std::unique_ptr<Box>> gone) {
+    if (gone.empty()) return;
+    root()->retire(std::make_shared<std::vector<std::unique_ptr<Box>>>(std::move(gone)));
+    root()->collectGarbage(true);
+}
+
 void Patch::removeBoxes(const std::vector<Box*>& bs) {
-    std::set<Box*> dead(bs.begin(), bs.end());
+    std::unordered_set<Box*> dead(bs.begin(), bs.end());
     for (Box* b : bs) cancel(b);
-    {
-        std::lock_guard<std::mutex> lk(mutex());
-        conns.erase(std::remove_if(conns.begin(), conns.end(),
-                                   [&](const Connection& c) {
-                                       return dead.count(c.from) || dead.count(c.to);
-                                   }),
-                    conns.end());
-        boxes.erase(std::remove_if(boxes.begin(), boxes.end(),
-                                   [&](const std::unique_ptr<Box>& b) {
-                                       return dead.count(b.get()) > 0;
-                                   }),
-                    boxes.end());
-        recompile();
-    }
+    conns.erase(std::remove_if(conns.begin(), conns.end(),
+                               [&](const Connection& c) { return dead.count(c.from) || dead.count(c.to); }),
+                conns.end());
+    cablesChanged();
+    std::vector<std::unique_ptr<Box>> gone, kept;
+    for (auto& b : boxes) (dead.count(b.get()) ? gone : kept).push_back(std::move(b));
+    boxes = std::move(kept);
+    recompile();
+    retireBoxes(std::move(gone));
     structureChanged();
 }
 
@@ -562,25 +768,24 @@ Box* Patch::replaceBox(Box* old, std::unique_ptr<Box> nb) {
     nb->x = old->x;
     nb->y = old->y;
     Box* raw = nb.get();
-    std::unique_ptr<Box> doomed;
+    std::vector<std::unique_ptr<Box>> doomed;
     cancel(old);
-    {
-        std::lock_guard<std::mutex> lk(mutex());
-        for (auto& b : boxes)
-            if (b.get() == old) {
-                doomed = std::move(b);
-                b = std::move(nb);
-                break;
-            }
-        std::vector<Connection> kept;
-        for (auto c : conns) {
-            if (c.from == old) c.from = raw;
-            if (c.to == old) c.to = raw;
-            if (canConnect(kept, c.from, c.outlet, c.to, c.inlet, nullptr)) kept.push_back(c);
+    for (auto& b : boxes)
+        if (b.get() == old) {
+            doomed.push_back(std::move(b));
+            b = std::move(nb);
+            break;
         }
-        conns = std::move(kept);
-        recompile();
+    std::vector<Connection> kept;
+    for (auto c : conns) {
+        if (c.from == old) c.from = raw;
+        if (c.to == old) c.to = raw;
+        if (canConnect(kept, c.from, c.outlet, c.to, c.inlet, nullptr)) kept.push_back(c);
     }
+    conns = std::move(kept);
+    cablesChanged();
+    recompile();
+    retireBoxes(std::move(doomed));
     raw->attached();
     structureChanged();
     return raw;
@@ -588,14 +793,13 @@ Box* Patch::replaceBox(Box* old, std::unique_ptr<Box> nb) {
 
 void Patch::clear() {
     if (parent) for (auto& b : boxes) root()->cancel(b.get());
-    else timers_.clear();
-    {
-        std::lock_guard<std::mutex> lk(mutex());
-        chain_.clear();
-        conns.clear();
-        boxes.clear();
-        recompile();
-    }
+    else { timers_.clear(); collectArmed_ = false; }
+    conns.clear();
+    cablesChanged();
+    std::vector<std::unique_ptr<Box>> gone = std::move(boxes);
+    boxes.clear();
+    recompile();
+    retireBoxes(std::move(gone));
     structureChanged();
 }
 
@@ -620,69 +824,34 @@ int Patch::maxOutputChannel() const {
     return m;
 }
 
-// Orders signal boxes so every box runs after the boxes feeding it, and
-// points each signal inlet at the output buffers connected to it.
-void Patch::compile() {
-    if (!parent) { planRate_ = sampleRate.load(); ++compiles; }
-    // inner patches first: their inlets/outlets decide the owner's ports
-    for (auto& b : boxes)
-        if (b->inner()) {
-            for (Patch* c : b->inners()) c->compile();
-            b->syncPorts();
-        }
-    // drop cables whose ports vanished or changed type
-    conns.erase(std::remove_if(conns.begin(), conns.end(),
-                               [](const Connection& c) {
-                                   return c.outlet >= c.from->numOuts() ||
-                                          c.inlet >= c.to->numIns() ||
-                                          (c.from->outs[c.outlet] == Port::Signal &&
-                                           c.to->ins[c.inlet] == Port::Control);
-                               }),
-                conns.end());
+// ---- compiling: the plan
 
-    std::vector<Box*> sig;
-    std::map<Box*, int> indeg;
-    int vs = vectorSize();
-    for (auto& b : boxes) {
-        b->ensureBlock(vs);                  // before inSrc points into the buffers
-        for (auto& s : b->inSrc) s.clear();
-        if (b->isSignal() || b->inner()) {          // subpatchers run their inner chain
-            sig.push_back(b.get());
-            indeg[b.get()] = 0;
-        }
+// Compiles every patch under the root (its own boxes, the inner patches and
+// the extras) into a new plan, on the GUI thread, and publishes it with one
+// pointer swap. The audio thread keeps running the old plan until its next
+// callback; the old plan is retired.
+void Patch::compile() {
+    indexDirty_ = true;              // boxes came or went: the name index follows
+    planRate_ = sampleRate.load();
+    ++compiles;
+    auto plan = std::make_shared<PatchPlan>();
+    buildPlan(*plan);
+    for (auto& e : extras) {
+        auto ep = std::make_unique<PatchPlan>();
+        e->buildPlan(*ep);
+        plan->extras.push_back(ep.get());
+        plan->owned.push_back(std::move(ep));
     }
-    std::map<Box*, std::vector<Box*>> next;     // edges of the signal graph
-    for (auto& c : conns) {
-        if (c.from->outs[c.outlet] != Port::Signal) continue;   // control and tap links
-        c.to->inSrc[c.inlet].push_back(c.from->sigOut(c.outlet));
-        next[c.from].push_back(c.to);
-        indeg[c.to]++;
-    }
-    addSendReceiveEdges(sig, next, indeg);
-    std::vector<Box*> order, ready;
-    for (Box* b : sig)
-        if (indeg[b] == 0) ready.push_back(b);
-    while (!ready.empty()) {
-        Box* b = ready.front();
-        ready.erase(ready.begin());
-        order.push_back(b);
-        for (Box* t : next[b])
-            if (--indeg[t] == 0) ready.push_back(t);
-    }
-    if (order.size() != sig.size()) {
-        dspError = "signal feedback loop: audio disabled for this patch";
-        chain_.clear();
-    } else {
-        dspError.clear();
-        chain_ = std::move(order);
-        for (auto& b : boxes)
-            if (Patch* c = b->inner(); c && !c->dspError.empty()) {   // first copy speaks for all
-                dspError = c->dspError + " (in " + b->text() + ")";
-                break;
-            }
-    }
-    for (auto& b : boxes) b->resolve();
-    for (auto& e : extras) e->compile();
+    std::shared_ptr<PatchPlan> old = std::move(current_);
+    current_ = plan;
+    plan_.store(plan.get(), std::memory_order_seq_cst);
+    if (old) retire(std::move(old));
+    collectGarbage();
+}
+
+void Patch::rateChanged() {
+    if (parent) { root()->rateChanged(); return; }
+    if (sampleRate.load() != planRate_) compile();
 }
 
 namespace {
@@ -693,29 +862,30 @@ void signalNames(Box* b, std::set<std::string>& sends, std::set<std::string>& re
     for (Patch* c : b->inners())
         for (auto& x : c->boxes) signalNames(x.get(), sends, recvs);
 }
-}  // namespace
 
 // A box holding a send~ runs before a box holding a receive~ of the same
 // name, unless that would close a loop: then the receive~ reads the previous
 // block (a one-block delay, as in Max).
-void Patch::addSendReceiveEdges(const std::vector<Box*>& sig, std::map<Box*, std::vector<Box*>>& next,
-                                std::map<Box*, int>& indeg) {
-    std::vector<std::pair<Box*, std::set<std::string>>> senders, receivers;
-    for (Box* b : sig) {
+void addSendReceiveEdges(const std::vector<Box*>& sig, std::vector<std::vector<int>>& next, std::vector<int>& indeg) {
+    std::vector<std::pair<int, std::set<std::string>>> senders, receivers;
+    for (int k = 0; k < (int)sig.size(); ++k) {
         std::set<std::string> s, r;
-        signalNames(b, s, r);
-        if (!s.empty()) senders.push_back({b, s});
-        if (!r.empty()) receivers.push_back({b, r});
+        signalNames(sig[(size_t)k], s, r);
+        if (!s.empty()) senders.push_back({k, std::move(s)});
+        if (!r.empty()) receivers.push_back({k, std::move(r)});
     }
-    auto reachesVia = [&](Box* from, Box* to) {
-        std::vector<Box*> stack{from};
-        std::set<Box*> seen;
+    if (senders.empty() || receivers.empty()) return;
+    std::vector<char> seen(sig.size());
+    auto reachesVia = [&](int from, int to) {
+        std::fill(seen.begin(), seen.end(), 0);
+        std::vector<int> stack{from};
         while (!stack.empty()) {
-            Box* x = stack.back();
+            int x = stack.back();
             stack.pop_back();
             if (x == to) return true;
-            if (!seen.insert(x).second) continue;
-            for (Box* y : next[x]) stack.push_back(y);
+            if (seen[(size_t)x]) continue;
+            seen[(size_t)x] = 1;
+            for (int y : next[(size_t)x]) stack.push_back(y);
         }
         return false;
     };
@@ -725,102 +895,182 @@ void Patch::addSendReceiveEdges(const std::vector<Box*>& sig, std::map<Box*, std
             bool shared = false;
             for (auto& n : sn) shared = shared || rn.count(n);
             if (!shared || reachesVia(r, s)) continue;
-            next[s].push_back(r);
-            indeg[r]++;
+            next[(size_t)s].push_back(r);
+            indeg[(size_t)r]++;
         }
 }
+}  // namespace
 
-void Patch::rateChanged() {
-    if (parent) { root()->rateChanged(); return; }
-    if (sampleRate.load() == planRate_) return;
-    std::lock_guard<std::mutex> lk(dspMutex);
-    compile();
+// Orders this patch's signal boxes so every box runs after the boxes feeding
+// it, and gives each signal port its buffer in the plan.
+void Patch::buildPlan(PatchPlan& pp) {
+    // inner patches first: their inlets/outlets decide the owner's ports
+    std::unordered_map<Box*, std::vector<const PatchPlan*>> innerOf;
+    for (auto& b : boxes) {
+        if (!b->inner()) continue;
+        auto& v = innerOf[b.get()];
+        for (Patch* c : b->inners()) {
+            auto cp = std::make_unique<PatchPlan>();
+            c->buildPlan(*cp);
+            v.push_back(cp.get());
+            pp.owned.push_back(std::move(cp));
+        }
+        b->syncPorts();
+    }
+    // drop cables whose ports vanished or changed type
+    size_t before = conns.size();
+    conns.erase(std::remove_if(conns.begin(), conns.end(),
+                               [](const Connection& c) {
+                                   return c.outlet >= c.from->numOuts() || c.inlet >= c.to->numIns() ||
+                                          (c.from->outs[(size_t)c.outlet] == Port::Signal &&
+                                           c.to->ins[(size_t)c.inlet] == Port::Control);
+                               }),
+                conns.end());
+    if (conns.size() != before) cablesChanged();
+
+    const int vs = vectorSize();
+    pp.vs = vs;
+    pp.spectral = spectralContext() != nullptr;
+    std::vector<Box*> sig;
+    std::unordered_map<Box*, int> index;
+    for (auto& b : boxes)
+        if (b->isSignal() || b->inner()) {          // subpatchers run their inner chain
+            index[b.get()] = (int)sig.size();
+            sig.push_back(b.get());
+        }
+    const int N = (int)sig.size();
+    std::vector<std::vector<int>> next((size_t)N);  // edges of the signal graph
+    std::vector<int> indeg((size_t)N, 0);
+    for (auto& c : conns) {
+        if (c.from->outs[(size_t)c.outlet] != Port::Signal) continue;   // control and tap links
+        auto f = index.find(c.from), t = index.find(c.to);
+        if (f == index.end() || t == index.end()) continue;
+        next[(size_t)f->second].push_back(t->second);
+        indeg[(size_t)t->second]++;
+    }
+    addSendReceiveEdges(sig, next, indeg);
+    std::vector<int> order;                         // Kahn, first come first served
+    order.reserve((size_t)N);
+    for (int k = 0; k < N; ++k)
+        if (indeg[(size_t)k] == 0) order.push_back(k);
+    for (size_t head = 0; head < order.size(); ++head)
+        for (int t : next[(size_t)order[head]])
+            if (--indeg[(size_t)t] == 0) order.push_back(t);
+
+    if ((int)order.size() != N) {
+        dspError = "signal feedback loop: audio disabled for this patch";
+        order.clear();
+    } else {
+        dspError.clear();
+        for (auto& b : boxes)
+            if (Patch* c = b->inner(); c && !c->dspError.empty()) {   // first copy speaks for all
+                dspError = c->dspError + " (in " + b->text() + ")";
+                break;
+            }
+    }
+    // the memory of the signal ports: a buffer per signal outlet and per
+    // signal inlet (for sums and values), and a sink
+    size_t total = (size_t)vs, totalD = 0;
+    for (int k : order) {
+        Box* b = sig[(size_t)k];
+        for (size_t o = 0; o < b->outs.size(); ++o)
+            if (b->outs[o] == Port::Signal) {
+                total += (size_t)vs;
+                if (b->preciseOut((int)o)) totalD += (size_t)vs;
+            }
+        for (auto p : b->ins) total += p == Port::Signal ? (size_t)vs : 0;
+    }
+    pp.arena.assign(total, 0.f);
+    pp.arenaD.assign(totalD, 0.0);
+    float* mem = pp.arena.data();
+    double* memD = pp.arenaD.data();
+    float* sink = mem;
+    mem += vs;
+    std::vector<int> stepOf((size_t)N, -1);
+    pp.steps.reserve(order.size());
+    for (int k : order) {
+        Box* b = sig[(size_t)k];
+        PatchPlan::Step s{b, {}};
+        s.io.sink = sink;
+        s.io.out.assign(b->outs.size(), nullptr);
+        s.io.outD.assign(b->outs.size(), nullptr);
+        for (size_t o = 0; o < b->outs.size(); ++o)
+            if (b->outs[o] == Port::Signal) {
+                s.io.out[o] = mem;
+                mem += vs;
+                if (b->preciseOut((int)o)) { s.io.outD[o] = memD; memD += vs; }
+            }
+        s.io.src.assign(b->ins.size(), {});
+        s.io.srcD.assign(b->ins.size(), nullptr);
+        s.io.scratch.assign(b->ins.size(), nullptr);
+        for (size_t i = 0; i < b->ins.size(); ++i)
+            if (b->ins[i] == Port::Signal) { s.io.scratch[i] = mem; mem += vs; }
+        if (auto it = innerOf.find(b); it != innerOf.end()) s.io.inner = it->second;
+        stepOf[(size_t)k] = (int)pp.steps.size();
+        pp.steps.push_back(std::move(s));
+    }
+    if (!pp.steps.empty())
+        for (auto& c : conns) {
+            if (c.from->outs[(size_t)c.outlet] != Port::Signal) continue;
+            auto f = index.find(c.from), t = index.find(c.to);
+            if (f == index.end() || t == index.end()) continue;
+            int sf = stepOf[(size_t)f->second], st = stepOf[(size_t)t->second];
+            BoxIO& to = pp.steps[(size_t)st].io;
+            const BoxIO& from = pp.steps[(size_t)sf].io;
+            to.src[(size_t)c.inlet].push_back(from.out[(size_t)c.outlet]);
+            // one precise source: its doubles too; more (a sum): floats only
+            to.srcD[(size_t)c.inlet] = to.src[(size_t)c.inlet].size() == 1 ? from.outD[(size_t)c.outlet] : nullptr;
+        }
+    for (auto& b : boxes) b->resolve();
 }
 
 void Patch::rebuild() {
     if (foreignThread()) { runOnDispatchThread([this] { rebuild(); }); return; }
-    {
-        std::lock_guard<std::mutex> lk(mutex());
-        recompile();
-    }
+    recompile();
     structureChanged();
 }
 
-void Patch::print(const std::string& s) {
-    if (onPrint) onPrint(s);
-    else if (parent) parent->print(s);
-    else std::fprintf(stderr, "%s\n", s.c_str());
-}
+// ---- retiring what the audio thread may still be using
 
-namespace {
-bool pathExists(const std::string& p) {      // a file or a folder
-    struct stat st;
-    return ::stat(p.c_str(), &st) == 0;
-}
-}  // namespace
-
-std::string Patch::resolvePath(const std::string& p) const {
-    if (p.empty() || isAbsolutePath(p)) return p;
-    if (p.rfind("~/", 0) == 0) return homeDir() + p.substr(1);
-    std::string here = p;
-    for (const Patch* q = this; q; q = q->parent)
-        if (!q->dir.empty()) { here = q->dir + "/" + p; break; }
-    if (!pathExists(here))                       // not next to the patch: the bundled sounds
-        for (auto& d : soundPath())
-            if (std::string f = d + "/" + p; pathExists(f)) return f;
-    return here;
-}
-
-// ---- scheduler: a small timer queue, run by the GUI (or by --render)
-
-void Patch::scheduleAt(Box* owner, double t, std::function<void()> fn) {
-    if (parent) { root()->scheduleAt(owner, t, std::move(fn)); return; }
-    timers_.push_back({t, timerSeq_++, owner, std::move(fn)});
-    if (!inRunDue_ && onSchedule) onSchedule();
-}
-
-void Patch::cancel(Box* owner) {
-    if (parent) { root()->cancel(owner); return; }
-    size_t before = timers_.size();
-    timers_.erase(std::remove_if(timers_.begin(), timers_.end(),
-                                 [&](const Timer& t) { return t.owner == owner; }),
-                  timers_.end());
-    if (timers_.size() != before && !inRunDue_ && onSchedule) onSchedule();
-}
-
-double Patch::nextDue() const {
-    double t = std::numeric_limits<double>::infinity();
-    for (auto& x : timers_) t = std::min(t, x.t);
-    return t;
-}
-
-void Patch::runDue(double now) {
-    inRunDue_ = true;
-    for (int guard = 0; guard < 100000; ++guard) {
-        int best = -1;
-        for (int k = 0; k < (int)timers_.size(); ++k)
-            if (timers_[k].t <= now &&
-                (best < 0 || timers_[k].t < timers_[best].t ||
-                 (timers_[k].t == timers_[best].t && timers_[k].seq < timers_[best].seq)))
-                best = k;
-        if (best < 0) break;
-        auto fn = std::move(timers_[best].fn);
-        timers_.erase(timers_.begin() + best);
-        fn();
+void Patch::retire(std::shared_ptr<void> x) {
+    if (parent) { root()->retire(std::move(x)); return; }
+    if (!x) return;
+    // the epoch after the swap that made x unreachable: freed once the audio
+    // thread has started a callback in it (or is not in one)
+    uint64_t tag = epoch_.fetch_add(1, std::memory_order_seq_cst) + 1;
+    garbage_.push_back({tag, std::move(x)});
+    if (!collectArmed_ && !offline) {         // free it soon even if nothing else happens
+        collectArmed_ = true;
+        scheduleAt(nullptr, time() + 0.05, [this] {
+            collectArmed_ = false;
+            collectGarbage();
+            if (!garbage_.empty() && !collectArmed_) {
+                collectArmed_ = true;
+                scheduleAt(nullptr, time() + 0.05, [this] { collectArmed_ = false; collectGarbage(); });
+            }
+        });
     }
-    inRunDue_ = false;
-    if (onSchedule) onSchedule();
 }
 
-namespace {
-thread_local int tlInProcess = 0;
-struct InProcess {
-    InProcess() { ++tlInProcess; }
-    ~InProcess() { --tlInProcess; }
-};
-}  // namespace
+void Patch::collectGarbage(bool wait) {
+    if (parent) { root()->collectGarbage(wait); return; }
+    for (int tries = 0;; ++tries) {
+        bool in = inside_.load(std::memory_order_seq_cst);
+        uint64_t seen = seen_.load(std::memory_order_seq_cst);
+        std::vector<std::shared_ptr<void>> dead;
+        size_t keep = 0;
+        for (size_t k = 0; k < garbage_.size(); ++k) {
+            if (!in || seen >= garbage_[k].first) dead.push_back(std::move(garbage_[k].second));
+            else garbage_[keep++] = std::move(garbage_[k]);
+        }
+        garbage_.resize(keep);
+        dead.clear();                       // destructors may retire more: garbage_ is consistent again
+        if (garbage_.empty() || !wait || tries >= 2000) return;
+        std::this_thread::sleep_for(std::chrono::microseconds(500));
+    }
+}
 
-bool inAudioProcess() { return tlInProcess > 0; }
+// ---- messages from other threads
 
 void Patch::setDispatchThread(std::thread::id t) { root()->dispatch_.store(t); }
 
@@ -848,26 +1098,180 @@ void Patch::drainForeign() {
     for (auto& fn : q) fn();
 }
 
+void Patch::print(const std::string& s) {
+    if (onPrint) onPrint(s);
+    else if (parent) parent->print(s);
+    else std::fprintf(stderr, "%s\n", s.c_str());
+}
+
+namespace {
+bool pathExists(const std::string& p) {      // a file or a folder
+    struct stat st;
+    return ::stat(p.c_str(), &st) == 0;
+}
+}  // namespace
+
+std::string Patch::resolvePath(const std::string& p) const {
+    if (p.empty() || isAbsolutePath(p)) return p;
+    if (p.rfind("~/", 0) == 0) return homeDir() + p.substr(1);
+    std::string here = p;
+    for (const Patch* q = this; q; q = q->parent)
+        if (!q->dir.empty()) { here = q->dir + "/" + p; break; }
+    if (!pathExists(here))                       // not next to the patch: the bundled sounds
+        for (auto& d : soundPath())
+            if (std::string f = d + "/" + p; pathExists(f)) return f;
+    return here;
+}
+
+// ---- scheduler: a timer heap, run by the GUI (or by a render)
+
+namespace {
+// the heap's order: the earliest on top, then the first scheduled
+bool laterTimer(double ta, uint64_t sa, double tb, uint64_t sb) { return ta > tb || (ta == tb && sa > sb); }
+}  // namespace
+
+void Patch::scheduleAt(Box* owner, double t, std::function<void()> fn) {
+    if (parent) { root()->scheduleAt(owner, t, std::move(fn)); return; }
+    timers_.push_back({t, timerSeq_++, owner, std::move(fn)});
+    std::push_heap(timers_.begin(), timers_.end(),
+                   [](const Timer& a, const Timer& b) { return laterTimer(a.t, a.seq, b.t, b.seq); });
+    if (!inRunDue_ && onSchedule) onSchedule();
+}
+
+void Patch::cancel(Box* owner) {
+    if (parent) { root()->cancel(owner); return; }
+    size_t before = timers_.size();
+    timers_.erase(std::remove_if(timers_.begin(), timers_.end(), [&](const Timer& t) { return t.owner == owner; }),
+                  timers_.end());
+    if (timers_.size() == before) return;
+    std::make_heap(timers_.begin(), timers_.end(),
+                   [](const Timer& a, const Timer& b) { return laterTimer(a.t, a.seq, b.t, b.seq); });
+    if (!inRunDue_ && onSchedule) onSchedule();
+}
+
+double Patch::nextDue() const {
+    const Patch* r = root();
+    return r->timers_.empty() ? std::numeric_limits<double>::infinity() : r->timers_.front().t;
+}
+
+double Patch::logicalTime() const {
+    const Patch* r = root();
+    return r->inRunDue_ ? r->dueNow_ : r->time();
+}
+
+void Patch::runDue(double now) {
+    if (parent) { root()->runDue(now); return; }
+    auto later = [](const Timer& a, const Timer& b) { return laterTimer(a.t, a.seq, b.t, b.seq); };
+    bool outer = !inRunDue_;
+    double prevNow = dueNow_;
+    inRunDue_ = true;
+    for (int guard = 0; guard < 100000 && !timers_.empty() && timers_.front().t <= now; ++guard) {
+        std::pop_heap(timers_.begin(), timers_.end(), later);
+        Timer tm = std::move(timers_.back());
+        timers_.pop_back();
+        // the timer's own time: what it schedules next counts from there, and
+        // the messages it sends are stamped with it (a timer very late, after
+        // the GUI was stuck, catches up from a quarter second ago, not in a burst)
+        dueNow_ = offline ? tm.t : std::max(tm.t, now - 0.25);
+        tm.fn();
+    }
+    dueNow_ = prevNow;
+    if (outer) inRunDue_ = false;
+    if (onSchedule) onSchedule();
+}
+
+// ---- timed events: where a message sent now lands on the sample count
+
+uint64_t Patch::stamp() {
+    if (parent) return root()->stamp();
+    double sr = sampleRate.load(std::memory_order_relaxed);
+    double t = logicalTime();
+    if (offline) return t <= 0 ? 0 : (uint64_t)std::llround(t * sr);
+    uint64_t now = sampleTime_.load(std::memory_order_acquire);
+    if (!anchored_.load(std::memory_order_acquire)) return now;
+    // two device buffers: the callback may have computed one buffer ahead of the clock already,
+    // and a GUI timer may fire up to one buffer late; later than that, it lands late
+    double latency = 2.0 * std::max(ioBufferFrames.load(std::memory_order_relaxed), dsp::kBlock);
+    double target = clockOffset_.load(std::memory_order_relaxed) + t * sr + latency;
+    return (uint64_t)std::llround(std::clamp(target, (double)now, (double)now + sr));
+}
+
+// At the start of a callback: the sample count against the clock (seconds).
+// The offset is smoothed, so the callbacks' own jitter does not move events;
+// a jump (the device restarted) resets it.
+void Patch::anchorClock() {
+    if (!clock) return;
+    double sr = sampleRate.load(std::memory_order_relaxed);
+    double off = (double)sampleTime_.load(std::memory_order_relaxed) - clock() * sr;
+    if (!anchored_.load(std::memory_order_relaxed) || std::fabs(off - offsetEst_) > 0.1 * sr) offsetEst_ = off;
+    else offsetEst_ += 0.02 * (off - offsetEst_);
+    clockOffset_.store(offsetEst_, std::memory_order_relaxed);
+    anchored_.store(true, std::memory_order_release);
+}
+
 void Patch::process(const float* in, int inCh, float* out, int outCh, int frames) {
-    InProcess inside;
+    ++tlInProcess;
     std::fill(out, out + (size_t)frames * outCh, 0.f);
-    std::unique_lock<std::mutex> lk(dspMutex, std::try_to_lock);
-    if (!lk.owns_lock()) return;                     // GUI is editing: one silent block
+    // say which epoch we are in before taking the plan (see collectGarbage)
+    inside_.store(true, std::memory_order_seq_cst);
+    seen_.store(epoch_.load(std::memory_order_seq_cst), std::memory_order_seq_cst);
+    const PatchPlan* plan = plan_.load(std::memory_order_seq_cst);
+    std::unique_lock<std::mutex> lk(dspMutex, std::try_to_lock);   // buffer~ storage: never waits
+    bool prevBuffers = tlBuffers;
+    tlBuffers = lk.owns_lock();
+    if (!offline) anchorClock();
     ioIn = in;
     ioOut = out;
     ioInCh = in ? inCh : 0;
     ioOutCh = outCh;
+    uint64_t t = sampleTime_.load(std::memory_order_relaxed);
     for (int off = 0; off < frames; off += dsp::kBlock) {
         int n = std::min(dsp::kBlock, frames - off);
         ioOffset = off;
-        for (Box* b : chain_) b->dsp(n);
-        for (auto& e : extras) e->runChain(n);
+        tlBlockStart = t;
+        if (plan) {
+            plan->run(n);
+            for (const PatchPlan* e : plan->extras) e->run(n);
+        }
+        t += (uint64_t)n;
+        sampleTime_.store(t, std::memory_order_release);
         ++blockCount;
     }
     for (size_t k = 0, N = (size_t)frames * outCh; k < N; ++k)
         out[k] = std::isfinite(out[k]) ? std::clamp(out[k], -1.f, 1.f) : 0.f;
     ioIn = nullptr;
     ioOut = nullptr;
+    tlBuffers = prevBuffers;
+    if (lk.owns_lock()) lk.unlock();
+    inside_.store(false, std::memory_order_release);
+    --tlInProcess;
+}
+
+// ---- names: receive and buffer~, indexed
+
+void Patch::rebuildIndex() {
+    receivers_.clear();
+    buffers_.clear();
+    forEachBox([&](Box* b) {
+        if (auto r = dynamic_cast<ReceiveBox*>(b)) receivers_[r->name].push_back(r);
+        else if (auto bb = dynamic_cast<BufferBox*>(b)) buffers_.emplace(bb->name, bb);   // the first one
+    });
+    indexDirty_ = false;
+}
+
+const std::vector<ReceiveBox*>& Patch::receivers(const std::string& name) {
+    Patch* r = root();
+    if (r->indexDirty_) r->rebuildIndex();
+    static const std::vector<ReceiveBox*> none;
+    auto it = r->receivers_.find(name);
+    return it == r->receivers_.end() ? none : it->second;
+}
+
+BufferBox* Patch::bufferNamed(const std::string& name) {
+    Patch* r = root();
+    if (r->indexDirty_) r->rebuildIndex();
+    auto it = r->buffers_.find(name);
+    return it == r->buffers_.end() ? nullptr : it->second;
 }
 
 void Patch::sendTo(const std::string& name, const Message& m) {
@@ -879,12 +1283,8 @@ void Patch::sendTo(const std::string& name, const Message& m) {
         else handleDspMessage(this, m);
         return;
     }
-    std::vector<ReceiveBox*> rs;
-    forEachBox([&](Box* b) {
-        if (auto r = dynamic_cast<ReceiveBox*>(b))
-            if (r->name == name) rs.push_back(r);
-    });
     if (depth > 256) { status("stack overflow: message loop via " + name); return; }
+    std::vector<ReceiveBox*> rs = receivers(name);   // a copy: receiving may change the patches
     ++depth;
     for (auto r : rs) r->receive(m);
     --depth;
@@ -899,6 +1299,18 @@ bool handleDspMessage(Patch* p, const Message& m) {
     if (m[0].is("start") || m[0].is("startwindow")) { if (r->onDsp) r->onDsp(true); return true; }
     if (m[0].is("stop")) { if (r->onDsp) r->onDsp(false); return true; }
     return false;
+}
+
+// Classes whose box text is one string (message, comment, expr, expr~): the
+// object files register them; build() joins their arguments before making them.
+std::set<std::string>& wholeTextClasses() {
+    static std::set<std::string> s;
+    return s;
+}
+
+bool takesWholeText(const std::string& cls) {
+    (void)classInfos();                        // the object files have registered theirs
+    return wholeTextClasses().count(cls) > 0;
 }
 
 // ---- file format
@@ -983,7 +1395,7 @@ bool Patch::build(const SExpr& form, std::vector<std::unique_ptr<Box>>& nb,
                     raw.push_back(sexprAtom(a));
                 }
             }
-            if (cls == "message" || cls == "comment" || cls == "expr" || cls == "expr~")
+            if (takesWholeText(cls))
                 raw = {Atom(messageToString(raw))};
             if (y < 0) { y = autoY; autoY += 40; }
             if (byId.count(id)) {
@@ -1035,15 +1447,13 @@ bool Patch::load(const SExpr& form, std::string& err) {
 
     std::vector<std::unique_ptr<Box>> old;
     if (parent) for (auto& b : boxes) root()->cancel(b.get());
-    else timers_.clear();
-    {
-        std::lock_guard<std::mutex> lk(mutex());
-        old.swap(boxes);
-        conns = std::move(nc);
-        boxes = std::move(nb);
-        recompile();
-        old.clear();
-    }
+    else { timers_.clear(); collectArmed_ = false; }
+    old.swap(boxes);
+    conns = std::move(nc);
+    cablesChanged();
+    boxes = std::move(nb);
+    recompile();
+    retireBoxes(std::move(old));
     for (size_t k = 0; k < boxes.size(); ++k) boxes[k]->attached();
     err.clear();
     for (auto& w : warnings) err += (err.empty() ? "" : "\n") + w;
@@ -1078,15 +1488,13 @@ bool Patch::merge(const std::string& src, int dx, int dy, std::vector<Box*>& add
         taken.insert(b->id);
     }
     added.clear();
-    {
-        std::lock_guard<std::mutex> lk(mutex());
-        for (auto& b : nb) {
-            added.push_back(b.get());
-            boxes.push_back(std::move(b));
-        }
-        for (auto& c : nc) conns.push_back(c);
-        recompile();
+    for (auto& b : nb) {
+        added.push_back(b.get());
+        boxes.push_back(std::move(b));
     }
+    for (auto& c : nc) conns.push_back(c);
+    cablesChanged();
+    recompile();
     for (Box* b : added) b->attached();
     err.clear();
     for (auto& w : warnings) err += (err.empty() ? "" : "\n") + w;
@@ -1164,7 +1572,6 @@ bool Patch::applyText(const std::string& src, std::string& err) {
         }
     }
     {
-        std::lock_guard<std::mutex> lk(mutex());
         // keep the text's order: kept boxes go where the text puts them
         std::vector<std::unique_ptr<Box>> ordered;
         std::map<Box*, std::unique_ptr<Box>*> oldSlot;
@@ -1185,10 +1592,11 @@ bool Patch::applyText(const std::string& src, std::string& err) {
             }
         boxes = std::move(ordered);
         conns = std::move(conns2);
+        cablesChanged();
         recompile();
-        gone.clear();
+        retireBoxes(std::move(gone));
     }
-    unused.clear();
+    unused.clear();                              // never ran
     for (Box* b : added) b->attached();
     err.clear();
     for (auto& w : warnings) err += (err.empty() ? "" : "\n") + w;

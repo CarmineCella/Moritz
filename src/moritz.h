@@ -6,39 +6,72 @@
 //
 // Threading model
 //   * Everything except Patch::process() runs on the GUI (main) thread:
-//     editing, message passing, file I/O.
-//   * The audio callback calls Patch::process(). It only try_locks the
-//     patch's DSP mutex, so it never blocks; while the GUI holds the lock
-//     during a structural edit, one block of silence is produced.
-//   * Values the GUI sends to signal objects while audio runs (floats on
-//     signal inlets, bangs to click~) go through atomics; ramps for line~
-//     go through a lock-free queue. Audio -> GUI values (meter~, scope~,
-//     snapshot~) are atomics read by the GUI.
+//     editing, message passing, file I/O. (A patch rendered by the render
+//     object belongs to that render's worker thread instead: messages other
+//     threads send into it are queued and dispatched by the worker.)
+//   * The signal graph is compiled on the GUI thread into a plan: the order
+//     of the boxes, the buffers of their signal ports (owned by the plan) and
+//     the plans of the patches inside them. The plan is published to the
+//     audio thread with one atomic pointer swap; the audio thread takes the
+//     newest plan at the start of each callback and never waits for the GUI.
+//     An edit never silences the audio: until the new plan is published the
+//     old one keeps playing.
+//   * What the audio thread may still be using (old plans, removed boxes,
+//     replaced state) is retired, not freed: Patch::retire() keeps it until
+//     the audio thread has started a callback after the swap (it says so
+//     through an epoch counter), then the GUI thread frees it.
+//   * State a box prepares for the audio thread (delay lines sized for the
+//     rate, head responses, prepared impulse responses...) is built on the GUI
+//     thread and published the same way (Published<T>, objects.h); objects
+//     handed over and back (a click~ shape, a line~ list) go through a
+//     Mailbox<T>, which returns the old one to the GUI thread to be freed.
+//   * Buffer~ storage: record~ and poke~ write it, play~ & co. read it. The
+//     audio thread try_locks the patch's mutex at the start of each callback;
+//     the GUI holds it only to swap a buffer~'s storage (O(1)), or briefly in
+//     code that changes one in place. If the try_lock fails, buffer~ readers
+//     see no buffer for that one callback; everything else plays on.
+//   * Timestamped events: a message to a signal object (a number on a signal
+//     inlet, bang to click~, line~ ramps, play~/record~/count~ commands...)
+//     is stamped with a target sample time and queued for the box (one
+//     single-producer queue per box). The audio thread applies it at that
+//     sample inside the block. The stamp comes from the patch clock: the time
+//     the scheduler meant the message to happen (a metro's tick, not the
+//     moment the GUI timer fired) mapped onto the sample count, plus two
+//     device buffers of latency (real time: the callback may already have
+//     computed a buffer ahead, and the GUI timer may fire up to a buffer
+//     late; a timer later than that lands late, at the start of the next
+//     block). Relative timers (Patch::schedule) count from that same time,
+//     so a metro never drifts. The mapping is anchored at each audio
+//     callback (wall time against samples, smoothed). Rendering offline, the
+//     clock is the sample count itself: no latency, and the scheduler runs
+//     ahead to the end of each block, so timers land on their exact sample.
+//     Events are applied at their offset by the box (Box::events(),
+//     eventPieces); a value for a signal inlet changes there by itself
+//     (sigIn). Inside pfft~ a call is a frame, not time: events apply at once.
+//   * Audio -> GUI values (meter~, scope~, snapshot~) are atomics read by
+//     the GUI.
 //   * Timed objects (metro, delay, line, ...) use the patch's scheduler,
 //     which runs on the GUI thread (like Max with Overdrive off).
-//   * A patch the render object runs belongs to the render's worker thread
-//     while it renders (Patch::setDispatchThread): messages other threads
-//     send into it (a code box's output, its (send ...), a rebuild) are
-//     queued and dispatched by the worker between blocks, so one thread
-//     only ever dispatches its messages and touches its scheduler.
 //
 // Nesting
 //   * Subpatchers (p), abstractions and pfft~ own a child Patch. The top
-//     patch (root) owns everything shared: the DSP lock, sample rate,
-//     scheduler, audio I/O, send/receive and buffer~ names. A child's signal
-//     chain is run by its owner box from inside the root's chain.
+//     patch (root) owns everything shared: the plan, the buffer lock, sample
+//     rate, scheduler, audio I/O, send/receive and buffer~ names. A child's
+//     plan is run by its owner box (runInner) from inside the root's plan.
 
 #pragma once
 
 #include "recorder.h"
 
 #include <atomic>
+#include <cstdint>
 #include <functional>
 #include <map>
 #include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 
 #include "dsp.h"
@@ -101,15 +134,45 @@ bool parseSExprs(const std::string& src, std::vector<SExpr>& out, std::string& e
 // ====================================================================== boxes
 
 class Patch;
+struct PatchPlan;
 
 // Tap: the special tapin~ -> tapout~ link. It shares a delay line without
 // ordering the two objects, so feedback through a delay is allowed.
 enum class Port { Control, Signal, Tap };
 enum class BoxKind { Object, Message, Number, UI, Comment, Broken };
 
+// A timestamped event for a box's audio side (see the threading model).
+// kind kEvScalar is a value for signal inlet `inlet`; kinds from kEvUser on
+// are the box's own (click~'s bang, line~'s ramps ...).
+struct Event {
+    uint64_t at = 0;          // target sample time
+    float a = 0.f, b = 0.f;
+    int16_t inlet = -1;
+    uint8_t kind = 0;
+};
+enum : uint8_t { kEvScalar = 0, kEvUser = 16 };
+
+// What a box's signal ports are connected to in one plan: built on the GUI
+// thread with the plan, read-only afterwards.
+struct BoxIO {
+    std::vector<float*> out;                       // per outlet: its buffer (nullptr: not a signal)
+    std::vector<std::vector<const float*>> src;    // per inlet: the buffers summed into it
+    std::vector<float*> scratch;                   // per signal inlet: room for a sum or its value
+    std::vector<const PatchPlan*> inner;           // the plans of the patches the box holds
+    float* sink = nullptr;                         // where an outlet the plan does not know writes
+    // the double-precision path: positions past 2^24 samples (count~ -> index~,
+    // line~ -> play~). outD: the outlet's double companion, if the box has one;
+    // srcD: an inlet fed by exactly one such outlet sees it there
+    std::vector<double*> outD;
+    std::vector<const double*> srcD;
+};
+
 class Box {
 public:
-    virtual ~Box() = default;
+    Box();
+    virtual ~Box();
+    Box(const Box&) = delete;
+    Box& operator=(const Box&) = delete;
 
     // ---- identity / layout
     std::string id;          // name used in the patch file
@@ -127,7 +190,7 @@ public:
 
     // ---- behaviour
     // GUI thread. By default a number on a signal inlet becomes its value
-    // while nothing is connected there.
+    // while nothing is connected there (timestamped: it changes at its sample).
     virtual void message(int inlet, const Message& m) {
         if (inlet >= 0 && inlet < numIns() && ins[(size_t)inlet] == Port::Signal && !m.empty() && m[0].isFloat())
             setScalar(inlet, m[0].f);
@@ -139,14 +202,22 @@ public:
     virtual bool wantsInput() const { return false; }     // uses audio input (adc~)
     virtual int outputChannels() const { return 0; }      // the highest output channel it writes (dac~)
     virtual void attached() {}         // box joined a patch (GUI thread): load files, start timers
-    virtual void resolve() {}          // during compile, DSP lock held: look up buffers/taps
-    // a buffer~'s contents were replaced (GUI thread, lock not held): conv~ prepares again
+    // During compile, on the GUI thread, while the audio thread may still be
+    // running the previous plan (and this box's dsp): look up buffers, taps,
+    // names... into atomics, a BufferRef or Published<> state (objects.h);
+    // never change in place what dsp() is using.
+    virtual void resolve() {}
+    // a buffer~'s contents were replaced (GUI thread): boxes that prepare from one look again
     virtual void buffersChanged() {}
     virtual void audioChanged() {}     // audio started, stopped or reopened (GUI thread)
     virtual void midiIn(const std::vector<unsigned char>& msg) {}   // a MIDI message arrived (GUI thread)
     // send~ / receive~: the chain runs a send~ before the receive~s of its name
     virtual std::string signalSendName() const { return ""; }
     virtual std::string signalReceiveName() const { return ""; }
+    // the tap link (tapin~ -> tapout~) may end at this inlet
+    virtual bool acceptsTap(int inlet) const { return false; }
+    // this signal outlet also gives its values in double precision (count~, line~)
+    virtual bool preciseOut(int outlet) const { return false; }
 
     // ---- boxes holding a patch (p, abstractions, pfft~)
     virtual Patch* inner() const { return nullptr; }       // the one a window shows
@@ -179,24 +250,50 @@ public:
     void outletFloat(int i, float v) { outlet(i, Message{Atom(v)}); }
     void outletBang(int i) { outlet(i, Message{Atom("bang")}); }
 
-    // ---- signal plumbing
+    // ---- signal plumbing (audio thread, inside dsp(), through the running plan)
     void setPorts(std::vector<Port> in, std::vector<Port> out);
-    void ensureBlock(int n);               // grow signal buffers to n samples (compile)
-    const float* sigIn(int i, int n);      // summed input, or the inlet's scalar
-    float* sigOut(int i) { return outBuf_[i].data(); }
-    float scalar(int i) const { return scalar_[i].load(std::memory_order_relaxed); }
-    void setScalar(int i, float v) { scalar_[i].store(v, std::memory_order_relaxed); }
+    const float* sigIn(int i, int n);      // summed input, or the inlet's value (sample-accurate)
+    float* sigOut(int i);
+    bool connected(int i) const;           // a signal reaches inlet i
+    double* sigOutPrecise(int i);          // the outlet's double companion (preciseOut), or nullptr
+    const double* sigInPrecise(int i);     // the inlet's input in double precision, or nullptr
+    int outCount() const;                  // the outlets the running plan knows (sigOutIf: nullptr
+    float* sigOutIf(int i);                // for one that is not a signal): ports that change
+    int innerCount() const;                // the inner plans it runs
+    void runInner(int k, int n);           // runs the k-th inner patch (n samples, or bins in pfft~)
+    // ---- control values: scalar(i) is the latest value given to inlet i;
+    // setScalar (GUI thread) timestamps it when i is a signal inlet
+    float scalar(int i) const;
+    void setScalar(int i, float v);
 
-    // set by Patch::compile(): source buffers feeding each signal inlet
-    std::vector<std::vector<const float*>> inSrc;
+    // ---- timed events. post(): GUI thread (or the patch's dispatch thread),
+    // stamped with Patch::stamp(). In dsp(): the events due in this block,
+    // in order, each at its offset 0..n-1.
+    void post(uint8_t kind, float a = 0.f, float b = 0.f, int inlet = -1);
+    int events() const;
+    const Event& event(int k) const;
+    int eventOffset(int k) const;
 
     // GUI state
     bool selected = false;
     double flashUntil = 0.0;
 
 private:
-    std::vector<std::vector<float>> outBuf_, inBuf_;
-    std::unique_ptr<std::atomic<float>[]> scalar_;
+    friend class Patch;
+    friend struct PatchPlan;
+    struct Scalars;
+    struct Inbox;
+    void beginBlock(uint64_t t0, int n, bool untimed);   // audio: take the events due
+    void endBlock();                                     // audio: the values they set stay
+    Inbox* inbox();                                      // GUI: made on first use
+    std::atomic<Scalars*> scal_{nullptr};
+    std::vector<std::unique_ptr<Scalars>> oldScalars_;   // kept: the audio thread may still read one
+    std::atomic<Inbox*> inbox_{nullptr};
+    const BoxIO* io_ = nullptr;                          // audio: its wiring in the running plan
+    uint64_t lastStamp_ = 0;                             // GUI: stamps never go back
+    // outlet(): the cables of each outlet (rebuilt when the patch's cables change)
+    std::vector<std::vector<std::pair<Box*, int>>> targets_;
+    uint64_t targetsGen_ = ~0ull;
 };
 
 struct Connection {
@@ -251,12 +348,37 @@ const std::vector<ClassInfo>& classInfos();     // every class, in menu order
 std::vector<std::string> allClassNames();       // every creatable class, sorted
 const char* describeClass(const std::string& cls);  // one-line help, "" if unknown
 
+// ====================================================================== plans
+
+// The compiled signal graph of one patch (see the threading model): its
+// boxes in running order with their wiring, the memory of their signal
+// ports, and the plans of the patches inside them. Immutable once published.
+struct PatchPlan {
+    struct Step {
+        Box* box;
+        BoxIO io;
+    };
+    std::vector<Step> steps;
+    std::vector<std::unique_ptr<PatchPlan>> owned;   // the inner patches' plans (and the root's extras)
+    std::vector<const PatchPlan*> extras;            // root: the extras' plans, run after its own
+    std::vector<float> arena;                        // the signal buffers
+    std::vector<double> arenaD;                      // and their double companions
+    int vs = 64;                                     // vector size (a pfft~ frame's bins inside one)
+    bool spectral = false;                           // inside pfft~: a call is a frame, not time
+    void run(int n) const;                           // audio thread
+};
+
+class ReceiveBox;
+class BufferBox;
+
 // ====================================================================== patch
 
 class Patch {
 public:
     Patch();
     ~Patch();
+    Patch(const Patch&) = delete;
+    Patch& operator=(const Patch&) = delete;
 
     std::vector<std::unique_ptr<Box>> boxes;
     std::vector<Connection> conns;
@@ -266,9 +388,10 @@ public:
     Box* owner = nullptr;        // the p / abstraction / pfft~ box holding this patch
     Patch* root() { Patch* p = this; while (p->parent) p = p->parent; return p; }
     const Patch* root() const { const Patch* p = this; while (p->parent) p = p->parent; return p; }
+    // The buffer~ lock: the audio thread try_locks it for each callback; hold
+    // it only to swap a buffer~'s storage, or to change one in place.
     std::mutex& mutex() { return root()->dspMutex; }
     void forEachBox(const std::function<void(Box*)>& fn);   // this patch and all inner ones
-    void runChain(int n) { for (Box* b : chain_) b->dsp(n); }   // called by the owner box
     void structureChanged();     // notify this patch and the ones around it
 
     // Patches the root runs alongside its own boxes but never saves: open
@@ -339,13 +462,18 @@ public:
     }
     void redraw() { if (onRedraw) onRedraw(); }
     void print(const std::string& s);
+    // the receive boxes and the buffer~s of a name, anywhere under the root
+    // (an index, rebuilt after the structure changes)
+    const std::vector<ReceiveBox*>& receivers(const std::string& name);
+    BufferBox* bufferNamed(const std::string& name);
+    void namesChanged() { root()->indexDirty_ = true; }   // a receive or buffer~ was renamed
 
-    // ---- the thread that dispatches messages: the GUI thread, unless set
-    // (the render object's worker, for the patch it renders). From another
-    // thread, messages (outlet, sendTo, rebuild) are queued for it, and it
-    // runs them with drainForeign().
-    void setDispatchThread(std::thread::id t);           // std::thread::id(): the GUI's again
-    bool foreignThread() const;                          // the caller is not the dispatch thread
+    // ---- the thread that dispatches messages: normally the GUI thread; a
+    // patch the render object runs belongs to its worker for the render.
+    // Messages from other threads (a code box's output, its (send ...)) are
+    // queued and run by the owner at the next block (drainForeign).
+    void setDispatchThread(std::thread::id t);
+    bool foreignThread() const;                       // the caller is not the dispatch thread
     void runOnDispatchThread(std::function<void()> fn);
     void drainForeign();
 
@@ -353,21 +481,35 @@ public:
     std::function<double()> clock;     // set on the root
     double time() const { return root()->clock ? root()->clock() : 0.0; }
     void scheduleAt(Box* owner, double t, std::function<void()> fn);
+    // relative to the time the message being dispatched belongs to (a timer's own
+    // time while it runs): a metro ticks at exact intervals, however late its timer fires
     void schedule(Box* owner, double delay, std::function<void()> fn) {
-        scheduleAt(owner, time() + delay, std::move(fn));
+        scheduleAt(owner, logicalTime() + delay, std::move(fn));
     }
     void cancel(Box* owner);
-    void runDue(double t);
-    double nextDue() const;   // +inf when idle
+    void runDue(double t);       // runs the timers due at or before t, in time order
+    double nextDue() const;      // +inf when idle
+    // the time the message being dispatched belongs to: a timer's own time
+    // while it runs (not the moment it fired), else the clock
+    double logicalTime() const;
+
+    // ---- timed events
+    bool offline = false;        // root: rendered offline, the clock is the sample count
+    uint64_t stamp();            // GUI thread: the sample at which a message sent now takes effect
+    uint64_t sampleTime() const { return root()->sampleTime_.load(std::memory_order_acquire); }
 
     // ---- files
     std::string dir;          // folder of the patch file, for relative paths ("" = parent's)
     std::string resolvePath(const std::string& p) const;
     void rebuild();           // recompile after a box changed what it refers to
-    // the sample rate changed (the audio device reopened): compiles again if the boxes were
-    // prepared for another rate, so they prepare (delay lines, head responses) here, on the
-    // GUI thread before audio starts, never in dsp()
-    void rateChanged();
+    void rateChanged();       // the sample rate changed: compile again for it (before audio runs)
+
+    // ---- what the audio thread may still use (GUI thread): x is freed once
+    // the audio thread has started a callback after this call
+    void retire(std::shared_ptr<void> x);
+    // frees what can be freed; wait: until the audio thread has let go of
+    // everything (at most about a second; what is left is freed later)
+    void collectGarbage(bool wait = false);
 
     // ---- audio (audio thread)
     void process(const float* in, int inCh, float* out, int outCh, int frames);
@@ -399,12 +541,42 @@ public:
     std::mutex dspMutex;
 
 private:
-    void compile();        // caller holds the DSP lock; compiles inner patches too
+    friend struct PatchPlan;
+    friend class Box;
+    void compile();        // root: compiles everything into a plan and publishes it
     void recompile() { root()->compile(); }
+    void buildPlan(PatchPlan& plan);   // this patch (and the ones inside it)
     bool reaches(Box* from, Box* to) const;   // signal path from -> to
-    void addSendReceiveEdges(const std::vector<Box*>& sig, std::map<Box*, std::vector<Box*>>& next,
-                             std::map<Box*, int>& indeg);
-    std::vector<Box*> chain_;
+    void cablesChanged() { ++connGen_; }
+    void retireBoxes(std::vector<std::unique_ptr<Box>> gone);   // after a plan without them
+    void rebuildIndex();
+    void anchorClock();    // audio thread: where the clock is on the sample count
+    // the plan (GUI side owner; the audio thread reads plan_)
+    std::shared_ptr<PatchPlan> current_;
+    std::atomic<const PatchPlan*> plan_{nullptr};
+    // retirement: the GUI counts epochs, the audio thread says which it saw last
+    std::atomic<uint64_t> epoch_{0}, seen_{0};
+    std::atomic<bool> inside_{false};
+    std::vector<std::pair<uint64_t, std::shared_ptr<void>>> garbage_;
+    bool collectArmed_ = false;
+    double planRate_ = 0.0;            // the sample rate the plan was made for
+    // clock anchor: sample count minus wall time (s) * rate, smoothed (audio writes, GUI reads)
+    std::atomic<double> clockOffset_{0.0};
+    std::atomic<bool> anchored_{false};
+    std::atomic<uint64_t> sampleTime_{0};
+    double offsetEst_ = 0.0;
+    // the cables changed (outlet() caches its targets)
+    uint64_t connGen_ = 0;
+    // receive and buffer~ names
+    std::unordered_map<std::string, std::vector<ReceiveBox*>> receivers_;
+    std::unordered_map<std::string, BufferBox*> buffers_;
+    bool indexDirty_ = true;
+    // messages from other threads, for the dispatch thread
+    std::atomic<std::thread::id> dispatch_{};
+    std::mutex foreignMutex_;
+    std::vector<std::function<void()>> foreign_;
+    std::atomic<bool> hasForeign_{false};
+    // the scheduler: a binary heap, earliest first
     struct Timer {
         double t;
         uint64_t seq;
@@ -414,12 +586,7 @@ private:
     std::vector<Timer> timers_;
     uint64_t timerSeq_ = 0;
     bool inRunDue_ = false;
-    double planRate_ = 0.0;      // root: the sample rate of the last compile
-    // messages from other threads for the dispatch thread (root)
-    std::atomic<std::thread::id> dispatch_{};
-    std::mutex foreignMutex_;
-    std::vector<std::function<void()>> foreign_;
-    std::atomic<bool> hasForeign_{false};
+    double dueNow_ = 0.0;
 };
 
 // The audio thread is inside Patch::process (for the allocation guard of

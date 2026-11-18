@@ -25,11 +25,18 @@ public:
     void message(int in, const Message& m) override {
         if (!m[0].isFloat()) return;
         if (in == 0) setScalar(0, m[0].f);
-        else osc_.setPhase(m[0].f);
+        else post(kPhase, m[0].f);                       // at its sample
     }
-    void dsp(int n) override { osc_.process(sigIn(0, n), sigOut(0), n, patch->root()->sampleRate); }
+    void dsp(int n) override {
+        const float* f = sigIn(0, n);
+        float* y = sigOut(0);
+        double sr = patch->root()->sampleRate;
+        eventPieces(*this, n, [&](int a, int b) { osc_.process(f + a, y + a, b - a, sr); },
+                    [&](const Event& e) { osc_.setPhase(e.a); });
+    }
 
 private:
+    enum : uint8_t { kPhase = kEvUser };
     dsp::Cycle osc_;
 };
 
@@ -45,7 +52,7 @@ public:
         setScalar(3, argf(a, 2, 10.f));
     }
     void message(int in, const Message& m) override {
-        if (m[0].is("clear")) { std::lock_guard<std::mutex> lk(patch->mutex()); f_.clear(); return; }
+        if (m[0].is("clear")) { post(kClear); return; }   // the audio thread clears it
         if (in == 0 && m.size() >= 2) {
             for (size_t k = 0; k < m.size() && k < 3; ++k)
                 if (m[k].isFloat()) setScalar(1 + (int)k, m[k].f);
@@ -56,10 +63,17 @@ public:
     void dsp(int n) override {
         const float* x = sigIn(0, n);
         float g = sigIn(1, n)[0], cf = sigIn(2, n)[0], q = sigIn(3, n)[0];
+        if (events() && hasEvent(kClear)) f_.clear();
         f_.process(x, sigOut(0), n, g, cf, q, patch->root()->sampleRate);
     }
 
 private:
+    enum : uint8_t { kClear = kEvUser };
+    bool hasEvent(uint8_t kind) const {
+        for (int k = 0; k < events(); ++k)
+            if (event(k).kind == kind) return true;
+        return false;
+    }
     dsp::Reson f_;
 };
 
@@ -79,8 +93,8 @@ private:
 };
 
 // ---------------------------------------------------------------- click~
-// click~: bang outputs an impulse; a list of floats ("set" optional) sets
-// the impulse shape.
+// click~: bang outputs an impulse (at the sample the bang is for); a list of
+// floats ("set" optional) sets the impulse shape.
 class ClickBox : public Box {
 public:
     explicit ClickBox(const Message& a) {
@@ -88,20 +102,36 @@ public:
         if (!a.empty()) setShape(a);
     }
     void message(int, const Message& m) override {
-        if (m[0].is("bang")) { click_.trigger(); return; }
+        if (m[0].is("bang")) { post(kBang); return; }
         setShape(m[0].is("set") ? Message(m.begin() + 1, m.end()) : m);
     }
-    void dsp(int n) override { click_.process(sigOut(0), n); }
+    void dsp(int n) override {
+        float* y = sigOut(0);
+        int ev = 0, ne = events();
+        for (int i = 0; i < n; ++i) {
+            for (; ev < ne && eventOffset(ev) <= i; ++ev) {
+                if (event(ev).kind == kBang) pos_ = 0;
+                else if (event(ev).kind == kShape) { shapes_.take(); pos_ = SIZE_MAX; }
+            }
+            const std::vector<float>* sh = shapes_.current();
+            const float* v = sh ? sh->data() : &one_;
+            size_t len = sh ? sh->size() : 1;
+            y[i] = pos_ < len ? v[pos_++] : 0.f;
+        }
+    }
 
 private:
+    enum : uint8_t { kBang = kEvUser, kShape };
+    // the shape goes to the audio thread through a mailbox (the old one comes back to be freed)
     void setShape(const Message& m) {
-        std::vector<float> s;
-        for (auto& a : m) if (a.isFloat()) s.push_back(a.f);
-        std::lock_guard<std::mutex> lk(patch ? patch->mutex() : dummy_);
-        click_.setShape(std::move(s));
+        auto s = std::make_unique<std::vector<float>>();
+        for (auto& a : m) if (a.isFloat()) s->push_back(a.f);
+        if (s->empty()) s->push_back(1.f);
+        if (shapes_.send(std::move(s))) post(kShape);
     }
-    std::mutex dummy_;
-    dsp::Click click_;
+    Mailbox<std::vector<float>, 16> shapes_;
+    const float one_ = 1.f;
+    size_t pos_ = SIZE_MAX;                    // audio side
 };
 
 // ---------------------------------------------------------------- +~ -~ *~ /~
@@ -193,14 +223,16 @@ public:
         setScalar(2, argf(a, 1, 1.f));
     }
     void message(int in, const Message& m) override {
-        if (m[0].is("reset")) reset_.store(true);
+        if (m[0].is("reset")) post(kReset);
         else if (m[0].isFloat()) setScalar(in, m[0].f);
     }
     void dsp(int n) override {
         const float *x = sigIn(0, n), *up = sigIn(1, n), *down = sigIn(2, n);
         float* out = sigOut(0);
-        if (reset_.exchange(false)) y_ = x[0];
+        int ev = 0, ne = events();
         for (int i = 0; i < n; ++i) {
+            for (; ev < ne && eventOffset(ev) <= i; ++ev)
+                if (event(ev).kind == kReset) y_ = x[i];      // jumps to the input, at its sample
             float s = std::max(1.f, x[i] > y_ ? up[i] : down[i]);
             y_ += (x[i] - y_) / s;
             if (!std::isfinite(y_)) y_ = 0.f;
@@ -209,8 +241,8 @@ public:
     }
 
 private:
+    enum : uint8_t { kReset = kEvUser };
     float y_ = 0.f;
-    std::atomic<bool> reset_{false};
 };
 
 // ---------------------------------------------------------------- selector~ / gate~
@@ -304,9 +336,9 @@ private:
 // a feedback loop through them (one block, 64 samples).
 class SendSigBox : public Box {
 public:
-    explicit SendSigBox(const Message& a) : name_(argstr(a, 0)) { setPorts({P::Signal}, {}); }
+    // its buffer holds the largest vector there is (a pfft~ frame): never resized while it runs
+    explicit SendSigBox(const Message& a) : name_(argstr(a, 0)), buf_(16384, 0.f) { setPorts({P::Signal}, {}); }
     std::string signalSendName() const override { return name_; }
-    void resolve() override { buf_.assign((size_t)patch->vectorSize(), 0.f); frames_ = 0; }
     void message(int, const Message& m) override {
         if (m[0].is("set") && m.size() > 1) { name_ = m[1].str(); patch->rebuild(); }
     }
@@ -329,12 +361,15 @@ class ReceiveSigBox : public Box {
 public:
     explicit ReceiveSigBox(const Message& a) : name_(argstr(a, 0)) { setPorts({P::Control}, {P::Signal}); }
     std::string signalReceiveName() const override { return name_; }
+    // the send~s of its name, at compile: a new list is published (the old one retired)
     void resolve() override {
-        sends_.clear();
+        std::vector<SendSigBox*> found;
         patch->root()->forEachBox([&](Box* b) {
             if (auto s = dynamic_cast<SendSigBox*>(b))
-                if (s->signalSendName() == name_) sends_.push_back(s);
+                if (s->signalSendName() == name_) found.push_back(s);
         });
+        if (sends_.get() && *sends_.get() == found) return;
+        sends_.set(patch, std::make_unique<std::vector<SendSigBox*>>(std::move(found)));
     }
     void message(int, const Message& m) override {
         if (m[0].is("set") && m.size() > 1) { name_ = m[1].str(); patch->rebuild(); }
@@ -342,7 +377,9 @@ public:
     void dsp(int n) override {
         float* out = sigOut(0);
         dsp::fill(out, 0.f, n);
-        for (auto* s : sends_) {
+        const std::vector<SendSigBox*>* sends = sends_.get();
+        if (!sends) return;
+        for (auto* s : *sends) {
             const float* x = s->data();
             for (int i = 0, k = std::min(n, s->frames()); i < k; ++i) out[i] += x[i];
         }
@@ -350,7 +387,7 @@ public:
 
 private:
     std::string name_;
-    std::vector<SendSigBox*> sends_;
+    Published<std::vector<SendSigBox*>> sends_;
 };
 
 // ---------------------------------------------------------------- dspstate~
@@ -397,44 +434,58 @@ private:
 
 // ---------------------------------------------------------------- line~
 // line~: signal ramp. "target time" pairs make segments ("1 10 0 300");
-// a float alone jumps, or ramps over the time given in the right inlet.
+// a float alone jumps, or ramps over the time given in the right inlet. A
+// list starts at the sample the message is for; its length has no limit
+// (the list goes to the audio thread whole, through a mailbox). Fed
+// directly into play~, its value reaches it in double precision.
 class LineSigBox : public Box {
 public:
+    using Seg = dsp::Ramp::Seg;
     explicit LineSigBox(const Message& a) {
         setPorts({P::Control, P::Control}, {P::Signal});
-        if (!a.empty() && a[0].isFloat()) post({dsp::Ramp::Cmd::Segment, a[0].f, 0.f});
+        if (!a.empty() && a[0].isFloat()) send({Seg{a[0].f, 0.f}});
     }
+    bool preciseOut(int) const override { return true; }
     void message(int in, const Message& m) override {
         if (in == 1) { if (m[0].isFloat()) time_ = m[0].f; return; }
-        if (m[0].is("stop")) { post({dsp::Ramp::Cmd::Stop, 0.f, 0.f}); return; }
+        if (m[0].is("stop")) { post(kStop); return; }
         if (!m[0].isFloat()) return;
-        dropped_ = 0;
-        post({dsp::Ramp::Cmd::Begin, 0.f, 0.f});
-        int segments = 0;
+        std::vector<Seg> list;
         if (m.size() == 1) {
-            post({dsp::Ramp::Cmd::Segment, m[0].f, time_});
+            list.push_back({m[0].f, time_});
         } else {
-            for (size_t k = 0; k < m.size(); k += 2, ++segments) {
+            for (size_t k = 0; k < m.size(); k += 2) {
                 float target = m[k].isFloat() ? m[k].f : 0.f;
                 float ms = k + 1 < m.size() && m[k + 1].isFloat() ? m[k + 1].f : 0.f;
-                if (segments < dsp::Ramp::kMax) post({dsp::Ramp::Cmd::Segment, target, ms});
-                else ++dropped_;
+                list.push_back({target, ms});
             }
         }
         time_ = 0.f;
-        if (dropped_ > 0)       // never silently: more segments than line~ holds, or audio is off
-            patch->print("line~: " + std::to_string(dropped_) + " segments dropped (at most " +
-                         std::to_string(dsp::Ramp::kMax) + " waiting; is audio on?)");
+        send(std::move(list));
     }
-    void dsp(int n) override { ramp_.process(sigOut(0), n, patch->root()->sampleRate); }
+    void dsp(int n) override {
+        float* y = sigOut(0);
+        double* yd = sigOutPrecise(0);
+        double sr = patch->root()->sampleRate;
+        eventPieces(*this, n, [&](int a, int b) { ramp_.process(y + a, yd ? yd + a : nullptr, b - a, sr); },
+                    [&](const Event& e) {
+                        if (e.kind == kStop) ramp_.stop();
+                        else if (e.kind == kList)
+                            if (const std::vector<Seg>* l = lists_.take()) ramp_.start(l->data(), (int)l->size(), sr);
+                    });
+    }
 
 private:
-    void post(const dsp::Ramp::Cmd& c) {
-        if (!ramp_.post(c)) ++dropped_;
+    enum : uint8_t { kList = kEvUser, kStop };
+    void send(std::vector<Seg> list) {
+        if (lists_.send(std::make_unique<std::vector<Seg>>(std::move(list)))) post(kList);
+        else if (patch)       // never silently: the audio thread has not taken the ones before
+            patch->print("line~: a ramp dropped: " + std::to_string(kLists - 1) + " are waiting already (is audio on?)");
     }
+    static constexpr size_t kLists = 64;
+    Mailbox<std::vector<Seg>, kLists> lists_;
     dsp::Ramp ramp_;
     float time_ = 0.f;
-    int dropped_ = 0;
 };
 
 // ---------------------------------------------------------------- sig~
@@ -463,11 +514,18 @@ public:
     void message(int in, const Message& m) override {
         if (!m[0].isFloat()) return;
         if (in == 0) setScalar(0, m[0].f);
-        else ph_.setPhase(m[0].f);
+        else post(kPhase, m[0].f);                       // at its sample
     }
-    void dsp(int n) override { ph_.process(sigIn(0, n), sigOut(0), n, patch->root()->sampleRate); }
+    void dsp(int n) override {
+        const float* f = sigIn(0, n);
+        float* y = sigOut(0);
+        double sr = patch->root()->sampleRate;
+        eventPieces(*this, n, [&](int a, int b) { ph_.process(f + a, y + a, b - a, sr); },
+                    [&](const Event& e) { ph_.setPhase(e.a); });
+    }
 
 private:
+    enum : uint8_t { kPhase = kEvUser };
     dsp::Phasor ph_;
 };
 
@@ -504,17 +562,20 @@ public:
         setScalar(2, argf(a, 1, 0.f));
     }
     void message(int in, const Message& m) override {
-        if (m[0].is("clear")) { std::lock_guard<std::mutex> lk(patch->mutex()); f_ = dsp::Biquad(); return; }
+        if (m[0].is("clear")) { post(kClear); return; }  // the audio thread clears it
         if (m[0].isFloat()) setScalar(in, m[0].f);
     }
     void dsp(int n) override {
         const float* x = sigIn(0, n);
+        for (int k = 0; k < events(); ++k)
+            if (event(k).kind == kClear) f_ = dsp::Biquad();
         float cf = sigIn(1, n)[0], res = std::clamp(sigIn(2, n)[0], 0.f, 1.f);
         f_.lowpass(cf, 0.707 + res * res * 24.0, patch->root()->sampleRate);
         f_.process(x, sigOut(0), n);
     }
 
 private:
+    enum : uint8_t { kClear = kEvUser };
     dsp::Biquad f_;
 };
 
@@ -607,34 +668,44 @@ private:
 // tapin~ maxms writes a delay line; connect its outlet to tapout~, whose
 // inlets set each tap's delay (ms). The tap link doesn't order the two, so
 // tapout~ -> ... -> tapin~ feedback is allowed (minimum delay: one block).
+// The line is sized for the rate the patch runs at, made at compile (again
+// when the rate changes) and published; `clear` empties it on the audio thread.
 class TapinBox : public Box {
 public:
     explicit TapinBox(const Message& a) {
         setPorts({P::Signal}, {P::Tap});
         maxMs_ = std::clamp(argf(a, 0, 1000.f), 1.f, 60000.f);
     }
-    // sized for the rate it runs at, at compile (again when the rate changes), never in dsp()
     void resolve() override {
         double sr = patch->root()->sampleRate.load();
         if (sr == sizedFor_) return;
         sizedFor_ = sr;
-        line.resize((size_t)(maxMs_ / 1000.0 * sr) + 4 * dsp::kBlock);
+        auto l = std::make_unique<dsp::DelayLine>();
+        l->resize((size_t)(maxMs_ / 1000.0 * sr) + 4 * dsp::kBlock);
+        line_.set(patch, std::move(l));
     }
     void message(int, const Message& m) override {
-        if (m[0].is("clear")) { std::lock_guard<std::mutex> lk(patch->mutex()); line.clear(); }
+        if (m[0].is("clear")) post(kClear);
     }
     void dsp(int n) override {
+        dsp::DelayLine* l = line_.get();
+        if (!l) return;
+        if (events())
+            for (int k = 0; k < events(); ++k)
+                if (event(k).kind == kClear) l->clear();
         const float* x = sigIn(0, n);
-        for (int i = 0; i < n; ++i) line.push(x[i]);
+        for (int i = 0; i < n; ++i) l->push(x[i]);
         lastBlock = patch->root()->blockCount;
     }
     float maxMs() const { return maxMs_; }
-    dsp::DelayLine line;
-    uint64_t lastBlock = ~0ull;
+    dsp::DelayLine* line() const { return line_.get(); }   // audio thread: for this block
+    uint64_t lastBlock = ~0ull;                            // audio side
 
 private:
+    enum : uint8_t { kClear = kEvUser };
     float maxMs_;
     double sizedFor_ = 0.0;
+    Published<dsp::DelayLine> line_;
 };
 
 class TapoutBox : public Box {
@@ -644,37 +715,82 @@ public:
         setPorts(std::vector<Port>(taps, P::Signal), std::vector<Port>(taps, P::Signal));
         for (size_t k = 0; k < taps; ++k) setScalar((int)k, argf(a, k, 0.f));
     }
+    bool acceptsTap(int inlet) const override { return inlet == 0; }
     void message(int in, const Message& m) override { if (m[0].isFloat()) setScalar(in, m[0].f); }
     void resolve() override {
-        tap_ = nullptr;
+        TapinBox* t = nullptr;
         for (auto& c : patch->conns)
-            if (c.to == this && c.from->outs[c.outlet] == Port::Tap)
-                tap_ = static_cast<TapinBox*>(c.from);
+            if (c.to == this && c.from->outs[c.outlet] == Port::Tap) t = static_cast<TapinBox*>(c.from);
+        tap_.store(t);
     }
     void dsp(int n) override {
-        if (!tap_) {
+        TapinBox* tap = tap_.load(std::memory_order_relaxed);
+        dsp::DelayLine* line = tap ? tap->line() : nullptr;
+        if (!line) {
             for (int k = 0; k < numOuts(); ++k) dsp::fill(sigOut(k), 0.f, n);
             return;
         }
-        bool written = tap_->lastBlock == patch->root()->blockCount;   // tapin~ ran this block
-        double sr = patch->root()->sampleRate, maxD = tap_->line.size() - 2.0 * dsp::kBlock;
+        bool written = tap->lastBlock == patch->root()->blockCount;   // tapin~ ran this block
+        double sr = patch->root()->sampleRate, maxD = line->size() - 2.0 * dsp::kBlock;
         for (int k = 0; k < numOuts(); ++k) {
             const float* ms = sigIn(k, n);
             float* y = sigOut(k);
             for (int i = 0; i < n; ++i) {
                 double d = std::clamp(ms[i] * sr / 1000.0, written ? 0.0 : (double)n, maxD);
-                y[i] = tap_->line.read(written ? n - i + d : d - i);
+                y[i] = line->read(written ? n - i + d : d - i);
             }
         }
     }
 
 private:
-    TapinBox* tap_ = nullptr;
+    std::atomic<TapinBox*> tap_{nullptr};      // at compile; the audio thread reads it
 };
 
 // ---------------------------------------------------------------- comb~ / allpass~
+// The delay lines of both: sized for the rate the patch runs at, made at
+// compile (again when the rate changes) and published; `clear` empties them
+// on the audio thread.
+struct CombLines {
+    dsp::DelayLine xs, ys;
+    double maxD = 1.0;
+};
+
+class CombLike : public Box {
+public:
+    void message(int in, const Message& m) override {
+        if (m[0].is("clear")) { post(kClear); return; }
+        if (m[0].isFloat()) setScalar(in, m[0].f);
+    }
+    void resolve() override {
+        double sr = patch->root()->sampleRate.load();
+        if (sr == sizedFor_) return;
+        sizedFor_ = sr;
+        size_t len = (size_t)(maxMs_ / 1000.0 * sr) + 8;
+        auto l = std::make_unique<CombLines>();
+        l->xs.resize(len);
+        l->ys.resize(len);
+        l->maxD = len - 4.0;
+        lines_.set(patch, std::move(l));
+    }
+
+protected:
+    CombLines* lines() {                       // audio thread: for this block, cleared if asked
+        CombLines* l = lines_.get();
+        if (l)
+            for (int k = 0; k < events(); ++k)
+                if (event(k).kind == kClear) { l->xs.clear(); l->ys.clear(); }
+        return l;
+    }
+    float maxMs_ = 50.f;
+
+private:
+    enum : uint8_t { kClear = kEvUser };
+    double sizedFor_ = 0.0;
+    Published<CombLines> lines_;
+};
+
 // comb~ [maxms delay a b c]: y = a x[n] + b x[n-D] + c y[n-D]
-class CombBox : public Box {
+class CombBox : public CombLike {
 public:
     explicit CombBox(const Message& a) {
         setPorts(std::vector<Port>(5, P::Signal), {P::Signal});
@@ -684,44 +800,26 @@ public:
         setScalar(3, argf(a, 3, 0.f));
         setScalar(4, argf(a, 4, 0.5f));
     }
-    void message(int in, const Message& m) override {
-        if (m[0].is("clear")) { std::lock_guard<std::mutex> lk(patch->mutex()); xs_.clear(); ys_.clear(); return; }
-        if (m[0].isFloat()) setScalar(in, m[0].f);
-    }
-    // sized for the rate it runs at, at compile (again when the rate changes), never in dsp()
-    void resolve() override {
-        double sr = patch->root()->sampleRate.load();
-        if (sr == sizedFor_) return;
-        sizedFor_ = sr;
-        size_t len = (size_t)(maxMs_ / 1000.0 * sr) + 8;
-        xs_.resize(len);
-        ys_.resize(len);
-        maxD_ = len - 4.0;
-    }
     void dsp(int n) override {
+        float* y = sigOut(0);
+        CombLines* l = lines();
+        if (!l) { dsp::fill(y, 0.f, n); return; }
         const float *x = sigIn(0, n), *dm = sigIn(1, n), *ga = sigIn(2, n), *gb = sigIn(3, n),
                     *gc = sigIn(4, n);
-        float* y = sigOut(0);
         double sr = patch->root()->sampleRate;
         for (int i = 0; i < n; ++i) {
-            double D = std::clamp(dm[i] * sr / 1000.0, 1.0, maxD_);
-            float out = ga[i] * x[i] + gb[i] * xs_.read(D) + gc[i] * ys_.read(D);
+            double D = std::clamp(dm[i] * sr / 1000.0, 1.0, l->maxD);
+            float out = ga[i] * x[i] + gb[i] * l->xs.read(D) + gc[i] * l->ys.read(D);
             if (!std::isfinite(out)) out = 0.f;
-            xs_.push(x[i]);
-            ys_.push(out);
+            l->xs.push(x[i]);
+            l->ys.push(out);
             y[i] = out;
         }
     }
-
-private:
-    dsp::DelayLine xs_, ys_;
-    double maxD_ = 1.0;
-    float maxMs_;
-    double sizedFor_ = 0.0;
 };
 
 // allpass~ [maxms delay gain]: y = -g x[n] + x[n-D] + g y[n-D]
-class AllpassBox : public Box {
+class AllpassBox : public CombLike {
 public:
     explicit AllpassBox(const Message& a) {
         setPorts({P::Signal, P::Signal, P::Signal}, {P::Signal});
@@ -729,39 +827,21 @@ public:
         setScalar(1, argf(a, 1, maxMs_ * 0.5f));
         setScalar(2, argf(a, 2, 0.7f));
     }
-    void message(int in, const Message& m) override {
-        if (m[0].is("clear")) { std::lock_guard<std::mutex> lk(patch->mutex()); xs_.clear(); ys_.clear(); return; }
-        if (m[0].isFloat()) setScalar(in, m[0].f);
-    }
-    // sized for the rate it runs at, at compile (again when the rate changes), never in dsp()
-    void resolve() override {
-        double sr = patch->root()->sampleRate.load();
-        if (sr == sizedFor_) return;
-        sizedFor_ = sr;
-        size_t len = (size_t)(maxMs_ / 1000.0 * sr) + 8;
-        xs_.resize(len);
-        ys_.resize(len);
-        maxD_ = len - 4.0;
-    }
     void dsp(int n) override {
-        const float *x = sigIn(0, n), *dm = sigIn(1, n), *g = sigIn(2, n);
         float* y = sigOut(0);
+        CombLines* l = lines();
+        if (!l) { dsp::fill(y, 0.f, n); return; }
+        const float *x = sigIn(0, n), *dm = sigIn(1, n), *g = sigIn(2, n);
         double sr = patch->root()->sampleRate;
         for (int i = 0; i < n; ++i) {
-            double D = std::clamp(dm[i] * sr / 1000.0, 1.0, maxD_);
-            float out = -g[i] * x[i] + xs_.read(D) + g[i] * ys_.read(D);
+            double D = std::clamp(dm[i] * sr / 1000.0, 1.0, l->maxD);
+            float out = -g[i] * x[i] + l->xs.read(D) + g[i] * l->ys.read(D);
             if (!std::isfinite(out)) out = 0.f;
-            xs_.push(x[i]);
-            ys_.push(out);
+            l->xs.push(x[i]);
+            l->ys.push(out);
             y[i] = out;
         }
     }
-
-private:
-    dsp::DelayLine xs_, ys_;
-    double maxD_ = 1.0;
-    float maxMs_;
-    double sizedFor_ = 0.0;
 };
 
 

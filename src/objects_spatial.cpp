@@ -313,19 +313,26 @@ public:
         nch_ = channelsOf(order_);
         setPorts(std::vector<Port>((size_t)nch_, P::Signal), {P::Signal, P::Signal});
     }
-    // prepared at compile (on the GUI thread) for the rate: again only when it changed
+    // prepared at compile (on the GUI thread, while the audio thread plays the state before) for
+    // the rate, and published: again only when the rate changed
     void resolve() override {
         double sr = patch->root()->sampleRate.load();
-        if (sr > 0 && std::fabs(sr - builtSr_) > 0.5) build(sr);
+        if (sr > 0 && std::fabs(sr - builtSr_) > 0.5) {
+            builtSr_ = sr;
+            st_.set(patch, build(sr));
+        }
     }
     void dsp(int n) override {
         float *L = sigOut(0), *R = sigOut(1);
         std::fill(L, L + n, 0.f);
         std::fill(R, R + n, 0.f);
-        const int T = taps_;
+        State* st = st_.get();
         // not prepared for this rate (the compile after a rate change is coming): silence, never
         // the preparation here
-        if (T == 0 || std::fabs(patch->root()->sampleRate.load() - builtSr_) > 0.5) return;
+        if (!st || st->taps == 0 || std::fabs(patch->root()->sampleRate.load() - st->sr) > 0.5) return;
+        const int T = st->taps;
+        std::vector<float>&hist_ = st->hist, &left_ = st->left, &right_ = st->right;
+        std::vector<int>& pos_ = st->pos;
         for (int k = 0; k < nch_; ++k) {
             const float* x = sigIn(k, n);
             float* h = &hist_[(size_t)k * 2 * T];           // the last T inputs, twice (no wrapping in the loop)
@@ -345,10 +352,14 @@ public:
     }
 
 private:
+    struct State {
+        double sr = 0;
+        int taps = 0;
+        std::vector<float> left, right, hist;
+        std::vector<int> pos;
+    };
     // the HRIRs at rate sr (windowed-sinc resampling), folded with the decoder
-    void build(double sr) {
-        if (sr <= 0) return;
-        builtSr_ = sr;
+    std::unique_ptr<State> build(double sr) {
         const HrirSet& set = hrirsAt(sr);
         const int T = set.taps;
         // 17 virtual speakers: 8 at ear height, 4 above, 4 below, 1 overhead
@@ -389,16 +400,18 @@ private:
         float scale = (float)std::sqrt(eh / std::max(ef, 1e-12));
         for (auto& v : fl) v *= scale;
         for (auto& v : fr) v *= scale;
-        taps_ = T;
-        left_ = std::move(fl);
-        right_ = std::move(fr);
-        hist_.assign((size_t)nch_ * 2 * T, 0.f);
-        pos_.assign((size_t)nch_, 0);
+        auto st = std::make_unique<State>();
+        st->sr = sr;
+        st->taps = T;
+        st->left = std::move(fl);
+        st->right = std::move(fr);
+        st->hist.assign((size_t)nch_ * 2 * T, 0.f);
+        st->pos.assign((size_t)nch_, 0);
+        return st;
     }
-    int order_, nch_, taps_ = 0;
-    double builtSr_ = 0;
-    std::vector<float> left_, right_, hist_;
-    std::vector<int> pos_;
+    int order_, nch_;
+    double builtSr_ = 0;                         // GUI side
+    Published<State> st_;
 };
 
 
@@ -418,25 +431,35 @@ public:
         setScalar(1, argf(a, 0, 0.f));
         setScalar(2, argf(a, 1, 0.f));
     }
-    // prepared at compile (on the GUI thread) for the rate: again only when it changed
+    // prepared at compile (on the GUI thread, while the audio thread plays the state before) for
+    // the rate, and published: again only when the rate changed
     void resolve() override {
         double sr = patch->root()->sampleRate.load();
-        if (sr > 0 && (!set_ || std::fabs(sr - sr_) > 0.5)) prepare(sr);
+        if (sr > 0 && std::fabs(sr - builtSr_) > 0.5) {
+            builtSr_ = sr;
+            st_.set(patch, prepare(sr));
+        }
     }
     void dsp(int n) override {
         float *L = sigOut(0), *R = sigOut(1);
-        if (!set_ || std::fabs(patch->root()->sampleRate.load() - sr_) > 0.5) {   // never prepared here
+        State* st = st_.get();
+        if (!st || std::fabs(patch->root()->sampleRate.load() - st->sr) > 0.5) {   // never prepared here
             std::fill(L, L + n, 0.f);
             std::fill(R, R + n, 0.f);
             return;
         }
+        const HrirSet* set_ = st->set;
+        std::vector<float>&hist_ = st->hist, &cl_ = st->cl, &cr_ = st->cr, &nl_ = st->nl, &nr_ = st->nr;
+        int& pos_ = st->pos;
+        float &az_ = st->az, &el_ = st->el;
+        bool& have_ = st->have;
         const float* x = sigIn(0, n);
         float az = sigIn(1, n)[n - 1], el = sigIn(2, n)[n - 1];
         bool move = !have_ || std::fabs(az - az_) > 1e-3f || std::fabs(el - el_) > 1e-3f;
         if (move) {
             az_ = az;
             el_ = el;
-            filter(az, el, nl_.data(), nr_.data());
+            filter(*set_, az, el, nl_.data(), nr_.data());
             if (!have_) { cl_ = nl_; cr_ = nr_; have_ = true; move = false; }
         }
         const int T = set_->taps;
@@ -460,17 +483,25 @@ public:
     }
 
 private:
-    void prepare(double sr) {
-        if (sr <= 0) return;
-        set_ = &hrirsAt(sr);
-        sr_ = sr;
-        const size_t T = (size_t)set_->taps;
-        hist_.assign(2 * T, 0.f);
-        pos_ = 0;
-        cl_.assign(T, 0.f); cr_.assign(T, 0.f); nl_.assign(T, 0.f); nr_.assign(T, 0.f);
-        have_ = false;
+    struct State {
+        const HrirSet* set = nullptr;
+        double sr = 0;
+        std::vector<float> hist, cl, cr, nl, nr;
+        int pos = 0;
+        float az = 0.f, el = 0.f;
+        bool have = false;
+    };
+    static std::unique_ptr<State> prepare(double sr) {
+        auto st = std::make_unique<State>();
+        st->set = &hrirsAt(sr);
+        st->sr = sr;
+        const size_t T = (size_t)st->set->taps;
+        st->hist.assign(2 * T, 0.f);
+        st->cl.assign(T, 0.f); st->cr.assign(T, 0.f); st->nl.assign(T, 0.f); st->nr.assign(T, 0.f);
+        return st;
     }
-    void filter(double az, double el, float* l, float* r) const {
+    static void filter(const HrirSet& set, double az, double el, float* l, float* r) {
+        const HrirSet* set_ = &set;
         int idx[4];
         float w[4];
         int k = set_->neighbours(az, el, idx, w);
@@ -482,12 +513,8 @@ private:
             for (int t = 0; t < T; ++t) { l[t] += w[m] * hl[t]; r[t] += w[m] * hr[t]; }
         }
     }
-    const HrirSet* set_ = nullptr;
-    double sr_ = 0;
-    std::vector<float> hist_, cl_, cr_, nl_, nr_;
-    int pos_ = 0;
-    float az_ = 0.f, el_ = 0.f;
-    bool have_ = false;
+    double builtSr_ = 0;                         // GUI side
+    Published<State> st_;
 };
 
 }  // namespace

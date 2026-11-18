@@ -55,12 +55,7 @@ bool writeWavFile(const std::string& path, const SampleBuffer& b, std::string& e
 
 
 BufferBox* findBuffer(Patch* p, const std::string& name) {
-    BufferBox* found = nullptr;
-    p->root()->forEachBox([&](Box* b) {
-        if (auto bb = dynamic_cast<BufferBox*>(b))
-            if (!found && bb->name == name) found = bb;
-    });
-    return found;
+    return p ? p->bufferNamed(name) : nullptr;      // the root's index of names
 }
 
 namespace {
@@ -68,8 +63,10 @@ namespace {
 
 // ---------------------------------------------------------------- play~
 // play~ name [channels]: plays a buffer~. With a signal in the inlet it
-// reads at that position (ms, e.g. from line~); otherwise "start [from
-// [to]]" (ms) or bang plays it, "stop" stops.
+// reads at that position (ms, e.g. from line~: fed directly by line~ it reads
+// line~'s double precision, so long buffers keep sub-sample positions);
+// otherwise "start [from [to]]" (ms) or bang plays it, "stop" stops, at the
+// sample the message is for.
 class PlayBox : public Box {
 public:
     explicit PlayBox(const Message& a) : ref_(argstr(a, 0)) {
@@ -78,45 +75,43 @@ public:
     void resolve() override { ref_.resolve(patch); }
     void message(int, const Message& m) override {
         if (m[0].is("set") && m.size() > 1) { ref_.set(patch, m[1].str()); return; }
-        if (m[0].is("stop")) { cmd_.store(2); return; }
-        if (m[0].is("bang") || m[0].is("start")) {
-            startMs_.store(m.size() > 1 && m[1].isFloat() ? m[1].f : 0.f);
-            endMs_.store(m.size() > 2 && m[2].isFloat() ? m[2].f : -1.f);
-            cmd_.store(1);
-        }
+        if (m[0].is("stop")) { post(kStop); return; }
+        if (m[0].is("bang") || m[0].is("start"))
+            post(kStart, m.size() > 1 && m[1].isFloat() ? m[1].f : 0.f, m.size() > 2 && m[2].isFloat() ? m[2].f : -1.f);
     }
     void dsp(int n) override {
-        int c = cmd_.exchange(0);
         const SampleBuffer* b = ref_.get();
         double ms2fr = b ? b->sr / 1000.0 : 0.0;
-        if (c == 1 && b) {
-            pos_ = startMs_.load() * ms2fr;
-            float e = endMs_.load();
-            end_ = e > 0 ? e * ms2fr : (double)b->frames;
-            playing_ = true;
-        } else if (c == 2) {
-            playing_ = false;
-        }
-        bool driven = !inSrc[0].empty();
+        bool driven = connected(0);
         const float* posMs = driven ? sigIn(0, n) : nullptr;
+        const double* posD = driven ? sigInPrecise(0) : nullptr;
         double rate = b ? b->sr / patch->root()->sampleRate : 0.0;
-        for (int k = 0; k < numOuts(); ++k) {
-            float* y = sigOut(k);
-            for (int i = 0; i < n; ++i) {
-                double p = driven ? posMs[i] * ms2fr : pos_ + i * rate;
-                y[i] = (b && (driven || (playing_ && p < end_))) ? b->interp(p, k) : 0.f;
+        eventPieces(*this, n, [&](int from, int to) {
+            for (int k = 0; k < numOuts(); ++k) {
+                float* y = sigOut(k);
+                for (int i = from; i < to; ++i) {
+                    double p = driven ? (posD ? posD[i] : (double)posMs[i]) * ms2fr : pos_ + (i - from) * rate;
+                    y[i] = (b && (driven || (playing_ && p < end_))) ? b->interp(p, k) : 0.f;
+                }
             }
-        }
-        if (playing_ && !driven) {
-            pos_ += n * rate;
-            if (pos_ >= end_) playing_ = false;
-        }
+            if (playing_ && !driven) {
+                pos_ += (to - from) * rate;
+                if (pos_ >= end_) playing_ = false;
+            }
+        }, [&](const Event& e) {
+            if (e.kind == kStart && b) {
+                pos_ = e.a * ms2fr;
+                end_ = e.b > 0 ? e.b * ms2fr : (double)b->frames;
+                playing_ = true;
+            } else if (e.kind == kStop) {
+                playing_ = false;
+            }
+        });
     }
 
 private:
+    enum : uint8_t { kStart = kEvUser, kStop };
     BufferRef ref_;
-    std::atomic<int> cmd_{0};
-    std::atomic<float> startMs_{0.f}, endMs_{-1.f};
     double pos_ = 0.0, end_ = 0.0;
     bool playing_ = false;
 };
@@ -138,8 +133,8 @@ public:
         if (in > 0) { if (m[0].isFloat()) setScalar(in, std::max(0.f, m[0].f)); return; }
         if (m[0].is("loop") && m.size() > 1) loop_.store(m[1].isFloat() && m[1].f != 0.f);
         else if (m[0].is("set") && m.size() > 1) { ref_.set(patch, m[1].str()); }
-        else if (m[0].is("startloop")) jumpMs_.store(scalar(1));
-        else if (m[0].isFloat() && std::isfinite(m[0].f)) jumpMs_.store(std::max(0.f, m[0].f));
+        else if (m[0].is("startloop")) post(kJump, scalar(1));
+        else if (m[0].isFloat() && std::isfinite(m[0].f)) post(kJump, std::max(0.f, m[0].f));
     }
     void dsp(int n) override {
         int ch = numOuts() - 1;
@@ -150,14 +145,15 @@ public:
             return;
         }
         double ms2fr = b->sr / 1000.0, ratio = b->sr / patch->root()->sampleRate;
-        float j = jumpMs_.exchange(-1.f);
-        if (j >= 0.f) pos_ = j * ms2fr;
         double ls = std::clamp(scalar(1) * ms2fr, 0.0, (double)b->frames - 1);
         double le = scalar(2) > 0.f ? std::min(scalar(2) * ms2fr, (double)b->frames) : (double)b->frames;
         if (le <= ls + 1) le = (double)b->frames;
         bool loop = loop_.load();
         const float* rate = sigIn(0, n);
+        int ev = 0, ne = events();
         for (int i = 0; i < n; ++i) {
+            for (; ev < ne && eventOffset(ev) <= i; ++ev)          // a jump, at its sample
+                if (event(ev).kind == kJump) pos_ = event(ev).a * ms2fr;
             if (loop) {
                 double L = le - ls;
                 if (pos_ >= le) pos_ = ls + std::fmod(pos_ - ls, L);
@@ -173,9 +169,9 @@ public:
     }
 
 private:
+    enum : uint8_t { kJump = kEvUser };
     BufferRef ref_;
     std::atomic<bool> loop_{false};
-    std::atomic<float> jumpMs_{-1.f};
     double pos_ = 0.0;
 };
 
@@ -194,17 +190,19 @@ public:
         if (in != 0) return;
         if (m[0].is("loop") && m.size() > 1) loop_.store(m[1].isFloat() && m[1].f != 0.f);
         else if (m[0].is("set") && m.size() > 1) { ref_.set(patch, m[1].str()); }
-        else if (m[0].isFloat()) cmd_.store(m[0].f != 0.f ? 1 : 2);
+        else if (m[0].isFloat()) post(m[0].f != 0.f ? kRecord : kStop);
     }
     void dsp(int n) override {
-        int c = cmd_.exchange(0);
-        if (c == 1) { pos_ = 0; rec_ = true; }
-        if (c == 2) rec_ = false;
         SampleBuffer* b = ref_.get();
         float* sync = sigOut(0);
         const float* in[8];                       // at most 8 channels: nothing allocated here
         for (int k = 0; k < numIns() && k < 8; ++k) in[k] = sigIn(k, n);
+        int ev = 0, ne = events();
         for (int i = 0; i < n; ++i) {
+            for (; ev < ne && eventOffset(ev) <= i; ++ev) {     // starts and stops at their sample
+                if (event(ev).kind == kRecord) { pos_ = 0; rec_ = true; }
+                else if (event(ev).kind == kStop) rec_ = false;
+            }
             if (rec_ && b && b->frames > 0) {
                 if (pos_ >= b->frames) {
                     if (loop_.load()) pos_ = 0;
@@ -221,8 +219,8 @@ public:
     }
 
 private:
+    enum : uint8_t { kRecord = kEvUser, kStop };
     BufferRef ref_;
-    std::atomic<int> cmd_{0};
     std::atomic<bool> loop_{false};
     long pos_ = 0;
     bool rec_ = false;
@@ -244,53 +242,63 @@ public:
     }
     void message(int, const Message& m) override {
         if (m[0].is("open") && m.size() > 1) {
-            SampleBuffer b;
+            auto b = std::make_unique<SampleBuffer>();
             std::string err;
-            if (!decodeAudioFile(patch->resolvePath(m[1].str()), b, err)) { patch->print("sfplay~: " + err); return; }
-            std::lock_guard<std::mutex> lk(patch->mutex());
-            buf_ = std::move(b);
-            playing_ = false;
+            if (!decodeAudioFile(patch->resolvePath(m[1].str()), *b, err)) { patch->print("sfplay~: " + err); return; }
+            if (sounds_.send(std::move(b))) post(kOpen);       // the audio thread takes it, stopped
+            else patch->print("sfplay~: too many files opened at once (is audio on?)");
         } else if (m[0].is("loop") && m.size() > 1) {
             loop_.store(m[1].isFloat() && m[1].f != 0.f);
         } else if (m[0].is("speed") && m.size() > 1 && m[1].isFloat()) {
             speed_.store(m[1].f);
         } else if (m[0].isFloat()) {
-            cmd_.store(m[0].f != 0.f ? 1 : 2);
+            post(m[0].f != 0.f ? kPlay : kStop);
         } else if (m[0].is("bang")) {
-            cmd_.store(1);
+            post(kPlay);
         }
     }
     void dsp(int n) override {
-        int c = cmd_.exchange(0);
-        if (c == 1) { pos_ = speed_.load() < 0.f ? buf_.frames - 1.0 : 0.0; playing_ = buf_.frames > 0; }
-        if (c == 2) playing_ = false;
-        double step = buf_.sr / patch->root()->sampleRate * speed_.load();
-        for (int k = 0; k < numOuts(); ++k) {
-            float* y = sigOut(k);
-            double p = pos_;
-            for (int i = 0; i < n; ++i) {
-                if (playing_ && loop_.load() && buf_.frames > 0) p = wrap(p);
-                y[i] = playing_ ? buf_.interp(p, k) : 0.f;
-                p += step;
+        double speed = speed_.load(std::memory_order_relaxed);
+        bool loop = loop_.load(std::memory_order_relaxed);
+        eventPieces(*this, n, [&](int from, int to) {
+            const SampleBuffer* sb = sounds_.current();
+            if (!sb) {
+                for (int k = 0; k < numOuts(); ++k) dsp::fill(sigOut(k) + from, 0.f, to - from);
+                return;
             }
-        }
-        if (playing_) {
-            pos_ += n * step;
-            if (loop_.load() && buf_.frames > 0) pos_ = wrap(pos_);
-            else if (pos_ >= buf_.frames || pos_ < 0) playing_ = false;
-        }
+            double step = sb->sr / patch->root()->sampleRate * speed;
+            for (int k = 0; k < numOuts(); ++k) {
+                float* y = sigOut(k);
+                double p = pos_;
+                for (int i = from; i < to; ++i) {
+                    if (playing_ && loop && sb->frames > 0) p = wrap(*sb, p);
+                    y[i] = playing_ ? sb->interp(p, k) : 0.f;
+                    p += step;
+                }
+            }
+            if (playing_) {
+                pos_ += (to - from) * step;
+                if (loop && sb->frames > 0) pos_ = wrap(*sb, pos_);
+                else if (pos_ >= sb->frames || pos_ < 0) playing_ = false;
+            }
+        }, [&](const Event& e) {
+            if (e.kind == kOpen) { sounds_.take(); playing_ = false; }
+            const SampleBuffer* sb = sounds_.current();
+            if (e.kind == kPlay && sb) { pos_ = speed < 0.f ? sb->frames - 1.0 : 0.0; playing_ = sb->frames > 0; }
+            else if (e.kind == kStop) playing_ = false;
+        });
     }
-    double wrap(double p) const {            // into 0..frames, also for negative speeds
-        p = std::fmod(p, (double)buf_.frames);
-        return p < 0 ? p + buf_.frames : p;
+    static double wrap(const SampleBuffer& b, double p) {      // into 0..frames, also for negative speeds
+        p = std::fmod(p, (double)b.frames);
+        return p < 0 ? p + b.frames : p;
     }
 
 private:
-    SampleBuffer buf_;
-    std::atomic<int> cmd_{0};
+    enum : uint8_t { kOpen = kEvUser, kPlay, kStop };
+    Mailbox<SampleBuffer, 8> sounds_;          // the files opened, handed to the audio thread
     std::atomic<bool> loop_{false};
     std::atomic<float> speed_{1.f};
-    double pos_ = 0.0;
+    double pos_ = 0.0;                         // audio side
     bool playing_ = false;
 };
 
@@ -449,6 +457,7 @@ public:
     }
     void dsp(int n) override {
         if (!recording_.load(std::memory_order_acquire)) return;
+        if (!audioBuffersAvailable()) { dropped_ += (uint64_t)n; return; }   // stop() holds the lock
         size_t need = (size_t)n * (size_t)ch_;
         size_t w = w_.load(std::memory_order_relaxed), r = r_.load(std::memory_order_acquire);
         if (kRing - (w - r) < need) { dropped_ += (uint64_t)n; return; }   // the writer fell behind

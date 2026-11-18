@@ -897,6 +897,7 @@ private:
 
 void registerControlObjects(ClassTable& t) {
     using M = const Message&;
+    wholeTextClasses().insert({"message", "comment", "expr"});   // their box text is one string
     auto ctlop = [](BinFn f) -> Factory {
         return [f](M a, Patch*) { return std::make_unique<CtlOpBox>(f, a); };
     };
