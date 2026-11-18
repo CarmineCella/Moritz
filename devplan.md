@@ -86,7 +86,7 @@ and publishes the builds as a release for every `v*` tag.
 | 1 | Foundations | Windows port, CI on macOS/Linux/Windows rendering every patch, releases built by CI. Several patches open at once. Clipboard as `.moritz` text. Code view. Tutorials. Import from Max. v0.5 |
 | 2 | Signal processing | Cross-synthesis in `sparkle~`. Supervised `nmf`. Filter design, spectral envelope. `nebula~`. Ambisonics and binaural. v0.6 |
 | 3 | Analysis and MIR | Onsets and segmentation. Mel, MFCC, chroma (live and offline). Key, tempo, beat tracking. Self-similarity, novelty. Loudness, register, polyphony curves. Plots and matrix display. v0.8 |
-| 4 | Maple and SoundTypes | Maple with FFT matching, dictionaries (frames, onsets, files, Gabor/gammatone), decomposition, hybridisation. SoundTypes: types at several levels, matching at any level, generation by n-grams, variable-order Markov and factor oracle. v0.9 |
+| 4 | Maple and SoundTypes | Maple with FFT matching, dictionaries (frames, onsets, files, Gabor/gammatone), decomposition, hybridisation. SoundTypes: types at several levels, matching at any level, generation by n-grams, variable-order Markov and factor oracle. v0.9. Then Musil in Moritz: complete in `musil/`, the code box, Maple and SoundTypes in Musil's music library, one data folder. v0.10 |
 | 5 | Recursive score | Score model, roll, rendering, playback, MusicXML, save/load. Database layer and `db-gen`. Dataset: TinySOL. |
 | 6 | Orchestration | Orchidea mimetic orchestration (static, dynamic) into scores; granular and morphological orchestration; playability checks. |
 | 7 | Neural networks | `mlp`, classifier, `autoencoder`/`vae` with a playable latent space, images as data. Dataset: MNIST. |
@@ -277,34 +277,44 @@ as the common time model.
 ### Musil, the scripting language
 
 Musil is the scripting language of Moritz. Its code lives in this repository,
-in `musil/`, and stays independent: Musil knows nothing of Moritz, and Moritz
-adds to it only from its own side. The Musil repository is archived at 0.9.1.
+in `musil/`, complete (the IDE of 0.9.1 aside), and evolves here from 0.10,
+released with Moritz under one tag. It stays independent: nothing in `musil/`
+uses Moritz (`tools/check-musil.sh`, and `make musil` and `make embed-test`
+build from `musil/` alone). Changes since 0.9.1 are in `musil/CHANGES.md`.
 
-- `musil/src` is Musil 0.9.1 exactly: the core and the libraries Moritz uses
-  (std, system, scientific, signals, music), their halves written in Musil
-  (`.mu`), and their data. `tools/check-musil.sh` (run by CI) checks every
-  file against the tag. Left out: Musil's live library (its audio engine;
-  Moritz plays) and its plot and controls windows (Moritz draws). `live.mu`
-  and `plot.mu` are there because `music.mu` loads them.
-- What Moritz adds is in `src/`: `musil_host.h` (the libraries an interpreter
-  gets; `synth-render` is silent, since synths are patches in Moritz) and
-  `session.cpp` (`send`, `buffer`, `buffer-rate`, `set-buffer!`).
-- Files: `.moritz` is a patch, `.mu` a Musil script. Musil does not make
-  patches, and patches are not code: they meet through messages and buffers.
-- Where you write it: the code editor (File > New Code, or any `.mu` file),
-  the Console's prompt, `moritz --run` and `moritz --repl`. Code runs in the
-  session, on a thread of its own.
-- Tests: `musil/tests` (Musil's own; `test_music` skips what needs the live
-  library), `tools/test-musil.sh` with golden outputs (equal to Musil's but
-  for one line: the synth is silent), `make embed-test` (built from
-  `musil/src` alone, so it also proves the independence).
-- Next: the `code` box, Musil inside a patch. Its script is saved in the
-  patch (or names a `.mu` file); messages set its variables and `bang` runs
-  it, off the audio thread; it sends lists out and bangs when it is done;
-  it reads and writes buffers. In a box, writing files, the network,
-  `exec`, `input` and `exit` are refused (the host rebinds those names; Musil
-  is unchanged). Double-click opens the code editor. Then examples, a
-  tutorial and help patches.
+- **Musil on its own is complete**: the command line (`make musil`, shipped
+  in the downloads) with its live audio, plots, sliders and score roll (for
+  display and playback). **Moritz hosts Musil without its devices**: the
+  live, plot and controls libraries are left out (Moritz plays and draws);
+  `src/musil_host.h` installs the libraries (`synth-render` is silent) and
+  `src/session.cpp` adds `send`, `buffer`, `buffer-rate`, `set-buffer!`
+  and, in a code box, `out`.
+- **Musil is the brain for offline work**, and the reference: the analyses
+  (`musil/src/signals/mir.h`), Maple and SoundTypes (`musil/src/music/`) and
+  k-means (`musil/src/scientific/algorithms.h`) are Musil's code, called by
+  Moritz's objects, offline and live. Where an object keeps its own
+  implementation (NMF, HPSS, the other learning objects, ambisonics), a
+  cross-test (`tests/cross/*.moritz`, a code box comparing the object with
+  Musil's function) checks that they agree. Orchestration, when it comes to
+  Moritz, will call Musil's Orchidea.
+- **The code box**: `code [inlets] [outlets] [file.mu]`, a script in the
+  patch (saved as `(script "line" ...)`) or in a `.mu` file, run off the audio
+  thread on bang; inlets set `in1`, `in2`...; `(out k ...)`; the last outlet
+  bangs when done; double-click opens the code editor. **A code box may do
+  what a patch may do**: read and write files; `exec`, `remove`, the
+  network, `input`, `sleep`, `breathe` and `exit` are refused (rebound in the
+  box's interpreter; Musil is unchanged). `tests/code-names.txt` lists what a
+  box can call (`moritz --code-names`).
+- Files: `.moritz` is a patch, `.mu` a Musil script; they meet through
+  messages and buffers. The sounds and data of both are in `data/`.
+- Tests: `tools/test-musil.sh musil` (Musil on its own, the reference: every
+  test, golden reference and example) and `tools/test-musil.sh moritz`
+  (Musil in Moritz, without the devices), `make embed-test`,
+  `tools/test-patches.sh` (with the cross-tests and the code-box names).
+- **One score model, Musil's; one editable roll, Moritz's** (later, with the
+  timeline and the waveform editor): a Moritz roll reads a score through
+  `score-roll` and edits it through Musil's functions; scores render into
+  buffers that patches play. Musil's own roll stays display and playback.
 
 ## Open points
 

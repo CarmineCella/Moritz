@@ -47,10 +47,12 @@ and the signal processing, analysis and learning of *Musil*.
 - **Max patches**: File > Import from Max opens `.maxpat` files, converting
   what Moritz knows and reporting the rest.
 - **Programming with Musil**: what is easier to write than to draw, you
-  write in Musil, the scripting language of Moritz (see
+  write in Musil, the scripting language of Moritz, at the Console, in the
+  code editor, or in a `code` box inside a patch (see
   [Programming inside Moritz](#programming-inside-moritz-with-musil)).
 
-The complete list of objects is in [OBJECTS.md](OBJECTS.md).
+The complete list of objects is in [OBJECTS.md](OBJECTS.md), and as a PDF in
+Help > Documents.
 
 ## Programming inside Moritz with Musil
 
@@ -62,36 +64,53 @@ filters, onsets, spectral descriptors, convolution, ambisonics), statistics
 and learning (matrices, PCA, k-means, kNN, NMF), and music (notes, chords,
 rhythms, scores, MIDI files, MusicXML, orchestration with sample databases).
 
-- **Where you write it**: in the code editor (File > New Code, or open any
-  `.mu` file): Cmd-Enter runs the paragraph at the cursor, Shift-Cmd-Enter
-  the whole script, Tab completes, and the help of the name under the cursor
-  is beside the text. Or at the Console's prompt, one line at a time. What a
-  script prints goes to the Console.
+- **Where you write it**: in a `code` box inside a patch, in the code
+  editor (File > New Code, or open any `.mu` file), or at the Console's
+  prompt, one line at a time. In the editor Cmd-Enter runs the paragraph at
+  the cursor, Shift-Cmd-Enter the whole script, Tab completes, and the help
+  of the name under the cursor is beside the text. What a script prints goes
+  to the Console.
+- **The `code` box**: `code [inlets] [outlets] [file.mu]` runs its script off
+  the audio thread when it gets a bang, in an interpreter of its own. Its
+  inlets set the variables `in1`, `in2`...; `out 1 values` sends out of its
+  first outlet; its last outlet bangs when the script has run. The script is
+  kept in the patch, or in a `.mu` file next to it; double-click the box to
+  edit it. A box may read and write files, as a patch does, but not run
+  programs, delete files, use the network, wait or quit.
 - **How it talks to your patches**: `buffer "name"` gives the channels of a
   `buffer~` as vectors, `set-buffer! "name" channels [rate]` fills it (a
   `waveform~` shows it at once, a `play~` plays it), and `send "name" values`
   reaches every `receive name`.
 - **Files**: a patch is a `.moritz` file, a script a `.mu` file. A script
-  loads the libraries it uses: `load "signals.mu"`.
+  loads the libraries it uses: `load "music.mu"` (a code box starts with the
+  signals library loaded).
 
-For example, with a patch open that holds `buffer~ demo drums.wav`:
+For example, a `code` box that transforms the drums of a `buffer~ demo
+drums.wav` into a `buffer~ out`, with the gain from its left inlet:
 
 ```lisp
-; reverse the drums, darken them, fade out, and put them back
-load "signals.mu"
+; reverse the drums, darken them, fade out, and put them in out
 var x (head (buffer "demo"))              ; the first channel, as a vector
 var sr (buffer-rate "demo")
 var y (normalize-peak (fade-out (lowpass (reverse x) sr 800 0.7) 4410))
-set-buffer! "demo" y sr
-send "done" 1                             ; tell the patch
+set-buffer! "out" (* in1 y) sr
+out 1 (length y)                          ; the number of samples, out of outlet 1
 ```
 
-Musil is the language its author wrote before Moritz; its code is in
-[`musil/`](musil/), exactly as Musil 0.9.1 was released (CI checks it), and
-it needs nothing of Moritz. Moritz leaves out Musil's own audio engine and
-plot windows, since Moritz plays and draws, so a score's synth events are
-silent in a script. Coming next: the `code` box, to put a Musil script inside
-a patch.
+Tutorial 11 goes from the Console to the code box; `examples/12-code` has
+sounds transformed, analysed and made by scripts, and Maple and SoundTypes
+from code; `help/code.help.moritz` sums it up. The Musil manual is in Help >
+Documents.
+
+**Musil on its own.** Musil is the language its author wrote before Moritz,
+and it lives in [`musil/`](musil/), complete and independent: nothing in it
+uses Moritz (CI checks it). On its own (`musil` in the downloads, or
+`make musil`) it also has its live audio engine, plot windows, sliders and
+score roll; inside Moritz those are left out, since Moritz plays and draws,
+and a script renders into a buffer that a patch plays. Musil is the
+reference for what is computed offline: the analyses, Maple, SoundTypes and
+k-means of Moritz's objects run Musil's code, and tests check that the other
+objects agree with Musil's functions.
 
 ## The name
 
@@ -112,14 +131,15 @@ click **Open Anyway** in System Settings > Privacy & Security (or run
 
 Moritz opens on the **browser**, the place to start:
 
-- **Tutorials**: ten patches that explain themselves as you play with them:
-  a first patch, numbers and messages, sound files, filters, the spectrum,
-  grains, sound in space, separating sounds, listening machines, atoms and
-  types.
+- **Tutorials**: eleven patches that explain themselves as you play with
+  them: a first patch, numbers and messages, sound files, filters, the
+  spectrum, grains, sound in space, separating sounds, listening machines,
+  atoms and types, programming with Musil.
 - **Examples**, by category (the folders of `examples/`): first steps,
   synthesis, generative music, filters and effects, samples, spectral
-  processing, space, atoms and types, analysis and MIR, learning, MIDI. Each
-  one says what it shows at the top.
+  processing, space, atoms and types, analysis and MIR, learning, MIDI, code.
+  Each one says what it shows at the top. Musil's own examples are in
+  `musil/examples`.
 - **Objects**: every object with its reference (arguments, messages, inlets,
   outlets), opening its help patch, a small working example with notes.
 
@@ -128,9 +148,9 @@ search box to find anything. The toolbar also zooms the patch (Cmd+ and Cmd-,
 Cmd+0 for 100%), opens the browser and the console, records what you hear
 (the quick recorder) and shows the CPU load and the output level.
 
-Help > Documents opens the PDFs in `docs/`, such as "Sound decomposition
-strategies for creative hybridizations", on the methods of the atoms and
-types objects.
+Help > Documents opens the PDFs: the reference of every object, the Musil
+manual, and "Sound decomposition strategies for creative hybridizations", on
+the methods of the atoms and types objects.
 
 ## Patching
 
@@ -225,20 +245,27 @@ RtMidi into `deps/`.
   `make` builds `build/windows/Moritz/moritz.exe` (static, no DLLs). It can
   also be cross-compiled from a Mac or Linux with MinGW-w64: `make windows`.
 
-`make dist`, `make linux-dist` and `make windows-zip` package each system.
+`make musil` builds Musil on its own (`build/musil/musil`), and
+`make test-musil` runs Musil's tests on it and on Musil in Moritz.
+`make dist`, `make linux-dist` and `make windows-zip` package each system,
+with Musil on its own in the `musil` folder.
 `make notarize SIGN_ID="Developer ID Application: Name (TEAMID)"` signs and
 notarizes the Mac app for distribution.
 
-Every push to GitHub builds Moritz on all three systems and runs every
-example, help patch, tutorial and library abstraction through
-`tools/test-patches.sh`; a tag `v<version>` publishes a release. The same
-test runs locally: `tools/test-patches.sh ./moritz`.
+Every push to GitHub builds Moritz and Musil on all three systems, runs every
+example, help patch, tutorial, library abstraction and cross-test (an object
+against Musil's function) through `tools/test-patches.sh`, and runs Musil's
+tests through `tools/test-musil.sh`; a tag `v<version>` publishes a release.
+The same tests run locally: `tools/test-patches.sh ./moritz`,
+`make test-musil`.
 
 ## Command line
 
 - `moritz --run script.mu [-- args...]` runs a Musil script without opening
   a window; `moritz --repl` gives a Musil prompt in the terminal. A script
   names the libraries it needs: `load "music.mu"` loads `musil/src/music.mu`.
+  For Musil's own audio, plots and score roll, use `musil script.mu` (Musil
+  on its own).
 - `moritz --no-audio [patch...]` opens with audio off, for a machine whose
   audio device misbehaves.
 - `moritz --import patch.maxpat [out.moritz]` converts a Max patch, as File >
@@ -254,7 +281,8 @@ test runs locally: `tools/test-patches.sh ./moritz`.
 
 ## Sounds
 
-The sounds in `examples/sounds/` come from the examples of Musil: a voice,
+The sounds and data in `data/` serve Moritz's patches and Musil's examples
+alike. Most come from the examples of Musil: a voice,
 an excerpt of Beethoven's Seventh Symphony, drums, a guitar phrase, a bell, a
 gong, two mixes for separation, and the impulse response of the
 Concertgebouw in Amsterdam. For music information retrieval:
@@ -264,9 +292,9 @@ from the band's "Complete Marches of John Philip Sousa", via Wikimedia
 Commons), and the preludes in C minor and D major of Bach's Well-Tempered
 Clavier, Book 1, played by Kimiko Ishizaka (the Open Well-Tempered Clavier,
 CC0, welltemperedclavier.org). The kitchen and people sounds in
-`examples/sounds/kitchen` and `examples/sounds/people`, used as dictionaries
+`data/kitchen` and `data/people`, used as dictionaries
 for matching pursuit, are the author's recordings. The clarinet notes in
-`examples/sounds/clarinet` (B-flat clarinet, ordinario, every pitch at pp,
+`data/clarinet` (B-flat clarinet, ordinario, every pitch at pp,
 mf and ff, shortened to 1.5 s) come from TinySOL (Cella, Ghisi, Lostanlen,
 Lévy, Fineberg and Maresz, IRCAM, CC BY 4.0). Short excerpts of John Cage
 speaking and of a Beach Boys song are used for the rematch example.

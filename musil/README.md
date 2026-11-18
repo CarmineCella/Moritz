@@ -2,7 +2,7 @@
 
 **Musil** is a tiny and expressive language designed to be easy to use, easy to expand and easy to embed in host applications.
 
-It comes as a command-line interpreter (`musil`) and as **Musil**, the IDE: an editor with syntax colouring where Cmd-Enter runs the block under the cursor, a console, your variables, a documentation search, and plots and controls in windows of their own.
+Musil is the scripting language of [Moritz](../README.md), a patching environment for sound and music by the same author, and lives in Moritz's repository, in this folder. It stays a language of its own: nothing here uses Moritz (`tools/check-musil.sh` checks it), and on its own it comes as a command-line interpreter (`musil`) with its live audio engine, plots, sliders and score roll. In Moritz you write it at the Console, in the code editor, or in a `code` box inside a patch; Moritz leaves out the live, plot and controls libraries, since it plays and draws by itself. What changed since 0.9.1, the last release of Musil's own repository (now archived), is in [CHANGES.md](CHANGES.md); the IDE of 0.9.1 stays there.
 
 The core of the language is made of a single [C++ header](src/core.h) and a more or less comprehensive overview of the language can be found [here](examples/reference.mu).
 
@@ -48,55 +48,39 @@ This duality mirrors the purpose of the Musil language:
 To call this language **Musil** is to acknowledge an intellectual lineage where  
 mathematics, sound, and imagination are not separate disciplines but different faces of the same creative activity.
 
-## Build and install
+## Build and test
+
+From the root of Moritz's tree, with the FLTK that Moritz builds:
 
 ```sh
-git clone https://github.com/CarmineCella/musil.git
-cd musil
-./build.sh --test                       # configure, build everything into build/, run the tests
-./build/musil examples/reference.mu     # tour of the core language
-./build/musil-ide                       # the IDE
-sudo cmake --install build              # musil and musil-ide -> /usr/local/bin, headers -> /usr/local/include/musil,
-                                        # the .mu libraries, help.txt and the font -> ~/.musil
-cmake --build build --target uninstall         # removes exactly that
+make musil                              # build/musil/musil (Linux: build/linux/musil/musil)
+MUSIL_PATH=musil/src build/musil/musil musil/examples/reference.mu    # tour of the core language
+make test-musil                         # every test, golden reference and example, on Musil and on Musil in Moritz
+make embed-test                         # Musil inside another program, built from musil/ alone
 ```
 
-`build.sh` is a thin wrapper around CMake; the equivalent commands are
+The `musil` program finds its libraries in a `src` folder next to it (as in Moritz's downloads,
+`musil/musil` beside `musil/src`), in `MUSIL_PATH`, or in `~/.musil`.
+
+On its own, from this folder, Musil still builds with CMake (it fetches FLTK):
 
 ```sh
 cmake -B build -DCMAKE_BUILD_TYPE=Release        # configure (regenerates src/help.txt from the source comments)
-cmake --build build -j                           # build musil and musil-ide
+cmake --build build -j                           # build musil
 ctest --test-dir build                           # tests: one per library, goldens, examples
 cmake --build build --target musil-docs          # help.txt, docs/generated/*.tex and docs/musil_manual.pdf (pdflatex)
-cmake --install build --prefix ~/.local          # install without sudo
+cmake --install build --prefix ~/.local          # musil -> bin, the .mu libraries and help.txt -> ~/.musil
 ```
-
-Configure options:
 
 | option | default | effect |
 |---|---|---|
 | `-DCMAKE_BUILD_TYPE=Release\|Debug` | Release | optimisation vs symbols |
-| `-DMUSIL_FLTK=ON\|OFF` | ON | fetch FLTK 1.4 and build the plot library, the controls window and the IDE; OFF builds the language and the other libraries with no dependency at all |
+| `-DMUSIL_FLTK=ON\|OFF` | ON | fetch FLTK 1.4 and build the plot library and the controls window; OFF builds the language and the other libraries with no dependency at all |
 | `-DMUSIL_READLINE=ON\|OFF` | ON | use GNU readline in the REPL when found |
 | `-DMUSIL_TESTS=ON\|OFF` | ON | register the tests with ctest |
-| `-DCMAKE_INSTALL_PREFIX=dir` | /usr/local | where `cmake --install` puts `bin/musil` and `include/musil`; the `.mu` files always go to `~/.musil` |
 
-Scripts: `./build.sh` (`--debug`, `--clean`, `--test`, `--run FILE.mu`, `--ide`, `--docs`,
-`--no-fltk`), `./clean.sh` (back to a fresh clone), `./deploy_macos.sh` (universal
-`dist/Musil.app` with the examples inside for its Help menu, `dist/musil`, `dist/musil-ide`, `dist/lib`, the examples, the manual, a zip),
-`./deploy_linux.sh` (a folder with the same plus `run.sh`, and a tar.gz).
-
-A complete release, from a clean tree (this is what the release assets are made of):
-
-```sh
-./clean.sh                    # fresh-clone state: no build directories, no generated documentation
-./build.sh --test             # configure (regenerates help.txt, the VS Code grammar and the version files), build, run every test
-./build.sh --docs             # the manual: docs/musil_manual.pdf (needs pdflatex)
-./deploy_macos.sh --clean     # macOS: dist/Musil.app, dist/musil, dist/musil-ide, dist/lib, dist/examples, dist/musil_manual.pdf,
-                              #        dist/musil-<version>.vsix (when npx is present), dist/Musil-<version>-macos.zip
-./deploy_linux.sh --clean     # Linux: dist/musil-<version>-linux/ and its tar.gz, on a Linux machine
-git tag -a v<version> -m "Musil <version>" && git push --tags   # then attach the zip, the tarball and the PDF to the GitHub release
-```
+The examples and tests read their sounds from `data/` at the root of Moritz's tree, shared with
+Moritz's patches. Musil is released with Moritz: one tag, `v<version>`, for both.
 
 ## Sample databases
 
@@ -111,7 +95,7 @@ datasets/
 
 with `(db-load "path/to/TinySOL.spectrum.db")`; the file names carry instrument, technique,
 pitch and dynamics; `db-gen` makes such a feature file from any folder of sounds. The
-repository bundles **MicroSOL** (`examples/data/microsol`: oboe, horn, violin, cello, C4-G4,
+repository bundles **MicroSOL** (`data/microsol` at the root of Moritz's tree: oboe, horn, violin, cello, C4-G4,
 32 sounds) so that every example and test runs from a fresh clone. The full sets are large
 and are not in git: `./fetch_tinysol.sh` downloads TinySOL (about 800 MB, a release asset)
 into `datasets/`, which git ignores; any other *SOL set goes there by hand. The examples use
@@ -166,7 +150,7 @@ There is also a [user manual](docs/musil_manual.pdf). Both come from the same pl
 above each function in `src/` (`// (name args) description` in a `.h`, `# (name args)
 description` in a `.mu`). Every configure regenerates `src/help.txt` and
 `docs/generated/*.tex` from those comments, so `help` is never stale; the PDF is built
-on request with `cmake --build build --target musil-docs` (or `./build.sh --docs`),
+on request with `cmake --build build --target musil-docs`,
 which needs `pdflatex`. Documenting a function is writing its comment.
 
 ## The language in one page
