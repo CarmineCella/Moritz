@@ -15,6 +15,9 @@
 #include <FL/fl_draw.H>
 
 #include <atomic>
+#include <chrono>
+#include <condition_variable>
+#include <thread>
 #include <mutex>
 #include <cstdio>
 
@@ -33,7 +36,11 @@ int nextPow2(long n) {
 // With a buffer~ name it plays the buffer: the left inlet is the speed (1 =
 // as recorded, 0.25 = four times slower, 0 = frozen, negative = backwards),
 // `start [ms]` or bang plays, `stop` stops, `loop 1` loops. Without a name it
-// transforms the signal in its left inlet (latency: one window).
+// transforms the signal in its left inlet. A frame is computed on a worker
+// thread of its own while the next hop plays (rendering offline: at once),
+// so no audio block carries a whole frame; its output is heard from the hop
+// after: the latency is one window and one hop. A frame the worker has not
+// finished in time is skipped (a hop with less sound), never waited for.
 // Inlets 2 and 3: pitch and formant ratios (signals or numbers, read once per
 // frame). `envelope C` preserves the spectral envelope with C cepstral
 // coefficients (0 = off; 30-80 for voices), so a transposed voice keeps its
@@ -77,6 +84,19 @@ public:
         setScalar(3, .5f);                  // cross amount
         ready_ = 0;
     }
+    ~SparkleBox() override {
+        if (worker_.joinable()) {
+            quit_.store(true);
+            wake_.notify_one();
+            worker_.join();
+        }
+    }
+    // the worker thread that computes the frames while audio plays (not when rendering offline)
+    void attached() override {
+        if (patch->root()->offline || worker_.joinable()) return;
+        worker_ = std::thread([this] { work(); });
+        async_.store(true, std::memory_order_release);
+    }
     void resolve() override {
         if (!live_) ref_.resolve(patch);
         xref_.resolve(patch);
@@ -105,7 +125,9 @@ public:
         if (float s = startAt_.exchange(-1.f); s >= 0.f && sb) {
             pos_ = s / 1000.0 * sb->sr;
             playing_ = true;
-            for (auto& c : chans_) { c->voc->reset(); std::fill(c->ola.begin(), c->ola.end(), 0.f); }
+            for (auto& c : chans_) std::fill(c->ola.begin(), c->ola.end(), 0.f);
+            reset_ = true;                                  // the next frame resets the vocoders
+            ++gen_;                                         // a frame computing now is not heard
             ready_ = 0;
         }
         if (stop_.exchange(false)) playing_ = false;
@@ -114,7 +136,7 @@ public:
             ring2_[(size_t)ringPos_] = other[i];
             ringPos_ = (ringPos_ + 1) % (int)ring2_.size();
             if (ready_ == 0) {
-                frame(pitch[i], form[i], spd[i], amount[i]);
+                hop(pitch[i], form[i], spd[i], amount[i]);
                 ready_ = hop_;
                 readPos_ = 0;
             }
@@ -134,11 +156,64 @@ private:
         std::unique_ptr<musil::dsp::Vocoder> voc;
         std::vector<float> now, prev, out, ola, oNow, oPrev;
     };
-    // one analysis/synthesis frame: overlap-adds a window into ola
-    void frame(float pitch, float formant, float speed, float amount) {
+    // a frame's settings, taken with its input
+    struct Job {
+        float P = 1.f, F = 1.f, thr = 0.f, amount = 0.f;
+        int C = 0, D = 0, xmode = 0, phaseMode = 0;
+        bool reset = false;
+        unsigned gen = 0;
+    };
+    enum { kIdle, kBusy, kDone };
+    // At each hop: the frame computed during the last hop is overlap-added (heard from now on),
+    // and the next frame's input is taken and handed to the worker (or computed at once offline).
+    void hop(float pitch, float formant, float speed, float amount) {
+        int st = state_.load(std::memory_order_acquire);
+        if (st == kBusy) { ++late_; return; }              // the worker is late: this hop has no new frame
+        if (st == kDone && job_.gen == gen_)
+            for (auto& c : chans_)
+                for (int k = 0; k < wn_; ++k) c->ola[(size_t)k] += c->out[(size_t)k];
+        state_.store(kIdle, std::memory_order_relaxed);
+        if (!capture(pitch, formant, speed, amount)) return;
+        if (async_.load(std::memory_order_acquire)) {
+            state_.store(kBusy, std::memory_order_release);
+            wake_.notify_one();                           // no lock taken: the worker also looks every 2 ms
+        } else {
+            compute();
+            state_.store(kDone, std::memory_order_release);
+        }
+    }
+    // the worker thread
+    void work() {
+        while (!quit_.load()) {
+            {
+                std::unique_lock<std::mutex> lk(wakeMutex_);
+                wake_.wait_for(lk, std::chrono::milliseconds(2),
+                               [&] { return quit_.load() || state_.load(std::memory_order_acquire) == kBusy; });
+            }
+            if (state_.load(std::memory_order_acquire) == kBusy) {
+                compute();
+                state_.store(kDone, std::memory_order_release);
+            }
+        }
+    }
+    // one analysis/synthesis frame of every channel into its out (the worker, or offline the audio thread)
+    void compute() {
+        const Job& j = job_;
+        for (auto& cp : chans_) {
+            Chan& x = *cp;
+            if (j.reset) x.voc->reset();
+            x.voc->phaseMode = j.phaseMode;
+            x.voc->crossMode = j.xmode;
+            x.voc->envelope = j.C;
+            x.voc->process(x.now.data(), x.prev.data(), j.xmode ? x.oNow.data() : nullptr, j.xmode ? x.oPrev.data() : nullptr,
+                           (double)j.D, (double)hop_, j.P, j.F, j.thr, j.amount, x.out.data());
+        }
+    }
+    // the input of the next frame (false: nothing plays), and the read position moved on
+    bool capture(float pitch, float formant, float speed, float amount) {
         const SampleBuffer* sb = live_ ? nullptr : ref_.get();
         bool active = live_ || (playing_ && sb && sb->frames > wn_);
-        if (!active) { sync_ = 0.f; return; }
+        if (!active) { sync_ = 0.f; return false; }
         double ratio = live_ ? 1.0 : sb->sr / patch->root()->sampleRate.load();
         float P = std::clamp(pitch, 0.05f, 8.f) * (float)ratio;
         float F = std::clamp(formant, 0.05f, 8.f) * (float)ratio;
@@ -163,9 +238,6 @@ private:
                     x.prev[(size_t)k] = sample(*sb, start - D + k, c);
                 }
             }
-            x.voc->phaseMode = phaseMode_.load();
-            x.voc->crossMode = xmode;
-            x.voc->envelope = C;
             if (xmode) {
                 int L = (int)ring2_.size();
                 for (int k = 0; k < wn_; ++k) {
@@ -179,12 +251,20 @@ private:
                     }
                 }
             }
-            x.voc->process(x.now.data(), x.prev.data(), xmode ? x.oNow.data() : nullptr, xmode ? x.oPrev.data() : nullptr,
-                           (double)D, (double)hop_, P, F, thr, amount, x.out.data());
-            for (int k = 0; k < wn_; ++k) x.ola[(size_t)k] += x.out[(size_t)k];
         }
+        job_.P = P;
+        job_.F = F;
+        job_.thr = thr;
+        job_.amount = amount;
+        job_.C = C;
+        job_.D = D;
+        job_.xmode = xmode;
+        job_.phaseMode = phaseMode_.load();
+        job_.reset = reset_;
+        job_.gen = gen_;
+        reset_ = false;
         if (xb && live_) xpos_ = std::fmod(xpos_ + hop_ * xb->sr / patch->root()->sampleRate.load(), (double)xb->frames);
-        if (live_) return;
+        if (live_) return true;
         sync_ = (float)std::clamp(pos_ / sb->frames, 0.0, 1.0);
         pos_ += speed * hop_ * ratio;
         if (loop_.load()) {
@@ -193,6 +273,7 @@ private:
         } else if (pos_ >= sb->frames || pos_ < -wn_) {
             playing_ = false;
         }
+        return true;
     }
     float sample(const SampleBuffer& sb, long f, int c) const {
         if (loop_.load() && sb.frames > 0) f = ((f % sb.frames) + sb.frames) % sb.frames;
@@ -214,6 +295,16 @@ private:
     std::atomic<float> startAt_{-1.f}, threshold_{0.f};
     std::atomic<bool> stop_{false}, loop_{false};
     std::atomic<int> cepstrum_{0}, phaseMode_{0};
+    // the frames' worker: the audio thread hands it a frame (kBusy) and takes the result (kDone)
+    Job job_;
+    bool reset_ = false;
+    unsigned gen_ = 0;
+    long late_ = 0;
+    std::atomic<int> state_{kIdle};
+    std::atomic<bool> async_{false}, quit_{false};
+    std::mutex wakeMutex_;
+    std::condition_variable wake_;
+    std::thread worker_;
 };
 
 // ---------------------------------------------------------------- conv~
