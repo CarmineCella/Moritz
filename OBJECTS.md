@@ -205,7 +205,7 @@ See also: `line~` `snapshot~` `+~`
 
 `line~ [value]`
 
-Signal ramps. A list of target-time pairs makes segments: `1 10 0 300` goes to 1 in 10 ms, then to 0 in 300 ms (up to 64 segments). A float alone jumps to that value, or ramps to it over the time last sent to the right inlet, which is used once and then reset to 0. A new message drops the segments still pending and starts from the current value.
+Signal ramps. A list of target-time pairs makes segments: `1 10 0 300` goes to 1 in 10 ms, then to 0 in 300 ms (a list as long as you like). A float alone jumps to that value, or ramps to it over the time last sent to the right inlet, which is used once and then reset to 0. A new message drops the segments still pending and starts from the current value.
 
 | Argument | |
 | --- | --- |
@@ -1358,7 +1358,7 @@ See also: `framedelta~` `frameaccum~` `cartopol~` `pvlock~`
 
 `sparkle~ [buffer] [channels] [window] [overlap]`
 
-The phase vocoder of the author's sparkle, with phase locking and formant (spectral envelope) preservation: the engine of Musil's pvoc. With a buffer~ name it plays the buffer: the left inlet is the speed. Without one it transforms the signal in its left inlet, one window late. Pitch and formant ratios (inlets 2 and 3, 0.05 to 8) are read once per frame. Cross-synthesis mixes in a second sound: a buffer~ (read at the same position, or on its own when the first sound is live), or else the signal in inlet 5; inlet 4 is the amount (0.5).
+The phase vocoder of the author's sparkle, with phase locking and formant (spectral envelope) preservation: the engine of Musil's pvoc. With a buffer~ name it plays the buffer: the left inlet is the speed. Without one it transforms the signal in its left inlet. A frame is computed while the next hop plays (on a thread of its own), so the sound comes one hop late, and one window and one hop late when transforming the input. Pitch and formant ratios (inlets 2 and 3, 0.05 to 8) are read once per frame. Cross-synthesis mixes in a second sound: a buffer~ (read at the same position, or on its own when the first sound is live), or else the signal in inlet 5; inlet 4 is the amount (0.5).
 
 | Argument | |
 | --- | --- |
