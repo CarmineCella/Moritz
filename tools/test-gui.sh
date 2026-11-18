@@ -71,6 +71,11 @@ frames=$(grep "state: buffer snd frames" "$out" | head -1)
 if [ $status -eq 0 ] && [ "$(grep -c "$frames" "$out")" = 2 ] && ! grep -q "frames 0$" "$out" &&
    grep -q "state: code bound code c1 edited yes" "$out"; then ok; else fail "undo keeps buffer~ and the code editor"; fi
 
+# 6. a script put back into its box is an edit: undo takes it back, and the editor follows the box
+run "$G/undo.moritz" --window-png none open=c1 "act=codeedit:;edited" act=codesave act=undo act=state
+expect "undo of a script" "state: code text (out 1 42)"
+if ! grep -q "state: code bound code c1 edited no" "$out"; then fail "the editor is bound to the box again"; fi
+
 # 7. closing asks about an abstraction edited in its window, first, by its name
 mkdir -p "$T/abs"
 printf '(patch\n  (obj i inlet (pos 20 20))\n  (obj o outlet (pos 20 80))\n  (connect i 0 o 0))\n' > "$T/abs/twice.moritz"

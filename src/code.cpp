@@ -463,9 +463,10 @@ void CodeWindow::setText(const std::string& t) {
 }
 
 bool CodeWindow::save() {
-    if (source_ && path_.empty()) {                     // the script of a code box: into the box
+    if (source_ && path_.empty()) {                     // the script of a code box: into the box, an edit of its patch
         char* t = text_->text();
         Patch* p = source_->patchOf();
+        App::get().pushUndoFor(p);                      // undo takes the script back
         source_->setScript(t);
         std::free(t);
         App::get().markEdited(p);
