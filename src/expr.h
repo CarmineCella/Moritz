@@ -8,12 +8,17 @@
 // are integers, $f, $v and decimal constants (12.) are floats. An operation
 // between two integers is an integer one: 7 / 2 is 3, 7. / 2 is 3.5.
 //
+// random(a, b) draws from a mt19937 of each box through Musil's portable random module: the same
+// seed gives the same numbers on every system. The seed is made from the box's id, so a patch plays the
+// same numbers at each run (and two boxes different ones), unless it sends `seed n`.
+//
 // An expression compiles to a flat program (postfix instructions run on a
 // small stack), not a tree of function objects: expr~ runs it for every
 // sample, without calls through std::function and without allocating.
 #pragma once
 
 #include "dsp.h"
+#include "rng.h"          // Musil's portable random numbers
 
 #include <cctype>
 #include <cmath>
@@ -41,6 +46,17 @@ public:
         double (*f2)(double, double) = nullptr;
     };
     static constexpr int kMaxStack = 64;
+
+    // random()'s generator (by the thread that runs the program)
+    void seed(uint32_t s) { rng_.seed(s); }
+    // a seed made from a text (a box's id): FNV-1a, the same everywhere
+    static uint32_t seedOf(const std::string& t) {
+        uint32_t h = 2166136261u;
+        for (unsigned char c : t) h = (h ^ c) * 16777619u;
+        return h;
+    }
+    // a seed as a patch gives it (a number, negative too)
+    static uint32_t seedOf(double x) { return std::isfinite(x) ? (uint32_t)(int64_t)std::llround(x) : 0u; }
 
     // v: the variables ($1..$9). Not thread-safe for one program (random() has a state):
     // each box runs its own.
@@ -73,7 +89,7 @@ public:
                         case Lt: a = a < b ? 1.0 : 0.0; break;
                         case Gt: a = a > b ? 1.0 : 0.0; break;
                         case Call2: a = in.f2(a, b); break;
-                        case Random: a = a + (b - a) * ((double)rng_() / 4294967296.0); break;   // raw mt19937 draws
+                        case Random: a = musil::rnd::uniform(rng_, a, b); break;
                         default: break;
                     }
                 }
@@ -117,7 +133,7 @@ public:
                             case Gt: for (int i = 0; i < m; ++i) a[i] = a[i] > b[i] ? 1.0 : 0.0; break;
                             case Call2: for (int i = 0; i < m; ++i) a[i] = ins.f2(a[i], b[i]); break;
                             case Random:
-                                for (int i = 0; i < m; ++i) a[i] = a[i] + (b[i] - a[i]) * ((double)rng_() / 4294967296.0);
+                                for (int i = 0; i < m; ++i) a[i] = musil::rnd::uniform(rng_, a[i], b[i]);
                                 break;
                             default: break;
                         }
@@ -136,7 +152,7 @@ private:
     static constexpr int kChunk = 64;
     std::vector<Ins> code_;
     double st_[kMaxStack][kChunk];               // evalBlock's stack: in the program, nothing allocated
-    std::mt19937 rng_{std::random_device{}()};
+    std::mt19937 rng_{1u};
 };
 
 class ExprParser {
@@ -161,11 +177,12 @@ public:
             return false;
         }
     }
-    // the same as a function (expr: control rate)
-    bool parse(Fn& out, int& nvars, std::string& err) {
+    // the same as a function (expr: control rate); program: the program it runs (to seed it)
+    bool parse(Fn& out, int& nvars, std::string& err, std::shared_ptr<ExprProgram>* program = nullptr) {
         auto p = std::make_shared<ExprProgram>();
         if (!parse(*p, nvars, err)) return false;
         out = [p](const double* v) { return p->eval(v); };
+        if (program) *program = p;
         return true;
     }
 

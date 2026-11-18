@@ -9,6 +9,7 @@
 #include <cmath>
 
 using namespace moritz;
+using etest::Rig;
 
 TEST(expr_program_values) {
     struct Case {
@@ -66,4 +67,32 @@ TEST(bench_expr_sig) {
     double ns = std::chrono::duration<double, std::nano>(std::chrono::steady_clock::now() - t0).count() / 441000;
     std::printf("  expr~ (8 operations, 3 calls): %.1f ns a sample, with noise~ and dac~\n", ns);
     CHECK(ns > 0);
+}
+
+// random() in expr~ and expr was seeded from std::random_device: a render was never the same twice.
+// Now the seed comes from the box's id (the same at each run, another for another box) or `seed n`.
+TEST(expr_random_is_the_same_at_each_run) {
+    const char* text = "(patch (obj e expr~ \"random(-1., 1.)\") (obj f expr~ \"random(-1., 1.)\") (obj o dac~ 1 2)"
+                       " (connect e 0 o 0) (connect f 0 o 1))";
+    Rig a(text), b(text);
+    auto ya = a.run(256), yb = b.run(256);
+    CHECK(ya == yb);
+    CHECK(etest::channel(ya, 2, 0) != etest::channel(ya, 2, 1));
+    CHECK(etest::peakOf(ya) > 0.5f);
+    // seed n: the same numbers from then on
+    Rig c(text), d(text);
+    c.box("e")->message(0, {Atom("seed"), Atom(7.f)});
+    auto yc = etest::channel(c.run(256), 2, 0);
+    d.run(512);
+    d.box("e")->message(0, {Atom("seed"), Atom(7.f)});
+    auto yd = etest::channel(d.run(256), 2, 0);
+    CHECK(yc == yd);
+    // expr, at control rate
+    const char* ctl = "(patch (obj e expr \"random(0, 1000)\") (obj p print v) (connect e 0 p 0))";
+    Rig g(ctl), h(ctl);
+    for (int k = 0; k < 5; ++k) {
+        g.box("e")->message(0, {Atom("bang")});
+        h.box("e")->message(0, {Atom("bang")});
+    }
+    CHECK(g.printed.size() == 5 && g.printed == h.printed);
 }

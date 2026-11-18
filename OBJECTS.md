@@ -612,7 +612,7 @@ See also: `clip~` `abs~` `expr~`
 
 `expr~ expression`
 
-An expr evaluated for every sample. `$v1` to `$v9` read the inlets, which take signals or floats (a float is held while nothing is connected); the highest one used sets the number of inlets. `$f` and `$i` read them too, `$i` truncated. Operators: `+ - * / %`, comparisons, `&& || !`, `pi`; functions: sin cos tan asin acos atan sinh cosh tanh exp log log10 sqrt abs floor ceil int round, pow atan2 min max fmod random(lo, hi). A result that is not a finite number gives 0; errors are printed in the console.
+An expr evaluated for every sample. `$v1` to `$v9` read the inlets, which take signals or floats (a float is held while nothing is connected); the highest one used sets the number of inlets. `$f` and `$i` read them too, `$i` truncated. Operators: `+ - * / %`, comparisons, `&& || !`, `pi`; functions: sin cos tan asin acos atan sinh cosh tanh exp log log10 sqrt abs floor ceil int round, pow atan2 min max fmod random(lo, hi). A result that is not a finite number gives 0; errors are printed in the console. random() gives the same numbers at each run (its seed comes from the box's id); `seed n` seeds it again, at the next block.
 
 | Argument | |
 | --- | --- |
@@ -3081,7 +3081,7 @@ Evaluates a C-like expression of its inputs: $f1..$f9 are decimals, $i1..$i9 the
 
 As in Max, values are typed: $i, integer constants (12) and the results of comparisons are integers; $f and constants with a point or an exponent (12., 1e3) are decimals. A division between two integers is an integer one: 7 / 2 is 3, while 7. / 2 or $f1 / 2 is 3.5.
 
-Operators: + - * / % (dividing by 0 gives 0), the comparisons == != < > <= >= (1 or 0), && || ! (logic), unary minus, and ( ) for grouping. Functions of one argument: sin cos tan asin acos atan sinh cosh tanh exp log log10 sqrt abs fabs floor ceil int round. Of two: pow(x, y), atan2(y, x), min(a, b), max(a, b), fmod(a, b), random(lo, hi) (a decimal from lo to hi). The constant pi.
+Operators: + - * / % (dividing by 0 gives 0), the comparisons == != < > <= >= (1 or 0), && || ! (logic), unary minus, and ( ) for grouping. Functions of one argument: sin cos tan asin acos atan sinh cosh tanh exp log log10 sqrt abs fabs floor ceil int round. Of two: pow(x, y), atan2(y, x), min(a, b), max(a, b), fmod(a, b), random(lo, hi) (a decimal from lo to hi: the same numbers at each run, the seed coming from the box's id; `seed n` seeds it again). The constant pi.
 
 | Argument | |
 | --- | --- |

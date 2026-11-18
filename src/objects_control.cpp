@@ -792,15 +792,20 @@ class ExprBox : public Box {
 public:
     explicit ExprBox(const Message& a) : src_(messageToString(a)) {
         int nv = 0;
-        ok_ = ExprParser(src_).parse(fn_, nv, err_);
+        ok_ = ExprParser(src_).parse(fn_, nv, err_, &prog_);
         setPorts(std::vector<Port>((size_t)std::max(1, nv), P::Control), {P::Control});
     }
     Message saveArgs() const override { return {Atom(src_)}; }
     std::string text() const override { return "expr " + src_; }
     void attached() override {
         if (!ok_) patch->print("expr: " + err_ + " in \"" + src_ + "\"");
+        if (prog_) prog_->seed(ExprProgram::seedOf(id));     // random(): the same numbers at each run
     }
     void message(int in, const Message& m) override {
+        if (in == 0 && m[0].is("seed") && m.size() > 1 && m[1].isFloat()) {
+            if (prog_) prog_->seed(ExprProgram::seedOf(m[1].f));
+            return;
+        }
         if (in > 0) { if (m[0].isFloat()) in_[in] = m[0].f; return; }
         if (m[0].isFloat())
             for (size_t k = 0; k < m.size() && k < 9; ++k)
@@ -815,6 +820,7 @@ private:
     std::string src_, err_;
     bool ok_ = false;
     ExprParser::Fn fn_;
+    std::shared_ptr<ExprProgram> prog_;
     double in_[9] = {0};
 };
 

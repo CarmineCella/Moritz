@@ -854,7 +854,7 @@ public:
 // ================================================================ signal utilities
 
 // expr~: expr evaluated per sample. $v1..$v9 (or $f/$i) read the inlets,
-// which take signals or floats.
+// which take signals or floats. `seed n` seeds random() (at the next block).
 class ExprSigBox : public Box {
 public:
     explicit ExprSigBox(const Message& a) : src_(messageToString(a)) {
@@ -867,12 +867,19 @@ public:
     std::string text() const override { return "expr~ " + src_; }
     void attached() override {
         if (!ok_) patch->print("expr~: " + err_ + " in \"" + src_ + "\"");
+        prog_.seed(ExprProgram::seedOf(id));        // random(): the same numbers at each run (not running yet)
     }
     void message(int in, const Message& m) override {
+        if (in == 0 && m[0].is("seed") && m.size() > 1 && m[1].isFloat()) {   // at the next block
+            post(kSeed, m[1].f);
+            return;
+        }
         if (m[0].isFloat()) setScalar(in, m[0].f);
     }
     void dsp(int n) override {
         float* y = sigOut(0);
+        for (int k = 0, ne = events(); k < ne; ++k)
+            if (event(k).kind == kSeed) prog_.seed(ExprProgram::seedOf(event(k).a));
         if (!ok_) { dsp::fill(y, 0.f, n); return; }
         const float* in[9];
         for (int k = 0; k < 9; ++k) in[k] = sigIn(std::min(k, nv_ - 1), n);
@@ -883,6 +890,7 @@ private:
     std::string src_, err_;
     bool ok_ = false;
     int nv_ = 1;
+    enum : uint8_t { kSeed = kEvUser };
     std::unique_ptr<ExprProgram> progPtr_ = std::make_unique<ExprProgram>();   // 32 KB: on the heap
     ExprProgram& prog_ = *progPtr_;
 };
