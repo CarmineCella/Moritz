@@ -121,34 +121,32 @@ private:
 };
 
 
-// y = x * h, the whole linear convolution (n + m - 1 samples, n and m the lengths of x and h), by FFTs: one
-// transform when x is not much longer than h, else overlap-add over blocks (FFTs of about 8 times h's length).
-// breathe(), when given, is called between blocks (an interpreter keeps its windows alive).
+// y = x * h, the whole linear convolution (n + m - 1 samples, n and m the lengths of x and h), by real FFTs:
+// one transform when x is not much longer than h, else overlap-add over blocks (FFTs of about 8 times h's
+// length). breathe(), when given, is called between blocks (an interpreter keeps its windows alive).
 template <class Breathe>
 inline std::vector<double> convolve(const double* x, size_t n, const double* h, size_t m, Breathe breathe) {
     if (n == 0 || m == 0) return {};
     size_t len = n + m - 1, N = next_pow2(std::max<size_t>(2, len)), cap = 8 * next_pow2(std::max<size_t>(2, m));
     if (N > cap) N = cap;                                   // overlap-add: blocks of N - m + 1 samples of x
-    size_t B = N - m + 1;
-    FFT<double> f;
-    f.init((int)N);
-    std::vector<double> hr(N, 0.0), hi(N, 0.0), xr(N), xi(N), y(len, 0.0);
-    std::copy(h, h + m, hr.begin());
-    f.forward(hr.data(), hi.data());
+    size_t B = N - m + 1, H = N / 2 + 1;
+    RealFFT<double>& f = rfft_plan<double>((int)N);
+    std::vector<double> buf(N, 0.0), hr(H), hi(H), xr(H), xi(H), y(len, 0.0);
+    std::copy(h, h + m, buf.begin());
+    f.forward(buf.data(), hr.data(), hi.data());
     for (size_t start = 0; start < n; start += B) {
         size_t take = std::min(B, n - start);
-        std::fill(xr.begin(), xr.end(), 0.0);
-        std::fill(xi.begin(), xi.end(), 0.0);
-        std::copy(x + start, x + start + take, xr.begin());
-        f.forward(xr.data(), xi.data());
-        for (size_t k = 0; k < N; ++k) {
+        std::fill(buf.begin(), buf.end(), 0.0);
+        std::copy(x + start, x + start + take, buf.begin());
+        f.forward(buf.data(), xr.data(), xi.data());
+        for (size_t k = 0; k < H; ++k) {
             double a = xr[k], b = xi[k];
             xr[k] = a * hr[k] - b * hi[k];
             xi[k] = a * hi[k] + b * hr[k];
         }
-        f.inverse(xr.data(), xi.data());
+        f.inverse(xr.data(), xi.data(), buf.data());
         size_t out = std::min(take + m - 1, len - start);
-        for (size_t k = 0; k < out; ++k) y[start + k] += xr[k] / (double)N;
+        for (size_t k = 0; k < out; ++k) y[start + k] += buf[k] / (double)N;
         if (start + B < n) breathe();
     }
     return y;
@@ -164,25 +162,25 @@ inline std::vector<double> convolve(const std::vector<double>& x, const std::vec
 // Non-finite results are 0.
 inline std::vector<double> deconvolve(const std::vector<double>& y, const std::vector<double>& h, double threshold) {
     if (y.empty() || h.empty()) return std::vector<double>(y.size(), 0.0);
-    size_t N = next_pow2(std::max<size_t>(2, std::max(y.size(), h.size())));
-    std::vector<double> yr(N, 0.0), yi(N, 0.0), hr(N, 0.0), hi(N, 0.0);
-    std::copy(y.begin(), y.end(), yr.begin());
-    std::copy(h.begin(), h.end(), hr.begin());
-    FFT<double> fft;
-    fft.init((int)N);
-    fft.forward(yr.data(), yi.data());
-    fft.forward(hr.data(), hi.data());
+    size_t N = next_pow2(std::max<size_t>(2, std::max(y.size(), h.size()))), H = N / 2 + 1;
+    RealFFT<double>& f = rfft_plan<double>((int)N);
+    std::vector<double> buf(N, 0.0), yr(H), yi(H), hr(H), hi(H);
+    std::copy(y.begin(), y.end(), buf.begin());
+    f.forward(buf.data(), yr.data(), yi.data());
+    std::fill(buf.begin(), buf.end(), 0.0);
+    std::copy(h.begin(), h.end(), buf.begin());
+    f.forward(buf.data(), hr.data(), hi.data());
     double mx2 = 0;
-    for (size_t k = 0; k < N; ++k) mx2 = std::max(mx2, hr[k] * hr[k] + hi[k] * hi[k]);
+    for (size_t k = 0; k < H; ++k) mx2 = std::max(mx2, hr[k] * hr[k] + hi[k] * hi[k]);
     double reg = threshold * threshold * mx2;
-    for (size_t k = 0; k < N; ++k) {
+    for (size_t k = 0; k < H; ++k) {
         double ar = yr[k], ai = yi[k], br = hr[k], bi = hi[k], d = br * br + bi * bi + reg;
         if (d > 0) { yr[k] = (ar * br + ai * bi) / d; yi[k] = (ai * br - ar * bi) / d; }
         else yr[k] = yi[k] = 0;
     }
-    fft.inverse(yr.data(), yi.data());
+    f.inverse(yr.data(), yi.data(), buf.data());
     std::vector<double> x(y.size());
-    for (size_t k = 0; k < x.size(); ++k) { double v = yr[k] / (double)N; x[k] = std::isfinite(v) ? v : 0.0; }
+    for (size_t k = 0; k < x.size(); ++k) { double v = buf[k] / (double)N; x[k] = std::isfinite(v) ? v : 0.0; }
     return x;
 }
 

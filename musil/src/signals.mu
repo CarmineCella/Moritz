@@ -120,7 +120,7 @@ function complex-mul (a b) {
     var bi (last b)
     return (list (- (* ar br) (* ai bi)) (+ (* ar bi) (* ai br)))
 }
-; (conv x h) is C++ (signals.h): the linear convolution by FFTs, overlap-add for a long x
+; (conv x h) is C++ (signals.h): the linear convolution by real FFTs, overlap-add for a long x
 
 ; (cepstrum mags)          real cepstrum of a full (symmetric) magnitude spectrum
 function cepstrum (mags) (ifft (list (log (max mags 1e-12)) (zeros (length mags))))

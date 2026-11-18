@@ -1,5 +1,5 @@
 // engines.cpp — the C++ engines of Musil's libraries (src/signals/*.h, src/scientific/*.h, src/music/*.h), tested
-// from C++ as a host such as Moritz uses them: resampling, the random numbers, the convolution engines,
+// from C++ as a host such as Moritz uses them: the FFTs, resampling, the random numbers, the convolution engines,
 // the vocoder, the decoders, the MIDI reader, Orchidea's search; and the shared state of the libraries used by
 // interpreters on several threads at once.
 //
@@ -19,6 +19,43 @@ static void expect(bool ok, const std::string& what) {
     if (!ok) { std::cerr << "FAIL " << what << "\n"; ++failures; }
 }
 
+
+// --- the FFTs: FFT<T> against a direct DFT, RealFFT<T> against FFT<T>, both ways ---
+static void test_fft() {
+    for (int n : {1, 2, 4, 8, 64, 1024}) {
+        std::vector<double> x((size_t)n);
+        for (int k = 0; k < n; ++k) x[(size_t)k] = std::sin(0.37 * k * k + 1.0) + 0.25 * std::cos(3.1 * k);
+        std::vector<double> re(x), im((size_t)n, 0.0);
+        dsp::FFT<double> f; f.init(n); f.forward(re.data(), im.data());
+        double err = 0;
+        for (int k = 0; k < n; ++k) {
+            std::complex<double> s = 0;
+            for (int t = 0; t < n; ++t) s += x[(size_t)t] * std::polar(1.0, -dsp::kTwoPi * k * t / n);
+            err = std::max(err, std::abs(s - std::complex<double>(re[(size_t)k], im[(size_t)k])));
+        }
+        expect(err < 1e-9 * n, "FFT<double> matches the DFT at n = " + std::to_string(n));
+        if (n < 2) continue;
+        dsp::RealFFT<double> rf; rf.init(n);
+        std::vector<double> rr((size_t)n / 2 + 1), ri((size_t)n / 2 + 1), back((size_t)n);
+        rf.forward(x.data(), rr.data(), ri.data());
+        double e2 = 0;
+        for (int k = 0; k <= n / 2; ++k) e2 = std::max(e2, std::hypot(rr[(size_t)k] - re[(size_t)k], ri[(size_t)k] - im[(size_t)k]));
+        expect(e2 < 1e-10 * n, "RealFFT<double> forward matches FFT<double> at n = " + std::to_string(n));
+        rf.inverse(rr.data(), ri.data(), back.data());
+        double e3 = 0;
+        for (int k = 0; k < n; ++k) e3 = std::max(e3, std::fabs(back[(size_t)k] / n - x[(size_t)k]));
+        expect(e3 < 1e-12 * n, "RealFFT<double> inverse(forward(x)) = n x at n = " + std::to_string(n));
+    }
+    // float, as the real-time objects use it
+    dsp::RealFFT<float> rf; rf.init(512);
+    std::vector<float> x(512), re(257), im(257), back(512);
+    for (int k = 0; k < 512; ++k) x[(size_t)k] = (float)std::sin(dsp::kTwoPi * 10 * k / 512);
+    rf.forward(x.data(), re.data(), im.data());
+    expect(std::fabs(std::hypot(re[10], im[10]) - 256) < 1e-2, "RealFFT<float>: a sine at bin 10");
+    rf.inverse(re.data(), im.data(), back.data());
+    float e = 0; for (int k = 0; k < 512; ++k) e = std::max(e, std::fabs(back[(size_t)k] / 512 - x[(size_t)k]));
+    expect(e < 1e-5f, "RealFFT<float> round trip");
+}
 
 // --- resampling: the anti-aliasing of a downsampling, the passband ---
 static double level_of(const varr& y, double f, double sr) {          // the amplitude of a sine of f in y (least squares)
@@ -164,6 +201,7 @@ static void test_denormals() {
 int main() {
     test_denormals();
     test_threads();
+    test_fft();
     test_resample();
     test_midi();
     test_orchidea();

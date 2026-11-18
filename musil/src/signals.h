@@ -194,14 +194,14 @@ inline vptr sig_resample(vlist& a, Interp& i) {
 // makes the first periodicity peak the largest. By FFT: |X|^2 of the signal padded to twice its length
 inline std::vector<double> autocorr_fft(const double* x, size_t n, size_t lags) {
     size_t N = dsp::next_pow2(std::max<size_t>(2, 2 * n));
-    std::vector<double> re(N, 0.0), im(N, 0.0);
-    std::copy(x, x + n, re.begin());
-    dsp::FFT<double> f; f.init((int)N);
-    f.forward(re.data(), im.data());
-    for (size_t k = 0; k < N; k++) { re[k] = re[k] * re[k] + im[k] * im[k]; im[k] = 0; }
-    f.inverse(re.data(), im.data());
+    std::vector<double> buf(N, 0.0), re(N / 2 + 1), im(N / 2 + 1);
+    std::copy(x, x + n, buf.begin());
+    auto& f = dsp::rfft_plan<double>((int)N);
+    f.forward(buf.data(), re.data(), im.data());
+    for (size_t k = 0; k <= N / 2; k++) { re[k] = re[k] * re[k] + im[k] * im[k]; im[k] = 0; }
+    f.inverse(re.data(), im.data(), buf.data());
     std::vector<double> r(lags, 0.0);
-    for (size_t lag = 0; lag < lags && lag < N; lag++) r[lag] = re[lag] / (double)N / (double)n;
+    for (size_t lag = 0; lag < lags && lag < N; lag++) r[lag] = buf[lag] / (double)N / (double)n;
     return r;
 }
 inline vptr sig_autocorr(vlist& a, Interp& i) {
@@ -634,7 +634,7 @@ inline vptr sig_ambi_rotate(vlist& a, Interp& i) {
     }
     return v_list(std::move(out));
 }
-// (conv x h) (conv-fast x h) => the linear convolution of x and h (length n + m - 1, n and m their lengths), by FFTs
+// (conv x h) (conv-fast x h) => the linear convolution of x and h (length n + m - 1, n and m their lengths), by real FFTs
 //   (signals/convolution.h, as Moritz's condec): one transform when x is not much longer than h, else overlap-add
 //   over blocks; the interpreter breathes between blocks (the windows stay responsive while a long score goes
 //   through the hall). conv streams in a synth (h constant, partitioned); conv-fast is the same function offline

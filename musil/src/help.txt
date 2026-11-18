@@ -873,7 +873,7 @@
   within each order, the pair (m, -m) rotates by m yaw, exactly; B is a list of (order+1)^2 channel vectors
 #conv conv-fast
   (conv x h)  (conv-fast x h)
-  => the linear convolution of x and h (length n + m - 1, n and m their lengths), by FFTs
+  => the linear convolution of x and h (length n + m - 1, n and m their lengths), by real FFTs
   (signals/convolution.h, as Moritz's condec): one transform when x is not much longer than h, else overlap-add
   over blocks; the interpreter breathes between blocks (the windows stay responsive while a long score goes
   through the hall). conv streams in a synth (h constant, partitioned); conv-fast is the same function offline
