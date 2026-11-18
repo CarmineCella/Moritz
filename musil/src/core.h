@@ -9,10 +9,30 @@
 //     # is an ordinary character: 'C#4 and #1 are symbols. \ at line end continues.
 //
 // Numbers are valarray<double>; size-1 vectors broadcast.
-// Values are shared_ptr — sharing by default; copy is explicit.
+// Values are shared_ptr — sharing by default; copy is explicit. The literals of the program text
+// (numbers, strings, quoted lists) are never changed in place: a variable bound to one gets its own
+// copy, a quoted list is a fresh copy each time it is evaluated, and the mutators refuse a literal.
 // Special forms dispatch by function-pointer comparison.
 // User functions curry when called with too few args; with too many, the
 // result is applied to the remaining args.
+//
+// Embedding (the API a host uses besides run/eval/call_fn/def):
+//   - Stop. Interp::request_stop() (any thread, also a signal handler: one atomic store) makes the
+//     running evaluation throw musil::Stop_signal at its next step (every evaluation step checks it,
+//     and so do sleep and udp-receive). Stop_signal derives neither from Error nor from std::exception,
+//     so (try ...) and the builtins that catch errors do not stop it: it reaches the host. The request
+//     is sticky: it stays set (every later step throws again) until the host calls Interp::clear_stop(),
+//     which it does once the evaluation has returned to it. Interp::stopping() reads it.
+//   - Capabilities. Interp::caps (struct Capabilities) says what the code may do: read and write files
+//     (optionally only under some folders), run programs, use the network, wait (sleep, input, exec,
+//     udp-receive), end the program (exit). Every builtin that touches the system checks it inside, with
+//     require_read(path), require_write(path), require_exec(what), require_net(what),
+//     require_blocking(what), require_exit(); a refusal is an ordinary Musil error
+//     "<builtin>: not allowed here: write /abs/path". Capabilities::full() is the default (the standalone
+//     musil); Capabilities::sandboxed(write_roots, read_roots) refuses programs, network, waiting and
+//     exit, and writes outside write_roots. allow_blocking is caps.blocking.
+//   - Per-interpreter state. Interp::state<T>() is a T owned by the interpreter (made on first use):
+//     the libraries keep their tables there, so several interpreters run at once on threads.
 //
 
 #pragma once
@@ -29,6 +49,7 @@
 #include <iomanip>
 #include <iostream>
 #include <memory>
+#include <new>
 #include <random>
 #include <sstream>
 #include <string>
@@ -44,8 +65,9 @@
 // the stack of the calling thread (kernel32, Windows 8 and later), declared here so that core.h does
 // not bring in <windows.h> and its macros
 extern "C" __declspec(dllimport) void __stdcall GetCurrentThreadStackLimits(unsigned long long* low, unsigned long long* high);
+#include <intrin.h>
 #else
-#include <sys/resource.h>
+#include <pthread.h>
 #include <sys/select.h>
 #include <unistd.h>
 #endif
@@ -74,12 +96,56 @@ template <std::atomic<long>& (*N)()> struct live_counter {
     ~live_counter() { N().fetch_sub(1, std::memory_order_relaxed); }
 };
 
+// --- the stack of the calling thread ------------------------------------------------------------
+// The evaluator, the reader and the structural walks recurse; they stop with an error when the thread's
+// stack is nearly used up. The bounds are those of the thread really running (an interpreter on a
+// std::thread has 512 KB on macOS, the main thread 8 MB), read once per thread.
+struct thread_stack { std::uintptr_t low = 0, high = 0; size_t reserve = 64u << 10; };
+#if defined(_MSC_VER)
+#define MUSIL_FRAME_ADDRESS() reinterpret_cast<std::uintptr_t>(_AddressOfReturnAddress())
+#else
+#define MUSIL_FRAME_ADDRESS() reinterpret_cast<std::uintptr_t>(__builtin_frame_address(0))
+#endif
+inline const thread_stack& this_thread_stack() {
+    static thread_local thread_stack s = [] {
+        thread_stack t;
+#if defined(_WIN32)
+        unsigned long long lo = 0, hi = 0; GetCurrentThreadStackLimits(&lo, &hi);
+        t.low = (std::uintptr_t)lo; t.high = (std::uintptr_t)hi;
+#elif defined(__APPLE__)
+        pthread_t self = pthread_self();
+        t.high = reinterpret_cast<std::uintptr_t>(pthread_get_stackaddr_np(self));
+        t.low = t.high - pthread_get_stacksize_np(self);
+#else
+        pthread_attr_t a;
+        if (pthread_getattr_np(pthread_self(), &a) == 0) {
+            void* addr = nullptr; size_t sz = 0;
+            if (pthread_attr_getstack(&a, &addr, &sz) == 0) { t.low = reinterpret_cast<std::uintptr_t>(addr); t.high = t.low + sz; }
+            pthread_attr_destroy(&a);
+        }
+#endif
+        size_t size = t.high > t.low ? t.high - t.low : 0;
+        if (size == 0) { size = 512u << 10; t.high = MUSIL_FRAME_ADDRESS(); t.low = t.high - size; }   // unknown: assume little
+        t.reserve = std::min<size_t>(1u << 20, std::max<size_t>(48u << 10, size / 4));
+        return t;
+    }();
+    return s;
+}
+// is the stack of this thread nearly used up? (an address off the stack, as with a sanitizer's fake frames, is not)
+inline bool stack_low() {
+    std::uintptr_t here = MUSIL_FRAME_ADDRESS(); const thread_stack& t = this_thread_stack();
+    return here >= t.low && here < t.low + t.reserve;
+}
+
 // AST
 struct Value {
     enum tag { NIL, NUM, STR, SYM, LIST, FN, OPAQUE } t = NIL;
+    bool lit = false;                              // read from the program text: never changed in place (see unlit)
+    int line = 0;
+    int amin = 0, amax = -1;                       // builtin: arity (amax < 0 = unbounded)
     varr num; std::string s; vlist l;
-    int line = 0; sptr file;
-    op_t op = nullptr; int amin = 0, amax = -1;   // builtin: arity (amax < 0 = unbounded)
+    sptr file;
+    op_t op = nullptr;
     std::vector<std::string> params;
     vptr body; eptr closure;
     std::weak_ptr<Env> wclosure;                  // a function bound in the environment it closes over holds it weakly (Env::bind)
@@ -115,6 +181,7 @@ inline const char* type_name(const vptr& v) {
     static const char* names[] = { "nil", "number", "string", "symbol", "list", "function", "opaque" };
     return v ? names[v->t] : "nil";
 }
+
 inline vptr v_nil()              { return std::make_shared<Value>(); }
 inline vptr v_num(double d)      { auto v = v_nil(); v->t = Value::NUM; v->num = varr(d, 1); return v; }
 inline vptr v_arr(varr a)        { auto v = v_nil(); v->t = Value::NUM; v->num = std::move(a); return v; }
@@ -130,6 +197,24 @@ inline vptr v_op(op_t f, std::string name, int amin, int amax) {
 inline vptr v_opaque(std::string tag, std::shared_ptr<void> p) { 
     auto v = v_nil(); v->t = Value::OPAQUE; v->opaque_tag = std::move(tag); v->opaque = std::move(p); return v; 
 }
+// A literal of the program text, as a value a variable may own: a number or a string is copied (a vector
+// literal changed in place would change the program); anything else is itself.
+inline vptr unlit(vptr v) {
+    if (v && v->lit && (v->t == Value::NUM || v->t == Value::STR)) { auto c = v_nil(); c->t = v->t; c->num = v->num; c->s = v->s; return c; }
+    return v;
+}
+// what a quoted literal evaluates to: a fresh copy of the lists in it (a quoted list changed by push or
+// setidx would change the program), the symbols and the other atoms shared
+inline vptr copy_literal(const vptr& v, int depth = 0) {
+    if (!v || !v->lit) return v;
+    if (v->t == Value::NUM || v->t == Value::STR) return unlit(v);
+    if (v->t != Value::LIST) return v;
+    if (depth > 10000 || stack_low()) return v;                      // the reader refuses deeper nesting
+    vlist out; out.reserve(v->l.size());
+    for (auto& x : v->l) out.push_back(copy_literal(x, depth + 1));
+    return v_list(std::move(out), v->line, v->file);
+}
+
 // A function bound by name in the very environment it closes over (a local function, a var holding a
 // lambda made there) would keep that environment alive forever: the environment holds the function and
 // the function holds the environment. So such a binding holds the environment weakly, and reading the
@@ -186,6 +271,9 @@ struct Error : std::exception {
 };
 struct Return_signal { vptr val; }; struct break_signal {}; struct continue_signal {};
 struct Exit_signal { int code; };
+// thrown when the host asked the interpreter to stop (Interp::request_stop): not an Error, not a
+// std::exception, so neither (try ...) nor a builtin's error handling catches it
+struct Stop_signal {};
 inline bool truthy(const vptr& v) {
     if (!v || v->t == Value::NIL) return false;
     if (v->t == Value::NUM) { for (size_t i=0; i<v->num.size(); i++) if (v->num[i]==0.0) return false; return v->num.size() > 0; }
@@ -201,7 +289,7 @@ inline int& str_of_depth() { static thread_local int d = 0; return d; }
 inline std::string str_of(const vptr& v) {
     if (!v) return "nil";
     struct guard { guard() { str_of_depth()++; } ~guard() { str_of_depth()--; } } g;
-    if (str_of_depth() > 200) return "...";              // a list that contains itself (a closure holding its environment) prints as ...
+    if (str_of_depth() > 200 || stack_low()) return "...";   // a list that contains itself (a closure holding its environment) prints as ...
     std::ostringstream os;
     switch (v->t) {
     case Value::NIL: return "nil";
@@ -225,7 +313,7 @@ inline std::string str_of(const vptr& v) {
 inline void str_of_into(const vptr& v, std::string& out, size_t limit, int depth) {
     if (out.size() >= limit) return;
     if (!v) { out += "nil"; return; }
-    if (depth > 200) { out += "..."; return; }
+    if (depth > 200 || stack_low()) { out += "..."; return; }
     switch (v->t) {
     case Value::NIL: out += "nil"; return;
     case Value::NUM: {
@@ -243,7 +331,9 @@ inline void str_of_into(const vptr& v, std::string& out, size_t limit, int depth
     }
 }
 inline std::string str_of_limited(const vptr& v, size_t limit) { std::string s; str_of_into(v, s, limit, 0); if (s.size() > limit) s = s.substr(0, limit) + " ..."; return s; }
-inline bool equal(const vptr& a, const vptr& b) {
+// Structural equality. It recurses into nested lists; a structure too deep for the stack (or one that
+// contains itself, which would never end) is an error rather than a crash.
+inline bool equal_at(const vptr& a, const vptr& b, int depth) {
     if (a == b) return true;                       // the same object: equal without a walk (a score holds thousands of notes, each its database)
     if (!a || !b) return (!a || a->t == Value::NIL) && (!b || b->t == Value::NIL);
     if (a->t != b->t) return false;
@@ -254,21 +344,28 @@ inline bool equal(const vptr& a, const vptr& b) {
         return true;
     case Value::STR: case Value::SYM: return a->s == b->s;
     case Value::LIST: if (a->l.size() != b->l.size()) return false;
-        for (size_t i=0; i<a->l.size(); i++) { if (!equal(a->l[i], b->l[i])) return false; }
+        if (depth > 100000 || ((depth & 31) == 31 && stack_low()))
+            throw Error("", 0, "equal?: the lists are nested too deep to compare (or one contains itself)");
+        for (size_t i=0; i<a->l.size(); i++) { if (!equal_at(a->l[i], b->l[i], depth + 1)) return false; }
         return true;
     case Value::FN: return a.get() == b.get() || (a->op && a->op == b->op);
     case Value::OPAQUE: return a->opaque.get() == b->opaque.get();
     }
     return false;
 }
+inline bool equal(const vptr& a, const vptr& b) { return equal_at(a, b, 0); }
 
 // parsing and lexing
 struct Parser {
     std::string src; size_t pos = 0; int line = 1; sptr file;
+    bool literal = true;                  // mark what is read as literals of the program text (parse makes plain data)
+    int depth = 0;                        // nesting of ( { and ' being read
+    static constexpr int max_depth = 3000;
     Parser(std::string s, sptr f) : src(std::move(s)), file(std::move(f)) {}
     bool eof() const { return pos >= src.size(); }
     char peek() const { return src[pos]; }
     [[noreturn]] void err(int ln, const std::string& m) { throw Error(file?*file:"<input>", ln, m); }
+    vptr mark(vptr v) { v->lit = literal; return v; }
     void skip_h() {
         while (!eof()) {
             char c = peek();
@@ -279,19 +376,22 @@ struct Parser {
         }
     }
     void skip_all() { while (true) { skip_h(); if (eof()) break; if (peek() != '\n') break; pos++; line++; } }
+    struct nest { Parser& p; nest(Parser& q, int ln) : p(q) { if (++p.depth > max_depth || stack_low()) { --p.depth; p.err(ln, "nested too deep (more than " + std::to_string(max_depth) + " levels)"); } } ~nest() { --p.depth; } };
     vptr read() {
         skip_h();
         if (eof()) err(line, "unexpected end of input");
         char c = peek(); int ln = line;
         if (c == '(') {
+            nest n(*this, ln);
             pos++; vlist out; skip_all();
             while (!eof() && peek() != ')') { out.push_back(read()); skip_all(); }
             if (eof()) err(ln, "missing )");
             pos++;
-            return v_list(std::move(out), ln, file);
+            return mark(v_list(std::move(out), ln, file));
         }
         if (c == '{') {
-            pos++; vlist out = { v_sym("do") };
+            nest n(*this, ln);
+            pos++; vlist out = { mark(v_sym("do")) };
             while (true) {
                 skip_h();
                 if (eof()) err(ln, "missing }");
@@ -300,7 +400,7 @@ struct Parser {
                 vptr lf = read_line('}');
                 if (lf->t != Value::LIST || !lf->l.empty()) out.push_back(lf);
             }
-            return v_list(std::move(out), ln, file);
+            return mark(v_list(std::move(out), ln, file));
         }
         if (c == ')' || c == '}') err(ln, std::string("unexpected ") + c);
         if (c == '"') {
@@ -311,9 +411,9 @@ struct Parser {
                 } else { if (peek() == '\n') line++; str += src[pos++]; }
             }
             if (eof()) err(ln, "missing closing \"");
-            pos++; return v_str(std::move(str));
+            pos++; return mark(v_str(std::move(str)));
         }
-        if (c == '\'') { pos++; return v_list({ v_sym("quote"), read() }, ln, file); }
+        if (c == '\'') { nest n(*this, ln); pos++; vptr q = read(); return mark(v_list({ mark(v_sym("quote")), q }, ln, file)); }
         std::string w;
         while (!eof()) {
             char k = peek();
@@ -322,7 +422,7 @@ struct Parser {
         }
         if (w.empty()) err(line, "empty word");
         char* e = nullptr; double d = std::strtod(w.c_str(), &e);
-        return (e && *e == '\0' && e != w.c_str()) ? v_num(d) : v_sym(std::move(w));
+        return mark((e && *e == '\0' && e != w.c_str()) ? v_num(d) : v_sym(std::move(w)));
     }
     // At the top level an indented line continues the command above it (a function's body on
     // the next line, a long call split over several); inside { } lines are separate commands.
@@ -346,10 +446,10 @@ struct Parser {
         // A line holding a single list is that list; a single literal is that value.
         // A single symbol is still a command: `ctr` calls ctr.
         if (out.size() == 1 && out[0]->t != Value::SYM) return out[0];
-        return v_list(std::move(out), ln, file);
+        return mark(v_list(std::move(out), ln, file));
     }
     vptr program() {
-        vlist out = { v_sym("do") };
+        vlist out = { mark(v_sym("do")) };
         while (true) {
             skip_h();
             if (eof()) break;
@@ -357,26 +457,66 @@ struct Parser {
             vptr lf = read_line(0);
             if (lf->t != Value::LIST || !lf->l.empty()) out.push_back(lf);
         }
-        return v_list(std::move(out), 1, file);
+        return mark(v_list(std::move(out), 1, file));
     }
 };
+
+// What a program may do (Interp::caps). A flag off refuses the whole kind; the roots, when not empty,
+// limit reading or writing to the files under them (resolved: ".." and symbolic links cannot step out).
+struct Capabilities {
+    bool read = true, write = true, exec = true, net = true, blocking = true, exit = true;
+    std::vector<std::string> write_roots;   // empty: anywhere
+    std::vector<std::string> read_roots;    // empty: anywhere
+    static Capabilities full() { return Capabilities(); }
+    // no programs, no network, no waiting, no exit; writing only under write_roots (none: no writing),
+    // reading only under read_roots (none: anywhere)
+    static Capabilities sandboxed(std::vector<std::string> write_roots = {}, std::vector<std::string> read_roots = {}) {
+        Capabilities c; c.exec = c.net = c.blocking = c.exit = false;
+        c.write = !write_roots.empty(); c.write_roots = std::move(write_roots); c.read_roots = std::move(read_roots);
+        return c;
+    }
+};
+// an absolute path with ".", ".." and the symbolic links of the part that exists resolved
+inline fs::path resolved_path(const std::string& path) {
+    std::error_code ec; fs::path p = fs::absolute(fs::path(path), ec);
+    if (ec) p = fs::path(path);
+    fs::path c = fs::weakly_canonical(p, ec);
+    return (ec ? p.lexically_normal() : c);
+}
+inline bool path_under(const fs::path& p, const std::vector<std::string>& roots) {
+    for (auto& r : roots) {
+        fs::path root = resolved_path(r);
+        auto pi = p.begin(); bool inside = true;
+        for (auto ri = root.begin(); ri != root.end(); ++ri, ++pi) {
+            if (ri->empty()) continue;                     // a trailing separator
+            if (pi == p.end() || *pi != *ri) { inside = false; break; }
+        }
+        if (inside) return true;
+    }
+    return false;
+}
+
 struct Frame { vptr name; sptr file; int line; };   // call-stack entry; formatted lazily on error
 struct Interp {
     eptr global;
     std::vector<Frame> call_stack;
-    int stack_depth = 0, max_stack = 100000;   // depth cap (secondary; the byte budget below is the real guard)
-    std::uintptr_t stack_base = 0;             // address of a local in the outermost run()
-    size_t stack_budget = 0;                   // bytes of C++ stack eval may use; set in the constructor, hosts may lower it
+    int stack_depth = 0, max_stack = 100000;   // depth cap (secondary; the stack of the thread is the real guard)
+    std::uintptr_t stack_base = 0;             // where the outermost evaluation on this thread started
+    size_t stack_budget = 0;                   // bytes of C++ stack eval may use; 0: what the thread has (hosts may set a limit)
+    std::uintptr_t stack_floor = 0;            // evaluation stops with an error below this address
     int function_depth = 0, loop_depth = 0;
     unsigned long eval_count = 0;
+    std::atomic<bool> stop_requested{false};
     std::function<void()> yield_fn;         // called every 1024 evals, for hosts that need to breathe
     std::function<void()> idle_fn;          // background work (schedulers, servers): called with yield_fn, from sleep,
                                             // and by hosts while they wait for input; never re-entered
     bool in_idle = false;
+    int waiting = 0;                        // > 0 inside a builtin that waits (sleep): a safe point for background code
     void idle() { if (idle_fn && !in_idle) { in_idle = true; try { idle_fn(); } catch (...) { in_idle = false; throw; } in_idle = false; } }
     std::vector<std::weak_ptr<Env>> tracked_envs;
     std::unordered_set<std::string> loaded_files;   // ran to completion; a second load is a no-op
     std::unordered_set<std::string> loading_files;  // currently running; a load from inside is a cycle and is skipped
+    std::unordered_set<std::string> library_files;  // the files found on the load path (and those they load next to them)
     std::vector<std::string> load_path;     // extra directories searched by load (after the local ones)
     std::string home_path;                  // ~/.musil, searched last
     sptr current_file; int current_line = 0;
@@ -384,12 +524,54 @@ struct Interp {
     std::mt19937_64 rng;
     std::ostream* out = &std::cout;
     const char* who = "";                   // name of the builtin being executed (for error messages)
-    bool allow_blocking = true;             // false: builtins that wait (sleep, input, exec) refuse to run;
+    Capabilities caps;                      // what the program may do (see the top of this file)
+    bool& allow_blocking = caps.blocking;   // false: builtins that wait (sleep, input, exec) refuse to run;
                                             // a host whose code must answer at once (a box in a patch) sets it
-    void blocking(const char* name) { if (!allow_blocking) err(std::string(name) + ": not allowed here: this code must not wait"); }
+    std::unordered_map<const void*, std::shared_ptr<void>> extensions;   // state<T>()
 
     Interp();
     ~Interp();
+    Interp(const Interp&) = delete;
+    Interp& operator=(const Interp&) = delete;
+    // a T that belongs to this interpreter, made on first use (the libraries' tables, servers, schedulers)
+    template <class T> T& state() {
+        static const char key = 0;
+        auto& p = extensions[&key];
+        if (!p) p = std::make_shared<T>();
+        return *static_cast<T*>(p.get());
+    }
+    // --- stop (see the top of this file)
+    void request_stop() noexcept { stop_requested.store(true, std::memory_order_relaxed); }
+    void clear_stop() noexcept { stop_requested.store(false, std::memory_order_relaxed); }
+    bool stopping() const noexcept { return stop_requested.load(std::memory_order_relaxed); }
+    void check_stop() { if (stop_requested.load(std::memory_order_relaxed)) throw Stop_signal{}; }
+    // --- capabilities
+    [[noreturn]] void refuse(const std::string& what) { err((who && *who ? std::string(who) + ": " : std::string()) + "not allowed here: " + what); }
+    void require_read(const std::string& path) {
+        if (!caps.read) refuse("read " + resolved_path(path).string());
+        if (!caps.read_roots.empty()) { fs::path p = resolved_path(path); if (!path_under(p, caps.read_roots)) refuse("read " + p.string()); }
+    }
+    void require_write(const std::string& path) {
+        if (!caps.write) refuse("write " + resolved_path(path).string());
+        if (!caps.write_roots.empty()) { fs::path p = resolved_path(path); if (!path_under(p, caps.write_roots)) refuse("write " + p.string()); }
+    }
+    void require_exec(const std::string& what) { if (!caps.exec) refuse("run a program (" + what + ")"); }
+    void require_net(const std::string& what) { if (!caps.net) refuse("use the network (" + what + ")"); }
+    void require_blocking(const std::string& what) { if (!caps.blocking) refuse(what + ": this code must not wait"); }
+    void require_exit() { if (!caps.exit) refuse("end the program"); }
+    void blocking(const char* name) { if (!caps.blocking) err(std::string(name) + ": not allowed here: this code must not wait"); }
+    // the builtin named in errors, for the length of a scope
+    struct who_scope { const char*& w; const char* saved; who_scope(Interp& i, const char* n) : w(i.who), saved(i.who) { w = n; } ~who_scope() { w = saved; } };
+    // a path to read: resolved like read_path, then checked; a path to write: checked
+    std::string readable(const std::string& path) { std::string p = read_path(path); require_read(p); return p; }
+    const std::string& writable(const std::string& path) { require_write(path); return path; }
+    // the largest vector or list a builtin makes (elements): beyond it an error rather than gigabytes
+    static constexpr double max_elements = 268435456.0;   // 2^28: 2 GB of doubles
+    size_t check_size(double n, const char* what) {
+        if (!(n >= 0)) err(std::string(what) + ": negative or invalid size");
+        if (n > max_elements) err(std::string(what) + ": too large (" + std::to_string((long long)std::min(n, 9e18)) + " elements; the limit is 2^28)");
+        return (size_t)n;
+    }
     eptr make_env(eptr parent = nullptr) {
         auto e = std::make_shared<Env>(std::move(parent));
         tracked_envs.push_back(e);
@@ -399,7 +581,10 @@ struct Interp {
         return e;
     }
     [[noreturn]] void err(const std::string& m) { throw Error(current_file?*current_file:"<input>", current_line, m); }
-    void yield_check() { if ((++eval_count & 1023) == 0) { if (yield_fn) yield_fn(); idle(); } }
+    void yield_check() {
+        if (stop_requested.load(std::memory_order_relaxed)) throw Stop_signal{};
+        if ((++eval_count & 1023) == 0) { if (yield_fn) yield_fn(); idle(); }
+    }
     void def(const std::string& name, op_t f, int amin, int amax) { global->vars[name] = v_op(f, name, amin, amax); }
     void def(const std::string& name, op_t f, int arity = 0) { def(name, f, arity, arity); }
     void def(const std::string& name, vptr v) { global->vars[name] = std::move(v); }
@@ -407,7 +592,13 @@ struct Interp {
     vptr call_fn(vptr fn, vlist args);
     vptr run(const std::string& src, const std::string& filename = "<input>");
     void load(const std::string& path);
-    std::string find_file(const std::string& path);   // the resolved path load would use, or ""
+    std::string find_file(const std::string& path, bool* in_library = nullptr);   // the resolved path load would use, or ""
+    void set_stack_floor(std::uintptr_t here) {
+        const thread_stack& t = this_thread_stack();
+        stack_base = here;
+        stack_floor = t.low + t.reserve;
+        if (stack_budget && here > stack_budget && here - stack_budget > stack_floor) stack_floor = here - stack_budget;
+    }
     // A path to read from: as given if it exists (or is absolute); otherwise relative to the
     // directory of the file being run, so a script finds its data wherever it is started from.
     // A relative path for reading: as it is (the current directory), else next to the file whose code is
@@ -437,6 +628,7 @@ struct Interp {
     long index(const vptr& v) {
         double d = scalar(v);
         if (d != std::floor(d)) bad("expected integer index, got " + str_of(v));
+        if (std::fabs(d) > 9e15) bad("index out of range: " + str_of(v));
         return (long)d;
     }
     const std::string& str(const vptr& v) {
@@ -451,6 +643,8 @@ struct Interp {
         if (!v || v->t != Value::FN) bad(std::string("expected function, got ") + type_name(v));
         return v;
     }
+    // a literal of the program text may not be changed in place
+    void mutable_target(const vptr& v) { if (v && v->lit) bad("cannot change a constant of the program text in place (make a copy with copy)"); }
     vptr call_op(const vptr& f, vlist& args) {
         if ((int)args.size() < f->amin || (f->amax >= 0 && (int)args.size() > f->amax)) {
             std::string want = f->amax < 0 ? "at least " + std::to_string(f->amin)
@@ -460,7 +654,11 @@ struct Interp {
         }
         struct guard { const char*& w; const char* saved; ~guard() { w = saved; } } g{who, who};
         who = f->s.c_str();
-        return f->op(args, *this);
+        try { return f->op(args, *this); }
+        catch (const Error&) { throw; }
+        catch (const std::bad_alloc&) { err(f->s + ": out of memory"); }
+        catch (const std::length_error&) { err(f->s + ": too large"); }
+        catch (const std::exception& ex) { err(f->s + ": " + ex.what()); }     // every C++ exception is a Musil error
     }
 };
 template <class F>
@@ -482,6 +680,7 @@ inline int op_prec(const std::string& o) {
 inline vptr expr_parse(vlist& w, size_t& p, int min_p, Interp& i, eptr e);
 inline vptr expr_atom(vlist& w, size_t& p, Interp& i, eptr e) {
     if (p >= w.size()) i.err("expr: unexpected end of expression");
+    if (stack_low()) i.err("expr: nested too deep");
     vptr a = w[p];
     if (a->t == Value::NUM) { p++; return a; }
     if (a->t == Value::SYM) {
@@ -536,7 +735,7 @@ inline vptr expr_parse(vlist& w, size_t& p, int min_p, Interp& i, eptr e) {
 
 // evaluation
 // === Special forms (documented here; dispatched in eval) =====
-// (quote x) 'x: x itself, unevaluated: code as data
+// (quote x) 'x: x itself, unevaluated: code as data (a quoted list is a fresh copy each time)
 // (do forms...) evaluate in order, return the last; what { } builds
 // (if cond then [else]) cond is true unless it is 0, nil, empty, or a vector with a zero
 // (while cond body) loop; (break) and (continue) inside it
@@ -572,7 +771,7 @@ inline vptr fn_help    (vlist&, Interp&) { return v_nil(); }
 inline void print_help(Interp& i, const std::string& name);
 inline vptr make_partial(Interp& i, const vptr& fn, const vlist& args) {
     auto bound = i.make_env(fn->closure);
-    for (size_t k=0; k<args.size(); k++) bound->vars[fn->params[k]] = args[k];
+    for (size_t k=0; k<args.size(); k++) bound->vars[fn->params[k]] = unlit(args[k]);
     auto curr = v_nil(); curr->t = Value::FN; curr->closure = bound; curr->body = fn->body;
     curr->params = std::vector<std::string>(fn->params.begin() + args.size(), fn->params.end());
     return curr;
@@ -586,6 +785,7 @@ inline bool ends_in_return(const vptr& v) {
 }
 inline vptr hoist_returns(const vptr& v) {
     if (!v || v->t != Value::LIST || v->l.empty()) return v;
+    if (stack_low()) return v;                          // a body nested beyond the stack is left as it is
     if (is_form(v, "if")) {
         vlist n = v->l; for (size_t k=2; k<n.size(); k++) n[k] = hoist_returns(n[k]);
         return v_list(std::move(n), v->line, v->file);
@@ -614,17 +814,30 @@ inline std::string frame_label(const Frame& f) {
     return (f.name && f.name->t == Value::SYM ? f.name->s : std::string("<anon>")) + "() at " +
         (f.file ? *f.file : "?") + ":" + std::to_string(f.line);
 }
+inline void add_trace(Error& fe, const std::vector<Frame>& call_stack) {
+    if (!fe.trace.empty() || call_stack.empty()) return;
+    // innermost first. Deep recursions are abbreviated: 12 innermost, a count, 4 outermost.
+    size_t n = call_stack.size(), head = 12, tail = 4;
+    for (size_t k = 0; k < n; k++) {
+        if (n > head + tail + 1 && k == head) { fe.trace.push_back("... " + std::to_string(n - head - tail) + " more frames ..."); k = n - tail - 1; continue; }
+        fe.trace.push_back(frame_label(call_stack[n - 1 - k]));
+    }
+    fe.cached.clear();
+}
 inline vptr Interp::eval(vptr expr, eptr e) {
-    // frame sizes differ between compilers and thread stacks differ between hosts.
-    { char probe; auto here = reinterpret_cast<std::uintptr_t>(&probe);
-      if (stack_base && (here > stack_base ? here - stack_base : stack_base - here) > stack_budget) err("stack overflow (recursion too deep)"); }
     if (++stack_depth > max_stack) { --stack_depth; err("stack overflow (depth " + std::to_string(max_stack) + ")"); }
     struct guard { int& d; ~guard() { --d; } } g{stack_depth};
+    {   // the thread's stack, measured: frame sizes differ between compilers and thread stacks between hosts
+        std::uintptr_t here = MUSIL_FRAME_ADDRESS();
+        if (stack_depth == 1) set_stack_floor(here);
+        if (here < stack_floor) err("stack overflow (recursion too deep)");
+    }
     yield_check();
     bool entered_fn = false;        // did we enter a user fn in this frame?
     int saved_loop = loop_depth;
+    sptr saved_file; int saved_line = 0;    // where the function was called from: restored when it returns
     auto cleanup = [&]() {
-        if (entered_fn) { call_stack.pop_back(); --function_depth; loop_depth = saved_loop; }
+        if (entered_fn) { call_stack.pop_back(); --function_depth; loop_depth = saved_loop; current_file = saved_file; current_line = saved_line; entered_fn = false; }
     };
 try {
     while (true) {
@@ -648,7 +861,7 @@ try {
         else head = eval(l[0], e);
         op_t op = head->op;
 
-        if (op == fn_quote) { cleanup(); return l.size() > 1 ? l[1] : v_nil(); }
+        if (op == fn_quote) { cleanup(); return l.size() > 1 ? copy_literal(l[1]) : v_nil(); }
         if (op == fn_do) {
             if (l.size() == 1) { cleanup(); return v_nil(); }
             for (size_t i=1; i+1<l.size(); i++) eval(l[i], e);
@@ -687,14 +900,15 @@ try {
         if (op == fn_var) {   // define (or redefine) in the current environment: a function's var never touches an outer one
             if (l.size() != 3) err("var: expected (var name value)");
             if (l[1]->t != Value::SYM) err("var: name must be a symbol, got " + str_of(l[1]));
-            vptr v = eval(l[2], e);
+            vptr v = unlit(eval(l[2], e));
             e->bind(l[1]->s, v);
             cleanup(); return v;
         }
         if (op == fn_set) {   // assign to the nearest existing binding, however far out; error if there is none
             if (l.size() != 3) err("set: expected (set name value)");
             if (l[1]->t != Value::SYM) err("set: name must be a symbol, got " + str_of(l[1]));
-            vptr v = eval(l[2], e);
+            vptr v = unlit(eval(l[2], e));
+            if (expr->line) current_line = expr->line;
             if (!e->assign(l[1]->s, v)) err("set: undefined: " + l[1]->s);
             cleanup(); return v;
         }
@@ -761,6 +975,8 @@ try {
         if (head->t != Value::FN) err("not callable: " + str_of(l[0]) + " (" + type_name(head) + ")");
         vlist args; args.reserve(l.size() - 1);
         for (size_t i=1; i<l.size(); i++) args.push_back(eval(l[i], e));
+        if (expr->line) current_line = expr->line;            // an argument may have run code elsewhere: errors are this call's
+        if (expr->file) current_file = expr->file;
         if (head->op) { vptr r = call_op(head, args); cleanup(); return r; }   // op may throw: cleanup after
         // currying: too few args => return partial application
         if (args.size() < head->params.size()) { vptr r = make_partial(*this, head, args); cleanup(); return r; }
@@ -780,9 +996,9 @@ try {
         // tail-merged call so the trace reflects current location, not history.
         Frame fr{ l[0], current_file, current_line };
         if (entered_fn) call_stack.back() = fr;
-        else { call_stack.push_back(fr); ++function_depth; loop_depth = 0; entered_fn = true; }
+        else { call_stack.push_back(fr); ++function_depth; loop_depth = 0; entered_fn = true; saved_file = current_file; saved_line = current_line; }
         auto ne = make_env(head->closure);
-        for (size_t i=0; i<head->params.size(); i++) ne->vars[head->params[i]] = args[i];
+        for (size_t i=0; i<head->params.size(); i++) ne->vars[head->params[i]] = unlit(args[i]);
         expr = head->body; e = ne;
         // continue eval loop with new expr/env — no new C++ frame.
     }
@@ -791,15 +1007,14 @@ try {
     throw;  // propagate up to the eval frame that entered the function
   }
   catch (Error& fe) {
-    if (fe.trace.empty() && !call_stack.empty()) {
-        // innermost first. Deep recursions are abbreviated: 12 innermost, a count, 4 outermost.
-        size_t n = call_stack.size(), head = 12, tail = 4;
-        for (size_t k = 0; k < n; k++) {
-            if (n > head + tail + 1 && k == head) { fe.trace.push_back("... " + std::to_string(n - head - tail) + " more frames ..."); k = n - tail - 1; continue; }
-            fe.trace.push_back(frame_label(call_stack[n - 1 - k]));
-        }
-    }
+    if (fe.file.empty() && fe.line == 0) { fe.file = current_file ? *current_file : "<input>"; fe.line = current_line; fe.cached.clear(); }
+    add_trace(fe, call_stack);
     cleanup(); throw;
+  }
+  catch (const std::exception& ex) {                    // a C++ exception from the evaluator itself (out of memory): a Musil error
+    Error fe(current_file ? *current_file : "<input>", current_line, dynamic_cast<const std::bad_alloc*>(&ex) ? "out of memory" : ex.what());
+    add_trace(fe, call_stack);
+    cleanup(); throw fe;
   }
   catch (...) { cleanup(); throw; }
 }
@@ -819,14 +1034,14 @@ inline vptr Interp::call_fn(vptr f, vlist args) {
         return call_fn(r, vlist(args.begin() + f->params.size(), args.end()));
     }
     auto ne = make_env(f->closure);
-    for (size_t i=0; i<f->params.size(); i++) ne->vars[f->params[i]] = args[i];
+    for (size_t i=0; i<f->params.size(); i++) ne->vars[f->params[i]] = unlit(args[i]);
     call_stack.push_back(Frame{ nullptr, current_file, current_line });
-    ++function_depth; int sl = loop_depth; loop_depth = 0;
-    vptr r;
-    try { r = eval(f->body, ne); } catch (Return_signal& rs) { r = rs.val; }
-    catch (...) { call_stack.pop_back(); --function_depth; loop_depth = sl; throw; }
-    call_stack.pop_back(); --function_depth; loop_depth = sl;
-    return r;
+    struct restore {
+        Interp& I; int loop; sptr file; int line;
+        ~restore() { I.call_stack.pop_back(); --I.function_depth; I.loop_depth = loop; I.current_file = std::move(file); I.current_line = line; }
+    } rs{ *this, loop_depth, current_file, current_line };
+    ++function_depth; loop_depth = 0;
+    try { return eval(f->body, ne); } catch (Return_signal& r) { return r.val; }
 }
 
 // builtins
@@ -917,11 +1132,12 @@ inline bool reaches(const vptr& from, const Value* target) {
     return false;
 }
 inline void check_insert(Interp& i, const char* who, const vptr& into, const vptr& x) {
+    i.mutable_target(into);
     if (reaches(x, into.get())) i.err(std::string(who) + ": a list cannot contain itself");
 }
 inline vptr fn_push(vlist& a, Interp& i) { i.list(a[0]); check_insert(i, "push", a[0], a[1]); a[0]->l.push_back(a[1]); return a[0]; }
 // (pop L) remove and return the last element of a list, in place
-inline vptr fn_pop(vlist& a, Interp& i) { vlist& l = i.list(a[0]); if (l.empty()) i.err("pop: empty list"); vptr r = l.back(); l.pop_back(); return r; }
+inline vptr fn_pop(vlist& a, Interp& i) { vlist& l = i.list(a[0]); i.mutable_target(a[0]); if (l.empty()) i.err("pop: empty list"); vptr r = l.back(); l.pop_back(); return r; }
 // (length x) (head x) (tail x) (empty? x) on a list, a vector or a string
 // (getidx x k) element k of a list, vector or string; negative k counts from the end
 // (setidx x k v) set element k of a list or vector in place
@@ -954,7 +1170,7 @@ inline vptr fn_getidx(vlist& a, Interp& i) {
     i.err(std::string("getidx: expected list, number or string, got ") + type_name(v)); }
 inline vptr fn_setidx(vlist& a, Interp& i) {
     auto& v=a[0];
-    if (v->t==Value::NUM)  { v->num[checked_index(i, a[1], v->num.size())] = i.scalar(a[2]); return v; }
+    if (v->t==Value::NUM)  { i.mutable_target(v); v->num[checked_index(i, a[1], v->num.size())] = i.scalar(a[2]); return v; }
     if (v->t==Value::LIST) { size_t k = checked_index(i, a[1], v->l.size()); check_insert(i, "setidx", v, a[2]); v->l[k] = a[2]; return v; }
     i.err(std::string("setidx: expected list or number, got ") + type_name(v)); }
 // (vec x ...) a vector from numbers, vectors and lists of numbers, concatenated; a scalar is a vector of size 1
@@ -978,7 +1194,7 @@ inline vptr fn_sum(vlist& a, Interp& i) {
 // (print x ...) print the arguments separated by spaces, then a newline
 // (exit [code]) end the program
 inline vptr fn_print(vlist& a, Interp& i) { for (size_t k=0; k<a.size(); k++) { if (k) *i.out<<" "; *i.out<<str_of(a[k]); } *i.out<<"\n"<<std::flush; return v_nil(); }
-inline vptr fn_exit(vlist& a, Interp& i) { throw Exit_signal{ a.empty() ? 0 : (int)i.scalar(a[0]) }; }
+inline vptr fn_exit(vlist& a, Interp& i) { i.require_exit(); throw Exit_signal{ a.empty() ? 0 : (int)i.scalar(a[0]) }; }
 // (type x) "scalar" "vec" "string" "symbol" "list" "function" "nil" or "opaque:tag"
 // (str x) x printed as a string
 // (sym s) a symbol from a string; (num s) a number from a string
@@ -1019,7 +1235,7 @@ inline vptr fn_live_objects(vlist&, Interp&) { return v_list({ v_num((double)liv
 inline vptr fn_error(vlist& a, Interp& i) { std::string m; for (auto& x : a) m+=str_of(x); i.err(m.empty() ? "error" : m); }
 inline vptr fn_clock(vlist&, Interp&) { return v_num(std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count()); }
 inline vptr fn_load(vlist& a, Interp& i) { i.load(i.str(a[0])); return v_nil(); }
-inline vptr fn_parse(vlist& a, Interp& i) { Parser p(i.str(a[0]), std::make_shared<std::string>("<parse>")); return p.program(); }
+inline vptr fn_parse(vlist& a, Interp& i) { Parser p(i.str(a[0]), std::make_shared<std::string>("<parse>")); p.literal = false; return p.program(); }
 // help is a special form (its argument is not evaluated): (help range) works, and so does (help "range").
 inline void print_help(Interp& i, const std::string& name) {
     std::string path = i.find_file("help.txt");
@@ -1041,18 +1257,6 @@ inline vptr fn_vars(vlist&, Interp& i) { std::vector<std::string> names; for (au
 // constructor/destructor, methods
 inline Interp::Interp() {
     rng.seed((uint64_t)std::chrono::high_resolution_clock::now().time_since_epoch().count());
-    size_t limit = 1u << 20;   // 1 MB: the Windows default
-#ifdef _WIN32
-    unsigned long long lo = 0, hi = 0; GetCurrentThreadStackLimits(&lo, &hi);
-    if (hi > lo) limit = (size_t)(hi - lo);
-    if (limit > (64u << 20)) limit = 64u << 20;
-#else
-    struct rlimit rl;
-    if (getrlimit(RLIMIT_STACK, &rl) == 0 && rl.rlim_cur != RLIM_INFINITY) limit = (size_t)rl.rlim_cur;
-    else limit = 8u << 20;
-    if (limit > (64u << 20)) limit = 64u << 20;
-#endif
-    stack_budget = limit / 4 * 3;
     global = make_env(); global->global = true;
 #ifdef _WIN32
     const char sep = ';'; const char* home = std::getenv("USERPROFILE");
@@ -1104,29 +1308,38 @@ inline Interp::~Interp() {
 //   2. the current directory
 //   3. each entry of load_path (MUSIL_PATH, plus whatever the host adds)
 //   4. ~/.musil
-inline std::string Interp::find_file(const std::string& path) {
-    fs::path p(path), resolved;
-    auto try_path = [&](const fs::path& q) { std::error_code ec; if (resolved.empty() && !q.empty() && fs::is_regular_file(q, ec)) resolved = q; };
-    if (p.is_absolute()) try_path(p);
+// A file found on the load path (or next to a library that loads it) is a library: its reading is not checked
+// against the capabilities (Interp::caps), which concern the program's own files.
+inline std::string Interp::find_file(const std::string& path, bool* in_library) {
+    fs::path p(path), resolved; bool lib = false;
+    auto try_path = [&](const fs::path& q, bool is_lib) { std::error_code ec; if (resolved.empty() && !q.empty() && fs::is_regular_file(q, ec)) { resolved = q; lib = is_lib; } };
+    if (p.is_absolute()) try_path(p, false);
     else {
-        if (current_file) { fs::path base = fs::path(*current_file).parent_path(); if (!base.empty()) try_path(base / p); }
-        try_path(p);
-        for (auto& d : load_path) try_path(fs::path(d) / p);
-        if (!home_path.empty()) try_path(fs::path(home_path) / p);
+        if (current_file) {
+            fs::path base = fs::path(*current_file).parent_path();
+            if (!base.empty()) try_path(base / p, library_files.count(*current_file) > 0);
+        }
+        try_path(p, false);
+        for (auto& d : load_path) try_path(fs::path(d) / p, true);
+        if (!home_path.empty()) try_path(fs::path(home_path) / p, true);
     }
+    if (in_library) *in_library = lib;
     if (resolved.empty()) return "";
     std::error_code ec;
     fs::path canon_p = fs::weakly_canonical(resolved, ec);
     return (ec ? fs::absolute(resolved) : canon_p).generic_string();
 }
 inline void Interp::load(const std::string& path) {
-    std::string canon = find_file(path);
+    bool lib = false;
+    std::string canon = find_file(path, &lib);
     if (canon.empty()) err("load: not found: " + path);
     if (loaded_files.count(canon) || loading_files.count(canon)) return;
+    if (!lib) { who_scope ws(*this, "load"); require_read(canon); }
     std::ifstream f(canon); if (!f) err("load: cannot open " + canon);
     std::stringstream ss; ss << f.rdbuf();
     auto sf = current_file; int sl = current_line;
     loading_files.insert(canon);
+    if (lib) library_files.insert(canon);
     struct guard { Interp& i; std::string c; sptr f; int l; bool ok = false;
         ~guard() { i.loading_files.erase(c); if (ok) i.loaded_files.insert(c); i.current_file = f; i.current_line = l; } } g{*this, canon, sf, sl};
     run(ss.str(), canon);
@@ -1138,11 +1351,9 @@ inline vptr Interp::run(const std::string& src, const std::string& filename) {
     auto prog = p.program();
     current_file = file;
     if (!main_file && !filename.empty() && filename[0] != '<' && loading_files.empty()) main_file = file;
-    char here;
-    if (stack_depth == 0) stack_base = reinterpret_cast<std::uintptr_t>(&here);   // outermost run on this thread
     return eval(prog, global);
 }
-inline Interp*& repl_interp() { static Interp* p = nullptr; return p; }
+inline Interp*& repl_interp() { static thread_local Interp* p = nullptr; return p; }
 inline void Interp::repl() {
     std::string buffer; int depth = 0;
     repl_interp() = this;
@@ -1156,7 +1367,7 @@ inline void Interp::repl() {
             fd_set fds; FD_ZERO(&fds); FD_SET(fd, &fds); timeval tv{ 0, 20000 };
             int r = select(fd + 1, &fds, nullptr, nullptr, &tv);
             if (r > 0) break;
-            if (repl_interp()) { try { repl_interp()->idle(); } catch (...) {} }
+            if (repl_interp()) { try { repl_interp()->idle(); } catch (...) {} repl_interp()->clear_stop(); }
         }
         unsigned char c; long n = read(fd, &c, 1);
         return n == 1 ? (int)c : EOF;
@@ -1179,6 +1390,7 @@ inline void Interp::repl() {
             int r = select(1, &fds, nullptr, nullptr, &tv);
             if (r > 0) break;
             try { idle(); } catch (...) {}
+            clear_stop();
         }
 #endif
         if (!std::getline(std::cin, line)) break;
@@ -1197,7 +1409,9 @@ inline void Interp::repl() {
         if (depth <= 0) {
             try { auto r = run(buffer, "<repl>"); if (r && r->t != Value::NIL) *out << str_of(r) << "\n"; }
             catch (Exit_signal&) { break; }
+            catch (Stop_signal&) { *out << "stopped\n"; }
             catch (const std::exception& ex) { *out << "error: " << ex.what() << "\n"; }
+            clear_stop();
             call_stack.clear(); function_depth = 0; loop_depth = 0; stack_depth = 0;
             buffer.clear(); depth = 0;
         }

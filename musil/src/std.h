@@ -11,7 +11,7 @@
 
 namespace musil {
 
-inline size_t checked_size(Interp& i, const vptr& v) { long n = i.index(v); if (n < 0) i.bad("negative size"); return (size_t)n; }
+inline size_t checked_size(Interp& i, const vptr& v) { long n = i.index(v); if (n < 0) i.bad("negative size"); return i.check_size((double)n, i.who); }
 
 // vectors
 // (range n) (range a b) (range a b step) a vector of evenly spaced numbers, end excluded
@@ -21,8 +21,9 @@ inline vptr fn_range(vlist& a, Interp& i) {   // (range n) | (range a b) | (rang
     if (a.size()==1) hi = i.scalar(a[0]);
     else { lo = i.scalar(a[0]); hi = i.scalar(a[1]); if (a.size()==3) step = i.scalar(a[2]); }
     if (step == 0) i.err("range: step must be nonzero");
-    long n = (long)std::ceil((hi - lo) / step); if (n < 0) n = 0;
-    varr r(n); for (long k=0; k<n; k++) r[k] = lo + k*step;
+    double count = std::ceil((hi - lo) / step); if (!(count > 0)) count = 0;      // NaN (an infinite bound) is none
+    size_t n = i.check_size(count, "range");
+    varr r(n); for (size_t k=0; k<n; k++) r[k] = lo + (double)k*step;
     return v_arr(std::move(r));
 }
 // (seed n) seed the random generator so that rand repeats
@@ -133,29 +134,35 @@ inline vptr fn_ord(vlist& a, Interp& i) { const std::string& s=i.str(a[0]); if (
 // I/O
 // (read path) the whole file as a string; a relative path that does not exist in the current
 //   directory is looked for next to the file being run (so a script finds its data from anywhere)
+//   Only regular files are read (not a device such as /dev/zero, a pipe or a directory), up to 1 GB.
 inline vptr fn_read(vlist& a, Interp& i) {
-    std::string fn=i.read_path(i.str(a[0]));
-    std::ifstream f(fn); if (!f) i.err("read: cannot open " + fn);
+    std::string fn=i.readable(i.str(a[0]));
+    std::error_code ec;
+    if (!fs::exists(fn, ec)) i.err("read: cannot open " + fn);
+    if (!fs::is_regular_file(fn, ec)) i.err("read: not a regular file: " + fn);
+    auto size = fs::file_size(fn, ec);
+    if (!ec && size > (1ull << 30)) i.err("read: " + fn + " is larger than 1 GB");
+    std::ifstream f(fn, std::ios::binary); if (!f) i.err("read: cannot open " + fn);
     std::stringstream ss; ss<<f.rdbuf(); return v_str(ss.str());
 }
 // (write path x) write x (printed) to a file, replacing it
 // (append-file path x) write x (printed) at the end of a file
 inline vptr fn_write(vlist& a, Interp& i) {
-    const std::string& fn=i.str(a[0]);
+    const std::string& fn=i.writable(i.str(a[0]));
     std::ofstream f(fn); if (!f) i.err("write: cannot open " + fn);
     f << str_of(a[1]); return v_nil();
 }
 inline vptr fn_appendf(vlist& a, Interp& i) {
-    const std::string& fn=i.str(a[0]);
+    const std::string& fn=i.writable(i.str(a[0]));
     std::ofstream f(fn, std::ios::app); if (!f) i.err("append-file: cannot open " + fn);
     f << str_of(a[1]); return v_nil();
 }
 // (directory? path) is the path an existing directory?
-inline vptr fn_directoryp(vlist& a, Interp& i) { std::error_code ec; return v_bool(std::filesystem::is_directory(i.read_path(i.str(a[0])), ec)); }
+inline vptr fn_directoryp(vlist& a, Interp& i) { std::error_code ec; return v_bool(std::filesystem::is_directory(i.readable(i.str(a[0])), ec)); }
 // (exists? path) does the file or directory exist?
-inline vptr fn_existsp(vlist& a, Interp& i) { return v_bool(fs::exists(i.read_path(i.str(a[0])))); }
+inline vptr fn_existsp(vlist& a, Interp& i) { std::error_code ec; return v_bool(fs::exists(i.readable(i.str(a[0])), ec)); }
 // (input [prompt]) a line read from the console, or nil at end of input
-inline vptr fn_input(vlist& a, Interp& i) { i.blocking("input"); if (!a.empty()) { *i.out << i.str(a[0]) << std::flush; } std::string s; if (!std::getline(std::cin, s)) return v_nil(); return v_str(std::move(s)); }
+inline vptr fn_input(vlist& a, Interp& i) { i.require_blocking("input"); if (!a.empty()) { *i.out << i.str(a[0]) << std::flush; } std::string s; if (!std::getline(std::cin, s)) return v_nil(); return v_str(std::move(s)); }
 
 // higher-order
 // (map x f) f applied to every element: a list for a list; for a vector, a vector when every result is a number, a list otherwise

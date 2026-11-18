@@ -38,7 +38,7 @@ hosted() {
 
 # --- the tests of each library
 cd "$ROOT/musil/tests" || exit 1
-TESTS="test_core test_std test_system test_scientific test_signals test_live test_music test_atoms test_plot test_memory test_stress test_smoke test_load"
+TESTS="test_core test_std test_system test_scientific test_signals test_live test_music test_atoms test_plot test_memory test_stress test_smoke test_load test_robust"
 [ "$MODE" = moritz ] && TESTS=$(echo "$TESTS" | sed 's/test_live//; s/test_plot//')
 # test_live checks the audio thread in real time (voices start and stop within tens of ms): on a busy
 # machine it may miss, so it gets three tries, and says when it needed more than one
