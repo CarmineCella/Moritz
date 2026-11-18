@@ -69,6 +69,7 @@ void PatchWindow::detach() {
     patch->onRedraw = nullptr;
     patch->onStructure = nullptr;
     patch = nullptr;
+    canvas->detach();     // its timers would walk the freed patch before FLTK deletes the window
 }
 
 int PatchWindow::handle(int e) {

@@ -15,6 +15,7 @@
 //   act=menu:<command>        run a menu command by its id (menus.cpp), if it is enabled now
 //   act=new:<class>           Patch > New: a box at the mouse in the front patch window
 //   act=text:<file>           the code view of the front document: its text replaced by the file's, applied
+//   act=type:<file>           the same, as if typed: applied when typing pauses (wait for it)
 //   act=click:<id>            a click on a box of the front document (left part)
 //   act=keys:<text>           typed into the front document's canvas (',' is Enter)
 //   act=send:<id>:<message>   a message to a box of the front document
@@ -143,7 +144,7 @@ bool act(const std::string& a) {
         c->commitEdit();
         return true;
     }
-    if (verb == "text") {
+    if (verb == "text" || verb == "type") {
         DocumentWindow* d = front();
         std::string src;
         if (!d || !fileio::read(arg, src)) return false;
@@ -151,7 +152,7 @@ bool act(const std::string& a) {
         PatchTextWindow* tw = app.textWindow(&d->patch);
         if (!tw) return false;
         tw->replaceText(src);
-        tw->applyNow();
+        if (verb == "text") tw->applyNow();
         return true;
     }
     if (verb == "click" || verb == "dblclick") {

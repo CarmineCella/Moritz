@@ -174,8 +174,19 @@ Canvas::~Canvas() {
     Fl::remove_timeout(tipTimer, this);
 }
 
+void Canvas::detach() {
+    Fl::remove_timeout(flashTimer, this);
+    Fl::remove_timeout(tipTimer, this);
+    editor_->hide();
+    patch_ = nullptr;
+    editing_ = dragBox_ = typingBox_ = tipBox_ = nullptr;
+    drag_ = Drag::None;
+    sugg_.clear();
+    layouts_.clear();
+}
+
 Box* Canvas::alive(Box* b) const {
-    if (!b) return nullptr;
+    if (!b || !patch_) return nullptr;
     for (auto& x : patch_->boxes)
         if (x.get() == b) return b;
     return nullptr;
@@ -184,6 +195,7 @@ Box* Canvas::alive(Box* b) const {
 // Flashing and animated boxes: only their areas are drawn again (the rest of the canvas is kept).
 void Canvas::flashTimer(void* data) {
     auto* c = static_cast<Canvas*>(data);
+    if (!c->patch_) return;
     double t = now();
     bool any = false;
     for (auto& b : c->patch_->boxes)
@@ -442,7 +454,7 @@ int Canvas::suggestionAt(int ex, int ey) const {
 
 void Canvas::tipTimer(void* data) {
     auto* c = static_cast<Canvas*>(data);
-    if (!c->tipBox_) return;
+    if (!c->tipBox_ || !c->patch_) return;
     c->tipShown_ = true;
     c->redraw();
 }
@@ -578,7 +590,7 @@ void Canvas::pasteText(const std::string& text) {
         k = text.find('\n', k);
         if (k != std::string::npos) k = text.find_first_not_of(" \t\r\n", k);
     }
-    if (readOnly()) return;
+    if (readOnly() || !patch_) return;
     if (k == std::string::npos || text.compare(k, 6, "(patch") != 0) {
         ed_->setStatus("nothing to paste: the clipboard holds no Moritz boxes");
         return;
@@ -607,6 +619,10 @@ void Canvas::pasteText(const std::string& text) {
 }
 
 void Canvas::draw() {
+    if (!patch_) {                                  // detached: the patch is gone
+        draw_box();
+        return;
+    }
     Patch& p = *patch_;
     zd::push_clip(x(), y(), w(), h());
     // what is to be drawn: all of it, or (an animated box) a part; in patch units, with a margin
@@ -706,6 +722,7 @@ void Canvas::draw() {
 
 void Canvas::contentBounds(int& x0, int& y0, int& x1, int& y1) const {
     x0 = 0; y0 = 0; x1 = 0; y1 = 0;
+    if (!patch_) return;
     for (auto& b : patch_->boxes) {
         x0 = std::min(x0, b->x - 20);
         y0 = std::min(y0, b->y - 20);
@@ -835,19 +852,21 @@ int Canvas::inletAt(Box* b, int mx) const {
 }
 
 void Canvas::clearSelection() {
+    if (!patch_) return;
     for (auto& b : patch_->boxes) b->selected = false;
     for (auto& c : patch_->conns) c.selected = false;
 }
 
 std::vector<Box*> Canvas::selectedBoxes() const {
     std::vector<Box*> s;
+    if (!patch_) return s;
     for (auto& b : patch_->boxes)
         if (b->selected) s.push_back(b.get());
     return s;
 }
 
 void Canvas::selectAll() {
-    if (locked_) return;
+    if (locked_ || !patch_) return;
     for (auto& b : patch_->boxes) b->selected = true;
     redraw();
 }
@@ -918,7 +937,7 @@ void Canvas::fitEditor() {
 void Canvas::editCb(Fl_Widget*, void* data) { static_cast<Canvas*>(data)->commitEdit(); }
 
 void Canvas::commitEdit() {
-    if (!editing_) return;
+    if (!editing_ || !patch_) return;
     Box* b = alive(editing_);
     editing_ = nullptr;
     sugg_.clear();
@@ -972,7 +991,7 @@ void Canvas::commitEdit() {
 }
 
 void Canvas::cancelEdit() {
-    if (!editing_) return;
+    if (!editing_ || !patch_) return;
     Box* b = alive(editing_);
     editing_ = nullptr;
     sugg_.clear();
@@ -986,6 +1005,7 @@ void Canvas::cancelEdit() {
 }
 
 void Canvas::newBoxAt(const std::string& cls, int bx, int by) {
+    if (!patch_) return;
     commitEdit();
     if (readOnly()) {                               // a help patch: nothing is added to it
         ed_->setStatus("a help patch can't be edited: copy its boxes into a patch of yours");
@@ -1009,6 +1029,7 @@ void Canvas::newBoxAt(const std::string& cls, int bx, int by) {
 void Canvas::newBoxAtMouse(const std::string& cls) { newBoxAt(cls, mouseX_, mouseY_); }
 
 void Canvas::deleteSelection() {
+    if (!patch_) return;
     Patch& p = *patch_;
     std::vector<int> cables;
     for (int k = 0; k < (int)p.conns.size(); ++k)
@@ -1032,6 +1053,7 @@ void Canvas::numberDrag(int dy) {
 }
 
 int Canvas::handle(int e) {
+    if (!patch_) return 0;                          // detached: the patch is gone
     // the scrollbars get their own clicks
     if ((e == FL_PUSH || e == FL_MOVE || e == FL_ENTER) &&
         ((hbar_->visible() && Fl::event_inside(hbar_)) || (vbar_->visible() && Fl::event_inside(vbar_))))

@@ -75,6 +75,9 @@ public:
     Canvas(int x, int y, int w, int h, PatchEditor* editor, Patch* patch);
     ~Canvas() override;
     Patch* patch() const { return patch_; }
+    // the patch is being destroyed: the canvas forgets it and stops its timers (the window may be
+    // deleted later, by FLTK; until then it draws nothing and takes no events)
+    void detach();
     PatchEditor* editor() const { return ed_; }
     bool readOnly() const { return !ed_->editable(); }   // help patches: always locked
 

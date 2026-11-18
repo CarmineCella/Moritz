@@ -113,6 +113,22 @@ expect "Edit Mode with a help window in front" "state: menu patch.edit disabled"
 run "$G/numbers.moritz" --window-png none act=menu:patch.edit act=state
 expect "Edit Mode on a document" "state: front"
 
+# 13. the code view, typed into, replaces a subpatcher whose window is open and animated: the window's timers
+#     must not walk the freed patch before FLTK deletes the window (the patch is long, so applying it takes
+#     longer than the timer's period)
+flashpatch() {   # flashpatch <a box more inside the subpatcher>
+    printf '(patch\n  (obj sub p inner (pos 20 20)\n    (patch\n      (obj osc cycle~ 440 (pos 20 20))\n'
+    printf '      (obj m meter~ (pos 20 60))\n%s      (connect osc 0 m 0)))\n' "$1"
+    k=0
+    while [ $k -lt 1500 ]; do printf '  (obj a%d + %d (pos %d %d))\n' $k $k $((20 + k % 40 * 60)) $((100 + k / 40 * 30)); k=$((k + 1)); done
+    printf ')\n'
+}
+flashpatch "" > "$T/flash.moritz"
+flashpatch '      (obj c comment "changed" (pos 120 20))
+' > "$T/flash-edited.txt"
+run "$T/flash.moritz" --window-png none act=opensub:sub act=wait:0.3 "act=type:$T/flash-edited.txt" act=wait:1.5 act=state
+expect "a subpatcher's window closed by the code view" "state: boxes 1501"
+
 rm -rf "$T"
 echo "$count interface cases, $fails failed"
 [ $fails -eq 0 ]
