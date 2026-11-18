@@ -25,6 +25,8 @@
 #include <sstream>
 #include <filesystem>
 #include <map>
+#include <memory>
+#include <mutex>
 
 #ifdef OPAQUE      // Windows defines it (wingdi.h, through system.h's sockets); Musil has a value type of that name
 #undef OPAQUE
@@ -200,11 +202,16 @@ inline vptr mus_db_gen(vlist& a, Interp& i) {
 // other), so a sound is found by its file name: the folder is walked once and indexed by name, with the
 // case and the spelling of sharps ignored.
 inline std::string db_norm_name(std::string s) { size_t sl = s.find_last_of("/\\"); if (sl != std::string::npos) s = s.substr(sl + 1); for (auto& c : s) { c = (char)std::tolower((unsigned char)c); if (c == '#') c = '_'; } return s; }
-inline std::map<std::string, std::string>& db_index_of(const std::string& root) {
-    static std::map<std::string, std::map<std::string, std::string>> cache;
+// The indexes are shared by the interpreters of the process (several run on threads in Moritz): built once per
+// folder under a lock, then read-only (a shared pointer to a finished index)
+using db_index = std::map<std::string, std::string>;
+inline std::shared_ptr<const db_index> db_index_of(const std::string& root) {
+    static std::mutex m; static std::map<std::string, std::shared_ptr<const db_index>> cache;
+    std::lock_guard<std::mutex> lock(m);
     auto it = cache.find(root); if (it != cache.end()) return it->second;
-    auto& idx = cache[root]; std::error_code ec; namespace fs = std::filesystem;
-    if (fs::is_directory(root, ec)) for (auto& e : fs::recursive_directory_iterator(root, ec)) { if (!e.is_regular_file(ec)) continue; std::string ext = e.path().extension().string(); for (auto& c : ext) c = (char)std::tolower((unsigned char)c); if (ext == ".wav" || ext == ".aif" || ext == ".aiff") idx.emplace(db_norm_name(e.path().filename().string()), e.path().string()); }
+    auto idx = std::make_shared<db_index>(); std::error_code ec; namespace fs = std::filesystem;
+    if (fs::is_directory(root, ec)) for (auto& e : fs::recursive_directory_iterator(root, ec)) { if (!e.is_regular_file(ec)) continue; std::string ext = e.path().extension().string(); for (auto& c : ext) c = (char)std::tolower((unsigned char)c); if (ext == ".wav" || ext == ".aif" || ext == ".aiff") idx->emplace(db_norm_name(e.path().filename().string()), e.path().string()); }
+    cache[root] = idx;
     return idx;
 }
 // (db-locate root file) => the path on disk of a sound named file (a path from a feature file) under root, found by its
@@ -213,9 +220,9 @@ inline vptr mus_db_locate(vlist& a, Interp& i) {
     std::string root = i.read_path(i.str(a[0])), rel = i.str(a[1]);
     std::filesystem::path direct = std::filesystem::path(root) / (rel.size() && (rel[0] == '/' || rel[0] == '\\') ? rel.substr(1) : rel); std::error_code ec;
     if (std::filesystem::exists(direct, ec)) return v_str(direct.string());
-    auto& idx = db_index_of(root); auto it = idx.find(db_norm_name(rel)); return v_str(it == idx.end() ? "" : it->second);
+    auto idx = db_index_of(root); auto it = idx->find(db_norm_name(rel)); return v_str(it == idx->end() ? "" : it->second);
 }
-inline vptr mus_db_index_size(vlist& a, Interp& i) { return v_num((double)db_index_of(i.read_path(i.str(a[0]))).size()); }
+inline vptr mus_db_index_size(vlist& a, Interp& i) { return v_num((double)db_index_of(i.read_path(i.str(a[0])))->size()); }
 
 // --- mimetic orchestration: Orchidea's search (music/orchidea.h) -------------------------------------------------
 // a record's value by key (a symbol or a string), or nil

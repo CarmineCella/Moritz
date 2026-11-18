@@ -25,6 +25,8 @@
 #include "signals/convolution.h"
 #include "signals/filters.h"
 #include <map>
+#include <memory>
+#include <mutex>
 
 namespace musil {
 
@@ -137,7 +139,8 @@ inline varr resample_sinc(const varr& x, double factor) {
     double fc = factor < 1 ? factor : 1.0;                 // cutoff relative to the input Nyquist
     // the windowed sinc tabulated over Q fractional phases (interpolated between them), normalised so that a constant
     // stays a constant; kept between calls with the same cutoff (a note's pitch shift is asked for thousands of times)
-    static const int Q = 512; static double table_fc = -1; static std::vector<double> table;
+    // (per thread: interpreters run on several threads in Moritz)
+    static const int Q = 512; thread_local double table_fc = -1; thread_local std::vector<double> table;
     if (fc != table_fc) {
         table.assign((size_t)(Q + 1) * taps, 0.0);
         for (int q = 0; q <= Q; q++) {
@@ -604,33 +607,47 @@ inline vptr sig_conv_fast(vlist& a, Interp& i) {
 //   (as src/hrtf_kemar.csv, the MIT KEMAR compact set at 44100 Hz, found on the load path); => the number of directions.
 //   Once a set is loaded, hrir takes the nearest measured direction (resampled to the requested rate);
 //   (hrtf-unload) goes back to the spherical-head model; (hrtf-loaded) => directions loaded, 0 for the model.
-struct hrtf_set { std::vector<double> az, el; std::vector<varr> left, right; double sr = 44100; };
-inline bool& hrtf_unloaded_by_user() { static bool b = false; return b; }
-inline hrtf_set& hrtf() { static hrtf_set h; return h; }
+// The set is shared by the interpreters of the process (several run on threads in Moritz): it is held by a shared
+// pointer that a load replaces under a lock, so an interpreter keeps the set it started a call with; the responses
+// resampled to a rate are kept with the set (under its own lock), each computed once.
+struct hrtf_set {
+    std::vector<double> az, el; std::vector<varr> left, right; double sr = 44100;
+    std::mutex m;                                            // guards what follows
+    std::map<long, double> scale;                            // per rate: the energy of the front direction there
+    std::map<std::pair<size_t, long>, std::pair<varr, varr>> at_rate;   // (direction, rate) -> the two ears at that rate
+};
+struct hrtf_registry { std::mutex m, loading; std::shared_ptr<hrtf_set> set; bool unloaded_by_user = false, tried = false; };
+inline hrtf_registry& hrtf_reg() { static hrtf_registry r; return r; }
+inline std::shared_ptr<hrtf_set> hrtf_current() { auto& r = hrtf_reg(); std::lock_guard<std::mutex> l(r.m); return r.set; }
 inline vptr sig_hrtf_load(vlist& a, Interp& i) {
     std::string path = i.find_file(i.str(a[0])); if (path.empty()) path = i.read_path(i.str(a[0]));
     std::ifstream f(path); if (!f) i.bad("cannot open " + i.str(a[0]));
-    hrtf_set h;
+    auto h = std::make_shared<hrtf_set>();
     for (auto& d : dsp::read_hrtf_csv(f)) {                // signals/hrtf.h
-        h.az.push_back(d.az); h.el.push_back(d.el);
-        h.left.push_back(varr(d.left.data(), d.left.size())); h.right.push_back(varr(d.right.data(), d.right.size()));
+        h->az.push_back(d.az); h->el.push_back(d.el);
+        h->left.push_back(varr(d.left.data(), d.left.size())); h->right.push_back(varr(d.right.data(), d.right.size()));
     }
-    if (h.az.empty()) i.bad("no directions in " + path);
+    if (h->az.empty()) i.bad("no directions in " + path);
     // normalised so that a source in front has unit energy at each ear (the set's overall level is arbitrary)
-    size_t front = 0; double bd = 1e9; for (size_t k = 0; k < h.az.size(); k++) { double d = std::fabs(h.az[k]) + std::fabs(h.el[k]); if (d < bd) { bd = d; front = k; } }
-    double e = 0; for (double v : h.left[front]) e += v * v; for (double v : h.right[front]) e += v * v; e = std::sqrt(e / 2); if (e <= 0) e = 1;
-    for (auto& v : h.left) v /= e; for (auto& v : h.right) v /= e;
-    hrtf() = std::move(h); hrtf_unloaded_by_user() = false; return v_num((double)hrtf().az.size());
+    size_t front = 0; double bd = 1e9; for (size_t k = 0; k < h->az.size(); k++) { double d = std::fabs(h->az[k]) + std::fabs(h->el[k]); if (d < bd) { bd = d; front = k; } }
+    double e = 0; for (double v : h->left[front]) e += v * v; for (double v : h->right[front]) e += v * v; e = std::sqrt(e / 2); if (e <= 0) e = 1;
+    for (auto& v : h->left) v /= e; for (auto& v : h->right) v /= e;
+    double n = (double)h->az.size();
+    auto& r = hrtf_reg(); std::lock_guard<std::mutex> l(r.m); r.set = std::move(h); r.unloaded_by_user = false;
+    return v_num(n);
 }
-inline vptr sig_hrtf_unload(vlist&, Interp&) { hrtf() = hrtf_set(); hrtf_unloaded_by_user() = true; return v_nil(); }
-inline bool hrtf_try_default(Interp& i);
-inline vptr sig_hrtf_loaded(vlist&, Interp& i) { hrtf_try_default(i); return v_num((double)hrtf().az.size()); }
-inline bool hrtf_try_default(Interp& i) {         // the first request loads the bundled set if it is on the load path
-    static bool tried = false; if (!hrtf().az.empty()) return true;
-    if (tried || hrtf_unloaded_by_user()) return false;
-    tried = true; std::string p = i.find_file("hrtf_kemar.csv"); if (p.empty()) return false;
-    vlist a = { v_str("hrtf_kemar.csv") }; try { sig_hrtf_load(a, i); } catch (...) { return false; } return true;
+inline vptr sig_hrtf_unload(vlist&, Interp&) { auto& r = hrtf_reg(); std::lock_guard<std::mutex> l(r.m); r.set.reset(); r.unloaded_by_user = true; return v_nil(); }
+// the set to use: the loaded one, or the bundled one loaded on the first request if it is on the load path; null for the model
+inline std::shared_ptr<hrtf_set> hrtf_try_default(Interp& i) {
+    auto& r = hrtf_reg();
+    if (auto s = hrtf_current()) return s;
+    std::lock_guard<std::mutex> one(r.loading);              // one thread loads, the others wait for it
+    { std::lock_guard<std::mutex> l(r.m); if (r.set) return r.set; if (r.tried || r.unloaded_by_user) return nullptr; r.tried = true; }
+    std::string p = i.find_file("hrtf_kemar.csv"); if (p.empty()) return nullptr;
+    vlist a = { v_str("hrtf_kemar.csv") }; try { sig_hrtf_load(a, i); } catch (...) { return nullptr; }
+    return hrtf_current();
 }
+inline vptr sig_hrtf_loaded(vlist&, Interp& i) { auto s = hrtf_try_default(i); return v_num(s ? (double)s->az.size() : 0.0); }
 // (hrir-model az el sr) => the spherical-head model, whatever is loaded (below)
 // (hrir az el sr) => (list left right): the nearest measured direction of the loaded set (the MIT KEMAR set is loaded
 //   from the load path on first use), resampled to sr; the spherical-head model when no set is available
@@ -660,25 +677,32 @@ inline vptr sig_hrir_model(vlist& a, Interp& i) {
     (void)x; return v_list(std::move(ears));
 }
 inline vptr sig_hrir(vlist& a, Interp& i) {
-    if (!hrtf_try_default(i)) return sig_hrir_model(a, i);
-    double az = i.scalar(a[0]), el = i.scalar(a[1]), sr = i.scalar(a[2]); hrtf_set& h = hrtf();
+    std::shared_ptr<hrtf_set> hp = hrtf_try_default(i);
+    if (!hp) return sig_hrir_model(a, i);
+    hrtf_set& h = *hp;
+    double az = i.scalar(a[0]), el = i.scalar(a[1]), sr = i.scalar(a[2]);
     // nearest direction on the sphere
     double ca = deg2rad(az), ce = deg2rad(el); double x = std::cos(ce) * std::cos(ca), y = std::cos(ce) * std::sin(ca), z = std::sin(ce);
     size_t best = 0; double bd = -2;
     for (size_t k = 0; k < h.az.size(); k++) { double a2 = deg2rad(h.az[k]), e2 = deg2rad(h.el[k]); double d = x * std::cos(e2) * std::cos(a2) + y * std::cos(e2) * std::sin(a2) + z * std::sin(e2); if (d > bd) { bd = d; best = k; } }
-    varr L = h.left[best], R = h.right[best];
-    if (std::fabs(sr - h.sr) > 1) {
-        double f = sr / h.sr; L = resample_sinc(L, f); R = resample_sinc(R, f);
-        // resampling to a lower rate drops the band above its Nyquist and with it energy: renormalise so that
-        // the front direction keeps unit energy at this rate (computed once per rate)
-        static std::map<long, double> scale; long key = (long)sr;
-        if (!scale.count(key)) { size_t fr = 0; double bd = 1e9; for (size_t k = 0; k < h.az.size(); k++) { double d = std::fabs(h.az[k]) + std::fabs(h.el[k]); if (d < bd) { bd = d; fr = k; } }
-            varr fl = resample_sinc(h.left[fr], f), frr = resample_sinc(h.right[fr], f); double e = 0; for (double v : fl) e += v * v; for (double v : frr) e += v * v; scale[key] = std::sqrt(e / 2); }
-        double sc = scale[key] > 0 ? scale[key] : 1; L /= sc; R /= sc;
+    if (std::fabs(sr - h.sr) <= 1) return v_list({ v_arr(h.left[best]), v_arr(h.right[best]) });
+    long key = std::lround(sr);
+    { std::lock_guard<std::mutex> l(h.m); auto it = h.at_rate.find({ best, key }); if (it != h.at_rate.end()) return v_list({ v_arr(it->second.first), v_arr(it->second.second) }); }
+    double f = sr / h.sr; varr L = resample_sinc(h.left[best], f), R = resample_sinc(h.right[best], f);
+    // resampling to a lower rate drops the band above its Nyquist and with it energy: renormalise so that
+    // the front direction keeps unit energy at this rate (computed once per rate)
+    double sc = 0;
+    { std::lock_guard<std::mutex> l(h.m); auto it = h.scale.find(key); if (it != h.scale.end()) sc = it->second; }
+    if (sc == 0) {
+        size_t fr = 0; double fd = 1e9; for (size_t k = 0; k < h.az.size(); k++) { double d = std::fabs(h.az[k]) + std::fabs(h.el[k]); if (d < fd) { fd = d; fr = k; } }
+        varr fl = resample_sinc(h.left[fr], f), frr = resample_sinc(h.right[fr], f); double e = 0; for (double v : fl) e += v * v; for (double v : frr) e += v * v;
+        sc = std::sqrt(e / 2); if (!(sc > 0)) sc = 1;
+        std::lock_guard<std::mutex> l(h.m); h.scale[key] = sc;
     }
+    L /= sc; R /= sc;
+    { std::lock_guard<std::mutex> l(h.m); h.at_rate[{ best, key }] = { L, R }; }
     return v_list({ v_arr(std::move(L)), v_arr(std::move(R)) });
 }
-
 // (binaural-level sr speakers) => the gain that gives a front source, decoded at order 1 to these virtual speakers
 //   (ambi-decoder) and rendered with their head responses (hrir), the energy of the front head response itself;
 //   binaural-decode uses it (it depends on the rate and on the set of responses loaded)
