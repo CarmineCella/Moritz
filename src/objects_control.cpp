@@ -2,6 +2,7 @@
 // objects_control.cpp — timing, routing, control math, expr and interface objects
 
 #include "objects.h"
+#include "sysopen.h"
 #include "zoom.h"
 
 #include <map>
@@ -200,9 +201,10 @@ private:
 };
 
 // ---------------------------------------------------------------- link
-// link [text] target: underlined text; a click (or a bang) opens the target
-// with the system: a document (a PDF, relative to the patch, or bundled:
-// "docs/..."), a folder, or a web address.
+// link [text] target: underlined text; a click opens the target with the
+// system: a document (a PDF, relative to the patch, or bundled: "docs/..."),
+// a folder, or a web address. A bang (any message but set) asks the user
+// first (sysopen.h): a patch must not open things by itself.
 class LinkBox : public Box {
 public:
     explicit LinkBox(const Message& a) {
@@ -217,9 +219,9 @@ public:
     }
     void message(int, const Message& m) override {
         if (m[0].is("set") && m.size() > 1) { target_ = m[1].str(); return; }
-        open();
+        open(false);
     }
-    void uiMouse(int e, int, int) override { if (e == FL_PUSH) open(); }
+    void uiMouse(int e, int, int) override { if (e == FL_PUSH) open(true); }   // the user clicked
     void drawUI(int X, int Y) override {
         zd::font(FL_HELVETICA, 12);
         fl_color(flashUntil > now() ? kText : fl_rgb_color(110, 165, 245));
@@ -229,12 +231,13 @@ public:
     }
 
 private:
-    void open() {
+    void open(bool clicked) {
         flashUntil = now() + 0.2;
         patch->redraw();
         bool url = target_.find("://") != std::string::npos || target_.rfind("mailto:", 0) == 0;
         std::string t = url ? target_ : patch->resolvePath(target_);
-        if (!openWithSystem(t)) patch->print("link: can't open " + target_);
+        if (!clicked) askToOpenWithSystem(patch, t, "link");
+        else if (!openWithSystem(t)) patch->print("link: can't open " + target_);
     }
     std::string text_, target_;
 };

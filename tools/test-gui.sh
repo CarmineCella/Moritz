@@ -76,6 +76,10 @@ run "$T/abs/main.moritz" --window-png none act=opensub:a1 act=new:button answer=
 expect "closing asks about the abstraction" "ask: Save the changes to the abstraction \"twice.moritz\"?"
 expect "Cancel keeps the document" "state: documents 1"
 
+# 8. a link banged by the patch opens nothing by itself
+run --render "$G/link.moritz" 0.1
+expect "a link banged at load" "not opened"
+
 # 11. Recent files hold absolute paths, whatever the command line said
 ( cd "$G" && "$MORITZ" numbers.moritz --window-png none > "$out" 2>&1 )
 if grep -rq "numbers.moritz" "$HOME" 2>/dev/null && ! grep -rq "^0:numbers.moritz" "$HOME" 2>/dev/null; then ok

@@ -10,6 +10,7 @@
 #include "maximport.h"
 #include "fileio.h"
 #include "objects.h"
+#include "sysopen.h"
 
 #include <FL/Fl_Choice.H>
 #include <FL/Fl_Input.H>
@@ -196,6 +197,8 @@ void midiTick(void*) {          // look for MIDI devices plugged in or out
     Fl::repeat_timeout(1.0, midiTick);
 }
 
+bool gInitialized = false;      // App::init done: there are windows to ask in
+
 void schedulerTimer(void*) {
     Patch& h = App::get().host;
     h.runDue(h.time());           // re-arms through onSchedule
@@ -311,6 +314,7 @@ void App::init() {
 #endif
     log("Moritz " MORITZ_VERSION " - created by Carmine-Emanuele Cella (2026)");
     log("this console shows print objects, errors, audio and file events");
+    gInitialized = true;
 }
 
 Fl_Menu_Bar* App::menuFor(MainWindow* w) {
@@ -632,6 +636,26 @@ void App::quit() {
     hideBrowser();
     if (console_) console_->hide();
     for (auto* d : docs) d->hide();
+}
+
+// ---- a patch asks to open something with the system (link, sysopen.h)
+
+void askToOpenWithSystem(Patch* from, const std::string& target, const std::string& who) {
+    if (!gInitialized) {                             // no window to ask in (--render): never
+        if (from) from->print(who + ": not opened (a message asked, and there is no window to ask in): " + target);
+        return;
+    }
+    struct Ask {
+        std::string target, who;
+    };
+    // later, from the event loop: the message may come in the middle of loading a patch
+    Fl::add_timeout(0, [](void* d) {
+        std::unique_ptr<Ask> a(static_cast<Ask*>(d));
+        int r = askUser("A patch asks to open:\n\n%s\n\n(%s, from a message, not a click)", "Don't Open", "Open",
+                        nullptr, a->target.c_str(), a->who.c_str());
+        if (r != 1) { App::get().log(a->who + ": not opened: " + a->target); return; }
+        if (!openWithSystem(a->target)) App::get().print(a->who + ": can't open " + a->target);
+    }, new Ask{target, who});
 }
 
 void App::refreshStatus() {
