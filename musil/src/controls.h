@@ -29,11 +29,12 @@ struct controls_window : Fl_Double_Window {
     ~controls_window() override { Fl::remove_timeout(tick, this); }
     static void slider_cb(Fl_Widget* w, void* d) { row* r = (row*)d; queue_control_edit(r->name, ((Fl_Value_Slider*)w)->value()); }
     static void check_cb(Fl_Widget* w, void* d) { row* r = (row*)d; queue_control_edit(r->name, ((Fl_Check_Button*)w)->value() ? 1 : 0); }
-    void rebuild() {
-        scroll->clear(); rows.clear(); rows.reserve(controls().size());
+    void rebuild() { rebuild(controls_snapshot()); }
+    void rebuild(const std::vector<control>& now) {       // the registry is shared with the interpreters: a copy, taken under its lock
+        scroll->clear(); rows.clear(); rows.reserve(now.size());
         scroll->begin();
         int y = 8;
-        for (auto& c : controls()) {
+        for (auto& c : now) {
             rows.push_back({ c.name, nullptr, nullptr }); row& r = rows.back();
             if (c.toggle) { r.check = new Fl_Check_Button(10, y, 430, 24, r.name.c_str()); r.check->value(c.value > 0.5); r.check->callback(check_cb, &r); }
             else { r.slider = new Fl_Value_Slider(120, y, 320, 24, r.name.c_str()); r.slider->type(FL_HOR_NICE_SLIDER); r.slider->align(FL_ALIGN_LEFT); r.slider->bounds(c.lo, c.hi); r.slider->value(c.value); r.slider->callback(slider_cb, &r); }
@@ -45,11 +46,12 @@ struct controls_window : Fl_Double_Window {
     }
     static void tick(void* p) {                      // follow the registry: new controls, values moved by code or OSC; none left: close
         controls_window* w = (controls_window*)p;
-        if (controls().empty()) { w->hide(); controls_shown() = false; return; }
-        if (w->rows.size() != controls().size()) w->rebuild();
+        std::vector<control> now = controls_snapshot();
+        if (now.empty()) { w->hide(); controls_shown() = false; return; }
+        if (w->rows.size() != now.size()) w->rebuild(now);
         else for (size_t k = 0; k < w->rows.size(); k++) {
-            control& c = controls()[k]; row& r = w->rows[k];
-            if (r.name != c.name) { w->rebuild(); break; }
+            const control& c = now[k]; row& r = w->rows[k];
+            if (r.name != c.name) { w->rebuild(now); break; }
             if (r.slider && !Fl::pushed()) { if (r.slider->minimum() != c.lo || r.slider->maximum() != c.hi) r.slider->bounds(c.lo, c.hi); if (r.slider->value() != c.value) r.slider->value(c.value); }
             if (r.check && (r.check->value() != 0) != (c.value > 0.5)) r.check->value(c.value > 0.5);
         }
@@ -68,7 +70,7 @@ inline void controls_open() {
 inline void controls_awake_cb(void*) { controls_open(); }
 // (controls) open the controls window and return; the sound, the loops and the port keep running
 inline vptr fn_controls_window(vlist&, Interp& i) {
-    if (controls().empty()) i.bad("no controls declared: (control name lo hi value) first");
+    if (controls_snapshot().empty()) i.bad("no controls declared: (control name lo hi value) first");
     if (std::getenv("MUSIL_NOSHOW")) return v_nil();
     if (plot_needs_awake()) { controls_shown() = false; Fl::awake(controls_awake_cb, nullptr); for (int k = 0; k < 100 && !controls_shown(); k++) std::this_thread::sleep_for(std::chrono::milliseconds(10)); }   // wait for the FLTK thread to make it
     else { controls_open(); Fl::check(); }

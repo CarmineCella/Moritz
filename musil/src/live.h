@@ -57,7 +57,6 @@
 #include <sys/socket.h>
 #include <unistd.h>
 #endif
-
 namespace musil {
 
 // --- a single-producer single-consumer queue of commands (interpreter -> audio thread) ---
@@ -88,33 +87,62 @@ struct command_queue {                        // fixed ring, no allocation on th
         c = std::move(slots[h]); head.store((h + 1) % CAP, std::memory_order_release); return true;
     }
 };
+// What the audio thread lets go of (a buffer a voice no longer plays, a synth freed) is not freed there: it is
+// handed to this ring, and another thread (the cue loader, every 20 ms, or the interpreter) frees it.
+struct retire_ring {
+    static const int CAP = 8192;
+    std::shared_ptr<void> slots[CAP];
+    std::atomic<int> head{0}, tail{0};
+    std::mutex consumers;
+    bool push(std::shared_ptr<void>&& p) {    // the audio thread only
+        int t = tail.load(std::memory_order_relaxed), n = (t + 1) % CAP;
+        if (n == head.load(std::memory_order_acquire)) return false;
+        slots[t] = std::move(p); tail.store(n, std::memory_order_release); return true;
+    }
+    void drain() {                            // any other thread
+        std::lock_guard<std::mutex> g(consumers);
+        int h = head.load(std::memory_order_relaxed);
+        while (h != tail.load(std::memory_order_acquire)) {
+            std::shared_ptr<void> gone = std::move(slots[h]);
+            h = (h + 1) % CAP; head.store(h, std::memory_order_release);
+        }
+    }
+};
 
 // --- a sampler voice ---
 struct voice {
-    long id = 0; bool active = false;
+    std::atomic<long> id{0}; std::atomic<bool> active{false};   // read by the interpreter (voices)
     std::shared_ptr<const std::vector<float>> buffer; int channels = 1; double buffer_sr = 44100;
     long long start = 0;                      // clock sample at which it begins
     double pos = 0, rate = 1, amp = 1, pan = 0; bool loop = false;
-    std::atomic<double> target_amp{1}, target_pan{0}, target_rate{1};   // ramped towards, per block
+    double target_amp = 1, target_pan = 0, target_rate = 1;     // ramped towards, per block (the audio thread's own)
 };
 
 // --- the streaming graph -----------------------------------------------------------
 // A node has input nodes and one output per channel. Control arguments (a filter's cutoff, an
 // envelope's times) are read from their input's first sample each block, so a parameter, a
-// constant or a slowly varying signal all work there.
+// constant or a slowly varying signal all work there. Every buffer is made when the graph is
+// compiled (prepare, with the engine's block): process never allocates.
 struct gnode {
     std::vector<int> in;                                  // indices of the input nodes
     std::vector<std::vector<float>> out;                  // one buffer per channel
     int channels = 1;
     virtual ~gnode() {}
     virtual void process(std::vector<std::unique_ptr<gnode>>& g, int n) = 0;
-    void size(int n) { out.resize(channels); for (auto& c : out) if ((int)c.size() != n) c.assign(n, 0.0f); }
+    // the channels this node has, from its inputs (prepared before it)
+    virtual int channels_of(std::vector<std::unique_ptr<gnode>>&) { return channels; }
+    // the buffers, for blocks of up to `block` samples; nodes with scratch buffers add theirs
+    virtual void prepare(std::vector<std::unique_ptr<gnode>>& g, int block) { channels = channels_of(g); allocate(block); }
+    void allocate(int block) { out.resize((size_t)channels); for (auto& c : out) if ((int)c.size() < block) c.assign((size_t)block, 0.0f); }
+    void size(int n) { if ((int)out.size() < channels || (int)out[0].size() < n) allocate(n); }   // only when not prepared for n
+    int widest(std::vector<std::unique_ptr<gnode>>& g) { int c = 1; for (int k : in) c = std::max(c, g[k]->channels); return c; }
     const float* sig(std::vector<std::unique_ptr<gnode>>& g, size_t k, int ch = 0) { gnode& s = *g[in[k]]; return s.out[std::min(ch, s.channels - 1)].data(); }
     float ctrl(std::vector<std::unique_ptr<gnode>>& g, size_t k) { return g[in[k]]->out[0][0]; }
 };
+inline void grow(std::vector<double>& v, int n) { if ((int)v.size() < n) v.resize((size_t)n); }
 struct const_node : gnode {
     double value; const_node(double v) : value(v) {}
-    void process(std::vector<std::unique_ptr<gnode>>&, int n) override { size(n); std::fill(out[0].begin(), out[0].end(), (float)value); }
+    void process(std::vector<std::unique_ptr<gnode>>&, int n) override { size(n); std::fill(out[0].begin(), out[0].begin() + n, (float)value); }
 };
 struct param_node : gnode {                               // a hot parameter with a linear ramp
     std::string name; std::atomic<double> target{0}; std::atomic<int> ramp{0}; double value = 0;
@@ -130,30 +158,46 @@ struct param_node : gnode {                               // a hot parameter wit
 };
 struct arith_node : gnode {                               // + - * / over any number of inputs, mono broadcast
     char op; arith_node(char o) : op(o) {}
+    int channels_of(std::vector<std::unique_ptr<gnode>>& g) override { return widest(g); }
     void process(std::vector<std::unique_ptr<gnode>>& g, int n) override {
-        channels = 1; for (int k : in) channels = std::max(channels, g[k]->channels); size(n);
+        size(n);
         for (int ch = 0; ch < channels; ch++) {
-            const float* a = sig(g, 0, ch);
-            for (int k = 0; k < n; k++) out[ch][k] = a[k];
-            if (in.size() == 1 && op == '-') for (int k = 0; k < n; k++) out[ch][k] = -a[k];
-            if (in.size() == 1 && op == '/') for (int k = 0; k < n; k++) out[ch][k] = a[k] != 0 ? 1.0f / a[k] : 0;
+            const float* a = sig(g, 0, ch); float* o = out[ch].data();
+            for (int k = 0; k < n; k++) o[k] = a[k];
+            if (in.size() == 1 && op == '-') for (int k = 0; k < n; k++) o[k] = -a[k];
+            if (in.size() == 1 && op == '/') for (int k = 0; k < n; k++) o[k] = a[k] != 0 ? 1.0f / a[k] : 0;
             for (size_t j = 1; j < in.size(); j++) { const float* b = sig(g, j, ch);
-                for (int k = 0; k < n; k++) { float& o = out[ch][k]; o = op == '+' ? o + b[k] : op == '-' ? o - b[k] : op == '*' ? o * b[k] : (b[k] != 0 ? o / b[k] : 0); } }
+                switch (op) {
+                case '+': for (int k = 0; k < n; k++) o[k] += b[k]; break;
+                case '-': for (int k = 0; k < n; k++) o[k] -= b[k]; break;
+                case '*': for (int k = 0; k < n; k++) o[k] *= b[k]; break;
+                default:  for (int k = 0; k < n; k++) o[k] = b[k] != 0 ? o[k] / b[k] : 0; break;
+                } }
         }
     }
 };
 struct math_node : gnode {                                // elementwise functions of one or two inputs
-    std::string fn; math_node(std::string f) : fn(std::move(f)) {}
+    enum fn_t { ABS, TANH, SIN, COS, EXP, SQRT, MIN, MAX, POW, CLIP, FLOOR, NONE } fn = NONE;
+    static fn_t of(const std::string& f) {
+        static const char* names[] = { "abs", "tanh", "sin", "cos", "exp", "sqrt", "min", "max", "pow", "clip", "floor" };
+        for (int k = 0; k < NONE; k++) if (f == names[k]) return (fn_t)k;
+        return NONE;
+    }
+    math_node(const std::string& f) : fn(of(f)) {}
+    int channels_of(std::vector<std::unique_ptr<gnode>>& g) override { return widest(g); }
     void process(std::vector<std::unique_ptr<gnode>>& g, int n) override {
-        channels = 1; for (int k : in) channels = std::max(channels, g[k]->channels); size(n);
+        size(n);
         for (int ch = 0; ch < channels; ch++) {
             const float* a = sig(g, 0, ch); const float* b = in.size() > 1 ? sig(g, 1, ch) : nullptr; const float* c = in.size() > 2 ? sig(g, 2, ch) : nullptr;
+            float* o = out[ch].data();
             for (int k = 0; k < n; k++) {
                 double x = a[k], y = b ? b[k] : 0, z = c ? c[k] : 0, r = 0;
-                if (fn == "abs") r = std::fabs(x); else if (fn == "tanh") r = std::tanh(x); else if (fn == "sin") r = std::sin(x); else if (fn == "cos") r = std::cos(x);
-                else if (fn == "exp") r = std::exp(x); else if (fn == "sqrt") r = std::sqrt(std::max(0.0, x)); else if (fn == "min") r = std::min(x, y); else if (fn == "max") r = std::max(x, y);
-                else if (fn == "pow") r = std::pow(x, y); else if (fn == "clip") r = std::max(y, std::min(z, x)); else if (fn == "floor") r = std::floor(x);
-                out[ch][k] = (float)r;
+                switch (fn) {
+                case ABS: r = std::fabs(x); break; case TANH: r = std::tanh(x); break; case SIN: r = std::sin(x); break; case COS: r = std::cos(x); break;
+                case EXP: r = std::exp(x); break; case SQRT: r = std::sqrt(std::max(0.0, x)); break; case MIN: r = std::min(x, y); break; case MAX: r = std::max(x, y); break;
+                case POW: r = std::pow(x, y); break; case CLIP: r = std::max(y, std::min(z, x)); break; case FLOOR: r = std::floor(x); break; case NONE: break;
+                }
+                o[k] = (float)r;
             }
         }
     }
@@ -161,8 +205,9 @@ struct math_node : gnode {                                // elementwise functio
 struct osc_node : gnode {                                 // (osc sr freq table): freq is a signal
     std::vector<double> table; osc_state st; double sr; std::vector<double> fbuf, obuf;
     osc_node(std::vector<double> t, double s) : table(std::move(t)), sr(s) {}
+    void prepare(std::vector<std::unique_ptr<gnode>>& g, int block) override { gnode::prepare(g, block); grow(fbuf, block); grow(obuf, block); }
     void process(std::vector<std::unique_ptr<gnode>>& g, int n) override {
-        size(n); fbuf.resize(n); obuf.resize(n); const float* f = sig(g, 0);
+        size(n); grow(fbuf, n); grow(obuf, n); const float* f = sig(g, 0);
         for (int k = 0; k < n; k++) fbuf[k] = f[k];
         osc_run(fbuf.data(), obuf.data(), n, table.data(), table.size(), sr, st);
         for (int k = 0; k < n; k++) out[0][k] = (float)obuf[k];
@@ -175,8 +220,9 @@ struct noise_node : gnode {
 struct adsr_node : gnode {                                // (adsr sr gate a d s r): gate is a signal, times controls
     adsr_state st; double sr; std::vector<double> gbuf, obuf;
     adsr_node(double s) : sr(s) {}
+    void prepare(std::vector<std::unique_ptr<gnode>>& g, int block) override { gnode::prepare(g, block); grow(gbuf, block); grow(obuf, block); }
     void process(std::vector<std::unique_ptr<gnode>>& g, int n) override {
-        size(n); gbuf.resize(n); obuf.resize(n); const float* gate = sig(g, 0);
+        size(n); grow(gbuf, n); grow(obuf, n); const float* gate = sig(g, 0);
         for (int k = 0; k < n; k++) gbuf[k] = gate[k];
         adsr_run(gbuf.data(), obuf.data(), n, ctrl(g, 1), ctrl(g, 2), ctrl(g, 3), ctrl(g, 4), sr, st);
         for (int k = 0; k < n; k++) out[0][k] = (float)obuf[k];
@@ -185,8 +231,9 @@ struct adsr_node : gnode {                                // (adsr sr gate a d s
 struct lag_node : gnode {                                 // (lag x sr seconds)
     lag_state st; double sr; std::vector<double> xb, ob;
     lag_node(double s) : sr(s) {}
+    void prepare(std::vector<std::unique_ptr<gnode>>& g, int block) override { gnode::prepare(g, block); grow(xb, block); grow(ob, block); }
     void process(std::vector<std::unique_ptr<gnode>>& g, int n) override {
-        size(n); xb.resize(n); ob.resize(n); const float* x = sig(g, 0); double secs = ctrl(g, 1);
+        size(n); grow(xb, n); grow(ob, n); const float* x = sig(g, 0); double secs = ctrl(g, 1);
         for (int k = 0; k < n; k++) xb[k] = x[k];
         lag_run(xb.data(), ob.data(), n, secs <= 0 ? 0.0 : std::exp(-1.0 / (secs * sr)), st);
         for (int k = 0; k < n; k++) out[0][k] = (float)ob[k];
@@ -194,32 +241,41 @@ struct lag_node : gnode {                                 // (lag x sr seconds)
 };
 struct iir_node : gnode {                                 // (iir x b a) with constant coefficients
     std::vector<double> b, a; iir_state st; std::vector<double> xb, yb;
-    iir_node(std::vector<double> bb, std::vector<double> aa) : b(std::move(bb)), a(std::move(aa)) {}
+    iir_node(std::vector<double> bb, std::vector<double> aa) : b(std::move(bb)), a(std::move(aa)) { st.xs.assign(b.size(), 0.0); st.ys.assign(a.size(), 0.0); }
+    void prepare(std::vector<std::unique_ptr<gnode>>& g, int block) override { gnode::prepare(g, block); grow(xb, block); grow(yb, block); }
     void process(std::vector<std::unique_ptr<gnode>>& g, int n) override {
-        size(n); xb.resize(n); yb.resize(n); const float* x = sig(g, 0);
+        size(n); grow(xb, n); grow(yb, n); const float* x = sig(g, 0);
         for (int k = 0; k < n; k++) xb[k] = x[k];
         iir_run(xb.data(), yb.data(), n, b.data(), b.size(), a.data(), a.size(), st);
         for (int k = 0; k < n; k++) out[0][k] = (float)yb[k];
     }
 };
 struct biquad_node : gnode {                              // (lowpass x sr f0 q) and the other RBJ types; f0, q, gain are controls
-    std::string type; double sr; double b[3] = { 1, 0, 0 }, a[3] = { 1, 0, 0 }; double lf = -1, lq = -1, lg = -1; iir_state st; std::vector<double> xb, yb;
-    biquad_node(std::string t, double s) : type(std::move(t)), sr(s) {}
+    enum type_t { LOWPASS, HIGHPASS, BANDPASS, NOTCH, PEAK_EQ, LOWSHELF, HIGHSHELF } type;
+    static bool known(const std::string& t) { return t == "lowpass" || t == "highpass" || t == "bandpass" || t == "notch" || t == "peak-eq" || t == "lowshelf" || t == "highshelf"; }
+    static type_t of(const std::string& t) {
+        return t == "lowpass" ? LOWPASS : t == "highpass" ? HIGHPASS : t == "bandpass" ? BANDPASS : t == "notch" ? NOTCH : t == "peak-eq" ? PEAK_EQ : t == "lowshelf" ? LOWSHELF : HIGHSHELF;
+    }
+    double sr; double b[3] = { 1, 0, 0 }, a[3] = { 1, 0, 0 }; double lf = -1, lq = -1, lg = -1; iir_state st; std::vector<double> xb, yb;
+    biquad_node(const std::string& t, double s) : type(of(t)), sr(s) { st.xs.assign(3, 0.0); st.ys.assign(3, 0.0); }
     void coefficients(double f0, double q, double gain_db) {                    // the RBJ cookbook, as biquad in signals.mu
         double w0 = 2 * 3.14159265358979323846 * f0 / sr, c = std::cos(w0), sn = std::sin(w0), alpha = sn / (2 * std::max(q, 1e-3));
         double A = std::pow(10, gain_db / 40), sA = std::sqrt(A);
-        if (type == "lowpass")       { b[0] = (1 - c) / 2; b[1] = 1 - c; b[2] = (1 - c) / 2; a[0] = 1 + alpha; a[1] = -2 * c; a[2] = 1 - alpha; }
-        else if (type == "highpass") { b[0] = (1 + c) / 2; b[1] = -(1 + c); b[2] = (1 + c) / 2; a[0] = 1 + alpha; a[1] = -2 * c; a[2] = 1 - alpha; }
-        else if (type == "bandpass") { b[0] = alpha; b[1] = 0; b[2] = -alpha; a[0] = 1 + alpha; a[1] = -2 * c; a[2] = 1 - alpha; }
-        else if (type == "notch")    { b[0] = 1; b[1] = -2 * c; b[2] = 1; a[0] = 1 + alpha; a[1] = -2 * c; a[2] = 1 - alpha; }
-        else if (type == "peak-eq")  { b[0] = 1 + alpha * A; b[1] = -2 * c; b[2] = 1 - alpha * A; a[0] = 1 + alpha / A; a[1] = -2 * c; a[2] = 1 - alpha / A; }
-        else if (type == "lowshelf") { b[0] = A * ((A + 1) - (A - 1) * c + 2 * sA * alpha); b[1] = 2 * A * ((A - 1) - (A + 1) * c); b[2] = A * ((A + 1) - (A - 1) * c - 2 * sA * alpha);
-                                       a[0] = (A + 1) + (A - 1) * c + 2 * sA * alpha; a[1] = -2 * ((A - 1) + (A + 1) * c); a[2] = (A + 1) + (A - 1) * c - 2 * sA * alpha; }
-        else if (type == "highshelf"){ b[0] = A * ((A + 1) + (A - 1) * c + 2 * sA * alpha); b[1] = -2 * A * ((A - 1) + (A + 1) * c); b[2] = A * ((A + 1) + (A - 1) * c - 2 * sA * alpha);
-                                       a[0] = (A + 1) - (A - 1) * c + 2 * sA * alpha; a[1] = 2 * ((A - 1) - (A + 1) * c); a[2] = (A + 1) - (A - 1) * c - 2 * sA * alpha; }
+        switch (type) {
+        case LOWPASS:  b[0] = (1 - c) / 2; b[1] = 1 - c; b[2] = (1 - c) / 2; a[0] = 1 + alpha; a[1] = -2 * c; a[2] = 1 - alpha; break;
+        case HIGHPASS: b[0] = (1 + c) / 2; b[1] = -(1 + c); b[2] = (1 + c) / 2; a[0] = 1 + alpha; a[1] = -2 * c; a[2] = 1 - alpha; break;
+        case BANDPASS: b[0] = alpha; b[1] = 0; b[2] = -alpha; a[0] = 1 + alpha; a[1] = -2 * c; a[2] = 1 - alpha; break;
+        case NOTCH:    b[0] = 1; b[1] = -2 * c; b[2] = 1; a[0] = 1 + alpha; a[1] = -2 * c; a[2] = 1 - alpha; break;
+        case PEAK_EQ:  b[0] = 1 + alpha * A; b[1] = -2 * c; b[2] = 1 - alpha * A; a[0] = 1 + alpha / A; a[1] = -2 * c; a[2] = 1 - alpha / A; break;
+        case LOWSHELF: b[0] = A * ((A + 1) - (A - 1) * c + 2 * sA * alpha); b[1] = 2 * A * ((A - 1) - (A + 1) * c); b[2] = A * ((A + 1) - (A - 1) * c - 2 * sA * alpha);
+                       a[0] = (A + 1) + (A - 1) * c + 2 * sA * alpha; a[1] = -2 * ((A - 1) + (A + 1) * c); a[2] = (A + 1) + (A - 1) * c - 2 * sA * alpha; break;
+        case HIGHSHELF:b[0] = A * ((A + 1) + (A - 1) * c + 2 * sA * alpha); b[1] = -2 * A * ((A - 1) + (A + 1) * c); b[2] = A * ((A + 1) + (A - 1) * c - 2 * sA * alpha);
+                       a[0] = (A + 1) - (A - 1) * c + 2 * sA * alpha; a[1] = 2 * ((A - 1) - (A + 1) * c); a[2] = (A + 1) - (A - 1) * c - 2 * sA * alpha; break;
+        }
     }
+    void prepare(std::vector<std::unique_ptr<gnode>>& g, int block) override { gnode::prepare(g, block); grow(xb, block); grow(yb, block); }
     void process(std::vector<std::unique_ptr<gnode>>& g, int n) override {
-        size(n); xb.resize(n); yb.resize(n); const float* x = sig(g, 0);
+        size(n); grow(xb, n); grow(yb, n); const float* x = sig(g, 0);
         double f0 = ctrl(g, 1), q = ctrl(g, 2), gain = in.size() > 3 ? ctrl(g, 3) : 0;
         if (f0 != lf || q != lq || gain != lg) { coefficients(std::max(1.0, std::min(f0, sr * 0.49)), q, gain); lf = f0; lq = q; lg = gain; }
         for (int k = 0; k < n; k++) xb[k] = x[k];
@@ -238,9 +294,10 @@ struct svf_node : gnode {                                 // (svf x sr freq q ty
 };
 struct delay_node : gnode {                               // (delay x samples): samples is a control, up to max_delay
     delay_state st; size_t max_delay; std::vector<double> xb, yb, db;
-    delay_node(size_t m) : max_delay(m) {}
+    delay_node(size_t m) : max_delay(m) { st.ring.assign(max_delay + 2, 0.0); st.w = 0; }   // the ring delay_run would make
+    void prepare(std::vector<std::unique_ptr<gnode>>& g, int block) override { gnode::prepare(g, block); grow(xb, block); grow(yb, block); grow(db, block); }
     void process(std::vector<std::unique_ptr<gnode>>& g, int n) override {
-        size(n); xb.resize(n); yb.resize(n); db.resize(n); const float* x = sig(g, 0); const float* d = sig(g, 1);
+        size(n); grow(xb, n); grow(yb, n); grow(db, n); const float* x = sig(g, 0); const float* d = sig(g, 1);
         for (int k = 0; k < n; k++) { xb[k] = x[k]; db[k] = d[k]; }
         delay_run(xb.data(), yb.data(), n, db.data(), st, max_delay);
         for (int k = 0; k < n; k++) out[0][k] = (float)yb[k];
@@ -248,9 +305,10 @@ struct delay_node : gnode {                               // (delay x samples): 
 };
 struct comb_node : gnode {                                // (comb x d g): d constant, g a control
     comb_state st; size_t d; std::vector<double> xb, yb;
-    comb_node(size_t dd) : d(dd) {}
+    comb_node(size_t dd) : d(dd) { st.ring.assign(d, 0.0); st.w = 0; }
+    void prepare(std::vector<std::unique_ptr<gnode>>& g, int block) override { gnode::prepare(g, block); grow(xb, block); grow(yb, block); }
     void process(std::vector<std::unique_ptr<gnode>>& g, int n) override {
-        size(n); xb.resize(n); yb.resize(n); const float* x = sig(g, 0);
+        size(n); grow(xb, n); grow(yb, n); const float* x = sig(g, 0);
         for (int k = 0; k < n; k++) xb[k] = x[k];
         comb_run(xb.data(), yb.data(), n, d, ctrl(g, 1), st);
         for (int k = 0; k < n; k++) out[0][k] = (float)yb[k];
@@ -258,9 +316,10 @@ struct comb_node : gnode {                                // (comb x d g): d con
 };
 struct allpass_node : gnode {
     allpass_state st; size_t d; std::vector<double> xb, yb;
-    allpass_node(size_t dd) : d(dd) {}
+    allpass_node(size_t dd) : d(dd) { st.xin.assign(d, 0.0); st.yout.assign(d, 0.0); st.w = 0; }
+    void prepare(std::vector<std::unique_ptr<gnode>>& g, int block) override { gnode::prepare(g, block); grow(xb, block); grow(yb, block); }
     void process(std::vector<std::unique_ptr<gnode>>& g, int n) override {
-        size(n); xb.resize(n); yb.resize(n); const float* x = sig(g, 0);
+        size(n); grow(xb, n); grow(yb, n); const float* x = sig(g, 0);
         for (int k = 0; k < n; k++) xb[k] = x[k];
         allpass_run(xb.data(), yb.data(), n, d, ctrl(g, 1), st);
         for (int k = 0; k < n; k++) out[0][k] = (float)yb[k];
@@ -281,7 +340,7 @@ struct conv_node : gnode {                                // (conv x ir): unifor
         for (size_t k = 0; k < B; k++) { inbuf[2 * k] = prev[k]; inbuf[2 * (B + k)] = k < (size_t)n ? x[k] : 0; }
         for (size_t k = 0; k < B; k++) prev[k] = k < (size_t)n ? x[k] : 0;
         fft_inplace(inbuf.data(), 2 * B, -1);
-        fdl[pos] = inbuf;
+        std::copy(inbuf.begin(), inbuf.end(), fdl[pos].begin());
         std::fill(acc.begin(), acc.end(), 0.0);
         for (size_t p = 0; p < P; p++) {
             const std::vector<double>& X = fdl[(pos + P - p) % P]; const std::vector<double>& H = irf[p];
@@ -308,16 +367,49 @@ struct pan_az_node : gnode {                              // (pan-azimuth x az):
     pan_az_node() { channels = 2; }
     void process(std::vector<std::unique_ptr<gnode>>& g, int n) override {
         size(n); const float* x = sig(g, 0); double az = ctrl(g, 1);
-        if (az > 90) az = 180 - az; if (az < -90) az = -180 - az; az = std::max(-90.0, std::min(90.0, az));
+        if (az > 90) az = 180 - az;
+        if (az < -90) az = -180 - az;
+        az = std::max(-90.0, std::min(90.0, az));
         double p = -az / 90.0, gl = std::sqrt(0.5 * (1 - p)), gr = std::sqrt(0.5 * (1 + p));
         for (int k = 0; k < n; k++) { out[0][k] = (float)(x[k] * gl); out[1][k] = (float)(x[k] * gr); }
     }
 };
+// The spherical harmonics of ambi-encode for a moving source, without sh_gains (which allocates) on the audio
+// thread: a harmonic is a factor of the elevation (sh_gains at azimuth 0, or 90/m degrees for the sine terms)
+// times cos(m az) or sin(|m| az). The elevation factors are tabulated once per order, every quarter degree,
+// and interpolated.
+struct sh_table {
+    int order = 0, nch = 1; static constexpr double step = 0.25; int rows = 0;
+    std::vector<double> E;                                // rows * nch
+    explicit sh_table(int o) : order(o), nch((o + 1) * (o + 1)) {
+        rows = (int)(180.0 / step) + 1; E.assign((size_t)rows * nch, 0.0);
+        for (int r = 0; r < rows; r++) {
+            double el = -90.0 + r * step;
+            auto g0 = sh_gains(order, 0, el);
+            for (int n = 0; n <= order; n++) for (int m = 0; m <= n; m++) E[(size_t)r * nch + n * n + n + m] = g0[(size_t)(n * n + n + m)];
+            for (int m = 1; m <= order; m++) {
+                auto gm = sh_gains(order, 90.0 / m, el);   // sin(m * 90/m degrees) = 1
+                for (int n = m; n <= order; n++) E[(size_t)r * nch + n * n + n - m] = gm[(size_t)(n * n + n - m)];
+            }
+        }
+    }
+    void gains(double az, double el, double* g) const {   // no allocation
+        el = std::max(-90.0, std::min(90.0, el)); double f = (el + 90.0) / step; int r = std::min(rows - 2, (int)f); double w = f - r;
+        const double* a = &E[(size_t)r * nch]; const double* b = a + nch;
+        double ar = az * 3.14159265358979323846 / 180.0;
+        for (int n = 0; n <= order; n++) for (int m = -n; m <= n; m++) {
+            int c = n * n + n + m; double e = a[c] * (1 - w) + b[c] * w;
+            g[c] = e * (m > 0 ? std::cos(m * ar) : m < 0 ? std::sin(-m * ar) : 1.0);
+        }
+    }
+};
 struct ambi_encode_node : gnode {                         // (ambi-encode x order az el): az and el are controls
-    int order; ambi_encode_node(int o) : order(o) { channels = (o + 1) * (o + 1); }
-    void process(std::vector<std::unique_ptr<gnode>>& g, int n) override {
-        size(n); const float* x = sig(g, 0); auto gains = sh_gains(order, ctrl(g, 1), ctrl(g, 2));
-        for (int c = 0; c < channels; c++) for (int k = 0; k < n; k++) out[c][k] = (float)(x[k] * gains[c]);
+    int order; std::shared_ptr<const sh_table> table; double g[64] = { 0 }; double laz = 1e9, lel = 1e9;
+    ambi_encode_node(int o, std::shared_ptr<const sh_table> t) : order(o), table(std::move(t)) { channels = (o + 1) * (o + 1); }
+    void process(std::vector<std::unique_ptr<gnode>>& g_, int n) override {
+        size(n); const float* x = sig(g_, 0); double az = ctrl(g_, 1), el = ctrl(g_, 2);
+        if (az != laz || el != lel) { table->gains(az, el, g); laz = az; lel = el; }
+        for (int c = 0; c < channels; c++) for (int k = 0; k < n; k++) out[c][k] = (float)(x[k] * g[c]);
     }
 };
 struct matrix_node : gnode {                              // (ambi-decode B speakers): a fixed gain matrix, rows = outputs
@@ -325,12 +417,13 @@ struct matrix_node : gnode {                              // (ambi-decode B spea
     matrix_node(std::vector<std::vector<double>> m) : M(std::move(m)) { channels = (int)M.size(); }
     void process(std::vector<std::unique_ptr<gnode>>& g, int n) override {
         size(n); gnode& b = *g[in[0]];
-        for (int r = 0; r < channels; r++) { std::fill(out[r].begin(), out[r].end(), 0.0f); for (size_t c = 0; c < M[r].size() && (int)c < b.channels; c++) { const float* x = b.out[c].data(); double w = M[r][c]; for (int k = 0; k < n; k++) out[r][k] += (float)(x[k] * w); } }
+        for (int r = 0; r < channels; r++) { std::fill(out[r].begin(), out[r].begin() + n, 0.0f); for (size_t c = 0; c < M[r].size() && (int)c < b.channels; c++) { const float* x = b.out[c].data(); double w = M[r][c]; for (int k = 0; k < n; k++) out[r][k] += (float)(x[k] * w); } }
     }
 };
 struct ambi_rotate_node : gnode {                         // (ambi-rotate B yaw): yaw is a control
+    int channels_of(std::vector<std::unique_ptr<gnode>>& g) override { return g[in[0]]->channels; }
     void process(std::vector<std::unique_ptr<gnode>>& g, int n) override {
-        gnode& b = *g[in[0]]; channels = b.channels; size(n); double yaw = ctrl(g, 1) * 3.14159265358979323846 / 180.0;
+        gnode& b = *g[in[0]]; size(n); double yaw = ctrl(g, 1) * 3.14159265358979323846 / 180.0;
         int order = (int)std::lround(std::sqrt((double)channels)) - 1;
         for (int l = 0; l <= order; l++) {
             int c0 = l * l + l; for (int k = 0; k < n; k++) out[c0][k] = b.out[c0][k];
@@ -339,34 +432,47 @@ struct ambi_rotate_node : gnode {                         // (ambi-rotate B yaw)
         }
     }
 };
-struct binaural_node : gnode {                            // (binaural x az el sr): direct HRIR rendering with hot az and el;
-    Interp* I; double sr; std::vector<float> hist;        // the responses crossfade over a block when the direction changes
-    std::vector<double> curL, curR; double cur_az = 1e9, cur_el = 1e9; size_t hpos = 0;
-    binaural_node(Interp* i, double s) : I(i), sr(s) { channels = 2; hist.assign(4096, 0.0f); }
-    void fetch(double az, double el, std::vector<double>& L, std::vector<double>& R) {
-        vlist a = { v_num(az), v_num(el), v_num(sr) }; vptr h = sig_hrir(a, *I);
-        const varr& l = h->l[0]->num; const varr& r = h->l[1]->num;
-        L.assign(std::begin(l), std::end(l)); R.assign(std::begin(r), std::end(r));
+// The head responses of binaural, for every direction hrir would choose from (the measured directions of the set
+// loaded, or a grid of 5 by 10 degrees for the model), at the engine's rate: computed by hrir itself, on the
+// interpreter's thread, when the graph is compiled. The node picks the nearest, as hrir does, without allocating.
+struct hrir_table {
+    std::vector<double> x, y, z;                          // unit vectors of the directions
+    std::vector<std::vector<float>> left, right;
+    size_t taps = 0;
+    size_t nearest(double az, double el) const {
+        double a = az * 3.14159265358979323846 / 180.0, e = el * 3.14159265358979323846 / 180.0;
+        double px = std::cos(e) * std::cos(a), py = std::cos(e) * std::sin(a), pz = std::sin(e);
+        size_t best = 0; double bd = -2;
+        for (size_t k = 0; k < x.size(); k++) { double d = px * x[k] + py * y[k] + pz * z[k]; if (d > bd) { bd = d; best = k; } }
+        return best;
     }
+};
+struct binaural_node : gnode {                            // (binaural x az el sr): direct HRIR rendering with hot az and el;
+    std::shared_ptr<const hrir_table> T;                  // the responses crossfade over a block when the direction changes
+    std::vector<float> hist; size_t cur = (size_t)-1; double cur_az = 1e9, cur_el = 1e9; size_t hpos = 0;
+    binaural_node(std::shared_ptr<const hrir_table> t) : T(std::move(t)) { channels = 2; size_t h = 64; while (h < T->taps + 1) h *= 2; hist.assign(h, 0.0f); }
     void process(std::vector<std::unique_ptr<gnode>>& g, int n) override {
         size(n); const float* x = sig(g, 0); double az = ctrl(g, 1), el = ctrl(g, 2);
-        bool changed = std::fabs(az - cur_az) > 0.5 || std::fabs(el - cur_el) > 0.5;
-        std::vector<double> newL, newR; if (changed) { fetch(az, el, newL, newR); if (curL.empty()) { curL = newL; curR = newR; changed = false; } }
-        size_t mask = hist.size() - 1;
+        size_t next = cur;
+        if (std::fabs(az - cur_az) > 0.5 || std::fabs(el - cur_el) > 0.5) { next = T->nearest(az, el); cur_az = az; cur_el = el; if (cur == (size_t)-1) cur = next; }
+        const std::vector<float>& cl = T->left[cur]; const std::vector<float>& cr = T->right[cur];
+        const std::vector<float>& nl = T->left[next]; const std::vector<float>& nr = T->right[next];
+        bool fade = next != cur; size_t mask = hist.size() - 1;
         for (int k = 0; k < n; k++) {
             hist[hpos & mask] = x[k];
-            double accL = 0, accR = 0, nL = 0, nR = 0;
-            for (size_t j = 0; j < curL.size(); j++) { float xv = hist[(hpos - j) & mask]; accL += curL[j] * xv; accR += curR[j] * xv; }
-            if (changed) { for (size_t j = 0; j < newL.size(); j++) { float xv = hist[(hpos - j) & mask]; nL += newL[j] * xv; nR += newR[j] * xv; }
+            double accL = 0, accR = 0;
+            for (size_t j = 0; j < cl.size(); j++) { float xv = hist[(hpos - j) & mask]; accL += cl[j] * xv; accR += cr[j] * xv; }
+            if (fade) { double nL = 0, nR = 0; for (size_t j = 0; j < nl.size(); j++) { float xv = hist[(hpos - j) & mask]; nL += nl[j] * xv; nR += nr[j] * xv; }
                 double w = (double)(k + 1) / n; accL = accL * (1 - w) + nL * w; accR = accR * (1 - w) + nR * w; }
             out[0][k] = (float)accL; out[1][k] = (float)accR; hpos++;
         }
-        if (changed) { curL = newL; curR = newR; cur_az = az; cur_el = el; }
+        cur = next;
     }
 };
 struct list_node : gnode {                                // (list a b ...): one channel per input
+    int channels_of(std::vector<std::unique_ptr<gnode>>&) override { return std::max<int>(1, (int)in.size()); }
     void process(std::vector<std::unique_ptr<gnode>>& g, int n) override {
-        channels = (int)in.size(); size(n);
+        size(n);
         for (size_t j = 0; j < in.size(); j++) { const float* x = sig(g, j); for (int k = 0; k < n; k++) out[j][k] = x[k]; }
     }
 };
@@ -375,9 +481,9 @@ struct list_node : gnode {                                // (list a b ...): one
 struct synth_instance {
     long id = 0; std::vector<std::unique_ptr<gnode>> nodes; std::vector<int> params; int output = -1; std::string name;
     std::atomic<bool> active{true};
+    void prepare(int block) { for (auto& nd : nodes) nd->prepare(nodes, block); }
     void render(int n) { for (auto& nd : nodes) nd->process(nodes, n); }
 };
-
 
 // --- the bus reverb: the whole output through an impulse response (the concert hall), partitioned convolution on a
 //     thread of its own. The callback hands it the mix in hops of P frames and takes the wet signal back DELAY_HOPS
@@ -488,54 +594,89 @@ struct cue_player {
     void run();
 };
 
+
 // --- the engine ---
+// One audio device per process. The audio thread runs render; the interpreter side (open, the compiled synths,
+// the status) is guarded by `m`, which the audio thread never takes: what reaches the audio thread goes through
+// the command queue, and what it lets go of goes back through the retire ring.
 struct audio_engine {
-    ma_device device{}; bool open = false, running = false, null_backend = false;
+    ma_device device{}; std::atomic<bool> open{false}; bool running = false, null_backend = false;
     double sr = 44100; int block = 256, channels = 2;
     std::atomic<long long> clock{0};          // samples since start
     std::atomic<double> master{1.0}, load{0.0}, peak{0.0};
     std::atomic<int> active_voices{0};
     command_queue queue;
-    static const int MAX_VOICES = 256;
+    retire_ring retired;                      // what the audio thread let go of, freed elsewhere
+    static const int MAX_VOICES = 256, MAX_SYNTHS = 256, MAX_PENDING = 2048;
     voice voices[MAX_VOICES];
-    std::vector<std::shared_ptr<synth_instance>> synths;   // owned by the audio thread once added
+    std::shared_ptr<synth_instance> synths[MAX_SYNTHS]; int nsynths = 0;   // the audio thread's
     std::map<long, std::shared_ptr<synth_instance>> compiled;   // interpreter side: every instance created, for parameter lookups
     std::atomic<long> next_id{1};
-    std::vector<float> bus;                   // channels * frames, reused
-    std::vector<audio_command> pending;       // timed commands not yet due (audio thread only)
+    audio_command pending[MAX_PENDING]; int npending = 0;       // timed commands not yet due (audio thread only)
     bus_reverb reverb;                        // the hall on the whole output, when on
     cue_player cues;                          // a score's sounds, read and queued by the loader thread
     std::atomic<bool> limiter{true}; double limit_gain = 1.0;   // the bus limiter (audio thread state)
+    std::recursive_mutex m;                   // the interpreter side (several interpreters may use the engine)
 
     static void callback(ma_device* dev, void* out, const void*, ma_uint32 frames) {
         static_cast<audio_engine*>(dev->pUserData)->render(static_cast<float*>(out), (int)frames);
     }
-    void apply(const audio_command& c) {
+    template <class T> void retire(std::shared_ptr<T>& p) {     // audio thread: never the last owner of anything
+        if (!p) return;
+        std::shared_ptr<void> v = std::const_pointer_cast<typename std::remove_const<T>::type>(p); p.reset();   // v holds it: no free here
+        if (!retired.push(std::move(v))) { /* the ring is full (nobody drains): the object is freed here, a glitch at worst */ }
+    }
+    void retire_command(audio_command& c) { retire(c.buffer); retire(c.synth); }
+    synth_instance* find_synth(long id) { for (int k = 0; k < nsynths; k++) if (synths[k]->id == id) return synths[k].get(); return nullptr; }
+    void apply(audio_command& c) {
         switch (c.kind) {
         case audio_command::PLAY: {
-            voice* v = nullptr; for (auto& w : voices) if (!w.active) { v = &w; break; }
-            if (!v) return;                   // all voices busy: the sound is dropped
-            v->id = c.id; v->buffer = c.buffer; v->channels = c.channels; v->buffer_sr = c.buffer_sr;
+            voice* v = nullptr; for (auto& w : voices) if (!w.active.load(std::memory_order_relaxed)) { v = &w; break; }
+            if (!v) break;                    // all voices busy: the sound is dropped
+            retire(v->buffer);
+            v->id = c.id; v->buffer = std::move(c.buffer); v->channels = c.channels; v->buffer_sr = c.buffer_sr;
             v->start = c.at; v->pos = 0; v->rate = c.rate; v->amp = c.amp; v->pan = c.pan; v->loop = c.loop;
             v->target_amp = c.amp; v->target_pan = c.pan; v->target_rate = c.rate; v->active = true; break; }
-        case audio_command::STOP: for (auto& v : voices) if (v.active && v.id == c.id) v.active = false; break;
+        case audio_command::STOP: for (auto& v : voices) if (v.active.load(std::memory_order_relaxed) && v.id.load(std::memory_order_relaxed) == c.id) v.active = false; break;
         case audio_command::STOP_ALL: for (auto& v : voices) v.active = false; break;
         case audio_command::GAIN: master = c.value; break;
-        case audio_command::ADD_SYNTH: synths.push_back(c.synth); break;
-        case audio_command::FREE_SYNTH: for (auto& sy : synths) if (sy->id == c.id) sy->active = false; break;
-        case audio_command::SET_PARAM: for (auto& sy : synths) if (sy->id == c.id && c.param_index < (int)sy->params.size()) {
+        case audio_command::ADD_SYNTH: if (nsynths < MAX_SYNTHS) synths[nsynths++] = std::move(c.synth); break;
+        case audio_command::FREE_SYNTH: if (synth_instance* sy = find_synth(c.id)) sy->active = false; break;
+        case audio_command::SET_PARAM: if (synth_instance* sy = find_synth(c.id)) if (c.param_index < (int)sy->params.size()) {
                 auto* p = static_cast<param_node*>(sy->nodes[sy->params[c.param_index]].get()); p->target = c.value; p->ramp = c.ramp_samples; } break;
-        case audio_command::SET_VOICE: for (auto& v : voices) if (v.active && v.id == c.id) { if (c.param == 0) v.target_amp = c.value; else if (c.param == 1) v.target_pan = c.value; else v.target_rate = c.value; } break;
+        case audio_command::SET_VOICE: for (auto& v : voices) if (v.active.load(std::memory_order_relaxed) && v.id.load(std::memory_order_relaxed) == c.id) { if (c.param == 0) v.target_amp = c.value; else if (c.param == 1) v.target_pan = c.value; else v.target_rate = c.value; } break;
         }
+        retire_command(c);                    // what the command still holds (a sound no voice took)
     }
+    // the callback: in pieces of at most `block` frames (the size the synths were prepared for)
     void render(float* out, int frames) {
         auto t0 = std::chrono::steady_clock::now();
-        audio_command c; while (queue.pop(c)) { if (c.at > clock.load() + frames && c.kind != audio_command::PLAY) pending.push_back(std::move(c)); else apply(c); }
-        for (size_t k = 0; k < pending.size();) { if (pending[k].at <= clock.load() + frames) { apply(pending[k]); pending.erase(pending.begin() + k); } else k++; }
+        int step = std::max(1, block);
+        for (int done = 0; done < frames; done += step) render_block(out + (size_t)done * channels, std::min(step, frames - done));
+        double us = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+        load = us / ((double)frames / sr);
+    }
+    void render_block(float* out, int frames) {
+        long long now = clock.load();
+        // commands: applied at the start of the block they fall in (timed ones wait in pending until then)
+        audio_command c;
+        while (queue.pop(c)) {
+            if (c.kind != audio_command::PLAY && c.at > now + frames) {
+                if (npending < MAX_PENDING) { pending[npending++] = std::move(c); continue; }
+            }
+            apply(c);
+        }
+        for (int k = 0; k < npending;) {
+            if (pending[k].at <= now + frames) {
+                apply(pending[k]);
+                if (k != npending - 1) pending[k] = std::move(pending[npending - 1]);
+                npending--;
+            } else k++;
+        }
         std::memset(out, 0, sizeof(float) * frames * channels);
-        long long now = clock.load(); int active = 0; double pk = 0;
+        int active = 0; double pk = 0;
         for (auto& v : voices) {
-            if (!v.active) continue;
+            if (!v.active.load(std::memory_order_relaxed)) continue;
             if (v.start > now + frames) { active++; continue; }         // scheduled later
             const std::vector<float>& b = *v.buffer; size_t len = b.size() / v.channels;
             double step = v.rate * v.buffer_sr / sr;
@@ -554,16 +695,17 @@ struct audio_engine {
                 }
                 v.pos += step;
             }
-            if (v.active) active++;
+            if (v.active.load(std::memory_order_relaxed)) active++;
         }
-        // synths: timed commands were applied above; each instance renders its graph and is mixed in
-        for (auto& sy : synths) {
-            if (!sy->active) continue;
-            sy->render(frames);
-            gnode& o = *sy->nodes[sy->output];
+        // synths: each instance renders its graph and is mixed in; the ones freed go back to be deleted elsewhere
+        for (int k = 0; k < nsynths;) {
+            synth_instance& sy = *synths[k];
+            if (!sy.active) { retire(synths[k]); if (k != nsynths - 1) synths[k] = std::move(synths[nsynths - 1]); nsynths--; continue; }
+            sy.render(frames);
+            gnode& o = *sy.nodes[sy.output];
             for (int ch = 0; ch < channels; ch++) { const float* src = o.out[std::min(ch, o.channels - 1)].data(); for (int f = 0; f < frames; f++) out[f * channels + ch] += src[f]; }
+            k++;
         }
-        synths.erase(std::remove_if(synths.begin(), synths.end(), [](const std::shared_ptr<synth_instance>& sy) { return !sy->active; }), synths.end());
         if (reverb.on.load(std::memory_order_relaxed)) for (int f = 0; f < frames; f++) reverb.process_frame(out + f * channels);
         double m = master.load();
         for (int k = 0; k < frames * channels; k++) { out[k] *= (float)m; pk = std::max(pk, (double)std::fabs(out[k])); }
@@ -573,20 +715,66 @@ struct audio_engine {
             if (limit_gain < 0.999) { for (int k = 0; k < frames * channels; k++) out[k] *= (float)limit_gain; pk *= limit_gain; }
         }
         active_voices = active; peak = pk; clock += frames;
-        double us = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
-        load = us / ((double)frames / sr);
+    }
+    // the audio thread is stopped: drop everything it held (interpreter side)
+    void forget() {
+        for (auto& v : voices) { v.active = false; v.buffer.reset(); }
+        for (int k = 0; k < nsynths; k++) synths[k].reset();
+        nsynths = 0;
+        for (int k = 0; k < npending; k++) { pending[k] = audio_command(); }
+        npending = 0;
+        audio_command c; while (queue.pop(c)) {}
+        compiled.clear();
+        retired.drain();
     }
 };
 inline audio_engine& engine() { static audio_engine e; return e; }
+// the interpreter side of the engine, for one builtin: several interpreters may run at once
+using engine_guard = std::lock_guard<std::recursive_mutex>;
+template <op_t F> vptr engine_locked(vlist& a, Interp& i) { engine_guard g(engine().m); return F(a, i); }
 
-struct scheduler_state;
-inline scheduler_state& sched();
-inline void sched_reset();
+
+// --- per-interpreter state: the loops, the idle hooks, the OSC input ---
+struct live_loop { std::string name; double beats; long cycle = 0; double next_start = 0; bool active = true; };
+struct scheduler_state { double bpm = 120; double beat0_time = 0; double beat0 = 0; double lookahead = 0.25; std::vector<live_loop> loops; bool running = false; };
+inline scheduler_state& sched(Interp& i) { return i.state<scheduler_state>(); }
+inline void sched_reset(Interp& i) { sched(i).loops.clear(); sched(i).running = false; }
+// the engine's clock in seconds (any thread: the playhead of a window reads it)
+inline double live_now() { audio_engine& e = engine(); return e.open.load() ? (double)e.clock.load() / e.sr : 0; }
+inline double live_beat_at(Interp& i, double t) { scheduler_state& s = sched(i); return s.beat0 + (t - s.beat0_time) * s.bpm / 60.0; }
+inline double live_time_of_beat(Interp& i, double b) { scheduler_state& s = sched(i); return s.beat0_time + (b - s.beat0) * 60.0 / s.bpm; }
+
+// --- controls: named values with a range, bound to synth parameters, shown by the hosts ------
+// One registry for the process (the controls window shows it), guarded by its mutex: read it with
+// controls_snapshot, change it with the functions below.
+struct control { std::string name; double lo, hi, value; bool toggle; std::vector<std::pair<long, std::string>> bindings; std::string osc; };
+inline std::mutex& controls_mutex() { static std::mutex m; return m; }
+inline std::vector<control>& controls() { static std::vector<control> c; return c; }   // under controls_mutex
+inline std::vector<control> controls_snapshot() { std::lock_guard<std::mutex> g(controls_mutex()); return controls(); }
+inline void controls_clear() { std::lock_guard<std::mutex> g(controls_mutex()); controls().clear(); }
+inline control* find_control(const std::string& n) { for (auto& c : controls()) if (c.name == n) return &c; return nullptr; }   // under controls_mutex
+inline vptr live_set_param(vlist& a, Interp& i);
+// a control's bindings follow its value: called without the registry's lock (it takes the engine's)
+inline void apply_bindings(Interp& i, const std::vector<std::pair<long, std::string>>& bindings, double value) {
+    for (auto& b : bindings) {
+        vlist a = { v_num((double)b.first), v_sym(b.second), v_num(value), v_num(0.02) };
+        try { engine_guard g(engine().m); live_set_param(a, i); } catch (Error&) {}
+    }
+}
+// set a control's value (clamped) and apply its bindings; false if there is no such control
+inline bool set_control_value(Interp& i, const std::string& name, double v, double* result = nullptr) {
+    std::vector<std::pair<long, std::string>> bindings; double value;
+    { std::lock_guard<std::mutex> g(controls_mutex()); control* c = find_control(name); if (!c) return false;
+      c->value = std::max(c->lo, std::min(c->hi, v)); value = c->value; bindings = c->bindings; }
+    if (result) *result = value;
+    apply_bindings(i, bindings, value);
+    return true;
+}
+
 // --- builtins ---
 inline audio_engine& need_open(Interp& i) { if (!engine().open) i.bad("no audio device open: (audio-open sr block channels) first"); return engine(); }
 
 inline vptr live_close(vlist&, Interp&);
-struct control; inline std::vector<control>& controls();
 // (audio-open sr block channels [opts]) open the audio device; if one is already open with the same
 //   sample rate and channels it is reused (voices cleared), otherwise it is closed and reopened. opts: (list "device" "null") for the
 //   silent backend (tests, headless machines). Fails if a device is already open.
@@ -594,11 +782,11 @@ inline vptr live_open(vlist& a, Interp& i) {
     audio_engine& e = engine();
     double want_sr = i.scalar(a[0]); int want_block = (int)i.scalar(a[1]), want_ch = (int)i.scalar(a[2]);
     if (e.open) {                                          // already open (a stopped program left it so): reuse it if it matches, else reopen
-        if (e.sr == want_sr && e.channels == want_ch) { for (auto& v : e.voices) v.active = false; return v_nil(); }
+        if (e.sr == want_sr && e.channels == want_ch) { audio_command c; c.kind = audio_command::STOP_ALL; e.queue.push(std::move(c)); return v_nil(); }   // the audio thread clears its voices
         vlist none; live_close(none, i);
     }
+    if (want_sr < 8000 || want_block < 16 || want_block > 8192 || want_ch < 1 || want_ch > 64) i.bad("invalid parameters (sr >= 8000, 16 <= block <= 8192, 1..64 channels)");
     e.sr = want_sr; e.block = want_block; e.channels = want_ch;
-    if (e.sr < 8000 || e.block < 16 || e.block > 8192 || e.channels < 1 || e.channels > 64) i.bad("invalid parameters (sr >= 8000, 16 <= block <= 8192, 1..64 channels)");
     bool want_null = false;
     if (a.size() > 3) for (auto& o : i.list(a[3])) { vlist& kv = i.list(o); if (kv.size() == 2 && str_of(kv[0]) == "device" && str_of(kv[1]) == "null") want_null = true; }
     ma_device_config cfg = ma_device_config_init(ma_device_type_playback);
@@ -614,24 +802,30 @@ inline vptr live_open(vlist& a, Interp& i) {
         e.null_backend = true;
     } else e.null_backend = false;
     e.sr = e.device.sampleRate; e.channels = e.device.playback.channels; e.block = (int)e.device.playback.internalPeriodSizeInFrames;
-    e.clock = 0; e.open = true; e.running = false;
-    for (auto& v : e.voices) v.active = false;
+    if (e.block < 16) e.block = want_block;
+    e.clock = 0; e.running = false;
+    e.forget();
     e.reverb.stop(); e.reverb.on = false; e.reverb.setup(e.channels); e.reverb.start();
     e.cues.stop(); e.cues.clear(); e.cues.start();
+    e.open = true;
     return v_nil();
 }
 // (audio-close) stop and close the device
-inline vptr live_close(vlist&, Interp&) {
+inline vptr live_close(vlist&, Interp& i) {
     audio_engine& e = engine(); if (!e.open) return v_nil();
-    ma_device_uninit(&e.device); e.open = false; e.running = false; e.synths.clear(); e.compiled.clear(); e.pending.clear();
+    ma_device_uninit(&e.device); e.open = false; e.running = false;
     e.reverb.on = false; e.reverb.stop(); e.cues.clear(); e.cues.stop();
-    sched_reset(); controls().clear(); return v_nil();
+    e.forget();
+    sched_reset(i); controls_clear(); return v_nil();
 }
-// the loader: the cues due within the lookahead are made into voices (the file read once, cut, faded, queued at their time)
+// the loader: the cues due within the lookahead are made into voices (the file read once, cut, faded, queued at their time).
+//   It also frees what the audio thread let go of.
 inline void cue_player::run() {
     while (!quit) {
+        audio_engine& e = engine();
+        e.retired.drain();
         if (!active) { std::this_thread::sleep_for(std::chrono::milliseconds(20)); continue; }
-        audio_engine& e = engine(); double now = (double)e.clock.load() / e.sr;
+        double now = (double)e.clock.load() / e.sr;
         std::vector<cue> due;
         { std::lock_guard<std::mutex> g(m);
           while (active && next < cues.size() && cues[next].when < now + lookahead) due.push_back(cues[next++]);
@@ -652,9 +846,9 @@ inline void cue_player::run() {
                         for (size_t k = 0; k < fade; k++) { float g = (float)k / fade; for (int ch = 0; ch < d.channels; ch++) (*buf)[(n - 1 - k) * d.channels + ch] *= g; }
                     }
                     cmd.buffer = buf; cmd.channels = d.channels; cmd.buffer_sr = d.sr;
-                } catch (std::exception& ex) { failed++; last_error = ex.what(); continue; }
+                } catch (std::exception& ex) { failed++; { std::lock_guard<std::mutex> g(m); last_error = ex.what(); } continue; }
             }
-            if (!e.queue.push(cmd)) { failed++; last_error = "the command queue is full"; }
+            if (!e.queue.push(cmd)) { failed++; std::lock_guard<std::mutex> g(m); last_error = "the command queue is full"; }
             else loaded++;
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
@@ -669,7 +863,7 @@ inline vptr live_play_cues(vlist& a, Interp& i) {
     for (auto& item : i.list(a[0])) {
         vlist& f = i.list(item); if (f.size() < 7) i.bad("play-cues: a cue is (list when path skip dur rate amp pan) or (list when buffer sr 0 dur rate amp pan)");
         cue c; c.when = i.scalar(f[0]);
-        if (f[1]->t == Value::STR) { c.path = i.read_path(i.str(f[1])); c.skip = i.scalar(f[2]); c.dur = i.scalar(f[3]); c.rate = i.scalar(f[4]); c.amp = i.scalar(f[5]); c.pan = i.scalar(f[6]); }
+        if (f[1]->t == Value::STR) { c.path = i.readable(i.str(f[1])); c.skip = i.scalar(f[2]); c.dur = i.scalar(f[3]); c.rate = i.scalar(f[4]); c.amp = i.scalar(f[5]); c.pan = i.scalar(f[6]); }
         else {
             if (f.size() < 8) i.bad("play-cues: a buffer cue is (list when buffer sr 0 dur rate amp pan)");
             std::vector<const varr*> ch; if (f[1]->t == Value::NUM) ch.push_back(&f[1]->num); else for (auto& cc : i.list(f[1])) ch.push_back(&i.num(cc));
@@ -702,7 +896,7 @@ inline vptr live_bus_reverb(vlist& a, Interp& i) {
     audio_engine& e = need_open(i);
     vlist chans; if (a[0]->t == Value::LIST) chans = i.list(a[0]); else chans.push_back(a[0]);
     if (chans.empty()) i.bad("bus-reverb: an empty response");
-    bus_reverb_ir* ir = new bus_reverb_ir(); ir->channels = (int)chans.size();
+    std::unique_ptr<bus_reverb_ir> ir(new bus_reverb_ir()); ir->channels = (int)chans.size();
     size_t longest = 0; for (auto& c : chans) longest = std::max(longest, i.num(c).size());
     const size_t P = bus_reverb::P, N = bus_reverb::N; ir->parts = (longest + P - 1) / P;
     for (auto& c : chans) {
@@ -714,9 +908,10 @@ inline vptr live_bus_reverb(vlist& a, Interp& i) {
         }
         ir->H.push_back(std::move(H));
     }
-    bus_reverb_ir* old = e.reverb.pending.exchange(ir); delete old;
+    size_t parts = ir->parts;
+    bus_reverb_ir* old = e.reverb.pending.exchange(ir.release()); delete old;
     e.reverb.dry = i.scalar(a[1]); e.reverb.wet = i.scalar(a[2]); e.reverb.on = true;
-    return v_num((double)ir->parts);
+    return v_num((double)parts);
 }
 inline vptr live_bus_reverb_off(vlist&, Interp&) { engine().reverb.on = false; return v_nil(); }
 // (bus-limiter on) the peak limiter on the output (on by default): the bus is held under 0.95 with a fast duck and a
@@ -762,8 +957,9 @@ inline vptr live_play_buffer(vlist& a, Interp& i) {
     audio_command cmd; cmd.kind = audio_command::PLAY; cmd.id = e.next_id++; cmd.buffer = buf; cmd.channels = (int)ch.size(); cmd.buffer_sr = bsr;
     cmd.rate = rate; cmd.amp = amp; cmd.pan = std::max(-1.0, std::min(1.0, pan)); cmd.loop = loop;
     cmd.at = at > 0 ? (long long)(at * e.sr) : 0;
+    long id = cmd.id;
     if (!e.queue.push(std::move(cmd))) i.bad("the command queue is full");
-    return v_num((double)cmd.id);
+    return v_num((double)id);
 }
 // (stop voice) stop one voice; (stop-all) every voice
 inline vptr live_stop_voice(vlist& a, Interp& i) { audio_engine& e = need_open(i); audio_command c; c.kind = audio_command::STOP; c.id = (long)i.scalar(a[0]); e.queue.push(c); return v_nil(); }
@@ -778,7 +974,7 @@ inline vptr live_voice_set(vlist& a, Interp& i) {
     e.queue.push(c); return v_nil();
 }
 // (voices) => the ids of the voices playing or scheduled
-inline vptr live_voices(vlist&, Interp& i) { audio_engine& e = need_open(i); vlist out; for (auto& v : e.voices) if (v.active) out.push_back(v_num((double)v.id)); return v_list(std::move(out)); }
+inline vptr live_voices(vlist&, Interp& i) { audio_engine& e = need_open(i); vlist out; for (auto& v : e.voices) if (v.active.load()) out.push_back(v_num((double)v.id.load())); return v_list(std::move(out)); }
 
 // --- the compiler: a Musil function's body -> a graph ---------------------------------
 // The streamable table: builtin name -> how its call becomes a node. "sig" arguments are
@@ -812,6 +1008,37 @@ inline const std::map<std::string, ugen_spec>& ugen_table() {
     };
     return t;
 }
+// the tables the spatial nodes share, made on the interpreter's thread and kept by the interpreter
+struct spatial_tables {
+    std::map<int, std::shared_ptr<const sh_table>> sh;
+    std::map<std::string, std::shared_ptr<const hrir_table>> hrir;
+};
+inline std::shared_ptr<const sh_table> sh_table_for(Interp& i, int order) {
+    auto& t = i.state<spatial_tables>().sh[order];
+    if (!t) t = std::make_shared<const sh_table>(order);
+    return t;
+}
+// the responses hrir gives, for each direction it chooses from, at rate sr
+inline std::shared_ptr<const hrir_table> hrir_table_for(Interp& i, double sr) {
+    bool measured = hrtf_try_default(i); const hrtf_set& h = hrtf();
+    std::vector<std::pair<double, double>> dirs;
+    if (measured) for (size_t k = 0; k < h.az.size(); k++) dirs.push_back({ h.az[k], h.el[k] });
+    else for (int el = -90; el <= 90; el += 10) for (int az = -180; az < 180; az += 5) dirs.push_back({ (double)az, (double)el });
+    std::string key = std::to_string(sr) + (measured ? " set " + std::to_string(h.az.size()) + " " + std::to_string((uintptr_t)(h.left.empty() ? nullptr : &h.left[0])) +
+                                                      " " + std::to_string(h.left.empty() || h.left[0].size() == 0 ? 0.0 : h.left[0][0]) : " model");
+    auto& t = i.state<spatial_tables>().hrir[key];
+    if (t) return t;
+    auto T = std::make_shared<hrir_table>();
+    for (auto& d : dirs) {
+        vlist a = { v_num(d.first), v_num(d.second), v_num(sr) }; vptr r = sig_hrir(a, i);
+        const varr& l = r->l[0]->num; const varr& rr = r->l[1]->num;
+        double ca = d.first * 3.14159265358979323846 / 180.0, ce = d.second * 3.14159265358979323846 / 180.0;
+        T->x.push_back(std::cos(ce) * std::cos(ca)); T->y.push_back(std::cos(ce) * std::sin(ca)); T->z.push_back(std::sin(ce));
+        T->left.emplace_back(std::begin(l), std::end(l)); T->right.emplace_back(std::begin(rr), std::end(rr));
+        T->taps = std::max({ T->taps, (size_t)l.size(), (size_t)rr.size() });
+    }
+    t = T; return t;
+}
 // User functions whose body uses only streamable builtins are inlined: (sig gate 190), a helper
 // that wraps a filter chain, an oscillator with its own envelope... each call's arguments are
 // bound to the function's parameter names (in the caller's scope) and the body is compiled.
@@ -822,6 +1049,7 @@ struct synth_compiler {
     std::vector<std::map<std::string, binding>> scopes{ {} }; size_t cur = 0; int depth = 0;
     synth_compiler(Interp& i, eptr e, const std::vector<std::string>& p, synth_instance& o, double s, int b) : I(i), env(e), params(p), out(o), sr(s), block(b) {}
     [[noreturn]] void fail(const std::string& m) { I.bad(m); }
+    void deep() { if (stack_low()) fail("synth: the function is nested too deep"); }
     binding* bound(const std::string& name) { for (size_t k = cur + 1; k-- > 0;) { auto it = scopes[k].find(name); if (it != scopes[k].end()) return &it->second; } return nullptr; }
     bool is_param(const vptr& f) { return f->t == Value::SYM && !bound(f->s) && std::find(params.begin(), params.end(), f->s) != params.end(); }
     vptr user_fn(const vptr& head) {                      // a Musil function bound to this symbol (not a builtin, not a ugen name)
@@ -829,6 +1057,7 @@ struct synth_compiler {
         vptr v = env->find(head->s); return v && v->t == Value::FN && !v->op ? v : nullptr;
     }
     bool uses_signal(const vptr& f) {                     // does this form depend on a parameter or a ugen?
+        deep();
         if (is_param(f)) return true;
         if (f->t == Value::SYM) { binding* b = bound(f->s); if (b) { size_t saved = cur; cur = b->scope; bool r = uses_signal(b->form); cur = saved; return r; } return false; }
         if (f->t != Value::LIST || f->l.empty()) return false;
@@ -842,6 +1071,7 @@ struct synth_compiler {
     }
     int add(gnode* n) { out.nodes.emplace_back(n); return (int)out.nodes.size() - 1; }
     vptr substitute(const vptr& f) {                      // bound names replaced by their argument forms, so a constant can be evaluated
+        deep();
         if (f->t == Value::SYM) { binding* b = bound(f->s); if (b) { size_t saved = cur; cur = b->scope; vptr r = substitute(b->form); cur = saved; return r; } return f; }
         if (f->t != Value::LIST) return f;
         vptr out = v_list({}); for (auto& e : f->l) out->l.push_back(substitute(e)); return out;
@@ -849,6 +1079,7 @@ struct synth_compiler {
     vptr constant(const vptr& f) { return I.eval(substitute(f), env); }   // a build-time constant: evaluated like any Musil expression
     std::vector<double> vec_of(const vptr& v, const char* what) { if (v->t != Value::NUM) fail(std::string(what) + ": expected a number or vector"); return std::vector<double>(std::begin(v->num), std::end(v->num)); }
     int compile(const vptr& f) {
+        deep();
         if (f->t == Value::NUM) { if (f->num.size() != 1) fail("a vector constant cannot be a signal"); return add(new const_node(f->num[0])); }
         if (f->t == Value::SYM) { binding* b = bound(f->s); if (b) { if (b->node >= 0) return b->node; size_t saved = cur; cur = b->scope; int k = compile(b->form); cur = saved; b->node = k; return k; } }
         if (is_param(f)) {
@@ -885,49 +1116,58 @@ struct synth_compiler {
         else if (h == "noise") { n = new noise_node(); sigs.clear(); }
         else if (h == "adsr") n = new adsr_node(sr);
         else if (h == "lag") n = new lag_node(sr);
-        else if (h == "iir") n = new iir_node(vec_of(consts[0], "iir b"), vec_of(consts[1], "iir a"));
+        else if (h == "iir") { auto b = vec_of(consts[0], "iir b"), a = vec_of(consts[1], "iir a"); if (b.empty() || a.empty()) fail("iir: empty coefficients"); n = new iir_node(b, a); }
         else if (h == "svf") n = new svf_node(sr, svf_type(I, consts[0]));
         else if (h == "dc-block") n = new iir_node({ 1, -1 }, { 1, -0.995 });
         else if (h == "delay") n = new delay_node((size_t)(sr * 2));       // up to two seconds
-        else if (h == "comb") { long d = (long)consts[0]->num[0]; if (d < 1) fail("comb: delay must be >= 1"); n = new comb_node((size_t)d); }
-        else if (h == "allpass") { long d = (long)consts[0]->num[0]; if (d < 1) fail("allpass: delay must be >= 1"); n = new allpass_node((size_t)d); }
+        else if (h == "comb") { double d = vec_of(consts[0], "comb delay")[0]; if (d < 1 || d > sr * 60) fail("comb: delay must be 1 sample to 60 seconds"); n = new comb_node((size_t)d); }
+        else if (h == "allpass") { double d = vec_of(consts[0], "allpass delay")[0]; if (d < 1 || d > sr * 60) fail("allpass: delay must be 1 sample to 60 seconds"); n = new allpass_node((size_t)d); }
         else if (h == "conv") { auto ir = vec_of(consts[0], "conv ir"); if (ir.empty()) fail("conv: empty impulse response"); n = new conv_node(ir, (size_t)block); }
         else if (h == "pan") n = new pan_node();
         else if (h == "pan-azimuth") n = new pan_az_node();
-        else if (h == "channel") n = new channel_node((int)consts[0]->num[0]);
-        else if (h == "ambi-encode") { int o = (int)consts[0]->num[0]; if (o < 0 || o > 7) fail("ambi-encode: order 0..7"); n = new ambi_encode_node(o); }
+        else if (h == "channel") n = new channel_node((int)vec_of(consts[0], "channel")[0]);
+        else if (h == "ambi-encode") { int o = (int)vec_of(consts[0], "ambi-encode order")[0]; if (o < 0 || o > 7) fail("ambi-encode: order 0..7"); n = new ambi_encode_node(o, sh_table_for(I, o)); }
         else if (h == "ambi-rotate") n = new ambi_rotate_node();
-        else if (h == "binaural") n = new binaural_node(&I, consts[0]->num[0]);
+        else if (h == "binaural") n = new binaural_node(hrir_table_for(I, sr));
         else if (h == "ambi-decode") {
             // the decoding matrix of ambi-decode in signals.mu (ambi_decoder in signals/ambisonics.h)
             vptr spk = consts[0]; if (spk->t != Value::LIST && spk->t != Value::NUM) fail("ambi-decode: speakers is a list of (list az el) or azimuths");
-            int bch = out.nodes[sigs[0]]->channels; int order = (int)std::lround(std::sqrt((double)bch)) - 1;
+            int bch = out.nodes[sigs[0]]->channels_of(out.nodes); int order = (int)std::lround(std::sqrt((double)bch)) - 1;
             std::vector<std::vector<double>> M = ambi_decoder(order, speaker_dirs(spk, I));
             n = new matrix_node(M);
         }
-        else if (h == "lowpass" || h == "highpass" || h == "bandpass" || h == "notch" || h == "peak-eq" || h == "lowshelf" || h == "highshelf") n = new biquad_node(h, sr);
+        else if (biquad_node::known(h)) n = new biquad_node(h, sr);
         else n = new math_node(h);
-        int k = add(n); n->in = sigs; return k;
+        int k = add(n); n->in = sigs;
+        n->channels = n->channels_of(out.nodes);      // known now: a later node (ambi-decode) asks for it
+        return k;
     }
 };
+// a Musil function compiled into an instance prepared for blocks of `block` samples
+inline void compile_synth(Interp& i, const vptr& f, synth_instance& inst, double sr, int block) {
+    if (f->t != Value::FN || f->op) i.bad("expected a Musil function (not a builtin)");
+    vptr body = f->body;
+    if (body->t == Value::LIST && !body->l.empty() && body->l[0]->t == Value::SYM && body->l[0]->s == "do" && body->l.size() == 2) body = body->l[1];
+    synth_compiler c(i, f->closure ? f->closure : i.global, f->params, inst, sr, block);
+    inst.output = c.compile(body);
+    for (auto& p : f->params) if (!c.param_nodes.count(p)) { int k = c.add(new param_node(p, 0)); c.param_nodes[p] = k; inst.params.push_back(k); }   // unused parameters still exist
+    inst.prepare(block);
+}
 
 // (synth f) => id: compile the function f into a running instrument (silent until its parameters say otherwise).
 //   f's parameters become hot parameters; its body may use only the streamable builtins (see (streamable))
 inline vptr live_synth(vlist& a, Interp& i) {
-    audio_engine& e = need_open(i); const vptr& f = a[0];
-    if (f->t != Value::FN || f->op) i.bad("expected a Musil function (not a builtin)");
-    vptr body = f->body;
-    if (body->t == Value::LIST && !body->l.empty() && body->l[0]->t == Value::SYM && body->l[0]->s == "do" && body->l.size() == 2) body = body->l[1];
-    auto inst = std::make_shared<synth_instance>(); inst->id = e.next_id++; inst->name = f->s;
-    synth_compiler c(i, f->closure ? f->closure : i.global, f->params, *inst, e.sr, e.block);
-    inst->output = c.compile(body);
-    for (auto& p : f->params) if (!c.param_nodes.count(p)) { int k = c.add(new param_node(p, 0)); c.param_nodes[p] = k; inst->params.push_back(k); }   // unused parameters still exist
+    audio_engine& e = need_open(i);
+    auto inst = std::make_shared<synth_instance>(); inst->id = e.next_id++; inst->name = a[0]->s;
+    compile_synth(i, a[0], *inst, e.sr, e.block);
     e.compiled[inst->id] = inst;
+    e.retired.drain();
     audio_command cmd; cmd.kind = audio_command::ADD_SYNTH; cmd.synth = inst;
     if (!e.queue.push(std::move(cmd))) i.bad("the command queue is full");
     return v_num((double)inst->id);
 }
-// (set-param id name value [ramp-seconds]) change a synth's parameter, immediately or ramped
+// (set-param id name value [ramp-seconds [at-seconds]]) change a synth's parameter, immediately or ramped; with a time on
+//   the clock, at the start of the block it falls in
 inline vptr live_set_param(vlist& a, Interp& i) {
     audio_engine& e = need_open(i); long id = (long)i.scalar(a[0]);
     std::string name = a[1]->t == Value::SYM || a[1]->t == Value::STR ? a[1]->s : str_of(a[1]);
@@ -937,8 +1177,8 @@ inline vptr live_set_param(vlist& a, Interp& i) {
     int idx = -1; for (size_t k = 0; k < s->params.size(); k++) if (static_cast<param_node*>(s->nodes[s->params[k]].get())->name == name) idx = (int)k;
     if (idx < 0) i.bad("synth has no parameter " + name);
     audio_command cmd; cmd.kind = audio_command::SET_PARAM; cmd.id = id; cmd.param_index = idx; cmd.value = i.scalar(a[2]);
-    cmd.ramp_samples = a.size() > 3 ? (int)(i.scalar(a[3]) * e.sr) : 0;
-    if (a.size() > 4) cmd.at = (long long)(i.scalar(a[4]) * e.sr);
+    cmd.ramp_samples = a.size() > 3 ? (int)std::max(0.0, std::min(i.scalar(a[3]) * e.sr, 1e9)) : 0;
+    if (a.size() > 4) cmd.at = (long long)std::llround(std::max(0.0, i.scalar(a[4])) * e.sr);
     if (!e.queue.push(cmd)) i.bad("the command queue is full");
     return v_nil();
 }
@@ -947,35 +1187,37 @@ inline vptr live_set_param(vlist& a, Interp& i) {
 //   per sample); the same graph as (synth f), so the result equals f called on the same signals. No device needed.
 inline vptr live_synth_render(vlist& a, Interp& i) {
     const vptr& f = a[0]; vlist& ps = i.list(a[1]); double secs = i.scalar(a[2]);
-    double sr = a.size() > 3 ? i.scalar(a[3]) : (engine().open ? engine().sr : 44100); int block = engine().open ? engine().block : 256;
-    if (f->t != Value::FN || f->op) i.bad("expected a Musil function (not a builtin)");
-    vptr body = f->body;
-    if (body->t == Value::LIST && !body->l.empty() && body->l[0]->t == Value::SYM && body->l[0]->s == "do" && body->l.size() == 2) body = body->l[1];
-    synth_instance inst; synth_compiler c(i, f->closure ? f->closure : i.global, f->params, inst, sr, block);
-    inst.output = c.compile(body);
-    for (auto& p : f->params) if (!c.param_nodes.count(p)) { int k = c.add(new param_node(p, 0)); c.param_nodes[p] = k; inst.params.push_back(k); }
+    audio_engine& e = engine();
+    double sr = a.size() > 3 ? i.scalar(a[3]) : (e.open ? e.sr : 44100); int block = e.open ? e.block : 256;
+    if (sr <= 0) i.bad("sample rate must be > 0");
+    size_t total = i.check_size(std::ceil(secs * sr), "synth-render");
+    synth_instance inst; compile_synth(i, f, inst, sr, block);
+    std::map<std::string, int> param_nodes;
+    for (int k : inst.params) param_nodes[static_cast<param_node*>(inst.nodes[k].get())->name] = k;
     std::map<std::string, std::vector<double>> curves;
-    for (auto& e : ps) { vlist& kv = i.list(e); if (kv.size() != 2) i.bad("params are (list name value)"); std::string nm = kv[0]->t == Value::SYM || kv[0]->t == Value::STR ? kv[0]->s : str_of(kv[0]);
-        if (!c.param_nodes.count(nm)) i.bad("no parameter " + nm);
+    for (auto& p : ps) { vlist& kv = i.list(p); if (kv.size() != 2) i.bad("params are (list name value)"); std::string nm = kv[0]->t == Value::SYM || kv[0]->t == Value::STR ? kv[0]->s : str_of(kv[0]);
+        if (!param_nodes.count(nm)) i.bad("no parameter " + nm);
         const varr& v = i.num(kv[1]); curves[nm] = std::vector<double>(std::begin(v), std::end(v)); }
-    size_t total = (size_t)(secs * sr); gnode& o = *inst.nodes[inst.output];
+    total = (size_t)(secs * sr); gnode& o = *inst.nodes[inst.output];
     std::vector<std::vector<double>> out;
     for (size_t pos = 0; pos < total; pos += block) {
         int n = (int)std::min<size_t>(block, total - pos);
         for (auto& kv : curves) {
-            auto* p = static_cast<param_node*>(inst.nodes[c.param_nodes[kv.first]].get());
+            auto* p = static_cast<param_node*>(inst.nodes[param_nodes[kv.first]].get());
             if (kv.second.size() == 1) { p->target = kv.second[0]; p->ramp = 0; p->drive = nullptr; }
-            else { if (kv.second.size() < total) kv.second.resize(total, kv.second.back()); p->drive = &kv.second[pos]; }   // a value per sample
+            else { if (kv.second.size() < total) kv.second.resize(total, kv.second.empty() ? 0.0 : kv.second.back()); p->drive = &kv.second[pos]; }   // a value per sample
         }
         inst.render(n);
         if (out.empty()) out.resize(o.channels);
         for (int ch = 0; ch < o.channels; ch++) for (int k = 0; k < n; k++) out[ch].push_back(o.out[ch][k]);
+        if ((pos / block) % 64 == 63) i.check_stop();
     }
+    if (out.empty()) out.resize(1);
     if (out.size() == 1) return from_vec(out[0]);
     vlist chans; for (auto& ch : out) chans.push_back(from_vec(ch)); return v_list(std::move(chans));
 }
-// (free id) remove a synth from the graph
-inline vptr live_free(vlist& a, Interp& i) { audio_engine& e = need_open(i); audio_command c; c.kind = audio_command::FREE_SYNTH; c.id = (long)i.scalar(a[0]); e.queue.push(c); e.compiled.erase(c.id); return v_nil(); }
+// (free id) remove a synth from the graph (the audio thread hands it back; it is deleted off the audio thread)
+inline vptr live_free(vlist& a, Interp& i) { audio_engine& e = need_open(i); audio_command c; c.kind = audio_command::FREE_SYNTH; c.id = (long)i.scalar(a[0]); e.queue.push(c); e.compiled.erase(c.id); e.retired.drain(); return v_nil(); }
 // (synth-params id) => the parameter names of a synth, in the order of its function
 inline vptr live_synth_params(vlist& a, Interp& i) {
     audio_engine& e = need_open(i); long id = (long)i.scalar(a[0]); synth_instance* s = nullptr;
@@ -994,25 +1236,7 @@ inline vptr live_streamable(vlist&, Interp&) { vlist out; for (auto& kv : ugen_t
 // returns events: (list beat dur thunk), thunk a function of the absolute time in seconds that
 // schedules whatever it wants (note-at, play-at, set-param with a time). The scheduler runs
 // from the interpreter's idle hook, a little ahead of the audio clock, so late calls still
-// land on time.
-struct live_loop { std::string name; double beats; long cycle = 0; double next_start = 0; bool active = true; };
-struct scheduler_state { double bpm = 120; double beat0_time = 0; double beat0 = 0; double lookahead = 0.25; std::vector<live_loop> loops; bool running = false; };
-inline scheduler_state& sched() { static scheduler_state s; return s; }
-inline void sched_reset() { sched().loops.clear(); sched().running = false; }
-inline double live_now() { return engine().open ? (double)engine().clock.load() / engine().sr : 0; }
-inline double live_beat_at(double t) { scheduler_state& s = sched(); return s.beat0 + (t - s.beat0_time) * s.bpm / 60.0; }
-inline double live_time_of_beat(double b) { scheduler_state& s = sched(); return s.beat0_time + (b - s.beat0) * 60.0 / s.bpm; }
-
-// --- controls: named values with a range, bound to synth parameters, shown by the hosts ------
-struct control { std::string name; double lo, hi, value; bool toggle; std::vector<std::pair<long, std::string>> bindings; std::string osc; };
-inline std::vector<control>& controls() { static std::vector<control> c; return c; }
-inline control* find_control(const std::string& n) { for (auto& c : controls()) if (c.name == n) return &c; return nullptr; }
-inline void apply_control(Interp& i, control& c) {
-    for (auto& b : c.bindings) {
-        vlist a = { v_num((double)b.first), v_sym(b.second), v_num(c.value), v_num(0.02) };
-        try { live_set_param(a, i); } catch (...) {}
-    }
-}
+// land on time. The loops belong to the interpreter that started them.
 
 // --- OSC: a minimal encoder and decoder (f i s types) over UDP -----------------------------
 inline void osc_pad(std::string& b) { while (b.size() % 4) b += '\0'; }
@@ -1038,70 +1262,79 @@ inline bool osc_decode(const std::string& msg, std::string& addr, vlist& args) {
     return true;
 }
 #ifndef _WIN32
-struct osc_listener { int sock = -1; int port = 0; };
-inline osc_listener& osc_in() { static osc_listener l; return l; }
+struct osc_listener { int sock = -1; int port = 0; ~osc_listener() { if (sock >= 0) ::close(sock); } };
+inline osc_listener& osc_in(Interp& i) { return i.state<osc_listener>(); }
 #endif
 
-// Edits made in a controls window (possibly on another thread) wait here for the interpreter thread
+// Edits made in a controls window (possibly on another thread) wait here for an interpreter thread
 struct control_edit_queue { std::mutex m; std::deque<std::pair<std::string, double>> edits; };
 inline control_edit_queue& control_edits() { static control_edit_queue q; return q; }
 inline void queue_control_edit(const std::string& name, double value) { std::lock_guard<std::mutex> g(control_edits().m); control_edits().edits.push_back({ name, value }); }
 
 // --- idle hooks: Musil functions called by name from the idle work, at most every 10 ms (a score player's tick) ---
-inline std::vector<std::string>& idle_hooks() { static std::vector<std::string> h; return h; }
+struct idle_hook_state { std::vector<std::string> names; std::chrono::steady_clock::time_point last = std::chrono::steady_clock::now(); };
+inline std::vector<std::string>& idle_hooks(Interp& i) { return i.state<idle_hook_state>().names; }
 // (idle-hook! name) call the global function of that name from the idle work, until (idle-hook-off! name); an error
 //   in it is printed and takes it off
-inline vptr live_idle_hook(vlist& a, Interp& i) { std::string n = str_of(a[0]); for (auto& h : idle_hooks()) if (h == n) return v_nil(); idle_hooks().push_back(n); return v_nil(); }
+inline vptr live_idle_hook(vlist& a, Interp& i) { std::string n = str_of(a[0]); for (auto& h : idle_hooks(i)) if (h == n) return v_nil(); idle_hooks(i).push_back(n); return v_nil(); }
 // (idle-hooks) => the names hooked
-inline vptr live_idle_hooks(vlist&, Interp&) { vlist out; for (auto& n : idle_hooks()) out.push_back(v_str(n)); return v_list(std::move(out)); }
-inline vptr live_idle_hook_off(vlist& a, Interp& i) { std::string n = str_of(a[0]); auto& h = idle_hooks(); h.erase(std::remove(h.begin(), h.end(), n), h.end()); return v_nil(); }
+inline vptr live_idle_hooks(vlist&, Interp& i) { vlist out; for (auto& n : idle_hooks(i)) out.push_back(v_str(n)); return v_list(std::move(out)); }
+inline vptr live_idle_hook_off(vlist& a, Interp& i) { std::string n = str_of(a[0]); auto& h = idle_hooks(i); h.erase(std::remove(h.begin(), h.end(), n), h.end()); return v_nil(); }
 inline void run_idle_hooks(Interp& i) {
-    static auto last = std::chrono::steady_clock::now();
-    auto now = std::chrono::steady_clock::now(); if (std::chrono::duration<double>(now - last).count() < 0.01) return; last = now;
-    std::vector<std::string> names = idle_hooks();
+    idle_hook_state& st = i.state<idle_hook_state>();
+    auto now = std::chrono::steady_clock::now(); if (std::chrono::duration<double>(now - st.last).count() < 0.01) return; st.last = now;
+    std::vector<std::string> names = st.names;
     for (auto& n : names) {
         vptr fn = i.global->find(n);
         if (!fn || fn->t != Value::FN) { vlist a{ v_str(n) }; live_idle_hook_off(a, i); continue; }
-        try { i.call_fn(fn, {}); } catch (std::exception& e) { *i.out << "idle hook " << n << ": " << e.what() << "\n" << std::flush; vlist a{ v_str(n) }; live_idle_hook_off(a, i); }
+        try { i.call_fn(fn, {}); } catch (Error& e) { *i.out << "idle hook " << n << ": " << e.what() << "\n" << std::flush; vlist a{ v_str(n) }; live_idle_hook_off(a, i); }
     }
 }
 // The idle work: control edits, due loops, incoming OSC, the idle hooks. Called from the interpreter's idle hook (never re-entered).
 inline void live_idle(Interp& i) {
     run_idle_hooks(i);
-    scheduler_state& s = sched();
+    scheduler_state& s = sched(i);
     { std::deque<std::pair<std::string, double>> edits; { std::lock_guard<std::mutex> g(control_edits().m); edits.swap(control_edits().edits); }
-      for (auto& e : edits) { control* c = find_control(e.first); if (c) { c->value = std::max(c->lo, std::min(c->hi, e.second)); apply_control(i, *c); } } }
-    if (engine().open && engine().running && s.running) {
+      for (auto& e : edits) set_control_value(i, e.first, e.second); }
+    bool playing; { engine_guard g(engine().m); playing = engine().open && engine().running; }
+    if (playing && s.running) {
         double now = live_now();
-        for (auto& lp : s.loops) {
-            if (!lp.active) continue;
+        for (size_t k = 0; k < s.loops.size(); k++) {
+            if (!s.loops[k].active) continue;
             int guard = 0;
-            while (live_time_of_beat(lp.next_start) < now + s.lookahead && guard++ < 8) {
-                vptr fn = i.global->find(lp.name);
-                if (!fn || fn->t != Value::FN) { lp.active = false; *i.out << "live-loop " << lp.name << ": no function of that name, stopped\n" << std::flush; break; }
-                double start_time = live_time_of_beat(lp.next_start), spb = 60.0 / s.bpm;
+            while (s.loops[k].active && live_time_of_beat(i, s.loops[k].next_start) < now + s.lookahead && guard++ < 8) {
+                std::string name = s.loops[k].name;
+                vptr fn = i.global->find(name);
+                if (!fn || fn->t != Value::FN) { s.loops[k].active = false; *i.out << "live-loop " << name << ": no function of that name, stopped\n" << std::flush; break; }
+                double start_time = live_time_of_beat(i, s.loops[k].next_start), spb = 60.0 / s.bpm;
+                long cycle = s.loops[k].cycle;
+                s.loops[k].cycle++; s.loops[k].next_start += s.loops[k].beats;   // before the call: the call may start or stop loops
                 vptr events;
-                try { events = i.call_fn(fn, { v_num((double)lp.cycle) }); }
-                catch (std::exception& e) { *i.out << "live-loop " << lp.name << ": " << e.what() << "\n" << std::flush; events = v_list({}); }
+                try { events = i.call_fn(fn, { v_num((double)cycle) }); }
+                catch (Error& e) { *i.out << "live-loop " << name << ": " << e.what() << "\n" << std::flush; events = v_list({}); }
                 if (events && events->t == Value::LIST) for (auto& ev : events->l) {
                     if (ev->t != Value::LIST || ev->l.size() < 3 || ev->l[0]->t != Value::NUM || ev->l[2]->t != Value::FN) continue;
                     double t = start_time + ev->l[0]->num[0] * spb, d = ev->l[1]->t == Value::NUM ? ev->l[1]->num[0] * spb : 0;
-                    try { i.call_fn(ev->l[2], { v_num(t), v_num(d) }); } catch (std::exception& e) { *i.out << "live-loop " << lp.name << ": " << e.what() << "\n" << std::flush; }
+                    try { i.call_fn(ev->l[2], { v_num(t), v_num(d) }); } catch (Error& e) { *i.out << "live-loop " << name << ": " << e.what() << "\n" << std::flush; }
                 }
-                lp.cycle++; lp.next_start += lp.beats;
+                if (k >= s.loops.size()) break;
             }
         }
         s.loops.erase(std::remove_if(s.loops.begin(), s.loops.end(), [](const live_loop& l) { return !l.active; }), s.loops.end());
     }
 #ifndef _WIN32
-    if (osc_in().sock >= 0) {
+    osc_listener& l = osc_in(i);
+    if (l.sock >= 0) {
         char buf[4096]; sockaddr_in from{}; socklen_t fl = sizeof from;
         for (int k = 0; k < 64; k++) {
-            long n = recvfrom(osc_in().sock, buf, sizeof buf, MSG_DONTWAIT, (sockaddr*)&from, &fl);
+            long n = recvfrom(l.sock, buf, sizeof buf, MSG_DONTWAIT, (sockaddr*)&from, &fl);
             if (n <= 0) break;
             std::string addr; vlist args;
             if (!osc_decode(std::string(buf, (size_t)n), addr, args)) continue;
-            for (auto& c : controls()) if (c.osc == addr && !args.empty() && args[0]->t == Value::NUM) { c.value = std::max(c.lo, std::min(c.hi, args[0]->num[0])); apply_control(i, c); }
+            if (args.empty() || args[0]->t != Value::NUM) continue;
+            std::vector<std::string> names;
+            { std::lock_guard<std::mutex> g(controls_mutex()); for (auto& c : controls()) if (c.osc == addr) names.push_back(c.name); }
+            for (auto& nm : names) set_control_value(i, nm, args[0]->num[0]);
         }
     }
 #endif
@@ -1110,60 +1343,62 @@ inline void live_idle(Interp& i) {
 // (tempo bpm) set the tempo; beats are counted from now
 inline vptr live_tempo(vlist& a, Interp& i) {
     double bpm = i.scalar(a[0]); if (bpm <= 0) i.bad("bpm must be > 0");
-    scheduler_state& s = sched(); double now = live_now(); s.beat0 = live_beat_at(now); s.beat0_time = now; s.bpm = bpm; return v_nil();
+    scheduler_state& s = sched(i); double now = live_now(); s.beat0 = live_beat_at(i, now); s.beat0_time = now; s.bpm = bpm; return v_nil();
 }
 // (beat) => the current beat (a number, fractional); (beat-time b) => the clock time of beat b; (bpm) => the tempo
-inline vptr live_beat(vlist&, Interp&) { return v_num(live_beat_at(live_now())); }
-inline vptr live_beat_time(vlist& a, Interp& i) { return v_num(live_time_of_beat(i.scalar(a[0]))); }
-inline vptr live_bpm(vlist&, Interp&) { return v_num(sched().bpm); }
+inline vptr live_beat(vlist&, Interp& i) { return v_num(live_beat_at(i, live_now())); }
+inline vptr live_beat_time(vlist& a, Interp& i) { return v_num(live_time_of_beat(i, i.scalar(a[0]))); }
+inline vptr live_bpm(vlist&, Interp& i) { return v_num(sched(i).bpm); }
 // (live-loop name beats) start (or restart) the loop named name: the function of that name is called every
 //   cycle of `beats` beats; (stop-loop name) (stop-loops) (loops) => the names
 inline vptr live_loop_start(vlist& a, Interp& i) {
     need_open(i); std::string name = a[0]->t == Value::SYM || a[0]->t == Value::STR ? a[0]->s : str_of(a[0]); double beats = i.scalar(a[1]);
     if (beats <= 0) i.bad("beats must be > 0");
     vptr fn = i.global->find(name); if (!fn || fn->t != Value::FN) i.bad("no function named " + name);
-    scheduler_state& s = sched(); s.running = true;
-    double now_beat = live_beat_at(live_now()), prev = std::floor(now_beat / beats) * beats;
+    scheduler_state& s = sched(i); s.running = true;
+    double now_beat = live_beat_at(i, live_now()), prev = std::floor(now_beat / beats) * beats;
     double start = now_beat - prev < 0.25 ? prev : prev + beats;     // just after a boundary: start now; otherwise at the next one
     for (auto& lp : s.loops) if (lp.name == name) { lp.beats = beats; lp.active = true; return v_nil(); }
     s.loops.push_back({ name, beats, 0, start, true }); return v_nil();
 }
-inline vptr live_loop_stop(vlist& a, Interp&) { std::string name = a[0]->t == Value::SYM || a[0]->t == Value::STR ? a[0]->s : str_of(a[0]); for (auto& lp : sched().loops) if (lp.name == name) lp.active = false; return v_nil(); }
-inline vptr live_loops_stop(vlist&, Interp&) { for (auto& lp : sched().loops) lp.active = false; return v_nil(); }
-inline vptr live_loops(vlist&, Interp&) { vlist out; for (auto& lp : sched().loops) if (lp.active) out.push_back(v_str(lp.name)); return v_list(std::move(out)); }
+inline vptr live_loop_stop(vlist& a, Interp& i) { std::string name = a[0]->t == Value::SYM || a[0]->t == Value::STR ? a[0]->s : str_of(a[0]); for (auto& lp : sched(i).loops) if (lp.name == name) lp.active = false; return v_nil(); }
+inline vptr live_loops_stop(vlist&, Interp& i) { for (auto& lp : sched(i).loops) lp.active = false; return v_nil(); }
+inline vptr live_loops(vlist&, Interp& i) { vlist out; for (auto& lp : sched(i).loops) if (lp.active) out.push_back(v_str(lp.name)); return v_list(std::move(out)); }
 // (lookahead seconds) how far ahead of the clock loops are scheduled (default 0.25)
-inline vptr live_lookahead(vlist& a, Interp& i) { double v = i.scalar(a[0]); if (v < 0.01) i.bad("lookahead must be >= 0.01"); sched().lookahead = v; return v_nil(); }
+inline vptr live_lookahead(vlist& a, Interp& i) { double v = i.scalar(a[0]); if (v < 0.01) i.bad("lookahead must be >= 0.01"); sched(i).lookahead = v; return v_nil(); }
 
+inline std::string name_of(const vptr& v) { return v->t == Value::SYM || v->t == Value::STR ? v->s : str_of(v); }
 // (control name lo hi value) declare a control (a range and a value); (toggle name value) an on/off one
 inline vptr live_control(vlist& a, Interp& i) {
-    std::string name = a[0]->t == Value::SYM || a[0]->t == Value::STR ? a[0]->s : str_of(a[0]);
+    std::string name = name_of(a[0]);
     double lo = i.scalar(a[1]), hi = i.scalar(a[2]), v = i.scalar(a[3]); if (hi <= lo) i.bad("hi must be > lo");
-    control* c = find_control(name); if (!c) { controls().push_back({ name, lo, hi, v, false, {}, "" }); c = &controls().back(); }
-    c->lo = lo; c->hi = hi; c->value = std::max(lo, std::min(hi, v)); c->toggle = false; apply_control(i, *c); return v_nil();
+    { std::lock_guard<std::mutex> g(controls_mutex()); control* c = find_control(name); if (!c) { controls().push_back({ name, lo, hi, v, false, {}, "" }); c = &controls().back(); }
+      c->lo = lo; c->hi = hi; c->toggle = false; }
+    set_control_value(i, name, v); return v_nil();
 }
 inline vptr live_toggle(vlist& a, Interp& i) {
-    std::string name = a[0]->t == Value::SYM || a[0]->t == Value::STR ? a[0]->s : str_of(a[0]); double v = truthy(a[1]) ? 1 : 0;
-    control* c = find_control(name); if (!c) { controls().push_back({ name, 0, 1, v, true, {}, "" }); c = &controls().back(); }
-    c->lo = 0; c->hi = 1; c->value = v; c->toggle = true; apply_control(i, *c); return v_nil();
+    std::string name = name_of(a[0]); double v = truthy(a[1]) ? 1 : 0;
+    { std::lock_guard<std::mutex> g(controls_mutex()); control* c = find_control(name); if (!c) { controls().push_back({ name, 0, 1, v, true, {}, "" }); c = &controls().back(); }
+      c->lo = 0; c->hi = 1; c->toggle = true; }
+    set_control_value(i, name, v); return v_nil();
 }
 // (set-control name value) (control-value name) (controls-list) => (list (list name lo hi value toggle?) ...)
 inline vptr live_set_control(vlist& a, Interp& i) {
-    std::string name = a[0]->t == Value::SYM || a[0]->t == Value::STR ? a[0]->s : str_of(a[0]);
-    control* c = find_control(name); if (!c) i.bad("no control " + name);
-    c->value = std::max(c->lo, std::min(c->hi, i.scalar(a[1]))); apply_control(i, *c); return v_num(c->value);
+    std::string name = name_of(a[0]); double r = 0;
+    if (!set_control_value(i, name, i.scalar(a[1]), &r)) i.bad("no control " + name);
+    return v_num(r);
 }
-inline vptr live_control_value(vlist& a, Interp& i) { std::string name = a[0]->t == Value::SYM || a[0]->t == Value::STR ? a[0]->s : str_of(a[0]); control* c = find_control(name); if (!c) i.bad("no control " + name); return v_num(c->value); }
-inline vptr live_controls_list(vlist&, Interp&) { vlist out; for (auto& c : controls()) out.push_back(v_list({ v_str(c.name), v_num(c.lo), v_num(c.hi), v_num(c.value), v_bool(c.toggle) })); return v_list(std::move(out)); }
+inline vptr live_control_value(vlist& a, Interp& i) { std::string name = name_of(a[0]); std::lock_guard<std::mutex> g(controls_mutex()); control* c = find_control(name); if (!c) i.bad("no control " + name); return v_num(c->value); }
+inline vptr live_controls_list(vlist&, Interp&) { vlist out; for (auto& c : controls_snapshot()) out.push_back(v_list({ v_str(c.name), v_num(c.lo), v_num(c.hi), v_num(c.value), v_bool(c.toggle) })); return v_list(std::move(out)); }
 // (bind-control name synth-id param) a synth parameter follows the control (several bindings allowed); (unbind-control name)
 inline vptr live_bind_control(vlist& a, Interp& i) {
-    std::string name = a[0]->t == Value::SYM || a[0]->t == Value::STR ? a[0]->s : str_of(a[0]);
-    control* c = find_control(name); if (!c) i.bad("no control " + name);
-    std::string param = a[2]->t == Value::SYM || a[2]->t == Value::STR ? a[2]->s : str_of(a[2]);
-    c->bindings.push_back({ (long)i.scalar(a[1]), param }); apply_control(i, *c); return v_nil();
+    std::string name = name_of(a[0]), param = name_of(a[2]); long id = (long)i.scalar(a[1]); double v;
+    { std::lock_guard<std::mutex> g(controls_mutex()); control* c = find_control(name); if (!c) i.bad("no control " + name); c->bindings.push_back({ id, param }); v = c->value; }
+    set_control_value(i, name, v); return v_nil();
 }
-inline vptr live_unbind_control(vlist& a, Interp& i) { std::string name = a[0]->t == Value::SYM || a[0]->t == Value::STR ? a[0]->s : str_of(a[0]); control* c = find_control(name); if (!c) i.bad("no control " + name); c->bindings.clear(); return v_nil(); }
+inline vptr live_unbind_control(vlist& a, Interp& i) { std::string name = name_of(a[0]); std::lock_guard<std::mutex> g(controls_mutex()); control* c = find_control(name); if (!c) i.bad("no control " + name); c->bindings.clear(); return v_nil(); }
 // (clear-controls) forget every control
-inline vptr live_clear_controls(vlist&, Interp&) { controls().clear(); return v_nil(); }
+inline vptr live_clear_controls(vlist&, Interp&) { controls_clear(); return v_nil(); }
 
 // (osc-encode address args...) => the bytes of an OSC message as a string, for udp-send; (osc-decode bytes) => (list address args...)
 //   or nil: OSC in the language, on top of udp-send and udp-receive; osc-send, osc-listen and osc-map are conveniences over them
@@ -1173,6 +1408,7 @@ inline vptr live_osc_decode(vlist& a, Interp& i) { std::string addr; vlist args;
 inline vptr live_osc_send(vlist& a, Interp& i) {
 #ifndef _WIN32
     std::string host = i.str(a[0]); int port = (int)i.scalar(a[1]); std::string addr = i.str(a[2]);
+    i.require_net("osc-send " + host + ":" + std::to_string(port));
     vlist args(a.begin() + 3, a.end()); std::string msg = osc_encode(addr, args);
     int sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP); if (sock < 0) return v_bool(false);
     sockaddr_in srv{}; srv.sin_family = AF_INET; srv.sin_port = htons((uint16_t)port); srv.sin_addr.s_addr = inet_addr(host.c_str());
@@ -1185,7 +1421,8 @@ inline vptr live_osc_send(vlist& a, Interp& i) {
 //   number of a message at that address sets the control; (osc-stop)
 inline vptr live_osc_listen(vlist& a, Interp& i) {
 #ifndef _WIN32
-    int port = (int)i.scalar(a[0]); osc_listener& l = osc_in();
+    int port = (int)i.scalar(a[0]); i.require_net("osc-listen " + std::to_string(port));
+    osc_listener& l = osc_in(i);
     if (l.sock >= 0) ::close(l.sock);
     l.sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP); if (l.sock < 0) i.bad("cannot open a socket");
     int yes = 1; setsockopt(l.sock, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof yes);
@@ -1196,45 +1433,52 @@ inline vptr live_osc_listen(vlist& a, Interp& i) {
     i.bad("OSC input is not available on this platform");
 #endif
 }
-inline vptr live_osc_map(vlist& a, Interp& i) { std::string addr = i.str(a[0]); std::string name = a[1]->t == Value::SYM || a[1]->t == Value::STR ? a[1]->s : str_of(a[1]); control* c = find_control(name); if (!c) i.bad("no control " + name); c->osc = addr; return v_nil(); }
-inline vptr live_osc_stop(vlist&, Interp&) {
+inline vptr live_osc_map(vlist& a, Interp& i) { std::string addr = i.str(a[0]); std::string name = name_of(a[1]); std::lock_guard<std::mutex> g(controls_mutex()); control* c = find_control(name); if (!c) i.bad("no control " + name); c->osc = addr; return v_nil(); }
+inline vptr live_osc_stop(vlist&, Interp& i) {
 #ifndef _WIN32
-    osc_listener& l = osc_in(); if (l.sock >= 0) ::close(l.sock); l.sock = -1; l.port = 0;
+    osc_listener& l = osc_in(i); if (l.sock >= 0) ::close(l.sock); l.sock = -1; l.port = 0;
 #endif
     return v_nil();
 }
 
 // Close the device without an interpreter (at exit, in the hosts): the audio thread must stop before
 // the engine's statics are destroyed
-inline void live_shutdown() { audio_engine& e = engine(); if (e.open) { ma_device_uninit(&e.device); e.open = false; e.running = false; e.synths.clear(); e.compiled.clear(); e.pending.clear(); } sched_reset(); controls().clear(); }
-// --- the playhead: where a score is being played, for the roll's cursor (music.mu sets it) ---
-struct playhead_state { bool on = false; double t0 = 0, from = 0, end = 0; int owner = -1; };   // owner: the number of the score playing (register-score), -1 for any
+inline void live_shutdown() {
+    audio_engine& e = engine(); engine_guard g(e.m);
+    if (e.open) { ma_device_uninit(&e.device); e.open = false; e.running = false; e.reverb.on = false; e.reverb.stop(); e.cues.clear(); e.cues.stop(); e.forget(); }
+    controls_clear();
+}
+// --- the playhead: where a score is being played, for the roll's cursor (music.mu sets it; a window reads it) ---
+struct playhead_state { std::atomic<bool> on{false}; std::atomic<double> t0{0}, from{0}, end{0}; std::atomic<int> owner{-1}; };   // owner: the number of the score playing (register-score), -1 for any
 inline playhead_state& playhead() { static playhead_state p; return p; }
 // (playhead! t0 from end [owner]) tell the roll that a score plays from `from` seconds, started at clock time t0, until
 //   end; owner the score's number (register-score), so only that score's roll follows; (playhead-off!) it stopped;
 //   (playhead) => (list on time owner) the cursor's position now
-inline vptr live_playhead_set(vlist& a, Interp& i) { playhead_state& p = playhead(); p.t0 = i.scalar(a[0]); p.from = i.scalar(a[1]); p.end = i.scalar(a[2]); p.owner = a.size() > 3 ? (int)i.scalar(a[3]) : -1; p.on = true; return v_nil(); }
+inline vptr live_playhead_set(vlist& a, Interp& i) { playhead_state& p = playhead(); p.on = false; p.t0 = i.scalar(a[0]); p.from = i.scalar(a[1]); p.end = i.scalar(a[2]); p.owner = a.size() > 3 ? (int)i.scalar(a[3]) : -1; p.on = true; return v_nil(); }
 inline vptr live_playhead_off(vlist&, Interp&) { playhead().on = false; return v_nil(); }
 inline vptr live_playhead_get(vlist&, Interp&) { playhead_state& p = playhead(); double now = live_now(); bool on = p.on && now < p.end; return v_list({ v_bool(on), v_num(on ? p.from + (now - p.t0) : 0), v_num(p.owner) }); }
 inline void add_live(Interp& i) {
-    i.def("audio-open", live_open, 3, 4); i.def("audio-close", live_close, 0, 0);
-    i.def("audio-start", live_start, 0, 0); i.def("audio-stop", live_stop, 0, 0);
-    i.def("audio-status", live_status, 0, 0); i.def("audio-devices", live_devices, 0, 0); i.def("audio-time", live_time, 0, 0);
-    i.def("play-buffer", live_play_buffer, 7, 7); i.def("stop", live_stop_voice, 1, 1); i.def("stop-all", live_stop_all, 0, 0);
-    i.def("master-gain", live_master, 1, 1); i.def("bus-reverb", live_bus_reverb, 3, 3); i.def("bus-reverb-off", live_bus_reverb_off, 0, 0); i.def("bus-limiter", live_bus_limiter, 1, 1);
-    i.def("play-cues", live_play_cues, 1, 1); i.def("stop-cues", live_stop_cues, 0, 0); i.def("cues-status", live_cues_status, 0, 0); i.def("cue-cache-limit", live_cue_cache_limit, 1, 1); i.def("cue-lookahead", live_cue_lookahead, 1, 1); i.def("bus-reverb-latency", live_bus_reverb_latency, 0, 0);
-    i.def("idle-hook!", live_idle_hook, 1, 1); i.def("idle-hook-off!", live_idle_hook_off, 1, 1); i.def("idle-hooks", live_idle_hooks, 0, 0); i.def("voice-set", live_voice_set, 3, 3); i.def("voices", live_voices, 0, 0);
-    i.def("synth", live_synth, 1, 1); i.def("set-param", live_set_param, 3, 5); i.def("free", live_free, 1, 1);
-    i.def("synth-params", live_synth_params, 1, 1); i.def("synths", live_synths, 0, 0); i.def("streamable", live_streamable, 0, 0);
+    // every builtin of the engine runs under its lock: several interpreters may use the one device
+#define L(f) engine_locked<f>
+    i.def("audio-open", L(live_open), 3, 4); i.def("audio-close", L(live_close), 0, 0);
+    i.def("audio-start", L(live_start), 0, 0); i.def("audio-stop", L(live_stop), 0, 0);
+    i.def("audio-status", L(live_status), 0, 0); i.def("audio-devices", live_devices, 0, 0); i.def("audio-time", L(live_time), 0, 0);
+    i.def("play-buffer", L(live_play_buffer), 7, 7); i.def("stop", L(live_stop_voice), 1, 1); i.def("stop-all", L(live_stop_all), 0, 0);
+    i.def("master-gain", L(live_master), 1, 1); i.def("bus-reverb", L(live_bus_reverb), 3, 3); i.def("bus-reverb-off", L(live_bus_reverb_off), 0, 0); i.def("bus-limiter", L(live_bus_limiter), 1, 1);
+    i.def("play-cues", L(live_play_cues), 1, 1); i.def("stop-cues", L(live_stop_cues), 0, 0); i.def("cues-status", L(live_cues_status), 0, 0); i.def("cue-cache-limit", L(live_cue_cache_limit), 1, 1); i.def("cue-lookahead", L(live_cue_lookahead), 1, 1); i.def("bus-reverb-latency", L(live_bus_reverb_latency), 0, 0);
+    i.def("idle-hook!", live_idle_hook, 1, 1); i.def("idle-hook-off!", live_idle_hook_off, 1, 1); i.def("idle-hooks", live_idle_hooks, 0, 0); i.def("voice-set", L(live_voice_set), 3, 3); i.def("voices", L(live_voices), 0, 0);
+    i.def("synth", L(live_synth), 1, 1); i.def("set-param", L(live_set_param), 3, 5); i.def("free", L(live_free), 1, 1);
+    i.def("synth-params", L(live_synth_params), 1, 1); i.def("synths", L(live_synths), 0, 0); i.def("streamable", live_streamable, 0, 0);
     i.def("synth-render", live_synth_render, 3, 4);
     i.def("tempo", live_tempo, 1, 1); i.def("beat", live_beat, 0, 0); i.def("beat-time", live_beat_time, 1, 1); i.def("bpm", live_bpm, 0, 0);
-    i.def("live-loop", live_loop_start, 2, 2); i.def("stop-loop", live_loop_stop, 1, 1); i.def("stop-loops", live_loops_stop, 0, 0); i.def("loops", live_loops, 0, 0);
+    i.def("live-loop", L(live_loop_start), 2, 2); i.def("stop-loop", live_loop_stop, 1, 1); i.def("stop-loops", live_loops_stop, 0, 0); i.def("loops", live_loops, 0, 0);
     i.def("lookahead", live_lookahead, 1, 1);
     i.def("control", live_control, 4, 4); i.def("toggle", live_toggle, 2, 2); i.def("set-control", live_set_control, 2, 2); i.def("control-value", live_control_value, 1, 1);
     i.def("controls-list", live_controls_list, 0, 0); i.def("bind-control", live_bind_control, 3, 3); i.def("unbind-control", live_unbind_control, 1, 1); i.def("clear-controls", live_clear_controls, 0, 0);
     i.def("osc-send", live_osc_send, 3, -1); i.def("osc-listen", live_osc_listen, 1, 1); i.def("osc-map", live_osc_map, 2, 2); i.def("osc-stop", live_osc_stop, 0, 0);
     i.def("osc-encode", live_osc_encode, 1, -1); i.def("osc-decode", live_osc_decode, 1, 1);
     i.def("playhead!", live_playhead_set, 3, 4); i.def("playhead-off!", live_playhead_off, 0, 0); i.def("playhead", live_playhead_get, 0, 0);
+#undef L
     auto prev = i.idle_fn;
     i.idle_fn = [&i, prev]() { if (prev) prev(); live_idle(i); };   // chained: the port (system) was hooked first
 }

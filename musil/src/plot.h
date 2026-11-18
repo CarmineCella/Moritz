@@ -31,11 +31,15 @@
 #include <FL/platform.H>
 #include <cstdio>
 #include <set>
+#include <mutex>
+#include <atomic>
 
 namespace musil {
 
 // how a window hands a line of Musil to the interpreter: hosts set it (the IDE queues; the CLI runs it from its idle hook)
 inline std::function<void(const std::string&)>& plot_submit() { static std::function<void(const std::string&)> f; return f; }
+// the requests of the windows (any thread) waiting for the interpreter: under plot_pending_mutex
+inline std::mutex& plot_pending_mutex() { static std::mutex m; return m; }
 inline std::vector<std::string>& plot_pending() { static std::vector<std::string> q; return q; }
 
 // --- figure description, validated once ---
@@ -148,7 +152,7 @@ inline double nice_step(double range, int target) {
 }
 inline std::string tick_label(double v) { char b[32]; std::snprintf(b, sizeof b, "%.6g", std::fabs(v) < 1e-12 ? 0.0 : v); return b; }
 inline std::string plot_save_name(const figure& f) {
-    static int n = 0; std::string base = f.title.empty() ? "plot" : f.title;
+    static std::atomic<int> n{0}; std::string base = f.title.empty() ? "plot" : f.title;
     for (auto& c : base) if (!std::isalnum((unsigned char)c)) c = '_';
     std::string name = "musil_" + base + "_" + std::to_string(++n) + ".png";
     std::error_code ec; fs::path dir = fs::current_path(ec);
@@ -633,8 +637,8 @@ inline void plot_wheel(const figure& f, plot_view& view, int dir) {
 
 // --- PNG export: draw offscreen, encode (a small PNG writer: stored deflate blocks, no dependency) ---
 inline unsigned long plot_crc32(const unsigned char* d, size_t n, unsigned long crc = 0xffffffffUL) {
-    static unsigned long table[256]; static bool init = false;
-    if (!init) { for (unsigned long k = 0; k < 256; k++) { unsigned long c = k; for (int j = 0; j < 8; j++) c = c & 1 ? 0xedb88320UL ^ (c >> 1) : c >> 1; table[k] = c; } init = true; }
+    struct crc_table { unsigned long t[256]; crc_table() { for (unsigned long k = 0; k < 256; k++) { unsigned long c = k; for (int j = 0; j < 8; j++) c = c & 1 ? 0xedb88320UL ^ (c >> 1) : c >> 1; t[k] = c; } } };
+    static const crc_table tab; const unsigned long* table = tab.t;   // made once, by whichever thread comes first
     for (size_t k = 0; k < n; k++) crc = table[(crc ^ d[k]) & 255] ^ (crc >> 8);
     return crc;
 }
@@ -885,6 +889,8 @@ inline void plot_show_figure(figure f, int w, int h) {
 inline vptr plot_save_png(vlist& a, Interp& i) {
     figure f; try { f = parse_figure(a[0]); } catch (std::exception& e) { i.bad(e.what()); }
     int w = a.size() > 2 ? (int)i.scalar(a[2]) : 900, h = a.size() > 3 ? (int)i.scalar(a[3]) : 560;
+    if (w < 1 || h < 1 || w > 16384 || h > 16384) i.bad("size: 1 to 16384 pixels");
+    i.require_write(i.str(a[1]));
     if (plot_needs_awake()) Fl::lock();
     try { figure_to_png(f, i.str(a[1]), w, h); } catch (std::exception& e) { if (plot_needs_awake()) Fl::unlock(); i.bad(e.what()); }
     if (plot_needs_awake()) Fl::unlock();
@@ -900,9 +906,11 @@ inline vptr plot_show(vlist& a, Interp& i) {
     if (!plot_needs_awake()) Fl::check();
     return v_nil();
 }
+// the windows belong to the FLTK thread: from another thread, under its lock
+struct fl_lock_if_needed { bool on; fl_lock_if_needed() : on(plot_needs_awake()) { if (on) Fl::lock(); } ~fl_lock_if_needed() { if (on) Fl::unlock(); } };
 // (plot-windows) => how many plot windows are open; (close-plots) closes them
-inline vptr plot_windows_count(vlist&, Interp&) { return v_num(plot_windows_open()); }
-inline vptr plot_close_all(vlist&, Interp&) { for (auto* w : plot_windows()) w->hide(); return v_nil(); }
+inline vptr plot_windows_count(vlist&, Interp&) { fl_lock_if_needed g; return v_num(plot_windows_open()); }
+inline vptr plot_close_all(vlist&, Interp&) { fl_lock_if_needed g; for (auto* w : plot_windows()) w->hide(); return v_nil(); }
 // (roll-refresh fig) the roll windows showing a score take a new figure of it (score-roll), keeping their view: what
 //   roll-choose calls after replacing a segment's notes
 inline vptr plot_roll_refresh(vlist& a, Interp& i) {
@@ -916,14 +924,16 @@ inline void add_plot(Interp& i) {
     i.def("save-png", plot_save_png, 2, 4); i.def("show", plot_show, 1, 3); i.def("roll-refresh", plot_roll_refresh, 1, 1);
     i.def("plot-windows", plot_windows_count, 0, 0); i.def("close-plots", plot_close_all, 0, 0);
     if (!plot_needs_awake()) { auto prev = i.idle_fn; i.idle_fn = [prev]() { if (prev) prev(); if (Fl::first_window()) Fl::check(); }; }   // keep the windows alive while the interpreter waits (only once there is one: no GUI setup for plain scripts)
+    static std::mutex once; std::lock_guard<std::mutex> g(once);   // interpreters may start on several threads at once
     if (!plot_submit()) {                                    // a window's request is kept until the event loop has repainted, then run from the idle hook (the IDE queues on its own)
-        plot_submit() = [](const std::string& code) { plot_pending().push_back(code); };
+        plot_submit() = [](const std::string& code) { std::lock_guard<std::mutex> lk(plot_pending_mutex()); plot_pending().push_back(code); };
         Interp* ip = &i; auto prev2 = i.idle_fn;
         i.idle_fn = [ip, prev2]() { if (prev2) prev2(); if (ip->stack_depth > 0) return;   // a window's request waits until the interpreter is idle
-            while (!plot_pending().empty()) {
-                std::string code = plot_pending().front(); plot_pending().erase(plot_pending().begin());
+            while (true) {
+                std::string code;
+                { std::lock_guard<std::mutex> lk(plot_pending_mutex()); if (plot_pending().empty()) break; code = plot_pending().front(); plot_pending().erase(plot_pending().begin()); }
                 bool was = ip->in_idle; ip->in_idle = false;              // lifted: the request's own evaluation must reach idle (Fl::check), or the window freezes for its length
-                try { ip->run(code, "<window>"); } catch (std::exception& e) { *ip->out << "window: " << e.what() << "\n" << std::flush; }
+                try { ip->run(code, "<window>"); } catch (std::exception& e) { *ip->out << "window: " << e.what() << "\n" << std::flush; } catch (...) { ip->in_idle = was; throw; }
                 ip->in_idle = was;
             } };
     }
