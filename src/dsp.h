@@ -230,9 +230,12 @@ private:
 
 // ------------------------------------------------------------------ line~
 // Piecewise-linear ramp. The GUI posts Begin (drop pending segments, keep
-// the current value), then Segment commands; Stop freezes the ramp.
+// the current value), then Segment commands; Stop freezes the ramp. A list
+// holds kMax segments (the caller reports what it sends beyond them), and
+// post() says when the queue is full.
 class Ramp {
 public:
+    static constexpr int kMax = 64;
     struct Cmd {
         enum Kind : uint8_t { Begin, Segment, Stop } kind = Segment;
         float target = 0.f, ms = 0.f;
@@ -272,7 +275,6 @@ public:
     }
 
 private:
-    static constexpr int kMax = 64;
     Spsc<Cmd, 256> q_;
     Cmd segs_[kMax];
     int count_ = 0, idx_ = 0;

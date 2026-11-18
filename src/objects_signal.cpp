@@ -408,24 +408,33 @@ public:
         if (in == 1) { if (m[0].isFloat()) time_ = m[0].f; return; }
         if (m[0].is("stop")) { post({dsp::Ramp::Cmd::Stop, 0.f, 0.f}); return; }
         if (!m[0].isFloat()) return;
+        dropped_ = 0;
         post({dsp::Ramp::Cmd::Begin, 0.f, 0.f});
+        int segments = 0;
         if (m.size() == 1) {
             post({dsp::Ramp::Cmd::Segment, m[0].f, time_});
         } else {
-            for (size_t k = 0; k < m.size(); k += 2) {
+            for (size_t k = 0; k < m.size(); k += 2, ++segments) {
                 float target = m[k].isFloat() ? m[k].f : 0.f;
                 float ms = k + 1 < m.size() && m[k + 1].isFloat() ? m[k + 1].f : 0.f;
-                post({dsp::Ramp::Cmd::Segment, target, ms});
+                if (segments < dsp::Ramp::kMax) post({dsp::Ramp::Cmd::Segment, target, ms});
+                else ++dropped_;
             }
         }
         time_ = 0.f;
+        if (dropped_ > 0)       // never silently: more segments than line~ holds, or audio is off
+            patch->print("line~: " + std::to_string(dropped_) + " segments dropped (at most " +
+                         std::to_string(dsp::Ramp::kMax) + " in a list; is audio on?)");
     }
     void dsp(int n) override { ramp_.process(sigOut(0), n, patch->root()->sampleRate); }
 
 private:
-    void post(const dsp::Ramp::Cmd& c) { ramp_.post(c); }
+    void post(const dsp::Ramp::Cmd& c) {
+        if (!ramp_.post(c)) ++dropped_;
+    }
     dsp::Ramp ramp_;
     float time_ = 0.f;
+    int dropped_ = 0;
 };
 
 // ---------------------------------------------------------------- sig~

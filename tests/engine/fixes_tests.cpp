@@ -159,3 +159,25 @@ TEST(buffer_gets_its_memory_before_record_writes_it) {
     audio.join();
     CHECK(true);
 }
+
+// line~ dropped the segments of a list beyond 64 (and the commands that did not fit its queue)
+// without a word: now it says how many
+TEST(line_reports_what_it_drops) {
+    Rig r("(patch (obj l line~) (obj o dac~ 1) (connect l 0 o 0))");
+    Message m;
+    for (int k = 1; k <= 64; ++k) {
+        m.push_back(Atom(k / 64.f));
+        m.push_back(Atom(1.f));
+    }
+    r.box("l")->message(0, m);
+    auto y = etest::channel(r.run(44100 / 5), 2, 0);
+    CHECK(std::fabs(y.back() - 1.f) < 1e-4f);
+    CHECK(!r.printedSomething("dropped"));
+    Message big;
+    for (int k = 0; k < 100; ++k) {
+        big.push_back(Atom(0.f));
+        big.push_back(Atom(1.f));
+    }
+    r.box("l")->message(0, big);
+    CHECK(r.printedSomething("line~: 36 segments dropped"));
+}
