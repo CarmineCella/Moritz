@@ -424,7 +424,7 @@ public:
         time_ = 0.f;
         if (dropped_ > 0)       // never silently: more segments than line~ holds, or audio is off
             patch->print("line~: " + std::to_string(dropped_) + " segments dropped (at most " +
-                         std::to_string(dsp::Ramp::kMax) + " in a list; is audio on?)");
+                         std::to_string(dsp::Ramp::kMax) + " waiting; is audio on?)");
     }
     void dsp(int n) override { ramp_.process(sigOut(0), n, patch->root()->sampleRate); }
 
