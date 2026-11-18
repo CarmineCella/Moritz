@@ -402,7 +402,7 @@ public:
     void clear() { std::fill(buf_.begin(), buf_.end(), 0.f); }
 
 private:
-    std::vector<float> buf_;
+    std::vector<float> buf_ = std::vector<float>(4, 0.f);   // sized by resize() before use
     size_t w_ = 0;
 };
 

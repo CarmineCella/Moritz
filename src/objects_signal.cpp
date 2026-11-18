@@ -612,8 +612,13 @@ public:
     explicit TapinBox(const Message& a) {
         setPorts({P::Signal}, {P::Tap});
         maxMs_ = std::clamp(argf(a, 0, 1000.f), 1.f, 60000.f);
-        // sized for sample rates up to 96 kHz
-        line.resize((size_t)(maxMs_ / 1000.0 * 96000.0) + 4 * dsp::kBlock);
+    }
+    // sized for the rate it runs at, at compile (again when the rate changes), never in dsp()
+    void resolve() override {
+        double sr = patch->root()->sampleRate.load();
+        if (sr == sizedFor_) return;
+        sizedFor_ = sr;
+        line.resize((size_t)(maxMs_ / 1000.0 * sr) + 4 * dsp::kBlock);
     }
     void message(int, const Message& m) override {
         if (m[0].is("clear")) { std::lock_guard<std::mutex> lk(patch->mutex()); line.clear(); }
@@ -629,6 +634,7 @@ public:
 
 private:
     float maxMs_;
+    double sizedFor_ = 0.0;
 };
 
 class TapoutBox : public Box {
@@ -672,12 +678,8 @@ class CombBox : public Box {
 public:
     explicit CombBox(const Message& a) {
         setPorts(std::vector<Port>(5, P::Signal), {P::Signal});
-        float maxMs = std::clamp(argf(a, 0, 50.f), 1.f, 10000.f);
-        size_t len = (size_t)(maxMs / 1000.0 * 96000.0) + 8;
-        xs_.resize(len);
-        ys_.resize(len);
-        maxD_ = len - 4.0;
-        setScalar(1, argf(a, 1, maxMs * 0.5f));
+        maxMs_ = std::clamp(argf(a, 0, 50.f), 1.f, 10000.f);
+        setScalar(1, argf(a, 1, maxMs_ * 0.5f));
         setScalar(2, argf(a, 2, 1.f));
         setScalar(3, argf(a, 3, 0.f));
         setScalar(4, argf(a, 4, 0.5f));
@@ -685,6 +687,16 @@ public:
     void message(int in, const Message& m) override {
         if (m[0].is("clear")) { std::lock_guard<std::mutex> lk(patch->mutex()); xs_.clear(); ys_.clear(); return; }
         if (m[0].isFloat()) setScalar(in, m[0].f);
+    }
+    // sized for the rate it runs at, at compile (again when the rate changes), never in dsp()
+    void resolve() override {
+        double sr = patch->root()->sampleRate.load();
+        if (sr == sizedFor_) return;
+        sizedFor_ = sr;
+        size_t len = (size_t)(maxMs_ / 1000.0 * sr) + 8;
+        xs_.resize(len);
+        ys_.resize(len);
+        maxD_ = len - 4.0;
     }
     void dsp(int n) override {
         const float *x = sigIn(0, n), *dm = sigIn(1, n), *ga = sigIn(2, n), *gb = sigIn(3, n),
@@ -704,6 +716,8 @@ public:
 private:
     dsp::DelayLine xs_, ys_;
     double maxD_ = 1.0;
+    float maxMs_;
+    double sizedFor_ = 0.0;
 };
 
 // allpass~ [maxms delay gain]: y = -g x[n] + x[n-D] + g y[n-D]
@@ -711,17 +725,23 @@ class AllpassBox : public Box {
 public:
     explicit AllpassBox(const Message& a) {
         setPorts({P::Signal, P::Signal, P::Signal}, {P::Signal});
-        float maxMs = std::clamp(argf(a, 0, 50.f), 1.f, 10000.f);
-        size_t len = (size_t)(maxMs / 1000.0 * 96000.0) + 8;
-        xs_.resize(len);
-        ys_.resize(len);
-        maxD_ = len - 4.0;
-        setScalar(1, argf(a, 1, maxMs * 0.5f));
+        maxMs_ = std::clamp(argf(a, 0, 50.f), 1.f, 10000.f);
+        setScalar(1, argf(a, 1, maxMs_ * 0.5f));
         setScalar(2, argf(a, 2, 0.7f));
     }
     void message(int in, const Message& m) override {
         if (m[0].is("clear")) { std::lock_guard<std::mutex> lk(patch->mutex()); xs_.clear(); ys_.clear(); return; }
         if (m[0].isFloat()) setScalar(in, m[0].f);
+    }
+    // sized for the rate it runs at, at compile (again when the rate changes), never in dsp()
+    void resolve() override {
+        double sr = patch->root()->sampleRate.load();
+        if (sr == sizedFor_) return;
+        sizedFor_ = sr;
+        size_t len = (size_t)(maxMs_ / 1000.0 * sr) + 8;
+        xs_.resize(len);
+        ys_.resize(len);
+        maxD_ = len - 4.0;
     }
     void dsp(int n) override {
         const float *x = sigIn(0, n), *dm = sigIn(1, n), *g = sigIn(2, n);
@@ -740,6 +760,8 @@ public:
 private:
     dsp::DelayLine xs_, ys_;
     double maxD_ = 1.0;
+    float maxMs_;
+    double sizedFor_ = 0.0;
 };
 
 

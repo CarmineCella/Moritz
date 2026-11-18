@@ -9,6 +9,32 @@
 using namespace moritz;
 using etest::Rig;
 
+// comb~ (and tapin~, allpass~) were sized for 96 kHz: at 192 kHz a 49 ms delay of a 50 ms comb~
+// was cut to about 25 ms. Now they are sized for the rate they run at.
+TEST(comb_is_sized_for_the_rate) {
+    Rig r("(patch (obj c click~) (obj k comb~ 50 49 0 1 0) (obj o dac~ 1) (connect c 0 k 0) (connect k 0 o 0))",
+          192000);
+    r.box("c")->message(0, {Atom("bang")});
+    auto y = etest::channel(r.run(192000 / 10), 2, 0);
+    size_t first = 0;
+    for (size_t i = 0; i < y.size() && !first; ++i)
+        if (std::fabs(y[i]) > 0.5f) first = i;
+    CHECK(first >= 9400 && first <= 9420);    // 49 ms at 192 kHz: 9408 samples
+}
+
+// tapin~ / tapout~ too: a 900 ms tap of a 1000 ms line at 192 kHz
+TEST(tapin_is_sized_for_the_rate) {
+    Rig r("(patch (obj c click~) (obj ti tapin~ 1000) (obj to tapout~ 900) (obj o dac~ 1)"
+          " (connect c 0 ti 0) (connect ti 0 to 0) (connect to 0 o 0))",
+          192000);
+    r.box("c")->message(0, {Atom("bang")});
+    auto y = etest::channel(r.run(192000), 2, 0);
+    size_t first = 0;
+    for (size_t i = 0; i < y.size() && !first; ++i)
+        if (std::fabs(y[i]) > 0.5f) first = i;
+    CHECK(first >= 172790 && first <= 172810);    // 900 ms at 192 kHz: 172800 samples
+}
+
 // hrtf~ and binaural~ prepared themselves in dsp() when the rate changed (allocating, and taking a
 // lock the GUI takes). Now the compile after the rate change prepares them, before audio runs.
 TEST(head_responses_are_prepared_when_the_rate_changes) {
