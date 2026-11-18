@@ -39,7 +39,7 @@ public:
     Vocoder(int window, int pad) { init(window, pad); }
 
     // settings, read at every frame
-    int envelope = 0;      // cepstral coefficients of the envelope (0: no formant preservation)
+    int envelope = 0;      // cepstral coefficients of the envelope (0: no formant preservation); about sr / (2 f0), as envelope.h says
     int phaseMode = 0;     // 1 robot, 2 whisper
     int crossMode = 0;     // 1 multiplicative, 2 spectral flattener, 3 morphing (0 off)
 

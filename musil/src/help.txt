@@ -841,6 +841,13 @@
   where |H| is far above threshold times its peak it is Y / H, at that level half of it, and below it the
   gain falls smoothly to 0 instead of being cut; threshold 0 is the plain inverse (signals/convolution.h, as
   Moritz's condec): a recording un-reverberated by a measured response, or a response measured from a known sweep
+#spectral-envelope
+  (spectral-envelope mags order)
+  smooth envelope of a full magnitude spectrum (all n bins, n a power of two, as
+  magnitudes of an fft gives): the "true envelope", a cepstral smoothing (the first `order` coefficients) iterated
+  12 times so that it rides on the harmonic peaks instead of averaging peaks and valleys (signals/envelope.h, the
+  estimator of Moritz's specenv~). The order sets the resolution: about sr / (2 f0) of the sound, f0 its lowest
+  fundamental (150 for a voice at 44.1 kHz), follows the formants without rippling at the harmonics; lower is smoother
 #svf
   (svf x sr freq q type)
   => x through a state-variable filter (signals/filters.h, as Moritz's svf~);
@@ -1022,13 +1029,6 @@
 #cepstrum
   (cepstrum mags)
   real cepstrum of a full (symmetric) magnitude spectrum
-#spectral-envelope
-  (spectral-envelope mags order)
-  smooth envelope of a full magnitude spectrum: the "true envelope",
-  a cepstral smoothing (first `order` coefficients) iterated so that it rides
-  on the harmonic peaks instead of averaging peaks and valleys. The order sets
-  the resolution: about sr / (2 f0) of the sound (e.g. 150 for a voice at
-  44.1 kHz) follows the formants without rippling at the harmonics
 #flatten-spectrum
   (flatten-spectrum mags order)
   the magnitudes divided by their envelope: the fine structure alone
@@ -1063,7 +1063,7 @@
   pitch-shift by ratio at the same length (formants move too)
 #pvoc-pitch-formant
   (pvoc-pitch-formant x ratio order)
-  pitch-shift keeping the formants (order about sr/100: 400 at 44.1 kHz)
+  pitch-shift keeping the formants (order about sr / (2 f0): 150 for a voice at 44.1 kHz)
 #pvoc-formants
   (pvoc-formants x ratio order)
   move the formants by ratio, the pitch kept

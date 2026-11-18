@@ -95,6 +95,18 @@ check (< (spectral-irregularity (take env 512)) (* 0.3 (spectral-irregularity (t
 check (< (abs (- (argmax (take env 512)) 115)) 40) "spectral-envelope: peaks near the formant"
 check (> (min (picks (/ env shaped))) 0.1) "spectral-envelope: stays within an order of magnitude of the harmonic peaks"
 check (< (/ (max (picks (/ env shaped))) (min (picks (/ env shaped)))) 3) "spectral-envelope: peak-to-envelope ratio is consistent across harmonics"
+; spectral-envelope is C++ now (signals/envelope.h, Moritz's specenv~ too): the same as the Musil it replaced
+function spectral-envelope-mu (mags order) {
+    var n (length mags)
+    var lifter (vec (ones (+ order 1)) (zeros (- n (* 2 order) 1)) (ones order))
+    function smooth (log-spec) (head (fft (* (ifft (list log-spec (zeros n))) lifter)))
+    var target (log (max mags (* 1e-4 (max mags))))
+    var e (smooth target)
+    times 12 (function (k) (set e (smooth (max target e))))
+    return (exp e)
+}
+check (near? (/ env (spectral-envelope-mu shaped 20)) (ones 1024) 1e-9) "spectral-envelope: the true envelope, as written in Musil"
+check (contains? (error-of (function () (spectral-envelope (ones 100) 10))) "power of two") "spectral-envelope: a power of two"
 var flat (flatten-spectrum shaped 20)
 check (< (stdev (log (picks flat))) (* 0.5 (stdev (log (picks shaped))))) "flatten-spectrum: harmonics level out"
 check (near? (impose-envelope shaped shaped 20) shaped 1e-9) "impose-envelope: a spectrum given its own envelope is unchanged"

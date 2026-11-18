@@ -124,20 +124,7 @@ function complex-mul (a b) {
 
 ; (cepstrum mags)          real cepstrum of a full (symmetric) magnitude spectrum
 function cepstrum (mags) (ifft (list (log (max mags 1e-12)) (zeros (length mags))))
-; (spectral-envelope mags order)   smooth envelope of a full magnitude spectrum: the "true envelope",
-;                          a cepstral smoothing (first `order` coefficients) iterated so that it rides
-;                          on the harmonic peaks instead of averaging peaks and valleys. The order sets
-;                          the resolution: about sr / (2 f0) of the sound (e.g. 150 for a voice at
-;                          44.1 kHz) follows the formants without rippling at the harmonics
-function spectral-envelope (mags order) {
-    var n (length mags)
-    var lifter (vec (ones (+ order 1)) (zeros (- n (* 2 order) 1)) (ones order))
-    function smooth (log-spec) (head (fft (* (ifft (list log-spec (zeros n))) lifter)))
-    var target (log (max mags (* 1e-4 (max mags))))
-    var env (smooth target)
-    times 12 (function (k) (set env (smooth (max target env))))
-    return (exp env)
-}
+; (spectral-envelope mags order) is C++ (signals.h, signals/envelope.h: the estimator of Moritz's specenv~)
 ; (flatten-spectrum mags order)    the magnitudes divided by their envelope: the fine structure alone
 function flatten-spectrum (mags order) (/ mags (spectral-envelope mags order))
 ; (impose-envelope mags source order)   mags reshaped to carry the spectral envelope of source
@@ -190,8 +177,8 @@ function fftshift (v) {
 ;                            "stretch"   time-stretch ratio (2 = twice as long)              default 1
 ;                            "pitch"     pitch-shift ratio (2 = an octave up)                  1
 ;                            "formants"  formant-move ratio, needs "envelope"                  1
-;                            "envelope"  cepstral order for envelope preservation: about sr/100
-;                                        (80 at 8 kHz, 400 at 44.1 kHz); 0 = off                0
+;                            "envelope"  cepstral order for envelope preservation: about sr / (2 f0),
+;                                        f0 the lowest pitch (150 for a voice at 44.1 kHz; as spectral-envelope); 0 = off   0
 ;                            "window"    analysis window in samples                            2048
 ;                            "overlap"   synthesis overlap factor: output hop = window/overlap  8
 ;                            "pad"       zero-padding: fft size = next-pow2(window) * 2^pad     1
@@ -209,7 +196,7 @@ function fftshift (v) {
 function pvoc-stretch (x factor) (pvoc x (list (list "stretch" factor)))
 ; (pvoc-pitch x ratio)                   pitch-shift by ratio at the same length (formants move too)
 function pvoc-pitch (x ratio) (pvoc x (list (list "pitch" ratio)))
-; (pvoc-pitch-formant x ratio order)     pitch-shift keeping the formants (order about sr/100: 400 at 44.1 kHz)
+; (pvoc-pitch-formant x ratio order)     pitch-shift keeping the formants (order about sr / (2 f0): 150 for a voice at 44.1 kHz)
 function pvoc-pitch-formant (x ratio order) (pvoc x (list (list "pitch" ratio) (list "envelope" order)))
 ; (pvoc-formants x ratio order)          move the formants by ratio, the pitch kept
 function pvoc-formants (x ratio order) (pvoc x (list (list "formants" ratio) (list "envelope" order)))

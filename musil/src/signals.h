@@ -24,6 +24,7 @@
 #include "signals/hrtf.h"
 #include "signals/convolution.h"
 #include "signals/filters.h"
+#include "signals/envelope.h"
 #include "signals/denormal.h"
 #include <map>
 #include <memory>
@@ -388,6 +389,21 @@ inline vptr sig_deconv(vlist& a, Interp& i) {
     std::vector<double> ys(std::begin(y), std::end(y)), hs(std::begin(h), std::end(h));
     auto x = dsp::deconvolve(ys, hs, thr);
     return v_arr(varr(x.data(), x.size()));
+}
+
+// (spectral-envelope mags order)   smooth envelope of a full magnitude spectrum (all n bins, n a power of two, as
+//   magnitudes of an fft gives): the "true envelope", a cepstral smoothing (the first `order` coefficients) iterated
+//   12 times so that it rides on the harmonic peaks instead of averaging peaks and valleys (signals/envelope.h, the
+//   estimator of Moritz's specenv~). The order sets the resolution: about sr / (2 f0) of the sound, f0 its lowest
+//   fundamental (150 for a voice at 44.1 kHz), follows the formants without rippling at the harmonics; lower is smoother
+inline vptr sig_spectral_envelope(vlist& a, Interp& i) {
+    const varr& m = i.num(a[0]); long order = i.index(a[1]); size_t n = m.size();
+    if (n < 4 || (n & (n - 1))) i.bad("the spectrum's length must be a power of two >= 4 (as fft gives)");
+    if (order < 0) i.bad("order must be >= 0");
+    std::vector<double> mags(std::begin(m), std::end(m)), env(n);
+    thread_local dsp::TrueEnvelope<double> te; te.init((int)n);
+    te.full(mags.data(), (int)order, 12, env.data());
+    return v_arr(varr(env.data(), n));
 }
 
 // (svf x sr freq q type) => x through a state-variable filter (signals/filters.h, as Moritz's svf~);
@@ -989,7 +1005,7 @@ inline void add_signals(Interp& i) {
     i.def("interleave", sig_interleave, 1, 1); i.def("deinterleave", sig_deinterleave, 2, 2);
     i.def("local-maxima", sig_local_maxima, 1, 1); i.def("gather", sig_gather, 2, 2);
     i.def("add-at!", sig_add_at_inplace, 3, 3); i.def("comb", sig_comb, 3, 3); i.def("allpass", sig_allpass, 3, 3);
-    i.def("pvoc", sig_pvoc, 2, 2); i.def("nebula", sig_nebula, 3, 3); i.def("deconv", sig_deconv, 2, 3); i.def("svf", sig_svf, 5, 5);
+    i.def("pvoc", sig_pvoc, 2, 2); i.def("nebula", sig_nebula, 3, 3); i.def("deconv", sig_deconv, 2, 3); i.def("svf", sig_svf, 5, 5); i.def("spectral-envelope", sig_spectral_envelope, 2, 2);
     i.def("adsr", sig_adsr, 6, 6); i.def("lag", sig_lag, 3, 3); i.def("hpss", sig_hpss, 4, 4);
     i.def("chromagram", sig_chromagram, 4, 4); i.def("self-similarity", sig_self_similarity, 1, 1); i.def("foote-novelty", sig_foote_novelty, 2, 2);
     i.def("tempogram", sig_tempogram, 3, 4); i.def("beat-track", sig_beat_track, 4, 4);
