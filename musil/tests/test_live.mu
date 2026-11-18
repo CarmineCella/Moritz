@@ -51,14 +51,16 @@ set-amp lp 0.1
 set-pan lp -1
 set-rate lp 2
 check (contains? (error-of (function () (voice-set lp "nope" 1))) "amp, pan or rate") "voice-set: parameter names"
+; the audio thread drops a stopped voice at its next block: wait for it (up to a second, for slow machines)
+function settle (ok) { for (var t 0) (and (< t 50) (not (ok))) (var t (+ t 1)) { sleep 0.02 } }
 stop lp
-sleep 0.05
+settle (function () (not (contains? (voices) lp)))
 check (not (contains? (voices) lp)) "stop"
 var w (play-with tone sr (list (list "amp" 0.2) (list "pan" 0.5) (list "rate" 0.5)))
 sleep 0.05
 check (contains? (voices) w) "play-with"
 stop-all
-sleep 0.05
+settle (function () (equal? (voices) (list)))
 check (equal? (voices) (list)) "stop-all"
 check (equal? (type (play (list tone tone) sr)) "scalar") "play: a stereo buffer"
 check (contains? (error-of (function () (play (list tone (take tone 10)) sr))) "same length") "play: channel lengths"
