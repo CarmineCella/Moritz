@@ -6,6 +6,7 @@
 // peaks instead of averaging peaks and valleys.
 
 #include "objects.h"
+#include "signals/fft.h"   // Musil's FFT
 
 #include <algorithm>
 #include <cmath>
@@ -86,7 +87,7 @@ private:
     }
 
     std::atomic<int> order_, iters_;
-    dsp::FFT fft_;
+    musil::dsp::FFT<float> fft_;
     std::vector<float> target_, cur_, re_, im_;
 };
 

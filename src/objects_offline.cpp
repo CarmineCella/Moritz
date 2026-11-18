@@ -10,6 +10,7 @@
 // `stop` cancels.
 
 #include "offline.h"
+#include "signals/fft.h"   // Musil's FFT
 #include "scientific/nmf.h"    // Musil's nmf
 
 #include <fstream>
@@ -42,7 +43,7 @@ struct Stft {
         frames = (int)((padded - n) / hop + 1);
         re.assign((size_t)frames, std::vector<float>((size_t)n));
         im.assign((size_t)frames, std::vector<float>((size_t)n));
-        dsp::FFT fft;
+        musil::dsp::FFT<float> fft;
         fft.init(n);
         for (int f = 0; f < frames; ++f) {
             for (int k = 0; k < n; ++k) {
@@ -60,7 +61,7 @@ struct Stft {
         long outLen = (long)(frames - 1) * hop + n;
         std::vector<double> y((size_t)outLen, 0.0), wsum((size_t)outLen, 0.0);
         std::vector<float> r((size_t)n), i((size_t)n);
-        dsp::FFT fft;
+        musil::dsp::FFT<float> fft;
         fft.init(n);
         for (int f = 0; f < frames; ++f) {
             for (int k = 0; k < n; ++k) {

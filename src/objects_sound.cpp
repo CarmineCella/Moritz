@@ -5,6 +5,7 @@
 // descriptors and f0) and function (a breakpoint editor)
 
 #include "objects.h"
+#include "signals/fft.h"   // Musil's FFT
 #include "zoom.h"
 #include "signals/convolution.h"   // Musil's convolution engines
 #include "signals/vocoder.h"   // Musil's phase vocoder engine, as its pvoc
@@ -434,7 +435,7 @@ private:
         // spectrum: Hann window, amplitudes scaled so that a full-scale sine is 1
         std::vector<float> re((size_t)2 * N, 0.f), im((size_t)2 * N, 0.f);
         for (int i = 0; i < N; ++i) re[(size_t)i] = x[(size_t)i] * (float)(.5 - .5 * std::cos(dsp::kTwoPi * i / N));
-        dsp::FFT f;
+        musil::dsp::FFT<float> f;
         f.init(N);
         f.forward(re.data(), im.data());
         std::vector<float> amp((size_t)H + 1);
@@ -491,7 +492,7 @@ private:
     int n_, hop_;
     std::vector<int> which_;
     std::vector<float> prevAmp_;
-    dsp::FFT fft_;
+    musil::dsp::FFT<float> fft_;
 };
 
 // ---------------------------------------------------------------- function

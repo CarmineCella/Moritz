@@ -2,6 +2,7 @@
 // objects_samples.cpp — buffer~, play~, groove~, record~, sfplay~ and analysis
 
 #include "objects.h"
+#include "signals/fft.h"   // Musil's FFT
 #include "zoom.h"
 
 #include <FL/fl_draw.H>
@@ -706,7 +707,7 @@ private:
     static constexpr int kRing = 8192, kN = 2048;
     std::unique_ptr<std::atomic<float>[]> ring_;
     std::atomic<size_t> wpos_{0};
-    dsp::FFT fft_;
+    musil::dsp::FFT<float> fft_;
     std::vector<float> disp_;
     int w_, h_;
 };

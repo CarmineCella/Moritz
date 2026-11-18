@@ -14,6 +14,7 @@
 //   expr~ sah~ count~ index~ poke~                             signal utilities
 
 #include "expr.h"
+#include "signals/fft.h"   // Musil's FFT
 #include "objects.h"
 
 #include <atomic>
@@ -288,7 +289,7 @@ private:
     int nIn_ = 0, nOut_ = 0;
     int w_ = 0, count_ = 0;
     float scale_ = 1.f;
-    dsp::FFT fft_;
+    musil::dsp::FFT<float> fft_;
     std::vector<float> win_, re_, im_;
     std::vector<std::vector<float>> ring_, acc_, sre_, sim_, ore_, oim_;
     std::vector<const float*> in_;
