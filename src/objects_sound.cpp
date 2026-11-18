@@ -794,11 +794,14 @@ public:
         } else if ((h.is("pitch1") || h.is("pitch2")) && m.size() > 1) {
             pitch_[h.is("pitch1") ? 0 : 1].store(std::max(0.f, num(1, 0)));
         } else if ((h.is("proto1") || h.is("proto2")) && m.size() > 1) {
-            std::lock_guard<std::mutex> lk(patch->mutex());
             int k = h.is("proto1") ? 0 : 1;
-            names_[k] = m[1].str();
-            if (!neb_.setWave(k, names_[k])) neb_.setSound(k, nullptr, 0, 1, 44100.0);
-            buf_[k].set(patch, Neb::isWave(names_[k]) ? "" : names_[k]);
+            std::string name = m[1].str();
+            bool wave = neb_.prepareWave(k, name);       // the tables are built outside the lock
+            std::lock_guard<std::mutex> lk(patch->mutex());
+            names_[k] = name;
+            if (wave) neb_.commitWave(k);                // only swapped under it
+            else neb_.setSound(k, nullptr, 0, 1, 44100.0);
+            buf_[k].set(patch, wave ? "" : name);
         }
     }
     void dsp(int n) override {

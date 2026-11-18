@@ -233,7 +233,36 @@ static void test_hpss() {
     expect(s < 1e-6, "hpss: the parts add up to the input");
 }
 
+// --- Nebula: a prototype changed while grains sound (as nebula~'s proto1/proto2 between two blocks). A grain
+// kept the old prototype's phase (far into a sound) and table level (square's 6, sine's 1): both are brought
+// into the new one's range, never read past its table (the address sanitizer build catches a stray read) ---
+static void test_nebula_switch() {
+    std::vector<float> snd(200000);
+    for (size_t i = 0; i < snd.size(); ++i) snd[i] = (float)((double)(i % 100) / 100.0);
+    for (int mode = 0; mode < 2; ++mode) {
+        dsp::Nebula<float> n;
+        n.p.on = true; n.p.density = 200; n.p.length = 200; n.p.morph = 0; n.p.freq = mode ? 3000 : 1;
+        if (mode == 0) n.setSound(0, snd.data(), (long)snd.size(), 1, 44100);
+        else n.setWave(0, "square");
+        float L[64], R[64];
+        for (int b = 0; b < 2000; ++b) {
+            if (mode == 0) n.setSound(0, snd.data(), (long)snd.size(), 1, 44100);
+            n.process(L, R, 64, 44100);
+        }
+        bool ok = n.active() > 0;
+        expect(n.prepareWave(0, "sine"), "nebula: sine is a waveform");
+        n.commitWave(0);
+        for (int b = 0; b < 4; ++b) {
+            n.process(L, R, 64, 44100);
+            for (int i = 0; i < 64; ++i) ok = ok && std::isfinite(L[i]) && std::fabs(L[i]) < 64 && std::isfinite(R[i]) && std::fabs(R[i]) < 64;
+        }
+        expect(ok, mode ? "nebula: square -> sine with grains sounding, read within the new tables"
+                        : "nebula: a sound -> sine with grains sounding, read within the table");
+    }
+}
+
 int main() {
+    test_nebula_switch();
     test_hpss();
     test_partconv();
     test_denormals();

@@ -59,8 +59,16 @@ public:
     // and mipmapped: a table per octave of their harmonics (odd ones up to 63, 31 ... 1), and each grain reads
     // the richest one whose harmonics stay under the Nyquist frequency at its frequency (and glissando)
     bool setWave(int k, const std::string& w) {
+        if (!prepareWave(k, w)) return false;
+        commitWave(k);
+        return true;
+    }
+    // setWave in two halves, for a host whose audio thread runs process(): prepareWave builds the tables aside
+    // (it allocates; process() never reads them, so no lock is needed), commitWave swaps them in (no allocation,
+    // under whatever excludes process()); the tables it replaces wait aside until the next prepareWave frees them
+    bool prepareWave(int k, const std::string& w) {
         if (!isWave(w)) return false;
-        Proto& pr = proto_[k];
+        Proto& pr = next_[k];
         pr.data = nullptr;
         pr.frames = 0;
         bool limited = w == "square" || w == "triangle";
@@ -105,6 +113,12 @@ public:
         pr.sr = sr;
         if (pr.frames > 0) pr.readPos = wrap(pr.readPos, (double)pr.frames);
     }
+    void commitWave(int k) {
+        std::swap(proto_[k].levels, next_[k].levels);
+        std::swap(proto_[k].maxHarm, next_[k].maxHarm);
+        proto_[k].data = nullptr;
+        proto_[k].frames = 0;
+    }
     bool isSound(int k) const { return proto_[k].levels.empty(); }
     // the grain envelope: hann, hamming or blackman (an unknown name is hann)
     void setWindow(const std::string& type) {
@@ -144,6 +158,12 @@ public:
             const Proto& p1 = proto_[1];
             const double len0 = p0.levels.empty() ? (double)std::max(1L, p0.frames) : (double)kTable;
             const double len1 = p1.levels.empty() ? (double)std::max(1L, p1.frames) : (double)kTable;
+            // a prototype changed while the grain sounds (a sound for a waveform, square for sine, a shorter
+            // sound): its table level and its phase are brought into the new prototype's range
+            for (int c = 0; c < 2; ++c)
+                if (!proto_[c].levels.empty()) g.level[c] = std::min(g.level[c], (int)proto_[c].levels.size() - 1);
+            if (use0) g.phase[0] = wrap(g.phase[0], len0);
+            if (use1) g.phase[1] = wrap(g.phase[1], len1);
             const double* t0 = p0.levels.empty() ? nullptr : p0.levels[(size_t)g.level[0]].data();
             const double* t1 = p1.levels.empty() ? nullptr : p1.levels[(size_t)g.level[1]].data();
             for (int i = g.delay; i < n; ++i) {
@@ -249,6 +269,7 @@ private:
     }
 
     Proto proto_[2];
+    Proto next_[2];                              // tables built by prepareWave, or replaced by commitWave
     std::vector<double> window_;
     std::vector<Grain> grains_;
     double untilNext_ = 0;
