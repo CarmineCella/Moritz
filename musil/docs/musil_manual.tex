@@ -352,6 +352,9 @@ nothing; only a \musil{return} from inside a loop unwinds.
 (expr (a > 1 && b < 2))              ; comparisons and logic: < > <= >= == != && ||
 \end{lstlisting}
 
+\texttt{\&\&} and \texttt{||} short-circuit like \musil{and} and \musil{or}: the right side is
+evaluated only when the left one does not decide.
+
 \subsection{Errors}
 
 \begin{lstlisting}
@@ -389,17 +392,26 @@ var code '(+ 1 2)                    ; a list, not a call
 
 \subsection{Loading files}
 
-\musil{(load "file.mu")} runs a file once in the global environment. A relative name
-is searched next to the loading file, in the current directory, in each entry of
-\texttt{MUSIL\_PATH}, then in \texttt{\textasciitilde/.musil}. Reading functions
+\musil{(load "file.mu")} runs a file in the global environment. A relative name
+is searched next to the loading file, in each entry of \texttt{MUSIL\_PATH}, in
+\texttt{\textasciitilde/.musil}, then in the current directory (a file of the current
+directory cannot stand in for a library). Reading functions
 (\musil{read}, \musil{read-wav}, \musil{read-csv}, \musil{exists?}, \musil{stat})
 apply a similar rule to their data: a relative path that does not exist in the current
 directory is looked for next to the file being run, so a script finds its data from
 wherever it was started, on the command line or from Moritz's code editor. A file that ran is not
-run again (so mutual loads are safe); a file that failed is not cached. Nothing is
+run again (so mutual loads are safe) unless it changed since: edit a module and load it
+again to run the new version. A file that failed is not cached. Nothing is
 loaded automatically: a program that wants the standard library says
 \musil{load "std.mu"}; each library loads what it needs (\musil{signals.mu} loads
 \musil{scientific.mu}, which loads \musil{std.mu}).
+
+\textbf{The libraries' names.} A library (a file found on the load path) runs in an
+environment of its own whose names are also the program's. A function of a library looks
+its names up there, so a program that defines a name of its own, \musil{(var sum 0)} or a
+\musil{function length}, changes it for itself only: \musil{mean} still sums with the
+builtin. \musil{set} on a library variable (\musil{(set sound-cache-limit 1e9)}) changes the
+library's too.
 
 \subsection{Sharing and copying}
 

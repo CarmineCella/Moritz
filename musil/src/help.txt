@@ -34,7 +34,7 @@
   run body; on an error bind its message to e and run handler
 #expr
   (expr (a op b ...)
-  ) infix arithmetic: + - * / % < > <= >= == != && ||; ( ) groups, (f x) calls
+  ) infix arithmetic: + - * / % < > <= >= == != && ||; ( ) groups, (f x) calls; && and || short-circuit
 #parse
   (parse "text")
   read Musil source into a form: (do line ...), the same reading a file gets; (eval (parse s)) runs it
@@ -140,8 +140,9 @@
   seconds from a monotonic clock, for timing
 #load
   (load "file.mu")
-  run a file once, searched next to the loading file, in the current directory,
-  in MUSIL_PATH and in ~/.musil
+  run a file, searched next to the loading file, then in MUSIL_PATH and ~/.musil (the
+  libraries), then in the current directory; once: a second load of the same file does nothing, unless the
+  file changed since (then it runs again: edit a module, load it again)
 #defined?
   (defined? 'name)
   is name bound?
@@ -455,8 +456,8 @@
   (sleep seconds)
 #find-file
   (find-file "name")
-  => the path of a file as load resolves it (the current directory, the file being run, the
-  load path: MUSIL_PATH, ~/.musil, the libraries), or "" when not found
+  => the path of a file as load resolves it (the file being run, the load path: MUSIL_PATH,
+  ~/.musil, the libraries; then the current directory), or "" when not found
 #resolve-path
   (resolve-path "name")
   => the path a reading function would open for a relative name: as given if it exists from the
@@ -1466,7 +1467,7 @@
   the output gain, applied to the whole bus
 #voice-set
   (voice-set voice "amp"|"pan"|"rate" value)
-  change a playing voice, ramped over a few blocks
+  change a playing voice, gliding there in a few milliseconds
 #voices
   (voices)
   => the ids of the voices playing or scheduled
@@ -1477,7 +1478,7 @@
 #set-param
   (set-param id name value [ramp-seconds [at-seconds]])
   change a synth's parameter, immediately or ramped; with a time on
-  the clock, at the start of the block it falls in
+  the clock, at that very sample
 #synth-render
   (synth-render f params seconds [sr])
   => the sound of f as the engine would stream it, computed offline block

@@ -1,5 +1,24 @@
 # Changes
 
+## 0.11
+
+- **The libraries' names are their own.** A library (a file found on the load path) runs in an
+  environment that mirrors the program's: its functions see its names, so a program's
+  `(var sum 0)` or its own `function length` no longer breaks `mean` or `median`. A `set` on a
+  library variable still changes it for the library. (Before, a program could redefine a library
+  name for the library's functions too; now it does so for itself only.)
+- **load** searches next to the loading file, then `MUSIL_PATH` and `~/.musil`, then the current
+  directory (the current directory came second), and runs a module again when the file changed
+  since it was loaded.
+- **expr**: `&&` and `||` short-circuit, as `and` and `or` do.
+- **Closures that hold their own scope are freed**: a cycle collector frees the object pattern
+  (`put! self 'get (function () self)`) and inner closures kept in an outer scope.
+- **Faster control flow**: `return`, `break` and `continue` are no longer C++ exceptions (a
+  `continue` costs under a microsecond instead of about 13), and a `(function ...)` form prepares
+  its body once.
+- **live**: a `set-param` with a time lands on its very sample, `voice-set` glides in 5 ms whatever
+  the block size, and the noise node draws the same numbers on every system.
+
 ## 0.10c
 
 Musil 0.10c is 0.10b made safer: the same programs give the same results, and what used to crash
