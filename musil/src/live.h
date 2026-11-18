@@ -1020,7 +1020,9 @@ inline std::shared_ptr<const sh_table> sh_table_for(Interp& i, int order) {
 }
 // the responses hrir gives, for each direction it chooses from, at rate sr
 inline std::shared_ptr<const hrir_table> hrir_table_for(Interp& i, double sr) {
-    bool measured = hrtf_try_default(i); const hrtf_set& h = hrtf();
+    static const hrtf_set none;
+    std::shared_ptr<hrtf_set> hp = hrtf_try_default(i);              // the set loaded now (signals.h), kept alive here
+    bool measured = (bool)hp; const hrtf_set& h = hp ? *hp : none;
     std::vector<std::pair<double, double>> dirs;
     if (measured) for (size_t k = 0; k < h.az.size(); k++) dirs.push_back({ h.az[k], h.el[k] });
     else for (int el = -90; el <= 90; el += 10) for (int az = -180; az < 180; az += 5) dirs.push_back({ (double)az, (double)el });
