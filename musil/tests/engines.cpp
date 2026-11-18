@@ -220,7 +220,21 @@ static void test_partconv() {
     expect(ef < 1e-3, "PartConv<float>: the whole convolution");
 }
 
+// --- hpss's engine on floats (as Moritz's hpss) is Musil's on doubles; the parts add up to the input ---
+static void test_hpss() {
+    std::vector<float> xf(8000); std::vector<double> xd(8000);
+    for (size_t k = 0; k < xf.size(); ++k) { xd[k] = 0.5 * std::sin(0.05 * (double)k) + (k % 1000 == 0 ? 1.0 : 0.0); xf[k] = (float)xd[k]; }
+    std::vector<float> hf, pf; std::vector<double> hd, pd;
+    dsp::hpss(xf.data(), xf.size(), 512, 128, 17, hf, pf);
+    dsp::hpss(xd.data(), xd.size(), 512, 128, 17, hd, pd);
+    double e = 0, s = 0;
+    for (size_t k = 0; k < xd.size(); ++k) { e = std::max(e, std::fabs(hf[k] - hd[k]) + std::fabs(pf[k] - pd[k])); s = std::max(s, std::fabs(hd[k] + pd[k] - xd[k])); }
+    expect(e < 1e-5, "hpss<float> is hpss<double> to float precision");
+    expect(s < 1e-6, "hpss: the parts add up to the input");
+}
+
 int main() {
+    test_hpss();
     test_partconv();
     test_denormals();
     test_threads();

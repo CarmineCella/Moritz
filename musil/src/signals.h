@@ -24,6 +24,7 @@
 #include "signals/hrtf.h"
 #include "signals/convolution.h"
 #include "signals/filters.h"
+#include "signals/hpss.h"
 #include "signals/biquad.h"
 #include "signals/envelope.h"
 #include "signals/denormal.h"
@@ -564,52 +565,16 @@ inline vptr sig_lag(vlist& a, Interp& i) {
 // hop; the magnitude spectrogram is median-filtered along time (harmonic sounds are horizontal
 // lines) and along frequency (percussive sounds are vertical ones); soft masks from the two
 // filtered spectrograms weight the original spectra, which are inverted and overlap-added. kernel
-// is the filter length in frames and bins (odd, ~17). C++: a median per bin per frame.
-inline double median_of(std::vector<double>& v) { size_t m = v.size() / 2; std::nth_element(v.begin(), v.begin() + m, v.end()); return v[m]; }
+// is the filter length in frames and bins (odd, ~17). The two parts add up to x (signals/hpss.h,
+// the engine of Moritz's hpss too)
 inline vptr sig_hpss(vlist& a, Interp& i) {
     const varr& x = i.num(a[0]); size_t n = (size_t)i.index(a[1]), hop = (size_t)i.index(a[2]); int kernel = (int)i.scalar(a[3]);
     if (n < 16 || (n & (n - 1))) i.bad("n must be a power of 2 >= 16");
     if (hop < 1 || hop > n) i.bad("hop must be in 1..n");
-    if (kernel < 3) i.bad("kernel must be >= 3"); if (kernel % 2 == 0) kernel++;
-    // the signal is padded with n zeros on both sides, so its edges are covered by full overlaps
-    std::vector<double> xp(x.size() + 2 * n, 0.0); for (size_t k = 0; k < x.size(); k++) xp[n + k] = x[k];
-    size_t half = kernel / 2, bins = n / 2 + 1, frames = (xp.size() - n) / hop + 1;
-    std::vector<double> w(n); for (size_t k = 0; k < n; k++) w[k] = 0.5 - 0.5 * std::cos(2 * 3.14159265358979323846 * k / n);
-    // analysis
-    std::vector<std::vector<double>> spec(frames, std::vector<double>(2 * n)), mag(frames, std::vector<double>(bins));
-    for (size_t f = 0; f < frames; f++) {
-        for (size_t k = 0; k < n; k++) { size_t idx = f * hop + k; spec[f][2 * k] = idx < xp.size() ? xp[idx] * w[k] : 0; spec[f][2 * k + 1] = 0; }
-        fft_inplace(spec[f].data(), n, -1);
-        for (size_t b = 0; b < bins; b++) mag[f][b] = std::hypot(spec[f][2 * b], spec[f][2 * b + 1]);
-    }
-    // medians along time (harmonic) and along frequency (percussive)
-    std::vector<std::vector<double>> H(frames, std::vector<double>(bins)), P(frames, std::vector<double>(bins));
-    std::vector<double> buf; buf.reserve(kernel);
-    for (size_t b = 0; b < bins; b++) for (size_t f = 0; f < frames; f++) {
-        buf.clear(); for (long t = (long)f - (long)half; t <= (long)f + (long)half; t++) buf.push_back(t >= 0 && t < (long)frames ? mag[t][b] : 0.0);
-        H[f][b] = median_of(buf);
-    }
-    for (size_t f = 0; f < frames; f++) for (size_t b = 0; b < bins; b++) {
-        buf.clear(); for (long q = (long)b - (long)half; q <= (long)b + (long)half; q++) buf.push_back(q >= 0 && q < (long)bins ? mag[f][q] : 0.0);
-        P[f][b] = median_of(buf);
-    }
-    // soft masks, synthesis
-    size_t out_len = (frames - 1) * hop + n; varr harm(0.0, out_len), perc(0.0, out_len);
-    std::vector<double> wsum(out_len, 0.0);          // the overlap-added squared window: the exact gain at every sample, edges included
-    for (size_t f = 0; f < frames; f++) for (size_t k = 0; k < n; k++) wsum[f * hop + k] += w[k] * w[k];
-    std::vector<double> fh(2 * n), fp(2 * n);
-    for (size_t f = 0; f < frames; f++) {
-        for (size_t k = 0; k < n; k++) {
-            size_t b = k <= n / 2 ? k : n - k; double h2 = H[f][b] * H[f][b], p2 = P[f][b] * P[f][b], d = h2 + p2 + 1e-12;
-            double mh = h2 / d, mp = p2 / d;
-            fh[2 * k] = spec[f][2 * k] * mh; fh[2 * k + 1] = spec[f][2 * k + 1] * mh; fp[2 * k] = spec[f][2 * k] * mp; fp[2 * k + 1] = spec[f][2 * k + 1] * mp;
-        }
-        fft_inplace(fh.data(), n, 1); fft_inplace(fp.data(), n, 1);
-        for (size_t k = 0; k < n; k++) { harm[f * hop + k] += fh[2 * k] / n * w[k]; perc[f * hop + k] += fp[2 * k] / n * w[k]; }
-    }
-    varr ho(0.0, x.size()), po(0.0, x.size());       // the padding removed: as long as the input
-    for (size_t k = 0; k < x.size() && n + k < out_len; k++) { double g = std::max(wsum[n + k], 1e-3); ho[k] = harm[n + k] / g; po[k] = perc[n + k] / g; }
-    return v_list({ v_arr(std::move(ho)), v_arr(std::move(po)) });
+    if (kernel < 3) i.bad("kernel must be >= 3");
+    std::vector<double> h, p;
+    dsp::hpss(x.size() ? &x[0] : (const double*)nullptr, x.size(), n, hop, kernel, h, p, [&] { i.yield_check(); return true; });
+    return v_list({ v_arr(varr(h.data(), h.size())), v_arr(varr(p.data(), p.size())) });
 }
 
 // --- spatial: spherical harmonics, rotation, a spherical-head HRIR --------------------------
