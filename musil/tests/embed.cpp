@@ -126,6 +126,15 @@ int main() {
         expect(refused("write " + q(outside / "a.txt") + " \"no\""), "sandboxed: writing outside the root is refused");
         expect(!fs::exists(outside / "a.txt"), "...and nothing was written");
         expect(refused("write " + q(inside / ".." / "outside" / "b.txt") + " \"no\""), "sandboxed: .. cannot step out");
+        // writing into a folder that does not exist is an ordinary error, inside the root and with full rights
+        // (on Windows, where links cannot be made, the link check below once did this and a crash followed)
+        {
+            bool ok = false;
+            try { I.run("write " + q(inside / "missing" / "c.txt") + " \"x\"", "<caps>"); }
+            catch (const Error& e) { ok = std::string(e.what()).find("cannot open") != std::string::npos; }
+            expect(ok, "sandboxed: writing into a missing folder is an error");
+            expect(I.run("(+ 1 2)", "<caps>")->num[0] == 3, "...and the interpreter goes on");
+        }
         if (fs::is_symlink(inside / "link", ec))           // Windows lets only administrators make links
             expect(refused("write " + q(inside / "link" / "c.txt") + " \"no\""), "sandboxed: a symbolic link cannot step out");
         expect(refused("append-file " + q(outside / "a.txt") + " \"no\""), "sandboxed: append-file");
