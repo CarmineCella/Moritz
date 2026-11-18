@@ -300,7 +300,7 @@ $(LX_DIR)/$(APP): $(LX_OBJECTS) $(LX_BUILD)/miniaudio.o $(LX_BUILD)/RtMidi.o
 LX_MUSIL := $(LX_BUILD)/musil/musil
 $(LX_MUSIL): $(MUSIL_DEPS) $(LX_FLTK_LIB)
 	@mkdir -p $(dir $@)
-	$(LX_CXX) -std=c++17 -O2 -Wall -Wextra -Wno-unused-parameter -DMUSIL_HAS_FLTK -I$(LX_FLTK)/include -Imusil/src \
+	$(LX_CXX) -std=c++17 -O2 -Wall -Wextra -Wno-unused-parameter -Wno-misleading-indentation -DMUSIL_HAS_FLTK -I$(LX_FLTK)/include -Imusil/src \
 	  musil/cli/main.cpp $$($(LX_FLTK)/bin/fltk-config --use-images --ldstaticflags) \
 	  -static-libstdc++ -static-libgcc -lpthread -ldl -lm -o $@
 
@@ -392,7 +392,7 @@ $(WIN_DIR)/$(APP).exe: $(WIN_OBJECTS) $(WIN_BUILD)/miniaudio.o $(WIN_BUILD)/RtMi
 WIN_MUSIL := $(WIN_BUILD)/musil/musil.exe
 $(WIN_MUSIL): $(MUSIL_DEPS) $(WIN_FLTK_LIB)
 	@mkdir -p $(dir $@)
-	$(WIN_CXX) -std=c++17 -O2 -Wall -Wextra -Wno-unused-parameter -DMUSIL_HAS_FLTK -I$(WIN_FLTK)/include -Imusil/src \
+	$(WIN_CXX) -std=c++17 -O2 -Wall -Wextra -Wno-unused-parameter -Wno-misleading-indentation -DMUSIL_HAS_FLTK -I$(WIN_FLTK)/include -Imusil/src \
 	  musil/cli/main.cpp -static -s -Wl,--stack,8388608 $(WIN_FLTK)/lib/libfltk_images.a $(WIN_FLTK)/lib/libfltk_png.a \
 	  $(WIN_FLTK)/lib/libfltk_z.a $(WIN_FLTK_LIB) -lwinmm -lole32 -luuid -lcomctl32 -lcomdlg32 \
 	  -lgdi32 -lgdiplus -lwinspool -lws2_32 -lshell32 -ladvapi32 -limm32 -loleaut32 -o $@

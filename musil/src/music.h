@@ -26,6 +26,10 @@
 #include <filesystem>
 #include <map>
 
+#ifdef OPAQUE      // Windows defines it (wingdi.h, through system.h's sockets); Musil has a value type of that name
+#undef OPAQUE
+#endif
+
 namespace musil {
 
 // --- pitch names ---
