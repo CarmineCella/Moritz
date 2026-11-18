@@ -748,8 +748,9 @@ inline int op_prec(const std::string& o) {
     if (o == "*" || o == "/" || o == "%")  return 6;
     return 0;
 }
-// expr: the infix expression is read and evaluated in one pass (with run false it is only read). A return,
-// break or continue inside stops the reading and is passed up (the result is then nullptr).
+// expr: the infix expression is read and evaluated in one pass; with run false it is only read (the side of
+// && or || that is not needed: like and and or, it is not evaluated). A return, break or continue inside
+// stops the reading and is passed up (the result is then nullptr).
 inline vptr expr_parse(vlist& w, size_t& p, int min_p, Interp& i, const eptr& e, bool run);
 inline vptr expr_atom(vlist& w, size_t& p, Interp& i, const eptr& e, bool run) {
     if (p >= w.size()) i.err("expr: unexpected end of expression");
@@ -787,11 +788,17 @@ inline vptr expr_parse(vlist& w, size_t& p, int min_p, Interp& i, const eptr& e,
         if (prec == 0) i.err("expr: unknown operator " + w[p]->s);
         if (prec < min_p) break;
         std::string op = w[p++]->s;
+        if (op == "&&" || op == "||") {                   // short-circuit, as and / or: the right side runs only when it decides
+            bool l = run && truthy(lhs);
+            bool need = run && (op == "&&" ? l : !l);
+            vptr rhs = expr_parse(w, p, prec + 1, i, e, need);
+            if (!rhs) return rhs;
+            if (run) lhs = v_bool(need ? truthy(rhs) : l);
+            continue;
+        }
         vptr rhs = expr_parse(w, p, prec + 1, i, e, run);
         if (!rhs) return rhs;
         if (!run) continue;
-        if (op == "&&") { lhs = v_bool(truthy(lhs) && truthy(rhs)); continue; }
-        if (op == "||") { lhs = v_bool(truthy(lhs) || truthy(rhs)); continue; }
         if (op == "==") { if (lhs->t != Value::NUM || rhs->t != Value::NUM) { lhs = v_bool(equal(lhs, rhs)); continue; } }
         if (op == "!=") { if (lhs->t != Value::NUM || rhs->t != Value::NUM) { lhs = v_bool(!equal(lhs, rhs)); continue; } }
         const varr& L = i.num(lhs); const varr& R = i.num(rhs);
@@ -824,7 +831,7 @@ inline vptr expr_parse(vlist& w, size_t& p, int min_p, Interp& i, const eptr& e,
 // (return [value]) leave the function; free in tail position
 // (break) (continue) leave or restart the innermost loop
 // (try body catch e handler) run body; on an error bind its message to e and run handler
-// (expr (a op b ...)) infix arithmetic: + - * / % < > <= >= == != && ||; ( ) groups, (f x) calls
+// (expr (a op b ...)) infix arithmetic: + - * / % < > <= >= == != && ||; ( ) groups, (f x) calls; && and || short-circuit
 // (parse "text") read Musil source into a form: (do line ...), the same reading a file gets; (eval (parse s)) runs it
 // (eval form) evaluate a form (code built as data) in the global environment
 // (apply f list) call f with the elements of list as arguments

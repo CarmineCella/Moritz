@@ -70,4 +70,20 @@ load mod
 check (== mod-version 2) "load: a module that changed runs again"
 remove mod
 
+; --- expr: && and || short-circuit like and / or ---------------------------------------------------------
+var side 0
+function bump (x) {
+    set side (+ side 1)
+    return 1
+}
+check (== (expr (0 && (bump 0))) 0) "expr &&: false"
+check (== side 0) "expr &&: the right side is not evaluated when the left is false"
+check (== (expr (1 || (bump 0))) 1) "expr ||: true"
+check (== side 0) "expr ||: the right side is not evaluated when the left is true"
+check (== (expr (1 && (bump 0))) 1) "expr &&: true and true"
+check (== side 1) "expr &&: the right side is evaluated when it decides"
+check (== (expr (0 || 0 || (bump 0))) 1) "expr ||: chained"
+check (== (expr ((1 + 2) * 3 == 9 && 2 > 1)) 1) "expr: precedence unchanged"
+check (contains? (error-of (function () (expr (0 && undefined-name)))) "") "expr: a skipped side is still read"
+
 report "test_semantics"
