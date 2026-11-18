@@ -32,7 +32,9 @@ print "--- voices ---"
 var sr 44100
 var tone (* 0.4 (sine sr 440 0.3))
 var v (play tone sr)
-sleep 0.05
+var tries 0
+while (and (not (contains? (voices) v)) (< tries 50)) { sleep 0.02
+    set tries (+ tries 1) }    ; the audio thread takes the voice within a block or two (longer on a busy machine)
 print "play             : voice" v "; playing:" (contains? (voices) v)
 print "play-with        : amp, pan, rate, loop, at:" (play-with tone sr (list (list "amp" 0.3) (list "pan" -0.5) (list "rate" 1.5)))
 print "stereo           :" (play (list tone (* 0.5 tone)) sr) "(a list of channels)"

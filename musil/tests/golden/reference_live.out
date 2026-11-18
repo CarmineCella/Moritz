@@ -37,7 +37,7 @@ note             : gate on now, off in 0.1 s (scheduled)
 free             : synths 0
 play-synth       : id 11 (compile, set, gate on)
 synth-render     : the graph offline; equals the call within 1
-not streamable   : reference_live.mu:99: synth: not streamable: pvoc (see (streamable))
+not streamable   : reference_live.mu:101: synth: not streamable: pvoc (see (streamable))
 tables           : sine-table saw-table square-table triangle-table, for osc
 
 --- loops ---
