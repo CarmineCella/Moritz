@@ -1,0 +1,52 @@
+; filters.moritz - cross-test: svf~ and lores~ against Musil's svf and lores, and condec against Musil's
+; deconv (tools/test-patches.sh)
+(patch
+  (obj b buffer~ xsrc drums.wav (pos 20 20))
+  (obj o buffer~ xflt 500 3 (pos 160 20))
+  (obj h buffer~ xir 10 1 (pos 300 20))
+  (obj y buffer~ xwet (pos 400 20))
+  (obj z buffer~ xdry (pos 500 20))
+  (obj lb loadbang (pos 20 60))
+  (obj pl sig~ 1 (pos 20 90))
+  (obj gr groove~ xsrc (pos 20 120))
+  (obj sv svf~ 800 0.6 (pos 20 160))
+  (obj lr lores~ 1200 0.5 (pos 160 160))
+  (obj r record~ xflt 3 (pos 20 200))
+  (obj on message 1 (pos 160 90))
+  (obj dl delay 600 (pos 300 60))
+  (obj c code 1 1 (pos 300 90)
+    (script
+      "; the drums through svf~ (band and low) and lores~, recorded, against Musil's svf and lores of the"
+      "; same samples; then condec's deconvolution of a convolved sound against Musil's deconv"
+      "var x (take (head (buffer \"xsrc\")) 20000)"
+      "var rec (buffer \"xflt\")"
+      "function err (a b) (/ (max (abs (- (take a 20000) (take b 20000)))) (+ 1e-12 (max (abs b))))"
+      "var e1 (err (head rec) (svf x 44100 800 0.6 \"band\"))"
+      "var e2 (err (getidx rec 1) (svf x 44100 800 0.6 \"low\"))"
+      "var e3 (err (last rec) (lores x 44100 1200 0.5))"
+      "print \"cross svf~ lores~: largest differences\" (fixed e1 6) (fixed e2 6) (fixed e3 6)"
+      "if (> (max (vec e1 e2 e3)) 1e-4) { print \"FAIL: svf~ or lores~ and Musil's svf or lores disagree\" }"
+      "var ir (vec 1 0 0 0.5 0 0 0 0.25 0 0.1)"
+      "set-buffer! \"xir\" (list ir)"
+      "set-buffer! \"xwet\" (list (take (conv (take x 8000) ir) 8000))"
+      "out 1 \"deconv\" \"xwet\" \"xir\" \"xdry\""))
+  (obj cd condec (pos 300 160))
+  (obj c2 code (pos 300 200)
+    (script
+      "var want (deconv (head (buffer \"xwet\")) (head (buffer \"xir\")))"
+      "var got (head (buffer \"xdry\"))"
+      "var e (max (abs (- got want)))"
+      "print \"cross condec: largest difference\" (fixed e 6)"
+      "if (> e 1e-4) { print \"FAIL: condec and Musil's deconv disagree\" }"))
+  (connect pl 0 gr 0)
+  (connect gr 0 sv 0)
+  (connect gr 0 lr 0)
+  (connect sv 2 r 0)
+  (connect sv 0 r 1)
+  (connect lr 0 r 2)
+  (connect lb 0 on 0)
+  (connect on 0 r 0)
+  (connect lb 0 dl 0)
+  (connect dl 0 c 0)
+  (connect c 0 cd 0)
+  (connect cd 0 c2 0))

@@ -209,6 +209,37 @@ check (> (rms xs) 0) "pvoc-cross mode 2: something comes out"
 check (> (rms (pvoc-cross voiced tone 1 0.5 100)) 0) "pvoc-cross mode 1"
 check (near? (slice (pvoc-cross voiced tone 3 0 100) 4096 2000) (slice (pvoc voiced (list)) 4096 2000) 1e-9) "pvoc-cross mode 3 at 0 is the first sound"
 
+; --- nebula ---
+var table (gen 1024 (vec 1 0.5 0.3))
+var cloud (nebula sr 0.5 (list (list "seed" 3) (list "density" 40) (list "length" 30) (list "freq" 440)))
+check (== (length cloud) 2) "nebula: stereo"
+check (== (length (head cloud)) (length (last cloud))) "nebula: two channels as long"
+check (>= (length (head cloud)) 4000) "nebula: at least the seconds asked (and the last grains' tails)"
+check (> (rms (head cloud)) 0.01) "nebula: grains"
+check (near? (head cloud) (head (nebula sr 0.5 (list (list "seed" 3) (list "density" 40) (list "length" 30) (list "freq" 440)))) 1e-12) "nebula: a seed gives the same cloud"
+check (near? (acf-f0 (slice (head (nebula sr 0.5 (list (list "seed" 1) (list "density" 200) (list "length" 50) (list "freq" 400) (list "jitter" 1) (list "jitter-random" 0)))) 1000 2048) sr) 400 5) "nebula: grains at the frequency asked"
+check (< (rms (last (nebula sr 0.3 (list (list "seed" 1) (list "jitter" 1) (list "jitter-random" 0))))) 1e-9) "nebula: jitter 1 is all left"
+var snd (osc sr (+ (zeros 8000) 200) table)
+check (> (rms (head (nebula sr 0.3 (list (list "proto1" snd) (list "seed" 2) (list "freq" 1))))) 0.01) "nebula: a sound as prototype"
+check (== (length (head (nebula sr 0.3 (list (list "density" (list 5 50)) (list "seed" 2))))) (length (head (nebula sr 0.3 (list (list "density" (list 5 50)) (list "seed" 2)))))) "nebula: a ramped density"
+check (contains? (error-of (function () (nebula sr 1 (list (list "proto1" "saw"))))) "waveform") "nebula: unknown waveform"
+check (contains? (error-of (function () (nebula sr 1 (list (list "nope" 1))))) "unknown option") "nebula: unknown option"
+
+; --- deconv, svf, lores ---
+var dry (* (noise 2000) (hann 2000))
+var ir (vec 1 0 0 0.5 0 0.25)
+check (near? (deconv (take (conv dry ir) 2000) ir) dry 1e-6) "deconv: undoes conv"
+check (== (length (deconv (vec 1 2 3) (vec 1))) 3) "deconv: as long as y"
+check (near? (deconv (vec 2 4 6 0) (vec 2)) (vec 1 2 3 0) 1e-9) "deconv: by a gain"
+var wn (noise 4096)
+check (< (centroid-of (svf wn sr 300 0.5 "low")) (* 0.5 (centroid-of wn))) "svf low lowers the centroid"
+check (> (centroid-of (svf wn sr 2000 0.5 "high")) (centroid-of wn)) "svf high raises it"
+check (near? (+ (svf wn sr 700 0.3 "low") (svf wn sr 700 0.3 "high")) (svf wn sr 700 0.3 "notch") 1e-9) "svf: notch = low + high"
+check (near? (svf wn sr 700 0.3 "band") (svf wn sr (+ (zeros 4096) 700) (+ (zeros 4096) 0.3) "band") 1e-12) "svf: freq and q as vectors"
+check (contains? (error-of (function () (svf wn sr 700 0.3 "comb"))) "type") "svf: unknown type"
+check (near? (lores wn sr 1000 0) (lowpass wn sr 1000 0.707) 1e-12) "lores: res 0 is a plain lowpass"
+check (> (rms (lores (osc sr (+ (zeros 8000) 1000) table) sr 1000 1)) (* 5 (rms (lores (osc sr (+ (zeros 8000) 1000) table) sr 1000 0)))) "lores: res 1 resonates at the cutoff"
+
 ; --- hpss and onsets ---
 var tone2 (* 0.5 (sin (* tau 220 (/ (range 16000) sr))))
 var clicks2 (mix (map (list 0 4000 8000 12000) (function (p) (list p (* 0.8 (noise 200))))))

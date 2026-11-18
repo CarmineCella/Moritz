@@ -1,0 +1,28 @@
+; nebula.moritz - cross-test: nebula~ against Musil's nebula, the same engine (tools/test-patches.sh)
+(patch
+  (obj o buffer~ xneb 1000 2 (pos 160 20))
+  (obj lb loadbang (pos 20 20))
+  (obj go message "seed 7, density 30 0.5, length 60 0.3, freq 330 0.2, gliss 0.1, morph 0.3, start" (pos 20 50))
+  (obj nb nebula~ sine square (pos 20 90))
+  (obj r record~ xneb 2 (pos 20 130))
+  (obj on message 1 (pos 160 90))
+  (obj dl delay 1100 (pos 300 50))
+  (obj c code (pos 300 90)
+    (script
+      "; the same cloud (seed 7) by nebula~, recorded for a second, and by nebula: the grains start at the"
+      "; same samples with the same random draws, so the two must be the same signal"
+      "var got (buffer \"xneb\")"
+      "var want (nebula 44100 1 (list (list \"proto1\" \"sine\") (list \"proto2\" \"square\") (list \"seed\" 7) (list \"density\" 30) (list \"density-random\" 0.5) (list \"length\" 60) (list \"length-random\" 0.3) (list \"freq\" 330) (list \"freq-random\" 0.2) (list \"gliss\" 0.1) (list \"morph\" 0.3)))"
+      "function corr (u v) (/ (dot u v) (* (+ 1e-12 (norm u)) (+ 1e-12 (norm v))))"
+      "var rl (corr (slice (head got) 0 40000) (slice (head want) 0 40000))"
+      "var rr (corr (slice (last got) 0 40000) (slice (last want) 0 40000))"
+      "print \"cross nebula~: correlation\" (fixed rl 5) (fixed rr 5)"
+      "if (or (< rl 0.999) (< rr 0.999)) { print \"FAIL: nebula~ and Musil's nebula disagree\" }"))
+  (connect lb 0 go 0)
+  (connect go 0 nb 0)
+  (connect nb 0 r 0)
+  (connect nb 1 r 1)
+  (connect lb 0 on 0)
+  (connect on 0 r 0)
+  (connect lb 0 dl 0)
+  (connect dl 0 c 0))

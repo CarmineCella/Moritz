@@ -10,6 +10,7 @@
 // `stop` cancels.
 
 #include "offline.h"
+#include "scientific/nmf.h"    // Musil's nmf
 
 #include <fstream>
 #include <map>
@@ -227,55 +228,10 @@ private:
 // when fixW. Returns false if cancelled.
 bool nmfFactor(const std::vector<float>& V, int F, int T, int K, int iters, std::vector<float>& W,
                std::vector<float>& H, bool fixW, Job& job, float p0, float p1) {
-    std::vector<float> WH((size_t)F * T), Q((size_t)F * T);
-    const float eps = 1e-9f;
-    auto product = [&] {
-        for (int b = 0; b < F; ++b)
-            for (int t = 0; t < T; ++t) {
-                float v = 0.f;
-                for (int k = 0; k < K; ++k) v += W[(size_t)b * K + k] * H[(size_t)k * T + t];
-                WH[(size_t)b * T + t] = v + eps;
-            }
-    };
-    for (int it = 0; it < iters; ++it) {
-        if (job.cancelled()) return false;
-        // H <- H * (W^T (V / WH)) / (W^T 1)
-        product();
-        for (size_t i = 0; i < Q.size(); ++i) Q[i] = V[i] / WH[i];
-        for (int k = 0; k < K; ++k) {
-            float colsum = 0.f;
-            for (int b = 0; b < F; ++b) colsum += W[(size_t)b * K + k];
-            for (int t = 0; t < T; ++t) {
-                float num = 0.f;
-                for (int b = 0; b < F; ++b) num += W[(size_t)b * K + k] * Q[(size_t)b * T + t];
-                H[(size_t)k * T + t] *= num / (colsum + eps);
-            }
-        }
-        if (!fixW) {
-            // W <- W * ((V / WH) H^T) / (1 H^T)
-            product();
-            for (size_t i = 0; i < Q.size(); ++i) Q[i] = V[i] / WH[i];
-            for (int k = 0; k < K; ++k) {
-                float rowsum = 0.f;
-                for (int t = 0; t < T; ++t) rowsum += H[(size_t)k * T + t];
-                for (int b = 0; b < F; ++b) {
-                    float num = 0.f;
-                    for (int t = 0; t < T; ++t) num += Q[(size_t)b * T + t] * H[(size_t)k * T + t];
-                    W[(size_t)b * K + k] *= num / (rowsum + eps);
-                }
-            }
-            // parts of unit sum, the scale moved into H (as Musil)
-            for (int k = 0; k < K; ++k) {
-                float sum = 0.f;
-                for (int b = 0; b < F; ++b) sum += W[(size_t)b * K + k];
-                sum = std::max(sum, eps);
-                for (int b = 0; b < F; ++b) W[(size_t)b * K + k] /= sum;
-                for (int t = 0; t < T; ++t) H[(size_t)k * T + t] *= sum;
-            }
-        }
+    return nmf_kl(V, F, T, K, iters, W, H, fixW, [&](int it) {       // Musil's nmf (scientific/nmf.h)
         job.progress(p0 + (p1 - p0) * (it + 1) / iters);
-    }
-    return true;
+        return !job.cancelled();
+    });
 }
 
 class NmfBox : public OfflineBox {
@@ -335,11 +291,7 @@ private:
             for (int b = 0; b < F; ++b) V[(size_t)b * T + t] = s.mag(t, b);
         return V;
     }
-    static void randomise(std::vector<float>& v, unsigned seed) {
-        std::mt19937 rng(seed);
-        std::uniform_real_distribution<float> u(.5f, 1.f);
-        for (auto& x : v) x = u(rng);
-    }
+    static void randomise(std::vector<float>& v, unsigned seed) { nmf_init(v, seed); }
     void start(const std::string& src, const std::string& dst) {
         if (busy()) return;
         BufferBox* b = source(src);

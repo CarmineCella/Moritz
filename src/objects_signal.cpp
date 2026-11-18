@@ -3,6 +3,7 @@
 
 #include "objects.h"
 #include "zoom.h"
+#include "signals/filters.h"   // Musil's svf
 
 #include <FL/fl_draw.H>
 
@@ -509,7 +510,8 @@ private:
 };
 
 // ---------------------------------------------------------------- svf~
-// svf~ [freq q]: state-variable filter; outlets low, high, band, notch.
+// svf~ [freq q]: state-variable filter; outlets low, high, band, notch. The
+// filter of Musil's svf.
 class SvfBox : public Box {
 public:
     explicit SvfBox(const Message& a) {
@@ -523,11 +525,12 @@ public:
     void dsp(int n) override {
         const float* x = sigIn(0, n);
         float f = sigIn(1, n)[0], q = sigIn(2, n)[0];
-        f_.process(x, sigOut(0), sigOut(1), sigOut(2), sigOut(3), n, f, q, patch->root()->sampleRate);
+        f_.set(f, q, patch->root()->sampleRate);
+        f_.process(x, sigOut(0), sigOut(1), sigOut(2), sigOut(3), n);
     }
 
 private:
-    dsp::Svf f_;
+    musil::dsp::Svf f_;       // Musil's svf (musil/src/signals/filters.h)
 };
 
 // ---------------------------------------------------------------- biquad~

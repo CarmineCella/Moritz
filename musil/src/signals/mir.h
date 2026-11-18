@@ -18,61 +18,16 @@
 #include <string>
 #include <vector>
 
+#include "fft.h"
+
 namespace musil {
 namespace mir {
 
 constexpr double kPi = 3.14159265358979323846;
 constexpr double kTwoPi = 2.0 * kPi;
 
-// In-place iterative radix-2 complex FFT on floats (n a power of 2). inverse() is unscaled, so
-// inverse(forward(x)) == n * x.
-class FFT {
-public:
-    void init(int n) {
-        if (n == n_) return;
-        n_ = n;
-        rev_.assign((size_t)n, 0);
-        for (int i = 0, j = 0; i < n; ++i) {
-            rev_[(size_t)i] = j;
-            int bit = n >> 1;
-            for (; j & bit; bit >>= 1) j ^= bit;
-            j |= bit;
-        }
-        cos_.resize((size_t)n / 2);
-        sin_.resize((size_t)n / 2);
-        for (int k = 0; k < n / 2; ++k) {
-            cos_[(size_t)k] = (float)std::cos(kTwoPi * k / n);
-            sin_[(size_t)k] = (float)std::sin(kTwoPi * k / n);
-        }
-    }
-    int size() const { return n_; }
-    void forward(float* re, float* im) const { run(re, im, -1.f); }
-    void inverse(float* re, float* im) const { run(re, im, 1.f); }
-
-private:
-    void run(float* re, float* im, float sign) const {
-        const int n = n_;
-        for (int i = 0; i < n; ++i) {
-            int j = rev_[(size_t)i];
-            if (j > i) { std::swap(re[i], re[j]); std::swap(im[i], im[j]); }
-        }
-        for (int len = 2; len <= n; len <<= 1) {
-            int half = len >> 1, step = n / len;
-            for (int i = 0; i < n; i += len)
-                for (int k = 0; k < half; ++k) {
-                    float wr = cos_[(size_t)(k * step)], wi = sign * sin_[(size_t)(k * step)];
-                    float* ar = re + i + k; float* ai = im + i + k;
-                    float* br = re + i + k + half; float* bi = im + i + k + half;
-                    float tr = *br * wr - *bi * wi, ti = *br * wi + *bi * wr;
-                    *br = *ar - tr; *bi = *ai - ti;
-                    *ar += tr; *ai += ti;
-                }
-        }
-    }
-    int n_ = 0;
-    std::vector<int> rev_;
-    std::vector<float> cos_, sin_;
-};
+// the FFT on floats of the signal engines (fft.h): unscaled inverse, inverse(forward(x)) == n * x
+using FFT = dsp::FFT<float>;
 
 using Vec = std::vector<double>;
 using Mat = std::vector<Vec>;              // rows x frames (or frames x bins for a spectrogram)

@@ -397,6 +397,8 @@ function biquad (type sr f0 q gain-db) {
 function apply-filter (x coeffs) (iir x (head coeffs) (last coeffs))
 ; (lowpass x sr f0 q) (highpass x sr f0 q) (bandpass x sr f0 q) (notch x sr f0 q) one biquad, applied
 function lowpass (x sr f0 q) (apply-filter x (biquad "lowpass" sr f0 q 0))
+; (lores x sr cutoff res) a resonant lowpass, res 0..1 (the biquad of Moritz's lores~: q = 0.707 + 24 res^2)
+function lores (x sr cutoff res) (lowpass x sr cutoff (+ 0.707 (* 24 res res)))
 ; (highpass x sr f0 q) a highpass biquad, applied
 function highpass (x sr f0 q) (apply-filter x (biquad "highpass" sr f0 q 0))
 ; (bandpass x sr f0 q) a bandpass biquad, applied

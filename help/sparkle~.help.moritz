@@ -2,7 +2,7 @@
 (patch
   (obj title comment "sparkle~ [buffer] [channels] [window] [overlap]: phase vocoder with formant preservation and phase locking" (pos 20 12))
   (obj sub comment "With a buffer~ it plays it: the left inlet is the speed (0 freezes, negative plays backwards). Without one it transforms its input." (pos 20 34))
-  (obj sub2 comment "Inlets 2-3: pitch and formant ratios. envelope C keeps the formants (C = 30-80 for voices); threshold x drops weak bins." (pos 20 52))
+  (obj sub2 comment "Inlets 2-3: pitch and formant ratios. envelope C keeps the formants (C = 30-80 for voices); threshold x drops bins weaker than x times a full-scale sine." (pos 20 52))
   (obj buf buffer~ helpspk ../data/Vox.wav (pos 20 85))
   (obj go message "start, loop 1" (pos 20 120))
   (obj st message stop (pos 120 120))

@@ -1,0 +1,36 @@
+; sparkle.moritz - cross-test: sparkle~ against Musil's pvoc, the same engine (tools/test-patches.sh)
+(patch
+  (obj b buffer~ xvox Vox.wav (pos 20 20))
+  (obj o buffer~ xspk 1000 1 (pos 160 20))
+  (obj lb loadbang (pos 20 60))
+  (obj go message "bang" (pos 20 90))
+  (obj sp sparkle~ xvox (pos 20 130))
+  (obj pr message "envelope 40" (pos 160 90))
+  (obj pi message 1.5 (pos 260 60))
+  (obj r record~ xspk 1 (pos 20 170))
+  (obj on message 1 (pos 160 130))
+  (obj dl delay 1100 (pos 300 90))
+  (obj c code (pos 300 130)
+    (script
+      "; Vox.wav up a fifth with its formants kept, by sparkle~ (recorded for a second) and by pvoc: the"
+      "; same frames at the same positions, so the two must be the same signal"
+      "var x (head (buffer \"xvox\"))"
+      "var got (head (buffer \"xspk\"))"
+      "var want (pvoc (take x 50000) (list (list \"pitch\" 1.5) (list \"envelope\" 40)))"
+      "var n 40000"
+      "var u (slice got 2048 n)"
+      "var v (slice want 2048 n)"
+      "var r (/ (dot u v) (* (+ 1e-12 (norm u)) (+ 1e-12 (norm v))))"
+      "print \"cross sparkle~: correlation\" (fixed r 5) \"level\" (fixed (/ (norm u) (+ 1e-12 (norm v))) 4)"
+      "if (< r 0.999) { print \"FAIL: sparkle~ and Musil's pvoc disagree\" }"))
+  (connect lb 0 go 0)
+  (connect lb 0 pr 0)
+  (connect pr 0 sp 0)
+  (connect lb 0 pi 0)
+  (connect pi 0 sp 1)
+  (connect go 0 sp 0)
+  (connect sp 0 r 0)
+  (connect lb 0 on 0)
+  (connect on 0 r 0)
+  (connect lb 0 dl 0)
+  (connect dl 0 c 0))

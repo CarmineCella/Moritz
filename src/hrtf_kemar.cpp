@@ -5,6 +5,7 @@
 // Measurements of a KEMAR Dummy-Head Microphone"), free to use provided the authors are cited.
 #include "hrtf_kemar.h"
 #include "gui.h"
+#include "signals/hrtf.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -25,27 +26,14 @@ std::vector<Direction> load() {
         std::fprintf(stderr, "moritz: cannot read the KEMAR head responses (musil/src/hrtf_kemar.csv): hrtf~ and binaural~ are silent\n");
         return out;
     }
-    std::string line;
-    while (std::getline(f, line)) {
-        if (line.empty() || line[0] == '#') continue;
+    for (auto& h : musil::dsp::read_hrtf_csv(f)) {      // Musil's reader (musil/src/signals/hrtf.h)
+        if ((int)h.left.size() != kTaps) continue;
         Direction d{};
-        const char* p = line.c_str();
-        char* end = nullptr;
-        float v[2 + 2 * kTaps];
-        int n = 0;
-        while (n < 2 + 2 * kTaps) {
-            v[n] = std::strtof(p, &end);
-            if (end == p) break;
-            ++n;
-            p = end;
-            if (*p == ',') ++p;
-        }
-        if (n != 2 + 2 * kTaps) continue;
-        d.az = v[0];
-        d.el = v[1];
+        d.az = (float)h.az;
+        d.el = (float)h.el;
         for (int t = 0; t < kTaps; ++t) {
-            d.left[t] = v[2 + t];
-            d.right[t] = v[2 + kTaps + t];
+            d.left[t] = (float)h.left[(size_t)t];
+            d.right[t] = (float)h.right[(size_t)t];
         }
         out.push_back(d);
     }

@@ -227,6 +227,15 @@ struct biquad_node : gnode {                              // (lowpass x sr f0 q)
         for (int k = 0; k < n; k++) out[0][k] = (float)yb[k];
     }
 };
+struct svf_node : gnode {                                 // (svf x sr freq q type): freq and q are controls
+    double sr; int type; musil::dsp::Svf f; double lf = -1, lq = -1;
+    svf_node(double s, int t) : sr(s), type(t) {}
+    void process(std::vector<std::unique_ptr<gnode>>& g, int n) override {
+        size(n); const float* x = sig(g, 0); double fr = ctrl(g, 1), q = ctrl(g, 2);
+        if (fr != lf || q != lq) { f.set(fr, q, sr); lf = fr; lq = q; }
+        for (int k = 0; k < n; k++) { double o[4]; f.tick(x[k], o[0], o[1], o[2], o[3]); out[0][k] = (float)o[type]; }
+    }
+};
 struct delay_node : gnode {                               // (delay x samples): samples is a control, up to max_delay
     delay_state st; size_t max_delay; std::vector<double> xb, yb, db;
     delay_node(size_t m) : max_delay(m) {}
@@ -784,6 +793,7 @@ inline const std::map<std::string, ugen_spec>& ugen_table() {
         { "iir",      { { 's', 'c', 'c' } } },           // (iir x b a)
         { "lowpass",  { { 's', 'r', 's', 's' } } }, { "highpass", { { 's', 'r', 's', 's' } } }, { "bandpass", { { 's', 'r', 's', 's' } } }, { "notch", { { 's', 'r', 's', 's' } } },
         { "peak-eq",  { { 's', 'r', 's', 's', 's' } } }, { "lowshelf", { { 's', 'r', 's', 's', 's' } } }, { "highshelf", { { 's', 'r', 's', 's', 's' } } },
+        { "svf",      { { 's', 'r', 's', 's', 'c' } } },  // (svf x sr freq q type)
         { "dc-block", { { 's' } } },                     // (dc-block x)
         { "delay",    { { 's', 's' } } },                // (delay x samples)
         { "comb",     { { 's', 'c', 's' } } }, { "allpass", { { 's', 'c', 's' } } },   // (comb x d g)
@@ -876,6 +886,7 @@ struct synth_compiler {
         else if (h == "adsr") n = new adsr_node(sr);
         else if (h == "lag") n = new lag_node(sr);
         else if (h == "iir") n = new iir_node(vec_of(consts[0], "iir b"), vec_of(consts[1], "iir a"));
+        else if (h == "svf") n = new svf_node(sr, svf_type(I, consts[0]));
         else if (h == "dc-block") n = new iir_node({ 1, -1 }, { 1, -0.995 });
         else if (h == "delay") n = new delay_node((size_t)(sr * 2));       // up to two seconds
         else if (h == "comb") { long d = (long)consts[0]->num[0]; if (d < 1) fail("comb: delay must be >= 1"); n = new comb_node((size_t)d); }
@@ -888,7 +899,7 @@ struct synth_compiler {
         else if (h == "ambi-rotate") n = new ambi_rotate_node();
         else if (h == "binaural") n = new binaural_node(&I, consts[0]->num[0]);
         else if (h == "ambi-decode") {
-            // the decoding matrix of ambi-decode in signals.mu (ambi_decoder in signals.h)
+            // the decoding matrix of ambi-decode in signals.mu (ambi_decoder in signals/ambisonics.h)
             vptr spk = consts[0]; if (spk->t != Value::LIST && spk->t != Value::NUM) fail("ambi-decode: speakers is a list of (list az el) or azimuths");
             int bch = out.nodes[sigs[0]]->channels; int order = (int)std::lround(std::sqrt((double)bch)) - 1;
             std::vector<std::vector<double>> M = ambi_decoder(order, speaker_dirs(spk, I));

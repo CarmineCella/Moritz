@@ -83,7 +83,7 @@ see: line function sig~ gain~
 
 @ nebula~
 syntax: nebula~ [proto1] [proto2]
-Granular synthesis (sound_math's nebula): clouds of windowed grains read from
+Granular synthesis (sound_math's nebula; the engine of Musil's nebula): clouds of windowed grains read from
 two prototypes, each a waveform (`sine`, `triangle`, `square`, `noise`) or the
 name of a buffer~, mixed by `morph`. A grain starts every 1/density seconds,
 lasts `length` ms and is placed at random in the stereo field; the outlets
@@ -132,7 +132,7 @@ see: lores~ svf~ biquad~ filterdesign noise~
 @ lores~
 syntax: lores~ [cf] [res]
 Resonant low-pass (an RBJ cookbook biquad whose Q rises from 0.7 to about 25
-with the resonance). The cutoff and resonance inlets take signals or floats,
+with the resonance; Musil's lores). The cutoff and resonance inlets take signals or floats,
 read once per block.
 arg cf: the cutoff frequency in Hz (1000)
 arg res: the resonance, 0-1 (0)
@@ -141,7 +141,7 @@ see: svf~ reson~ biquad~ filterdesign
 
 @ svf~
 syntax: svf~ [freq] [q]
-State-variable filter (topology-preserving) with four outlets: low-pass,
+State-variable filter (topology-preserving; Musil's svf) with four outlets: low-pass,
 high-pass, band-pass and notch. The frequency and Q inlets take signals or
 floats, read once per block.
 arg freq: the cutoff or centre frequency in Hz (1000)
@@ -204,7 +204,8 @@ see: line~ lores~ abs~ sah~
 @ conv~
 syntax: conv~ buffer [channels]
 Convolves each inlet with the impulse response in a buffer~, with no
-latency: the first 256 taps directly, the rest by partitioned FFT. Channel c
+latency: the first 256 taps directly, the rest by partitioned FFT (the engine
+is Musil's, musil/src/signals/convolution.h). Channel c
 uses the response's channel c, or its last one; an inlet with nothing
 connected takes the channel before, so one source into `conv~ hall 2` gives a
 stereo reverb. The response is normalised to unit energy unless `normalize

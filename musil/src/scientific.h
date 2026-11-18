@@ -15,6 +15,7 @@
 #include "core.h"
 #include "scientific/algorithms.h"
 #include "scientific/KNN.h"
+#include "scientific/nmf.h"
 
 namespace musil {
 
@@ -85,6 +86,35 @@ inline elim_result eliminate(mat& m, double eps = 1e-12) {
     return { r, sq ? det : 0.0, !sq || r < m.r };
 }
 // (det M)
+// (nmf V k iterations) => (list W H): V (r x c, non-negative) ~ W H with W r x k and H k x c, both
+//   non-negative, by Lee & Seung's multiplicative updates for the KL divergence (the usual choice for
+//   magnitude spectrograms; scientific/nmf.h, the factorisation of Moritz's nmf box). Columns of W are the
+//   parts (spectral shapes, of unit sum), rows of H their activations over time (the scale is in H)
+inline void nmf_check(Interp& i, const mat& V) { for (double v : V.d) if (!(v >= 0)) i.bad("V must be non-negative"); }
+inline vptr sci_nmf(vlist& a, Interp& i) {
+    mat V = to_mat(i, a[0]); nmf_check(i, V);
+    long k = i.index(a[1]), it = i.index(a[2]);
+    if (k < 1) i.bad("k must be >= 1"); if (it < 0) i.bad("iterations must be >= 0");
+    std::vector<double> v(std::begin(V.d), std::end(V.d)), W(V.r * (size_t)k), H((size_t)k * V.c);
+    nmf_init(W, (unsigned)i.rng()); nmf_init(H, (unsigned)i.rng());
+    nmf_kl(v, (int)V.r, (int)V.c, (int)k, (int)it, W, H, false, [](int) { return true; });
+    mat Wm(V.r, (size_t)k), Hm((size_t)k, V.c);
+    std::copy(W.begin(), W.end(), std::begin(Wm.d)); std::copy(H.begin(), H.end(), std::begin(Hm.d));
+    return v_list({ from_mat(Wm), from_mat(Hm) });
+}
+// (nmf-with-parts V W iterations) => H: the activations of known parts W (its columns), V ~ W H with W
+//   fixed: supervised NMF, when the parts were learnt from examples of each source
+inline vptr sci_nmf_with_parts(vlist& a, Interp& i) {
+    mat V = to_mat(i, a[0]), Wm = to_mat(i, a[1]); nmf_check(i, V);
+    long it = i.index(a[2]);
+    if (Wm.r != V.r) i.bad("W must have as many rows as V"); if (it < 0) i.bad("iterations must be >= 0");
+    size_t k = Wm.c;
+    std::vector<double> v(std::begin(V.d), std::end(V.d)), W(std::begin(Wm.d), std::end(Wm.d)), H(k * V.c);
+    nmf_init(H, (unsigned)i.rng());
+    nmf_kl(v, (int)V.r, (int)V.c, (int)k, (int)it, W, H, true, [](int) { return true; });
+    mat Hm(k, V.c); std::copy(H.begin(), H.end(), std::begin(Hm.d));
+    return from_mat(Hm);
+}
 inline vptr sci_det(vlist& a, Interp& i) { mat m = to_mat(i, a[0]); square(i, m); return v_num(eliminate(m).det); }
 // (rank M)
 inline vptr sci_rank(vlist& a, Interp& i) { mat m = to_mat(i, a[0]); return v_num((double)eliminate(m, 1e-10).rank); }
@@ -251,7 +281,7 @@ inline void add_scientific(Interp& i) {
     i.def("mat-mul", sci_mat_mul, 2, N); i.def("transpose", sci_transpose, 1, 1);
     i.def("det", sci_det, 1, 1); i.def("rank", sci_rank, 1, 1); i.def("inv", sci_inv, 1, 1); i.def("solve", sci_solve, 2, 2);
     i.def("eig-sym", sci_eig_sym, 1, 1); i.def("median-filter", sci_median_filter, 2, 2);
-    i.def("kmeans", sci_kmeans, 2, 2); i.def("knn", sci_knn, 3, 3); i.def("mp", sci_mp, 4, 5);
+    i.def("kmeans", sci_kmeans, 2, 2); i.def("nmf", sci_nmf, 3, 3); i.def("nmf-with-parts", sci_nmf_with_parts, 3, 3); i.def("knn", sci_knn, 3, 3); i.def("mp", sci_mp, 4, 5);
 }
 
 } // namespace musil

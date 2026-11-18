@@ -340,33 +340,6 @@ private:
     double x1_ = 0, x2_ = 0, y1_ = 0, y2_ = 0;
 };
 
-// State-variable filter (topology-preserving, Simper). q in 0..1 is
-// resonance, as in MSP's svf~. Outputs low, high, band, notch.
-class Svf {
-public:
-    void process(const float* in, float* lo, float* hi, float* bp, float* no, int n, double f,
-                 double q, double sr) {
-        f = std::clamp(f, 1.0, sr * 0.49);
-        double k = std::max(2.0 - 2.0 * std::clamp(q, 0.0, 1.0) * 0.99, 0.02);
-        double g = std::tan(kPi * f / sr);
-        double a1 = 1.0 / (1.0 + g * (g + k)), a2 = g * a1, a3 = g * a2;
-        for (int i = 0; i < n; ++i) {
-            double v0 = in[i];
-            double v3 = v0 - ic2_;
-            double v1 = a1 * ic1_ + a2 * v3;
-            double v2 = ic2_ + a2 * ic1_ + a3 * v3;
-            ic1_ = 2.0 * v1 - ic1_;
-            ic2_ = 2.0 * v2 - ic2_;
-            double h = v0 - k * v1 - v2;
-            lo[i] = (float)v2; hi[i] = (float)h; bp[i] = (float)v1; no[i] = (float)(v2 + h);
-        }
-        if (!std::isfinite(ic1_) || !std::isfinite(ic2_)) ic1_ = ic2_ = 0.0;
-    }
-
-private:
-    double ic1_ = 0.0, ic2_ = 0.0;
-};
-
 // ------------------------------------------------------------------ delay line
 // Ring buffer. read(k) returns the sample written k pushes ago, counted
 // from the next write position (k = 1 is the most recent sample), with

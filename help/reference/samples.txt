@@ -141,7 +141,7 @@ see: index~ count~ record~ buffer~
 @ condec
 syntax: condec
 Convolution and deconvolution of whole buffer~s, computed at once when asked
-(the author's condec). The result replaces the contents of the out buffer~,
+(the author's condec; the deconvolution is Musil's deconv). The result replaces the contents of the out buffer~,
 at the sample rate of the first; channels pair up, and the buffer with fewer
 channels repeats its last. Deconvolution divides the spectrum of y by that of
 h where h is above a threshold, so a recording can be "un-reverberated" by its

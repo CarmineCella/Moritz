@@ -86,7 +86,7 @@ see: framedelta~ frameaccum~ cartopol~ pvlock~
 @ sparkle~
 syntax: sparkle~ [buffer] [channels] [window] [overlap]
 The phase vocoder of the author's sparkle, with phase locking and formant
-(spectral envelope) preservation. With a buffer~ name it plays the buffer:
+(spectral envelope) preservation: the engine of Musil's pvoc. With a buffer~ name it plays the buffer:
 the left inlet is the speed. Without one it transforms the signal in its
 left inlet, one window late. Pitch and formant ratios (inlets 2 and 3,
 0.05 to 8) are read once per frame. Cross-synthesis mixes in a second sound:
@@ -102,7 +102,7 @@ msg start [ms]: plays from that position (0)
 msg stop: stops
 msg loop [1/0]: loops the buffer~ (1 when no argument; off at first)
 msg envelope C: keeps the spectral envelope with C cepstral coefficients, so transposed voices keep their formants (30-80 for voices; 0 off, the default)
-msg threshold x: drops the bins whose amplitude is at or below x, to remove noise (0 = off)
+msg threshold x: drops the bins weaker than x times a full-scale sine, to remove noise (0.001 is -60 dB; 0 = off)
 msg robot [1/0]: robot voice: all phases set to zero (1 when no argument)
 msg whisper [1/0]: whisper: random phases (1 when no argument)
 msg cross mode [buffer]: cross-synthesis with the buffer~ or inlet 5: 1 multiplicative, 2 spectral flattener (the second sound's envelope on the first, with the envelope order, 40 if none), 3 morph, 0 off
@@ -124,8 +124,8 @@ see: pfft~ cartopol~ sparkle~ impose~
 @ nmf
 syntax: nmf [components] [iterations]
 Separates a buffer~ into parts that repeat (notes, sources) by non-negative
-matrix factorisation of its magnitude spectrogram, V ~ W H, with Musil's KL
-updates: W holds a spectrum per part, H when and how loud it sounds. Each
+matrix factorisation of its magnitude spectrogram, V ~ W H, with Musil's nmf
+(the same code): W holds a spectrum per part, H when and how loud it sounds. Each
 part is resynthesised with the original phases through a soft mask, so the
 parts add up to the sound (mixed to mono). It works as a background job;
 messages sent while it works wait their turn, in order.

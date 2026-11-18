@@ -6,8 +6,9 @@
 
 #include "objects.h"
 #include "zoom.h"
-#include "partconv.h"
-#include "vocoder.h"
+#include "signals/convolution.h"   // Musil's convolution engines
+#include "signals/vocoder.h"   // Musil's phase vocoder engine, as its pvoc
+#include "signals/nebula.h"    // Musil's granular engine, as its nebula
 
 #include <FL/Fl.H>
 #include <FL/fl_draw.H>
@@ -26,7 +27,8 @@ int nextPow2(long n) {
 }
 
 // ---------------------------------------------------------------- sparkle~
-// sparkle~ [buffer] [channels] [window] [overlap]: sparkle's phase vocoder.
+// sparkle~ [buffer] [channels] [window] [overlap]: sparkle's phase vocoder,
+// the engine of Musil's pvoc (musil/src/signals/vocoder.h).
 // With a buffer~ name it plays the buffer: the left inlet is the speed (1 =
 // as recorded, 0.25 = four times slower, 0 = frozen, negative = backwards),
 // `start [ms]` or bang plays, `stop` stops, `loop 1` loops. Without a name it
@@ -34,7 +36,8 @@ int nextPow2(long n) {
 // Inlets 2 and 3: pitch and formant ratios (signals or numbers, read once per
 // frame). `envelope C` preserves the spectral envelope with C cepstral
 // coefficients (0 = off; 30-80 for voices), so a transposed voice keeps its
-// formants; `threshold x` drops weak bins (denoising); `robot 1` and
+// formants; `threshold x` drops bins weaker than x times a full-scale sine
+// (denoising: 0.001 is -60 dB); `robot 1` and
 // `whisper 1` replace the phases. Outlets: the channels, then the read
 // position, 0 to 1 (buffer mode).
 // Cross-synthesis with a second sound, as in sparkle: `cross mode [buffer]`,
@@ -52,30 +55,14 @@ public:
         ch_ = live_ ? 1 : std::clamp((int)argf(a, k++, 1.f), 1, 8);
         wn_ = std::clamp((int)argf(a, k++, 2048.f), 64, 16384);
         int olap = std::clamp((int)argf(a, k++, 8.f), 2, 32);
-        n_ = nextPow2(wn_) * 2;                 // sparkle's default padding (f = 1)
         hop_ = std::max(1, wn_ / olap);
-        offset_ = (n_ - wn_) / 2;
-        win_.resize((size_t)wn_);
-        Vocoder::hann(win_.data(), wn_);
-        // overlap-added frames come back scaled by n (unscaled inverse FFT)
-        // and by the squared window summed over the overlap: undo both, so
-        // the level is unchanged (sparkle divides by the plain window sum,
-        // which leaves Hann frames 2.5 dB low)
-        double sum2 = 0;
-        for (float w : win_) sum2 += (double)w * w;
-        norm_ = (float)(hop_ / (sum2 * n_));
         for (int c = 0; c < ch_; ++c) {
             chans_.push_back(std::make_unique<Chan>());
             Chan& x = *chans_.back();
-            x.voc = std::make_unique<Vocoder>(n_);
-            x.frame.assign((size_t)2 * n_, 0.f);
-            x.prev.assign((size_t)2 * n_, 0.f);
-            x.out.assign((size_t)2 * n_, 0.f);
+            x.voc = std::make_unique<musil::dsp::Vocoder>(wn_, 1);    // sparkle's default padding (f = 1)
+            x.voc->seed(1234u + (unsigned)c);
+            for (auto* v : {&x.now, &x.prev, &x.oNow, &x.oPrev, &x.out}) v->assign((size_t)wn_, 0.f);
             x.ola.assign((size_t)wn_ + hop_, 0.f);
-        }
-        for (auto& c : chans_) {
-            c->oNow.assign((size_t)2 * n_, 0.f);
-            c->oPrev.assign((size_t)2 * n_, 0.f);
         }
         if (live_) ring_.assign((size_t)(wn_ + hop_) * 2, 0.f);
         ring2_.assign((size_t)(wn_ + hop_) * 2, 0.f);
@@ -100,7 +87,7 @@ public:
         else if (m[0].is("start")) startAt_.store(std::max(0.f, argf(m, 1, 0.f)));
         else if (m[0].is("stop")) stop_.store(true);
         else if (m[0].is("loop")) loop_.store(argf(m, 1, 1.f) != 0.f);
-        else if (m[0].is("envelope")) cepstrum_.store(std::clamp((int)argf(m, 1, 0.f), 0, n_ / 2));
+        else if (m[0].is("envelope")) cepstrum_.store(std::clamp((int)argf(m, 1, 0.f), 0, wn_));
         else if (m[0].is("threshold")) threshold_.store(std::max(0.f, argf(m, 1, 0.f)));
         else if (m[0].is("robot")) phaseMode_.store(argf(m, 1, 1.f) != 0.f ? 1 : 0);
         else if (m[0].is("whisper")) phaseMode_.store(argf(m, 1, 1.f) != 0.f ? 2 : 0);
@@ -143,8 +130,8 @@ public:
 
 private:
     struct Chan {
-        std::unique_ptr<Vocoder> voc;
-        std::vector<float> frame, prev, out, ola, oNow, oPrev;
+        std::unique_ptr<musil::dsp::Vocoder> voc;
+        std::vector<float> now, prev, out, ola, oNow, oPrev;
     };
     // one analysis/synthesis frame: overlap-adds a window into ola
     void frame(float pitch, float formant, float speed, float amount) {
@@ -164,48 +151,36 @@ private:
         long xstart = !live_ ? (long)std::floor(pos_) : (long)std::floor(xpos_);
         for (int c = 0; c < ch_; ++c) {
             Chan& x = *chans_[(size_t)c];
-            std::fill(x.frame.begin(), x.frame.end(), 0.f);
-            std::fill(x.prev.begin(), x.prev.end(), 0.f);
             long start = live_ ? 0 : (long)std::floor(pos_);
             for (int k = 0; k < wn_; ++k) {
-                float now, before;
                 if (live_) {                              // the newest wn_ samples, and wn_ ending D earlier
                     int L = (int)ring_.size();
-                    now = ring_[(size_t)((ringPos_ - wn_ + k + 2 * L) % L)];
-                    before = ring_[(size_t)((ringPos_ - wn_ - D + k + 2 * L) % L)];
+                    x.now[(size_t)k] = ring_[(size_t)((ringPos_ - wn_ + k + 2 * L) % L)];
+                    x.prev[(size_t)k] = ring_[(size_t)((ringPos_ - wn_ - D + k + 2 * L) % L)];
                 } else {
-                    now = sample(*sb, start + k, c);
-                    before = sample(*sb, start - D + k, c);
+                    x.now[(size_t)k] = sample(*sb, start + k, c);
+                    x.prev[(size_t)k] = sample(*sb, start - D + k, c);
                 }
-                x.frame[2 * (size_t)(k + offset_)] = now * win_[(size_t)k];
-                x.prev[2 * (size_t)(k + offset_)] = before * win_[(size_t)k];
             }
             x.voc->phaseMode = phaseMode_.load();
             x.voc->crossMode = xmode;
-            x.voc->crossAmount = amount;
+            x.voc->envelope = C;
             if (xmode) {
-                std::fill(x.oNow.begin(), x.oNow.end(), 0.f);
-                std::fill(x.oPrev.begin(), x.oPrev.end(), 0.f);
                 int L = (int)ring2_.size();
                 for (int k = 0; k < wn_; ++k) {
-                    float now, before;
                     if (xb) {
                         auto at = [&](long f) { f = ((f % xb->frames) + xb->frames) % xb->frames; return xb->at(f, c % xb->channels); };
-                        now = at(xstart + k);
-                        before = at(xstart - D + k);
+                        x.oNow[(size_t)k] = at(xstart + k);
+                        x.oPrev[(size_t)k] = at(xstart - D + k);
                     } else {
-                        now = ring2_[(size_t)((ringPos_ - wn_ + k + 2 * L) % L)];
-                        before = ring2_[(size_t)((ringPos_ - wn_ - D + k + 2 * L) % L)];
+                        x.oNow[(size_t)k] = ring2_[(size_t)((ringPos_ - wn_ + k + 2 * L) % L)];
+                        x.oPrev[(size_t)k] = ring2_[(size_t)((ringPos_ - wn_ - D + k + 2 * L) % L)];
                     }
-                    x.oNow[2 * (size_t)(k + offset_)] = now * win_[(size_t)k];
-                    x.oPrev[2 * (size_t)(k + offset_)] = before * win_[(size_t)k];
                 }
-                x.voc->otherNow = x.oNow.data();
-                x.voc->otherPrev = x.oPrev.data();
             }
-            x.voc->process(x.frame.data(), x.prev.data(), x.out.data(), P, F, (float)D, (float)hop_, C, thr);
-            for (int k = 0; k < wn_; ++k)
-                x.ola[(size_t)k] += x.out[2 * (size_t)(k + offset_)] * win_[(size_t)k] * norm_;
+            x.voc->process(x.now.data(), x.prev.data(), xmode ? x.oNow.data() : nullptr, xmode ? x.oPrev.data() : nullptr,
+                           (double)D, (double)hop_, P, F, thr, amount, x.out.data());
+            for (int k = 0; k < wn_; ++k) x.ola[(size_t)k] += x.out[(size_t)k];
         }
         if (xb && live_) xpos_ = std::fmod(xpos_ + hop_ * xb->sr / patch->root()->sampleRate.load(), (double)xb->frames);
         if (live_) return;
@@ -225,9 +200,8 @@ private:
 
     std::string name_;
     bool live_;
-    int ch_, wn_, n_, hop_, offset_;
-    float norm_;
-    std::vector<float> win_, ring_, ring2_;
+    int ch_, wn_, hop_;
+    std::vector<float> ring_, ring2_;
     std::string crossName_;
     BufferBox* xb_ = nullptr;
     double xpos_ = 0.0;
@@ -286,7 +260,7 @@ public:
         const float* x = nullptr;
         for (int c = 0; c < ch_; ++c) {
             if (c == 0 || !inSrc[(size_t)c].empty()) x = sigIn(c, n);   // unconnected: the channel before
-            PartConv& pc = convs_[(size_t)c];
+            auto& pc = convs_[(size_t)c];
             if (pc.ready()) pc.process(x, sigOut(c), n);
             else dsp::fill(sigOut(c), 0.f, n);
         }
@@ -310,7 +284,7 @@ private:
     float gain_ = 1.f;
     bool normalize_ = true;
     Key key_;
-    std::vector<PartConv> convs_;
+    std::vector<musil::dsp::PartConv<float>> convs_;
 };
 
 // ---------------------------------------------------------------- condec
@@ -338,44 +312,22 @@ public:
         float p1 = argf(m, 4, conv ? 1.f : 0.001f), p2 = argf(m, 5, conv ? 0.f : 1.f);
         float scale = conv ? p1 : p2, mix = conv ? p2 : 0.f, threshold = conv ? 0.f : p1;
         long outLen = conv ? x.frames + h.frames - 1 : x.frames;
-        int N = nextPow2(std::max(x.frames, h.frames) + (conv ? h.frames : 0));
         int ch = std::max(x.channels, h.channels);
         SampleBuffer out;
         out.channels = ch;
         out.sr = x.sr;
         out.frames = outLen;
         out.data.assign((size_t)outLen * ch, 0.f);
-        dsp::FFT fft;
-        fft.init(N);
-        std::vector<float> xr(N), xi(N), hr(N), hi(N);
-        for (int c = 0; c < ch; ++c) {
+        std::vector<double> xs((size_t)x.frames), hs((size_t)h.frames);
+        for (int c = 0; c < ch; ++c) {        // Musil's convolution and deconvolution (signals/convolution.h)
             int xc = std::min(c, x.channels - 1), hc = std::min(c, h.channels - 1);
-            std::fill(xr.begin(), xr.end(), 0.f); std::fill(xi.begin(), xi.end(), 0.f);
-            std::fill(hr.begin(), hr.end(), 0.f); std::fill(hi.begin(), hi.end(), 0.f);
-            for (long f = 0; f < x.frames; ++f) xr[(size_t)f] = x.at(f, xc);
-            for (long f = 0; f < h.frames; ++f) hr[(size_t)f] = h.at(f, hc);
-            fft.forward(xr.data(), xi.data());
-            fft.forward(hr.data(), hi.data());
-            float mx = 0.f;
-            for (int k = 0; k < N; ++k) mx = std::max(mx, std::hypot(hr[(size_t)k], hi[(size_t)k]));
-            for (int k = 0; k < N; ++k) {
-                float ar = xr[(size_t)k], ai = xi[(size_t)k], br = hr[(size_t)k], bi = hi[(size_t)k];
-                if (conv) {
-                    xr[(size_t)k] = ar * br - ai * bi;
-                    xi[(size_t)k] = ar * bi + ai * br;
-                } else if (std::hypot(br, bi) > threshold * mx) {
-                    float d = br * br + bi * bi;
-                    xr[(size_t)k] = (ar * br + ai * bi) / d;
-                    xi[(size_t)k] = (ai * br - ar * bi) / d;
-                } else {
-                    xr[(size_t)k] = xi[(size_t)k] = 0.f;
-                }
-            }
-            fft.inverse(xr.data(), xi.data());
+            for (long f = 0; f < x.frames; ++f) xs[(size_t)f] = x.at(f, xc);
+            for (long f = 0; f < h.frames; ++f) hs[(size_t)f] = h.at(f, hc);
+            std::vector<double> y = conv ? musil::dsp::convolve(xs, hs) : musil::dsp::deconvolve(xs, hs, threshold);
             for (long f = 0; f < outLen; ++f) {
-                float v = xr[(size_t)f] / N * scale;
-                if (conv && f < x.frames) v += x.at(f, xc) * mix;
-                out.data[(size_t)f * ch + c] = std::isfinite(v) ? v : 0.f;
+                double v = y[(size_t)f] * scale;
+                if (conv && f < x.frames) v += xs[(size_t)f] * mix;
+                out.data[(size_t)f * ch + c] = std::isfinite(v) ? (float)v : 0.f;
             }
         }
         {
@@ -674,7 +626,7 @@ private:
 
 // ---------------------------------------------------------------- nebula~
 // nebula~ [proto1] [proto2]: sound_math's nebula, advanced granular
-// synthesis. Grains are windowed snippets of two prototypes, each a waveform
+// synthesis; the engine of Musil's nebula (musil/src/signals/nebula.h). Grains are windowed snippets of two prototypes, each a waveform
 // (sine, triangle, square, noise) or a buffer~, mixed by the morph amount.
 // A grain starts every 1 / density seconds and lasts `length` ms; its
 // frequency is in Hz for a waveform and a speed ratio for a buffer~ (1 = as
@@ -696,14 +648,12 @@ class NebulaBox : public Box {
 public:
     explicit NebulaBox(const Message& a) {
         setPorts({P::Control, P::Control, P::Control, P::Control, P::Control}, {P::Signal, P::Signal});
-        proto_[0].name = a.size() > 0 ? a[0].str() : "sine";
-        proto_[1].name = a.size() > 1 ? a[1].str() : proto_[0].name;
-        for (auto& p : proto_) makeTable(p);
-        makeWindow("hann");
-        grains_.resize(kMaxPoly);
+        names_[0] = a.size() > 0 ? a[0].str() : "sine";
+        names_[1] = a.size() > 1 ? a[1].str() : names_[0];
+        for (int k = 0; k < 2; ++k) neb_.setWave(k, names_[k]);
     }
     void resolve() override {
-        for (auto& p : proto_) p.buf = p.table.empty() ? findBuffer(patch, p.name) : nullptr;
+        for (int k = 0; k < 2; ++k) buf_[k] = Neb::isWave(names_[k]) ? nullptr : findBuffer(patch, names_[k]);
     }
     void message(int in, const Message& m) override {
         auto num = [&](size_t k, float def) { return argf(m, k, def); };
@@ -728,178 +678,51 @@ public:
         else if (h.is("jitter")) { jitter_.store(std::clamp(num(1, .5f), 0.f, 1.f)); jitterRnd_.store(std::clamp(num(2, 1), 0.f, 1.f)); }
         else if (h.is("speed")) speed_.store(num(1, 1));
         else if (h.is("grainlets")) grainlets_.store(std::max(0.f, num(1, 0)));
-        else if (h.is("poly")) poly_.store(std::clamp((int)num(1, 256), 1, kMaxPoly));
+        else if (h.is("poly")) poly_.store(std::clamp((int)num(1, 256), 1, Neb::kMaxPoly));
         else if (h.is("seed")) seed_.store((unsigned)num(1, 1));
         else if (h.is("window") && m.size() > 1) {
             std::lock_guard<std::mutex> lk(patch->mutex());
-            makeWindow(m[1].str());
+            neb_.setWindow(m[1].str());
         } else if ((h.is("pitch1") || h.is("pitch2")) && m.size() > 1) {
-            proto_[h.is("pitch1") ? 0 : 1].pitch.store(std::max(0.f, num(1, 0)));
+            pitch_[h.is("pitch1") ? 0 : 1].store(std::max(0.f, num(1, 0)));
         } else if ((h.is("proto1") || h.is("proto2")) && m.size() > 1) {
             std::lock_guard<std::mutex> lk(patch->mutex());
-            Proto& p = proto_[h.is("proto1") ? 0 : 1];
-            p.name = m[1].str();
-            makeTable(p);
-            p.buf = p.table.empty() ? findBuffer(patch, p.name) : nullptr;
+            int k = h.is("proto1") ? 0 : 1;
+            names_[k] = m[1].str();
+            if (!neb_.setWave(k, names_[k])) neb_.setSound(k, nullptr, 0, 1, 44100.0);
+            buf_[k] = Neb::isWave(names_[k]) ? nullptr : findBuffer(patch, names_[k]);
         }
     }
     void dsp(int n) override {
-        float *L = sigOut(0), *R = sigOut(1);
-        std::fill(L, L + n, 0.f);
-        std::fill(R, R + n, 0.f);
-        const double sr = std::max(1.0, (double)patch->root()->sampleRate.load());
-        if (unsigned s = seed_.exchange(0)) rng_ = s;
-        for (int i = 0; i < n; ++i) {
-            if (on_.load(std::memory_order_relaxed) && --untilNext_ <= 0) {
-                spawn(sr, i);
-                double d = density_.load(), r = d * densityRnd_.load();
-                double lo = 1.0 / (d + r), hi = 1.0 / std::max(d - r, 1e-3);
-                untilNext_ = std::max(1.0, (lo + rnd() * (hi - lo)) * sr);
-            }
-            // the read position through a buffer~ (for each prototype)
-            for (auto& p : proto_)
-                if (p.buf && p.buf->buf.frames > 0) {
-                    p.readPos += speed_.load(std::memory_order_relaxed) * p.buf->buf.sr / sr;
-                    double len = (double)p.buf->buf.frames;
-                    p.readPos = std::fmod(p.readPos, len);
-                    if (p.readPos < 0) p.readPos += len;
-                }
+        if (unsigned s = seed_.exchange(0)) neb_.seed(s);
+        auto& p = neb_.p;
+        p.on = on_.load(std::memory_order_relaxed);
+        p.density = density_.load(); p.densityRnd = densityRnd_.load();
+        p.length = length_.load(); p.lengthRnd = lengthRnd_.load();
+        p.freq = freq_.load(); p.freqRnd = freqRnd_.load();
+        p.morph = morph_.load(); p.amp = amp_.load(); p.gliss = gliss_.load();
+        p.jitter = jitter_.load(); p.jitterRnd = jitterRnd_.load();
+        p.speed = speed_.load(); p.grainlets = grainlets_.load(); p.poly = poly_.load();
+        for (int k = 0; k < 2; ++k) {
+            p.pitch[k] = pitch_[k].load(std::memory_order_relaxed);
+            if (Neb::isWave(names_[k])) continue;
+            const SampleBuffer* b = buf_[k] ? &buf_[k]->buf : nullptr;        // the buffer as it is now
+            if (b && b->frames > 0) neb_.setSound(k, b->data.data(), b->frames, b->channels, b->sr);
+            else neb_.setSound(k, nullptr, 0, 1, 44100.0);
         }
-        for (auto& g : grains_) {
-            if (!g.active) continue;
-            for (int i = g.delay; i < n; ++i) {
-                double e = g.envPos;
-                if (e >= kWin) { g.active = false; break; }
-                int ei = (int)e;
-                float w = window_[(size_t)ei] + (float)(e - ei) * (window_[(size_t)ei + 1] - window_[(size_t)ei]);
-                float s = (1.f - g.morph) * read(proto_[0], g.phase[0]) + g.morph * read(proto_[1], g.phase[1]);
-                s *= w * g.amp;
-                L[i] += s * g.left;
-                R[i] += s * g.right;
-                for (int k = 0; k < 2; ++k) g.phase[k] += g.inc[k] * g.glide;
-                g.glide += g.glideStep;
-                g.envPos += g.envStep;
-            }
-            g.delay = 0;
-        }
+        neb_.process(sigOut(0), sigOut(1), n, (double)patch->root()->sampleRate.load());
     }
 
 private:
-    static constexpr int kTable = 4096, kWin = 4096, kMaxPoly = 1024;
-    struct Proto {
-        std::string name;
-        std::vector<float> table;          // a waveform, or empty for a buffer~
-        BufferBox* buf = nullptr;
-        double readPos = 0;
-        std::atomic<float> pitch{0.f};      // a sound's pitch (Hz); 0: freq is a ratio
-    };
-    struct Grain {
-        bool active = false;
-        int delay = 0;
-        double phase[2] = {0, 0}, inc[2] = {0, 0}, envPos = 0, envStep = 0, glide = 1, glideStep = 0;
-        float amp = 0, left = 0, right = 0, morph = 0;
-    };
-    double rnd() {                                   // 0..1, Park-Miller as in the original
-        rng_ = (unsigned)((unsigned long long)rng_ * 16807ULL % 2147483647ULL);
-        return rng_ / 2147483647.0;
-    }
-    void makeTable(Proto& p) {
-        p.table.clear();
-        const std::string& w = p.name;
-        if (w != "sine" && w != "triangle" && w != "square" && w != "noise") return;
-        p.table.assign((size_t)kTable + 1, 0.f);
-        unsigned seed = 12345;
-        for (int i = 0; i < kTable; ++i) {
-            double t = (double)i / kTable, v = 0;
-            if (w == "sine") v = std::sin(2 * dsp::kPi * t);
-            else if (w == "noise") { seed = seed * 1103515245u + 12345u; v = (seed >> 8) / 8388608.0 - 1.0; }
-            else
-                for (int h = 1; h <= 63; h += 2)            // band-limited, odd harmonics
-                    v += w == "square" ? std::sin(2 * dsp::kPi * h * t) / h
-                                       : ((h / 2) % 2 ? -1.0 : 1.0) * std::sin(2 * dsp::kPi * h * t) / (h * h);
-            p.table[(size_t)i] = (float)v;
-        }
-        float peak = 0;
-        for (float v : p.table) peak = std::max(peak, std::fabs(v));
-        for (auto& v : p.table) v /= std::max(peak, 1e-9f);
-        p.table[(size_t)kTable] = p.table[0];
-    }
-    void makeWindow(const std::string& type) {
-        double a0 = .5, a1 = .5, a2 = 0;
-        if (type == "hamming" || type == "hamm") { a0 = .54; a1 = .46; }
-        else if (type == "blackman" || type == "black") { a0 = .42; a1 = .5; a2 = .08; }
-        window_.assign((size_t)kWin + 1, 0.f);
-        for (int i = 0; i <= kWin; ++i) {
-            double t = 2 * dsp::kPi * i / kWin;
-            window_[(size_t)i] = (float)(a0 - a1 * std::cos(t) + a2 * std::cos(2 * t));
-        }
-    }
-    float read(const Proto& p, double ph) const {
-        if (!p.table.empty()) {
-            double x = std::fmod(ph, (double)kTable);
-            if (x < 0) x += kTable;
-            int i = (int)x;
-            return p.table[(size_t)i] + (float)(x - i) * (p.table[(size_t)i + 1] - p.table[(size_t)i]);
-        }
-        if (!p.buf || p.buf->buf.frames <= 0) return 0.f;
-        const SampleBuffer& b = p.buf->buf;
-        double x = std::fmod(ph, (double)b.frames);
-        if (x < 0) x += b.frames;
-        long i = (long)x;
-        float a = b.at(i, 0), c = b.at((i + 1) % b.frames, 0);
-        return a + (float)(x - i) * (c - a);
-    }
-    void spawn(double sr, int at) {
-        int poly = poly_.load();
-        for (int k = 0; k < poly; ++k) {
-            Grain& g = grains_[(size_t)k];
-            if (g.active) continue;
-            double f = freq_.load(), fr = f * freqRnd_.load();
-            f = f - fr + rnd() * 2 * fr;
-            double lenMs = length_.load(), lr = lenMs * lengthRnd_.load();
-            lenMs = lenMs - lr + rnd() * 2 * lr;
-            if (float gl = grainlets_.load(); gl > 0 && std::fabs(f) > 1e-3)
-                lenMs = 1000.0 * gl / std::fabs(f);          // n periods of the frequency
-            double len = std::max(4.0, lenMs * sr / 1000.0);
-            for (int c = 0; c < 2; ++c) {
-                const Proto& p = proto_[c];
-                if (!p.table.empty()) {                          // a waveform: f in Hz
-                    g.inc[c] = f * kTable / sr;
-                    g.phase[c] = 0;
-                } else {                                         // a buffer~: f is a speed ratio
-                    double bsr = p.buf ? p.buf->buf.sr : sr;    // (or Hz, when its pitch is known)
-                    float pitch = p.pitch.load(std::memory_order_relaxed);
-                    g.inc[c] = (pitch > 0 ? f / pitch : f) * bsr / sr;
-                    g.phase[c] = p.readPos;
-                }
-            }
-            double gl = gliss_.load();
-            double target = 1.0 + (rnd() * 2 - 1) * gl;          // glide to f * target
-            g.glide = 1.0;
-            g.glideStep = (target - 1.0) / len;
-            g.envPos = 0;
-            g.envStep = kWin / len;
-            double j = jitter_.load(), jr = j * jitterRnd_.load();
-            double pan = std::clamp(j - jr + rnd() * 2 * jr, 0.0, 1.0);
-            g.left = (float)std::sqrt(pan);
-            g.right = (float)std::sqrt(1.0 - pan);
-            g.amp = amp_.load();
-            g.morph = morph_.load();
-            g.delay = at;
-            g.active = true;
-            return;
-        }
-    }
-
-    Proto proto_[2];
-    std::vector<float> window_;
-    std::vector<Grain> grains_;
-    double untilNext_ = 0;
-    unsigned rng_ = 1;
+    using Neb = musil::dsp::Nebula<float>;     // Musil's nebula (musil/src/signals/nebula.h)
+    Neb neb_;
+    std::string names_[2];
+    BufferBox* buf_[2] = {nullptr, nullptr};
     std::atomic<bool> on_{false};
     std::atomic<float> density_{10.f}, densityRnd_{0.f}, length_{100.f}, lengthRnd_{0.f}, freq_{220.f},
         freqRnd_{0.f}, morph_{0.f}, amp_{.25f}, gliss_{0.f}, jitter_{.5f}, jitterRnd_{1.f}, speed_{1.f},
         grainlets_{0.f};
+    std::atomic<float> pitch_[2] = {0.f, 0.f};
     std::atomic<int> poly_{256};
     std::atomic<unsigned> seed_{0};
 };

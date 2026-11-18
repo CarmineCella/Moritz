@@ -100,6 +100,7 @@ db-locate
 db-read
 dc-block
 dc-block-r
+deconv
 defined?
 deg->rad
 deinterleave
@@ -230,6 +231,7 @@ local-maxima
 log
 log10
 log2
+lores
 loudness-curve
 lower
 lowpass
@@ -305,6 +307,7 @@ moving-source
 mp
 ncols
 nearest
+nebula
 next-pow2
 nil
 nmf
@@ -464,6 +467,7 @@ stft-magnitudes
 str
 sum
 sum-by
+svf
 sym
 synth-render
 tail

@@ -9,7 +9,7 @@ Encodes a mono signal at a direction as an ambisonic sound field of
 (order+1)^2 channels (AmbiX: ACN order, SN3D; at order 1, W Y Z X). Azimuth
 and elevation are numbers or signals; moving sources glide, the gains are
 interpolated over each block. Fields add channel by channel, so several
-sources can be summed before decoding.
+sources can be summed before decoding. The gains are Musil's ambi-gains.
 arg order: the ambisonic order, 1 to 5 (1)
 arg azimuth: degrees, 0 in front, 90 to the left (0)
 arg elevation: degrees, positive up (0)
@@ -31,7 +31,8 @@ Decodes a sound field to loudspeakers on a horizontal ring, one outlet per
 azimuth, in the order given (ambidec~ 1 45 135 -135 -45 is a square: front
 left, back left, back right, front right). It uses the horizontal channels
 only: for an evenly spaced ring of at least 2N+1 speakers this is the exact
-(mode-matching) decoder, with 2D max-rE weights.
+(mode-matching) decoder, with 2D max-rE weights: Musil's ambi-decode on a
+ring.
 arg order: the ambisonic order, 1 to 5 (1)
 arg azimuth: the speakers' azimuths in degrees, one per outlet (45 135 -135 -45 when none is given)
 see: ambienc~ ambirot~ binaural~ dac~

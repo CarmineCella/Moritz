@@ -232,7 +232,7 @@ See also: `line` `function` `sig~` `gain~`
 
 `nebula~ [proto1] [proto2]`
 
-Granular synthesis (sound_math's nebula): clouds of windowed grains read from two prototypes, each a waveform (`sine`, `triangle`, `square`, `noise`) or the name of a buffer~, mixed by `morph`. A grain starts every 1/density seconds, lasts `length` ms and is placed at random in the stereo field; the outlets are left and right.
+Granular synthesis (sound_math's nebula; the engine of Musil's nebula): clouds of windowed grains read from two prototypes, each a waveform (`sine`, `triangle`, `square`, `noise`) or the name of a buffer~, mixed by `morph`. A grain starts every 1/density seconds, lasts `length` ms and is placed at random in the stereo field; the outlets are left and right.
 
 For a waveform the frequency is in Hz; for a buffer~ it is a speed ratio (1 = as recorded), unless `pitch1` or `pitch2` gives the sound's pitch, so that a waveform and a sound can be morphed at the same pitch. The second number after density, length, freq and jitter is randomness, as a ratio of the value: `density 40 .5` gives 20 to 60 grains a second. The inlets after the left one take density, length, frequency and morph as floats.
 
@@ -310,7 +310,7 @@ See also: `lores~` `svf~` `biquad~` `filterdesign` `noise~`
 
 `lores~ [cf] [res]`
 
-Resonant low-pass (an RBJ cookbook biquad whose Q rises from 0.7 to about 25 with the resonance). The cutoff and resonance inlets take signals or floats, read once per block.
+Resonant low-pass (an RBJ cookbook biquad whose Q rises from 0.7 to about 25 with the resonance; Musil's lores). The cutoff and resonance inlets take signals or floats, read once per block.
 
 | Argument | |
 | --- | --- |
@@ -337,7 +337,7 @@ See also: `svf~` `reson~` `biquad~` `filterdesign`
 
 `svf~ [freq] [q]`
 
-State-variable filter (topology-preserving) with four outlets: low-pass, high-pass, band-pass and notch. The frequency and Q inlets take signals or floats, read once per block.
+State-variable filter (topology-preserving; Musil's svf) with four outlets: low-pass, high-pass, band-pass and notch. The frequency and Q inlets take signals or floats, read once per block.
 
 | Argument | |
 | --- | --- |
@@ -423,7 +423,7 @@ See also: `line~` `lores~` `abs~` `sah~`
 
 `conv~ buffer [channels]`
 
-Convolves each inlet with the impulse response in a buffer~, with no latency: the first 256 taps directly, the rest by partitioned FFT. Channel c uses the response's channel c, or its last one; an inlet with nothing connected takes the channel before, so one source into `conv~ hall 2` gives a stereo reverb. The response is normalised to unit energy unless `normalize 0`. It is reloaded when the buffer~ changes.
+Convolves each inlet with the impulse response in a buffer~, with no latency: the first 256 taps directly, the rest by partitioned FFT (the engine is Musil's, musil/src/signals/convolution.h). Channel c uses the response's channel c, or its last one; an inlet with nothing connected takes the channel before, so one source into `conv~ hall 2` gives a stereo reverb. The response is normalised to unit energy unless `normalize 0`. It is reloaded when the buffer~ changes.
 
 | Argument | |
 | --- | --- |
@@ -1130,7 +1130,7 @@ See also: `index~` `count~` `record~` `buffer~`
 
 `condec`
 
-Convolution and deconvolution of whole buffer~s, computed at once when asked (the author's condec). The result replaces the contents of the out buffer~, at the sample rate of the first; channels pair up, and the buffer with fewer channels repeats its last. Deconvolution divides the spectrum of y by that of h where h is above a threshold, so a recording can be "un-reverberated" by its impulse response. The outlet bangs when the result is in.
+Convolution and deconvolution of whole buffer~s, computed at once when asked (the author's condec; the deconvolution is Musil's deconv). The result replaces the contents of the out buffer~, at the sample rate of the first; channels pair up, and the buffer with fewer channels repeats its last. Deconvolution divides the spectrum of y by that of h where h is above a threshold, so a recording can be "un-reverberated" by its impulse response. The outlet bangs when the result is in.
 
 | Message | |
 | --- | --- |
@@ -1358,7 +1358,7 @@ See also: `framedelta~` `frameaccum~` `cartopol~` `pvlock~`
 
 `sparkle~ [buffer] [channels] [window] [overlap]`
 
-The phase vocoder of the author's sparkle, with phase locking and formant (spectral envelope) preservation. With a buffer~ name it plays the buffer: the left inlet is the speed. Without one it transforms the signal in its left inlet, one window late. Pitch and formant ratios (inlets 2 and 3, 0.05 to 8) are read once per frame. Cross-synthesis mixes in a second sound: a buffer~ (read at the same position, or on its own when the first sound is live), or else the signal in inlet 5; inlet 4 is the amount (0.5).
+The phase vocoder of the author's sparkle, with phase locking and formant (spectral envelope) preservation: the engine of Musil's pvoc. With a buffer~ name it plays the buffer: the left inlet is the speed. Without one it transforms the signal in its left inlet, one window late. Pitch and formant ratios (inlets 2 and 3, 0.05 to 8) are read once per frame. Cross-synthesis mixes in a second sound: a buffer~ (read at the same position, or on its own when the first sound is live), or else the signal in inlet 5; inlet 4 is the amount (0.5).
 
 | Argument | |
 | --- | --- |
@@ -1375,7 +1375,7 @@ The phase vocoder of the author's sparkle, with phase locking and formant (spect
 | `stop` | stops |
 | `loop [1/0]` | loops the buffer~ (1 when no argument; off at first) |
 | `envelope C` | keeps the spectral envelope with C cepstral coefficients, so transposed voices keep their formants (30-80 for voices; 0 off, the default) |
-| `threshold x` | drops the bins whose amplitude is at or below x, to remove noise (0 = off) |
+| `threshold x` | drops the bins weaker than x times a full-scale sine, to remove noise (0.001 is -60 dB; 0 = off) |
 | `robot [1/0]` | robot voice: all phases set to zero (1 when no argument) |
 | `whisper [1/0]` | whisper: random phases (1 when no argument) |
 | `cross mode [buffer]` | cross-synthesis with the buffer~ or inlet 5: 1 multiplicative, 2 spectral flattener (the second sound's envelope on the first, with the envelope order, 40 if none), 3 morph, 0 off |
@@ -1399,7 +1399,7 @@ See also: `groove~` `pvlock~` `specenv~` `buffer~` `pitchshift~` `pfft~`
 
 `nmf [components] [iterations]`
 
-Separates a buffer~ into parts that repeat (notes, sources) by non-negative matrix factorisation of its magnitude spectrogram, V ~ W H, with Musil's KL updates: W holds a spectrum per part, H when and how loud it sounds. Each part is resynthesised with the original phases through a soft mask, so the parts add up to the sound (mixed to mono). It works as a background job; messages sent while it works wait their turn, in order.
+Separates a buffer~ into parts that repeat (notes, sources) by non-negative matrix factorisation of its magnitude spectrogram, V ~ W H, with Musil's nmf (the same code): W holds a spectrum per part, H when and how loud it sounds. Each part is resynthesised with the original phases through a soft mask, so the parts add up to the sound (mixed to mono). It works as a background job; messages sent while it works wait their turn, in order.
 
 | Argument | |
 | --- | --- |
@@ -1491,7 +1491,7 @@ See also: `pfft~` `cartopol~` `sparkle~` `impose~`
 
 `ambienc~ [order] [azimuth] [elevation]`
 
-Encodes a mono signal at a direction as an ambisonic sound field of (order+1)^2 channels (AmbiX: ACN order, SN3D; at order 1, W Y Z X). Azimuth and elevation are numbers or signals; moving sources glide, the gains are interpolated over each block. Fields add channel by channel, so several sources can be summed before decoding.
+Encodes a mono signal at a direction as an ambisonic sound field of (order+1)^2 channels (AmbiX: ACN order, SN3D; at order 1, W Y Z X). Azimuth and elevation are numbers or signals; moving sources glide, the gains are interpolated over each block. Fields add channel by channel, so several sources can be summed before decoding. The gains are Musil's ambi-gains.
 
 | Argument | |
 | --- | --- |
@@ -1550,7 +1550,7 @@ See also: `ambienc~` `ambidec~` `binaural~`
 
 `ambidec~ order azimuth ...`
 
-Decodes a sound field to loudspeakers on a horizontal ring, one outlet per azimuth, in the order given (ambidec~ 1 45 135 -135 -45 is a square: front left, back left, back right, front right). It uses the horizontal channels only: for an evenly spaced ring of at least 2N+1 speakers this is the exact (mode-matching) decoder, with 2D max-rE weights.
+Decodes a sound field to loudspeakers on a horizontal ring, one outlet per azimuth, in the order given (ambidec~ 1 45 135 -135 -45 is a square: front left, back left, back right, front right). It uses the horizontal channels only: for an evenly spaced ring of at least 2N+1 speakers this is the exact (mode-matching) decoder, with 2D max-rE weights: Musil's ambi-decode on a ring.
 
 | Argument | |
 | --- | --- |

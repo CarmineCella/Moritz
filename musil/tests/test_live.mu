@@ -149,6 +149,9 @@ function fx (amp) (* amp (comb (noise 0) 441 0.8))
 check (== (length (synth-render fx (list (list 'amp 0.5)) 0.1)) 4410) "synth-render: noise and comb, mono"
 function verb (amp) (* amp (conv (noise 0) (vec 1 (zeros 300) 0.5)))
 check (> (rms (synth-render verb (list (list 'amp 0.5)) 0.2)) 0.1) "synth-render: partitioned conv streams"
+function filt (freq) (+ (svf (osc sr freq table) sr 800 0.6 "band") (lores (osc sr freq table) sr 1200 0.5))
+check (near? (synth-render filt (list (list 'freq 330)) 0.2) (filt (+ (zeros 8820) 330)) 1e-5) "synth-render: svf and lores equal their offline versions"
+check (contains? (streamable) "svf") "streamable: svf"
 check (contains? (error-of (function () (synth-render beep (list (list 'nope 1)) 0.1))) "no parameter") "synth-render: unknown parameter"
 
 ; --- the scheduler: loops in beats, redefined while running ---

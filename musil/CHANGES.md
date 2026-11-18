@@ -1,5 +1,32 @@
 # Changes
 
+## 0.11 (not yet released)
+
+Musil is the reference of Moritz's signal processing: where Moritz has an object for what a Musil
+function does, the object runs Musil's code. The engines are in `src/signals/` (and
+`src/scientific/nmf.h`), self-contained C++ that Moritz builds into its objects.
+
+- **The phase vocoder is one engine** (`src/signals/vocoder.h`), `pvoc`'s and `sparkle~`'s.
+  Each frame's frequencies are measured against the frame one analysis hop before it, so a
+  real-time player may freeze, jump and play backwards; the rest is `pvoc` as it was (the envelope
+  that rides the harmonic peaks, every bin locked to a peak). Whisper's random phases are drawn
+  the same way on every system.
+- **`nebula`**: granular synthesis (`src/signals/nebula.h`, the engine of `nebula~`): clouds of
+  grains of two prototypes, waveforms or sounds, with density, length, frequency, glissando and
+  pan, spread at random and able to ramp; a seed gives the same cloud as `nebula~`. Example
+  `nebula.mu`.
+- **`svf`**: the state-variable filter of `svf~` (`src/signals/filters.h`), low, high, band or
+  notch, with a frequency and a resonance that may move; it streams in a synth. **`lores`**: the
+  resonant lowpass of `lores~`. `filters.mu` uses both.
+- **`deconv`**: deconvolution (`src/signals/convolution.h`, with the partitioned convolution of
+  `conv~` and the whole-buffer convolution of `condec`).
+- **`nmf` and `nmf-with-parts` are C++** (`src/scientific/nmf.h`, the factorisation of Moritz's
+  `nmf` box), about five times faster than the Musil they were; `nmf-separate` and the supervised
+  separation are faster with them. The starting point is drawn the same way on every system.
+- **The ambisonic harmonics and decoders** (`src/signals/ambisonics.h`) and the reader of
+  head-response sets (`src/signals/hrtf.h`) are shared with `ambienc~`, `ambidec~`, `binaural~`
+  and `hrtf~`; `src/signals/fft.h` is the FFT of all the engines and of `mir.h`.
+
 ## 0.10
 
 Musil now lives in Moritz's repository (`musil/`), as the scripting language of Moritz, and is

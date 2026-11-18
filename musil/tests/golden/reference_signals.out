@@ -81,7 +81,7 @@ pvoc-cross       : modes 1 (multiplicative), 2 (flattener), 3 (morph); denoise, 
 robotize, whisperize, denoise: lengths 4096 4032 4096
 
 --- hpss and onsets ---
-hpss             : harmonic rms 0.349 percussive rms 0.069 ; they add up to the input within 0
+hpss             : harmonic rms 0.352 percussive rms 0.075 ; they add up to the input within 0
 onset-strength   : 28 values (the spectral flux per frame)
 onsets           : (0 0.248) (seconds; 0 first)
 onsets-adaptive  : (0 0.248) (threshold on a moving median of the flux)
@@ -93,7 +93,7 @@ nmf-learn-parts, nmf-separate-with: supervised, parts learnt from each source al
 
 --- morphology ---
 frame-spectra    : 61 frames of 1024 bins (the database's feature space, per frame)
-spectral-similarity: tone vs itself 0.98 , tone vs noise 0.06
+spectral-similarity: tone vs itself 0.98 , tone vs noise 0.07
 event-rate       : 3 events that change the spectrum; rates up to 1 a second
 polyphony-estimate: (1 1 1 1)  register-curve: centroid 57 lowest partial 57 (MIDI)
 loudness-curve   : (-10 -9.9 -9.9) dB; coherence-time: (0.13 0.06 0.83) s
@@ -112,7 +112,7 @@ speaker-ring 4   : (0 90 180 -90)
 ambi-decode      : levels of a source at 45 on that ring (0.356 0.356 0 0)
 pan-n            : levels on a ring of 8, source at 100 (0 0 0.684 0.195 0 0 0 0)
 hrir 90 0        : two ears, 23 samples; the far ear later and quieter; 710 measured KEMAR directions loaded (hrtf-unload: the spherical model)
-binaural         : a left click, ear levels (0.293 0.14)
+binaural         : a left click, ear levels (0.294 0.139)
 binaural-decode  : B-format for headphones; a front source (1.15 1.15)
 moving-source, ambi-render, channel, stereo-add, normalize-peak-stereo: see spatial.mu
 

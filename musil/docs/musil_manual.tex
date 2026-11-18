@@ -424,6 +424,19 @@ needs and without what it does itself.
         and draws by itself, so a script renders into a buffer and a patch plays it, and a
         result is sent to a \texttt{plot} box. In a score, synths render as silence.
         \musil{display} returns without drawing.
+  \item \textbf{One implementation.} Where Moritz has an object for what a Musil function
+        does, the object runs Musil's code, the C++ of \texttt{src/signals},
+        \texttt{src/music} and \texttt{src/scientific}: \texttt{sparkle\textasciitilde} is
+        \musil{pvoc}'s engine (\texttt{vocoder.h}), \texttt{nebula\textasciitilde}
+        \musil{nebula}'s (\texttt{nebula.h}), \texttt{conv\textasciitilde} and
+        \texttt{condec} are \texttt{convolution.h}, \texttt{svf\textasciitilde} is
+        \musil{svf} (\texttt{filters.h}), the ambisonic objects use \musil{ambi-gains} and
+        \musil{ambi-decoder} (\texttt{ambisonics.h}) and read the head responses as
+        \musil{hrtf-load} does (\texttt{hrtf.h}), \texttt{nmf} is \musil{nmf}
+        (\texttt{scientific/nmf.h}), \texttt{kmeans} is \musil{kmeans}, and the analysis,
+        atoms and sound-types boxes are \texttt{mir.h}, \texttt{maple.h} and
+        \texttt{soundtypes.h}. Moritz's tests compare each pair. Musil is the reference:
+        an algorithm changes here, and both follow.
   \item \textbf{The \texttt{code} box.} A script inside a patch, run off the audio thread
         when it receives a bang: its inlets set variables, its outlets send lists, and it
         reads and writes buffers. It may do what a patch may do (read and write files) but
@@ -1134,8 +1147,13 @@ print (accuracy (knn-test model test) test)
 Offline signal processing on vectors. A signal is a vector of samples; a complex
 spectrum is \musil{(list re im)}; a polar spectrum is \musil{(list mag phase)}. The FFT,
 the table oscillator, the IIR filter, delay, resampling, autocorrelation, peak
-picking and gather are C++; generators, windows, convolution, the STFT and its
-inverse, cepstral envelopes, the phase vocoder, the spectral and temporal descriptors,
+picking and gather are C++, and so are the engines in \texttt{src/signals/}, which
+Moritz's objects run too: the phase vocoder (\texttt{vocoder.h}), granular synthesis
+(\texttt{nebula.h}), convolution and deconvolution (\texttt{convolution.h}), the
+state-variable filter (\texttt{filters.h}), the ambisonic harmonics and decoders
+(\texttt{ambisonics.h}), the reader of head responses (\texttt{hrtf.h}), the analyses of
+\texttt{mir.h} and their FFT (\texttt{fft.h}). Generators, windows, convolution, the STFT and its
+inverse, cepstral envelopes, the spectral and temporal descriptors,
 the RBJ biquads, comb and allpass sections and the Schroeder reverb are Musil, as
 compositions of vector operations; so are \musil{converb} (a convolution reverb through
 any response, dry and wet, per channel) and \musil{concerthall} (the Concertgebouw's
@@ -1148,9 +1166,9 @@ material whose loudness drifts) and \musil{segments} build onset detection from 
 spectral flux in Musil; onsets always start with 0 and are placed at the sample where
 the energy rises.
 
-\textbf{Separation by NMF.} \musil{nmf V k iterations} (in \texttt{scientific}, fifteen
-lines of Musil on the C++ matrix product: Lee and Seung's multiplicative updates for the
-KL divergence) factors a non-negative matrix into k parts; \musil{nmf-separate x n hop k
+\textbf{Separation by NMF.} \musil{nmf V k iterations} (in \texttt{scientific}, C++:
+Lee and Seung's multiplicative updates for the KL divergence, the factorisation of Moritz's
+\texttt{nmf} box) factors a non-negative matrix into k parts; \musil{nmf-separate x n hop k
 iterations} applies it to the magnitude spectrogram and splits the sound into k sources by
 Wiener masks that add up to the input. Supervised separation, when examples of each source
 exist: \musil{nmf-learn-parts} learns a few parts from each example alone,
@@ -1194,7 +1212,7 @@ spherical-head model (\musil{hrir-model}: interaural delay and head shadow only,
 and right but no front/back or height, which are cues of the pinna that only measured
 responses carry); \musil{hrtf-load} takes another set in the same CSV layout.
 \musil{binaural} renders a source through it, \musil{binaural-decode} renders B-format
-through ten virtual speakers. Every one of these streams in a synth as well (\musil{live});
+through seventeen virtual speakers. Every one of these streams in a synth as well (\musil{live});
 \musil{binaural} as a node crossfades its responses when the direction moves, so a sound
 can be flown around the listener from two sliders. \texttt{examples/spatial.mu},
 \texttt{flyby.mu} (a helicopter in front, overhead, behind and around, also as third-order
@@ -1213,15 +1231,33 @@ var lp (lowpass x 44100 500 0.707)
 print (spectral-centroid (magnitude-spectrum x) (spectrum-freqs 65536 44100))
 \end{lstlisting}
 
-The phase vocoder is one engine, \musil{pvoc}, in C++ (a frame is sixty vector
-operations on 4096 bins, ten thousand times a minute): a fixed synthesis hop with the
-analysis hop derived from the stretch, zero-phase windowing, phases locked to the
-nearest spectral peak, pitch shift and formant move in the spectrum, envelope
+The phase vocoder is one engine, \musil{pvoc}, in C++ (\texttt{src/signals/vocoder.h},
+the engine of Moritz's \texttt{sparkle\textasciitilde}): a fixed synthesis hop with the
+analysis hop derived from the stretch, every frame's frequencies measured against the
+frame one analysis hop before it (so a real-time player may also freeze, jump and play
+backwards), zero-phase windowing, phases locked to the nearest spectral peak, pitch shift and formant move in the spectrum, envelope
 preservation through the cepstral envelope, denoising, three cross-synthesis modes and
 two phase effects, every parameter able to ramp over the file. \musil{pvoc-stretch},
 \musil{pvoc-pitch}, \musil{pvoc-pitch-formant}, \musil{pvoc-formants},
 \musil{pvoc-cross}, \musil{denoise}, \musil{robotize} and \musil{whisperize} are
-one-line wrappers around it.
+one-line wrappers around it. The threshold of denoising is a fraction of the magnitude a
+sine at the sound's peak would have.
+
+\textbf{Granular synthesis.} \musil{nebula sr seconds opts} renders a cloud of grains
+(\texttt{src/signals/nebula.h}, the engine of Moritz's \texttt{nebula\textasciitilde}):
+grains of two prototypes, waveforms or sounds, mixed by \texttt{"morph"}, with density,
+length, frequency, glissando and pan, each spread at random by a ratio of it and able to
+ramp over the cloud; with a seed, the same cloud as \texttt{nebula\textasciitilde}'s.
+\texttt{examples/nebula.mu}.
+
+\textbf{Filters and deconvolution.} Besides the RBJ biquads (\musil{lowpass},
+\musil{highpass}, \musil{bandpass}, \musil{notch}, \musil{peak-eq}, the shelves),
+\musil{svf x sr freq q type} is a state-variable filter (low, high, band or notch; the
+filter of Moritz's \texttt{svf\textasciitilde}) whose frequency and resonance may be vectors
+as long as the sound, and \musil{lores} the resonant lowpass of
+\texttt{lores\textasciitilde}; both stream in a synth. \musil{deconv y h} undoes a
+convolution (the spectrum of y divided by that of h where h is not too weak: Moritz's
+\texttt{condec}), to remove a measured room from a recording or to measure a response.
 
 \input{generated/signals.tex}
 
@@ -1859,8 +1895,9 @@ All in \texttt{musil/examples/}, all run by \texttt{ctest} and \texttt{make test
 \texttt{music\_demo.mu} & temperament, scales, pitch-class sets, a sound written to a WAV \\
 \texttt{chords.mu} & pitch-class sets as vectors: distances, clustering, a PCA chord map \\
 \texttt{matrices.mu}, \texttt{iris.mu} & linear algebra; PCA, k-means and KNN on the Iris data \\
-\texttt{stft, filters, reverb, cross\_synth, additive, features} & signal processing on recordings \\
+\texttt{stft, filters, reverb, cross\_synth, additive, features} & signal processing on recordings (\texttt{filters.mu}: biquads, the state-variable filter swept, \musil{lores}) \\
 \texttt{phase\_vocoder.mu} & time stretching, pitch shifting with and without formants, robot, whisper \\
+\texttt{nebula.mu} & granular clouds: sine grains, a sine cloud turning square, grains of a voice, a voice and a triangle at the same pitch, grainlets \\
 \texttt{plots.mu}, \texttt{iris\_plot.mu} & waveforms, spectrograms, responses, clusters, surfaces \\
 \texttt{live\_play.mu}, \texttt{live\_chorale.mu}, \texttt{live\_probe.mu} & sounds through the device; a four-voice chorale scheduled with \musil{sequence}; a device check \\
 \texttt{live\_synth.mu}, \texttt{live\_offline.mu} & instruments as functions, played and changed live; the same rendered offline with parameter curves \\

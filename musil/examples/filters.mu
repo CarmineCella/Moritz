@@ -26,6 +26,15 @@ write-wav "/tmp/musil_bp.wav" sr bp
 var boosted (peak-eq x sr 2500 2 12)
 print "peak +12 dB @2500 centroid:" (centroid-of boosted) "Hz"
 
+; the state-variable filter: four responses of one filter (q 0..1 is the resonance), and a cutoff that
+; moves (freq as a vector as long as the sound); lores, the resonant lowpass of Moritz's lores~
+print "svf low 500      centroid:" (centroid-of (svf x sr 500 0.5 "low")) "Hz"
+print "svf band 1000    centroid:" (centroid-of (svf x sr 1000 0.8 "band")) "Hz"
+var sweep (svf x sr (+ 200 (* 3000 (/ (range (length x)) (length x)))) 0.85 "band")
+write-wav "/tmp/musil_svf_sweep.wav" sr (normalize-peak sweep)
+print "svf band sweep 200 -> 3200 Hz -> /tmp/musil_svf_sweep.wav"
+print "lores 800 res .7 centroid:" (centroid-of (lores x sr 800 0.7)) "Hz"
+
 ; the coefficients themselves, and a filter's impulse response
 var coeffs (biquad "lowpass" sr 300 0.707 0)
 print "lowpass b:" (fixed (head coeffs) 5) " a:" (fixed (last coeffs) 5)

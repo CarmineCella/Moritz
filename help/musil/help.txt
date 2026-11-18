@@ -539,6 +539,16 @@
   (transpose M)
 #det
   (det M)
+#nmf
+  (nmf V k iterations)
+  => (list W H): V (r x c, non-negative) ~ W H with W r x k and H k x c, both
+  non-negative, by Lee & Seung's multiplicative updates for the KL divergence (the usual choice for
+  magnitude spectrograms; scientific/nmf.h, the factorisation of Moritz's nmf box). Columns of W are the
+  parts (spectral shapes, of unit sum), rows of H their activations over time (the scale is in H)
+#nmf-with-parts
+  (nmf-with-parts V W iterations)
+  => H: the activations of known parts W (its columns), V ~ W H with W
+  fixed: supervised NMF, when the parts were learnt from examples of each source
 #rank
   (rank M)
 #inv
@@ -564,7 +574,8 @@
   => (list eigenvalues eigenvectors) of a symmetric matrix by Jacobi rotations;
 #kmeans
   (kmeans M k)
-  => (list labels centroids): labels is a vector of cluster indices, centroids a k x d matrix
+  => (list labels centroids): labels is a vector of cluster indices, centroids a k x d matrix.
+  k-means++ starts and Lloyd's iterations, ten starts, the tightest kept (the same as Moritz's kmeans box)
 #knn
   (knn training k queries)
   => list of predicted labels.
@@ -765,16 +776,6 @@
 #shuffle
   (shuffle L)
   a new list in random order (Fisher-Yates)
-#nmf
-  (nmf V k iterations)
-  V (r x c, non-negative) ~ W H with W r x k and H k x c, both non-negative:
-  Lee & Seung's multiplicative updates for the KL divergence (the usual choice
-  for magnitude spectrograms); => (list W H). Columns of W are the parts
-  (spectral shapes), rows of H their activations over time.
-#nmf-with-parts
-  (nmf-with-parts V W iterations)
-  the activations H of known parts W (their columns), V ~ W H with W fixed:
-  supervised NMF, when the parts were learnt from examples of each source
 #mat-min mat-max
   (mat-min M)  (mat-max M)
   the smallest and the largest element
@@ -825,7 +826,20 @@
   => feedback comb y[n] = x[n] + g y[n-d]; (allpass x d g) => Schroeder allpass
 #pvoc
   (pvoc x opts)
-  after sparkle: fixed synthesis hop I = window/overlap, analysis hop D = I/stretch
+  sparkle's phase vocoder (signals/vocoder.h, the engine of Moritz's sparkle~) over
+#deconv
+  (deconv y h [threshold])
+  => x such that (conv x h) ~ y, as long as y: the spectrum of y divided by that
+  of h where |H| is above threshold (0.001) times its peak, else 0 (signals/convolution.h, as Moritz's
+  condec): a recording un-reverberated by a measured response, or a response measured from a known sweep
+#svf
+  (svf x sr freq q type)
+  => x through a state-variable filter (signals/filters.h, as Moritz's svf~);
+  type is "low" "high" "band" or "notch"; q in 0..1 is the resonance; freq and q are numbers or vectors
+  as long as x (a moving filter). Streams in a synth (freq and q read once per block there).
+#nebula
+  (nebula sr seconds opts)
+  => (list left right): a cloud of grains (signals/nebula.h, the engine of
 #adsr
   (adsr sr gate a d s r)
   => an envelope following a gate signal (1 = on, 0 = off): attack a and
@@ -1137,6 +1151,9 @@
 #lowpass highpass bandpass notch
   (lowpass x sr f0 q)  (highpass x sr f0 q)  (bandpass x sr f0 q)  (notch x sr f0 q)
   one biquad, applied
+#lores
+  (lores x sr cutoff res)
+  a resonant lowpass, res 0..1 (the biquad of Moritz's lores~: q = 0.707 + 24 res^2)
 #highpass
   (highpass x sr f0 q)
   a highpass biquad, applied
@@ -2809,6 +2826,9 @@
 #send
   (send name values...)
   to every receive name (as a send box, or a ; message)
+#out
+  (out k values...)
+  out of outlet k of the code box (from 1); a list is sent as one message
 #buffer
   (buffer name)
   the channels of a buffer~ as vectors; (buffer-rate name) its sample rate
