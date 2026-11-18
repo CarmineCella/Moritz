@@ -47,9 +47,9 @@ void fl_open_display();    // declared in FL/platform.H, which drags in X11 here
 namespace {
 
 #ifdef __APPLE__
-void openFromFinder(const char* path) {    // double-clicked in the Finder: its own window
-    moritz::App::get().openDocument(path);
-}
+// double-clicked in the Finder: its own window (once the application is ready: at launch the system
+// can ask before the command line has been read)
+void openFromFinder(const char* path) { moritz::App::get().openLater(path); }
 #endif
 
 void writeWav(const char* path, const std::vector<float>& data, int ch, int sr) {
@@ -293,6 +293,11 @@ int main(int argc, char** argv) {
     }
 
     Fl::lock();                          // lets the MIDI thread wake the GUI (Fl::awake)
+#ifdef __APPLE__
+    // before anything opens the display (App::init does): the files the Finder opens the program with
+    // arrive as the display opens, and would be lost without it
+    fl_open_callback(openFromFinder);
+#endif
     Fl::scheme("gtk+");
     Fl::visual(FL_DOUBLE | FL_RGB);
     Fl::background(42, 44, 50);          // dark widgets for dialogs and choices
@@ -307,15 +312,13 @@ int main(int argc, char** argv) {
     // --window-png: drawn for tests, never waiting for an answer (dialogs answer answer=<n>, default 0)
     if (windowPng) moritz::setBatchMode(true);
     app.init();
-#ifdef __APPLE__
-    fl_open_callback(openFromFinder);    // double-clicked .moritz files in the Finder
-#endif
     for (int k = 1; k < argc; ++k)
         if (std::string(argv[k]) == "--no-audio" || std::string(argv[k]) == "--window-png") app.startAudio = false;
     for (int k = 1; k < argc; ++k)       // each patch on the command line in its window
         if (argv[k][0] != '-' && std::string(argv[k]).find('=') == std::string::npos &&
             (k == 1 || std::string(argv[k - 1]) != "--window-png") && std::string(argv[k]) != "run")
             app.openDocument(moritz::portablePath(argv[k]));
+    app.setReady();                      // and the files the system asked for meanwhile
     // --window-png out.png [patch] [zoom=z]: draws the first document window
     // (toolbar, canvas, status bar) into an image, without showing it: for tests.
     // With a code file (or open=<id> of a code box): its editor; run: runs it first; console=out2.png: the

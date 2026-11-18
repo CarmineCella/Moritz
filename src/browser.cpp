@@ -8,6 +8,7 @@
 // the examples folder with no list to maintain.
 
 #include "gui.h"
+#include "fileio.h"
 #include "reference.h"
 
 #include <FL/Fl_Check_Button.H>
@@ -386,7 +387,8 @@ std::vector<std::string> App::recentFiles() {
     return out;
 }
 
-void App::addRecent(const std::string& path) {
+void App::addRecent(const std::string& given) {
+    std::string path = fileio::absolute(given);   // the same file however it was named
     std::vector<std::string> list = recentFiles();
     list.erase(std::remove(list.begin(), list.end(), path), list.end());
     list.insert(list.begin(), path);

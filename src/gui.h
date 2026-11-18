@@ -257,10 +257,13 @@ public:
     std::vector<MainWindow*> docs;
     bool quitting = false;
     bool startAudio = true;     // --no-audio: start with audio off
+    bool ready = false;         // the command line is read: files the system asks for open at once
 
     void init();                                    // after FLTK is set up
     MainWindow* newDocument();                      // File > New: an empty window
     MainWindow* openDocument(const std::string& path);   // reuses an empty Untitled window
+    void openLater(const std::string& path);        // the system asked (Finder): opened once ready
+    void setReady();                                // the command line is read: open what was asked
     void openDialog();                              // File > Open...
     void importDialog();                            // File > Import from Max...
     MainWindow* importMax(const std::string& path);
@@ -281,7 +284,7 @@ public:
     bool browserAtStartup();
     void setBrowserAtStartup(bool on);
     std::vector<std::string> recentFiles();
-    void addRecent(const std::string& path);
+    void addRecent(const std::string& path);        // stored as an absolute path
     void showBanner();                  // Shift+Cmd+J: Max und Moritz
     void showConsole();
     void settingsChanged();             // the settings changed: every window shows them
@@ -330,6 +333,7 @@ private:
     std::vector<PatchWindow*> helpWindows_;
     std::vector<PatchTextWindow*> textWindows_;
     std::vector<CodeWindow*> codeWindows_;
+    std::vector<std::string> openLater_;      // asked to open before the command line was read
     Fl_Menu_Bar* sysMenu_ = nullptr;          // macOS: one menu bar for all windows
     Fl_Double_Window* console_ = nullptr;
     Fl_Text_Display* consoleView_ = nullptr;

@@ -501,7 +501,8 @@ MainWindow* App::newDocument() {
     return w;
 }
 
-MainWindow* App::openDocument(const std::string& path) {
+MainWindow* App::openDocument(const std::string& given) {
+    std::string path = fileio::absolute(given);      // the same file however it was named
     for (auto* d : docs)                              // already open: bring it forward
         if (!d->path().empty() && d->path() == path) { d->show(); return d; }
     if (path.size() > 3 && path.compare(path.size() - 3, 3, ".mu") == 0) {   // a Musil script: the editor
@@ -517,6 +518,18 @@ MainWindow* App::openDocument(const std::string& path) {
     }
     d->show();
     return d;
+}
+
+void App::openLater(const std::string& path) {
+    if (ready) { openDocument(path); return; }
+    openLater_.push_back(path);         // App::init and the command line first (main.cpp)
+}
+
+void App::setReady() {
+    ready = true;
+    auto later = std::move(openLater_);
+    openLater_.clear();
+    for (auto& p : later) openDocument(p);
 }
 
 void App::openDialog() {
@@ -726,7 +739,8 @@ CodeWindow* App::newCode() {
     return w;
 }
 
-CodeWindow* App::openCode(const std::string& path) {
+CodeWindow* App::openCode(const std::string& given) {
+    std::string path = fileio::absolute(given);
     for (auto* w : codeWindows_)
         if (w->path() == path) { w->show(); return w; }
     auto* w = new CodeWindow();

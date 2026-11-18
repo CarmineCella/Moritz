@@ -61,6 +61,11 @@ status=0
 if cmp -s "$T/big.moritz" "$T/big-original.moritz" && grep -q "alert: Can't save" "$out" &&
    [ -z "$(ls -A "$T" | grep '\.tmp$')" ]; then ok; else fail "a failed save keeps the file"; fi
 
+# 11. Recent files hold absolute paths, whatever the command line said
+( cd "$G" && "$MORITZ" numbers.moritz --window-png none > "$out" 2>&1 )
+if grep -rq "numbers.moritz" "$HOME" 2>/dev/null && ! grep -rq "^0:numbers.moritz" "$HOME" 2>/dev/null; then ok
+else fail "recent files: absolute paths"; fi
+
 rm -rf "$T"
 echo "$count interface cases, $fails failed"
 [ $fails -eq 0 ]
