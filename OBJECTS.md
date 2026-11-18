@@ -3932,17 +3932,18 @@ See also: `buffer~` `waveform~` `soundtypes` `melbands~` `filterplot` `spectrosc
 
 ### `code`
 
-`code [inlets] [outlets] [file.mu]`
+`code [inlets] [outlets] [file.mu] [@trusted]`
 
 A script in Musil inside the patch, as js is in Max. It runs off the audio thread when it gets a bang, in an interpreter of its own that keeps its variables from one run to the next (with the std and signals libraries loaded; load "music.mu" or "scientific.mu" for the others), and the last outlet bangs when it has run. Its inlets set the variables in1, in2... (a number, a vector for a list of numbers, a string, or a list; nil until a value comes): a message to the left inlet sets in1 and runs the script, the other inlets only store. In the script, (out k values...) sends out of outlet k; (buffer name) reads a buffer~ (a vector per channel), (buffer-rate name) its rate, (set-buffer! name x [rate]) writes one, and (send name values...) reaches the receive boxes of that name.
 
-The script is kept in the patch, or in the .mu file the box names (read at every run, next to the patch). Double-click the box (Cmd-double-click when editing) to open it in the code editor: Cmd-S puts it back into the box, Cmd-Enter runs a block in the box's interpreter. What it prints goes to the Console. A code box may read and write files, as a patch does; it may not run programs, delete files, use the network, wait or quit (exec, remove, udp-send, udp-receive, serve, input, sleep, exit: refused with an error). The Console and moritz --run have all of Musil.
+The script is kept in the patch, or in the .mu file the box names (read at every run, next to the patch). Double-click the box (Cmd-double-click when editing) to open it in the code editor: Cmd-S puts it back into the box, Cmd-Enter runs a block in the box's interpreter. What it prints goes to the Console. A code box reads files anywhere and writes them only in its patch's folder (a relative path is there) and in ~/Documents/Moritz; it does not run programs, use the network, wait or quit (exec, udp-send, serve, sleep, exit ... stop with "not allowed here"). With @trusted, its first run asks whether the patches in that folder may do everything; the answer is remembered. The Console and moritz --run have all of Musil.
 
 | Argument | |
 | --- | --- |
 | `inlets` | 1 to 16 (1) |
 | `outlets` | 0 to 16, besides the last one, which bangs when the script has run (1) |
 | `file.mu` | a script in a file instead of the patch (none) |
+| `@trusted` | asks, once per folder, to let the script do everything (write anywhere, run programs, the network) |
 
 | Message | |
 | --- | --- |

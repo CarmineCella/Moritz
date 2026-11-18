@@ -3,9 +3,26 @@
 // Cmd-Alt-Enter the line. The reply (a value, "ok", or an error) shows in the status bar.
 const vscode = require('vscode');
 const net = require('net');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+
+// the port's token: the first line of every message (musil writes it when the port opens, readable by the
+// user alone: ~/.musil/port-<port>.token, else <tmp>/musil-<uid>/port-<port>.token)
+function token(port) {
+    const name = 'port-' + port + '.token';
+    const places = [path.join(os.homedir(), '.musil', name)];
+    if (process.getuid) places.push(path.join(os.tmpdir(), 'musil-' + process.getuid(), name));
+    for (const f of places) {
+        try { const t = fs.readFileSync(f, 'utf8').split('\n')[0].trim(); if (t) return t; } catch (e) { }
+    }
+    return '';
+}
 
 function send(text) {
     const cfg = vscode.workspace.getConfiguration('musil');
+    const tok = token(cfg.get('port'));
+    if (!tok) return Promise.resolve('no token for port ' + cfg.get('port') + ': is musil --serve running on this machine?');
     return new Promise((resolve) => {
         const sock = new net.Socket(); let reply = '';
         sock.setTimeout(3000);
@@ -13,7 +30,7 @@ function send(text) {
         sock.on('close', () => resolve(reply.trim() || 'no reply'));
         sock.on('error', (e) => resolve('cannot reach the Listener (' + e.message + '): is it running, is the port ' + cfg.get('port') + '?'));
         sock.on('timeout', () => { sock.destroy(); resolve('no reply (timeout)'); });
-        sock.connect(cfg.get('port'), cfg.get('host'), () => { sock.end(text + '\n\x04'); });
+        sock.connect(cfg.get('port'), cfg.get('host'), () => { sock.end(tok + '\n' + text + '\n\x04'); });
     });
 }
 // the block around the cursor: the lines between blank lines, extended until brackets balance
