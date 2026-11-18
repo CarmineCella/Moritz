@@ -13,6 +13,9 @@ namespace moritz {
 
 
 AudioEngine::AudioEngine(Patch& p) : patch_(p) {
+    // the bus wider than the device (and the monitor's input): allocated once, here, never while
+    // the callback may be reading it
+    scratch_.assign((size_t)kScratchFrames * kMaxBus, 0.f);
     contextOk_ = ma_context_init(nullptr, 0, nullptr, &context_) == MA_SUCCESS;
     patch_.ioBufferFrames = settings.bufferFrames;
     refreshDevices();
@@ -39,7 +42,7 @@ void AudioEngine::callback(ma_device* d, void* out, const void* in, ma_uint32 fr
     (void)ftz;
     auto* self = static_cast<AudioEngine*>(d->pUserData);
     auto t0 = std::chrono::steady_clock::now();
-    int devOut = (int)d->playback.channels, bus = self->bus_.load(std::memory_order_relaxed);
+    int devOut = (int)d->playback.channels, bus = self->bus_.load(std::memory_order_acquire);
     Monitor* mon = self->monitor_.load(std::memory_order_acquire);
     bool testing = self->testChannel.load(std::memory_order_relaxed) >= 0;
     float* dst = static_cast<float*>(out);
@@ -210,8 +213,6 @@ void AudioEngine::setMonitor(const std::vector<std::pair<float, float>>& speaker
         m->hr.insert(m->hr.end(), r.begin(), r.end());
     }
     m->hist.assign((size_t)m->channels * 2 * (size_t)m->taps, 0.f);
-    // the scratch bus is needed even when the patch fits the device
-    if (scratch_.size() < (size_t)kScratchFrames * kMaxBus) scratch_.assign((size_t)kScratchFrames * kMaxBus, 0.f);
     monitor_.store(m.get(), std::memory_order_release);
     monitors_.push_back(std::move(m));
 }
@@ -221,8 +222,7 @@ void AudioEngine::updateBus() {
     int dev = (int)device_.playback.channels;
     int used = std::min(patch_.maxOutputChannel(), (int)kMaxBus);
     int bus = std::max(dev, used);
-    if (bus > dev && scratch_.size() < (size_t)kScratchFrames * kMaxBus) scratch_.assign((size_t)kScratchFrames * kMaxBus, 0.f);
-    bus_.store(bus);
+    bus_.store(bus, std::memory_order_release);
     if (bus > dev && bus != notedBus_)
         patch_.print("audio: the patches use " + std::to_string(bus) + " output channels and the device has " +
                      std::to_string(dev) + ": channels " + std::to_string(dev + 1) + "-" + std::to_string(bus) +

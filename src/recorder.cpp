@@ -34,6 +34,9 @@ void header(std::FILE* f, int channels, int sr, uint32_t dataBytes) {
 
 bool Recorder::start(const std::string& path, int channels, int sr) {
     stop();
+    // the audio thread may still be in a push() that began before the last stop: the ring is not
+    // touched until it has left (push() checks on_ after saying it is in)
+    while (pushing_.load(std::memory_order_seq_cst) != 0) std::this_thread::yield();
     file_ = std::fopen(path.c_str(), "wb");
     if (!file_) return false;
     path_ = path;
@@ -53,7 +56,7 @@ bool Recorder::start(const std::string& path, int channels, int sr) {
 
 void Recorder::stop() {
     if (!thread_.joinable()) return;
-    on_.store(false, std::memory_order_release);
+    on_.store(false, std::memory_order_seq_cst);
     quit_ = true;
     thread_.join();
     drain();
@@ -63,7 +66,12 @@ void Recorder::stop() {
 }
 
 void Recorder::push(const float* x, int frames, int channels) {
-    if (!on_.load(std::memory_order_acquire) || ring_.empty()) return;
+    struct In {
+        std::atomic<int>& n;
+        explicit In(std::atomic<int>& c) : n(c) { n.fetch_add(1, std::memory_order_seq_cst); }
+        ~In() { n.fetch_sub(1, std::memory_order_release); }
+    } in(pushing_);
+    if (!on_.load(std::memory_order_seq_cst) || ring_.empty()) return;
     size_t n = ring_.size(), h = head_.load(std::memory_order_relaxed), t = tail_.load(std::memory_order_acquire);
     size_t free = (t + n - h - 1) % n, need = (size_t)frames * (size_t)channels_;
     if (need > free) { overflow_ = true; return; }

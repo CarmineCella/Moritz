@@ -119,3 +119,22 @@ TEST(render_worker_flushes_denormals) {
     CHECK(!denormal);
     std::remove(inner.c_str());
 }
+
+// The quick recorder: start() re-made its ring while the audio thread could be pushing into the old
+// one (start/stop over and over while another thread pushes: clean under the sanitizers)
+TEST(recorder_restarts_while_the_audio_thread_pushes) {
+    Recorder rec;
+    std::atomic<bool> stop{false};
+    std::thread audio([&] {
+        std::vector<float> x(2 * 256, 0.25f);
+        while (!stop) rec.push(x.data(), 256, 2);
+    });
+    std::string path = tempPath("moritz-engine-recorder.wav");
+    bool ok = true;
+    for (int k = 0; k < 30; ++k) ok = ok && rec.start(path, 2, 8000 + 1000 * (k % 3));
+    rec.stop();
+    stop = true;
+    audio.join();
+    CHECK(ok);
+    std::remove(path.c_str());
+}

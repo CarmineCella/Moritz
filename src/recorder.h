@@ -32,6 +32,7 @@ private:
     std::vector<float> ring_;
     std::atomic<size_t> head_{0}, tail_{0};    // written by the audio thread / the writer
     std::atomic<bool> on_{false}, quit_{false}, overflow_{false};
+    std::atomic<int> pushing_{0};                // the audio thread is in push(): start() waits it out
     std::atomic<long long> written_{0};          // frames
     std::thread thread_;
     std::FILE* file_ = nullptr;

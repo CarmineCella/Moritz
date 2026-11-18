@@ -486,7 +486,7 @@ private:
     bool contextOk_ = false, running_ = false, duplex_ = false;
     std::atomic<float> peak_[kMeterChannels] = {};
     std::atomic<int> bus_{2};
-    std::vector<float> scratch_;              // the bus, when wider than the device
+    std::vector<float> scratch_;              // the bus, when wider than the device (made once)
     static constexpr int kScratchFrames = 8192;
     int notedBus_ = 0;
     struct Monitor {

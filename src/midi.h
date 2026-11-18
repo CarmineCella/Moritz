@@ -19,6 +19,32 @@ class RtMidiOut;
 
 namespace moritz {
 
+// The last problem, for the console: RtMidi reports from its own thread, the
+// GUI reads and clears it; a mutex keeps the two apart.
+class MidiError {
+public:
+    void set(const std::string& s) {
+        std::lock_guard<std::mutex> lk(m_);
+        text_ = s;
+    }
+    bool empty() const {
+        std::lock_guard<std::mutex> lk(m_);
+        return text_.empty();
+    }
+    void clear() { set(""); }
+    std::string str() const {
+        std::lock_guard<std::mutex> lk(m_);
+        return text_;
+    }
+    operator std::string() const { return str(); }
+    friend std::string operator+(const char* a, const MidiError& e) { return a + e.str(); }
+    friend std::string operator+(const std::string& a, const MidiError& e) { return a + e.str(); }
+
+private:
+    mutable std::mutex m_;
+    std::string text_;
+};
+
 class MidiEngine {
 public:
     MidiEngine();
@@ -41,7 +67,7 @@ public:
     const std::string& output() const { return output_; }
     void send(const std::vector<unsigned char>& msg);
     std::string describe() const;              // for the console: what is open
-    std::string error;                         // the last problem, for the console
+    MidiError error;                           // the last problem, for the console
 
 private:
     struct In {

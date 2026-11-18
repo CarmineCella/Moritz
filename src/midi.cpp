@@ -17,7 +17,7 @@ bool isOurs(const std::string& name) { return name.find("Moritz") != std::string
 // printing, so a missing MIDI system never stops the program.
 void quiet(RtMidiError::Type type, const std::string& text, void* engine) {
     if (type != RtMidiError::WARNING && type != RtMidiError::DEBUG_WARNING)
-        static_cast<MidiEngine*>(engine)->error = text;
+        static_cast<MidiEngine*>(engine)->error.set(text);
 }
 }  // namespace
 
@@ -26,7 +26,7 @@ MidiEngine::MidiEngine() {
         probe_ = std::make_unique<RtMidiIn>(RtMidi::UNSPECIFIED, "Moritz");
         probe_->setErrorCallback(quiet, this);
     } catch (const RtMidiError& e) {
-        error = e.getMessage();
+        error.set(e.getMessage());
     }
     setOutput("");
 }
@@ -66,7 +66,7 @@ std::vector<std::string> MidiEngine::inputPorts() {
             if (!name.empty() && !isOurs(name)) v.push_back(name);
         }
     } catch (const RtMidiError& e) {
-        error = e.getMessage();
+        error.set(e.getMessage());
     }
     return v;
 }
@@ -82,7 +82,7 @@ std::vector<std::string> MidiEngine::outputPorts() {
             if (!name.empty() && !isOurs(name)) v.push_back(name);
         }
     } catch (const RtMidiError& e) {
-        error = e.getMessage();
+        error.set(e.getMessage());
     }
     return v;
 }
@@ -115,7 +115,7 @@ void MidiEngine::refresh() {
                     break;
                 }
         } catch (const RtMidiError& e) {
-            error = e.getMessage();
+            error.set(e.getMessage());
         }
     }
 }
@@ -147,7 +147,7 @@ void MidiEngine::setOutput(const std::string& name) {
                 }
         }
     } catch (const RtMidiError& e) {
-        error = e.getMessage();
+        error.set(e.getMessage());
         out_.reset();
     }
     if (outName_.empty()) out_.reset();
@@ -158,7 +158,7 @@ void MidiEngine::send(const std::vector<unsigned char>& msg) {
     try {
         out_->sendMessage(&msg);
     } catch (const RtMidiError& e) {
-        error = e.getMessage();
+        error.set(e.getMessage());
     }
 }
 
