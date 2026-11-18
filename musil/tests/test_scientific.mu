@@ -119,6 +119,17 @@ check (near? (mat-vec (list (vec 2 1) (vec 1 2)) (head (last e))) (* 3 (head (la
 check (near? (head (eig-sym (diag (vec 1 5 3)))) (vec 5 3 1) 1e-12) "eig-sym: diagonal"
 check (contains? (error-of (function () (eig-sym (list (vec 1 2) (vec 3 4))))) "not symmetric") "eig-sym: not symmetric"
 check (contains? (error-of (function () (eig-sym (list (vec 1 2 3))))) "square") "eig-sym: not square"
+; the tolerances are relative to the matrix's scale: a tiny matrix is not singular or diagonal for being tiny
+var et (eig-sym (list (vec 1e-12 1e-12) (vec 1e-12 1e-12)))
+check (near? (/ (head et) 1e-12) (vec 2 0) 1e-9) "eig-sym: a tiny matrix (relative tolerance)"
+check (near? (head (last et)) (vec 0.70710678 0.70710678) 1e-6) "eig-sym: a tiny matrix's eigenvector"
+var At (list (vec 2e-12 1e-12) (vec 1e-12 3e-12))
+check (near? (/ (det At) 1e-24) 5 1e-9) "det: a tiny matrix is not singular"
+check (== (rank At) 2) "rank: relative to the scale"
+check (== (rank (list (vec 1e-12 2e-12) (vec 2e-12 4e-12))) 1) "rank: a tiny deficient matrix"
+check (mat-near? (mat-mul At (inv At)) I2 1e-9) "inv: a tiny matrix"
+check (near? (solve At (vec 4e-12 7e-12)) (vec 1 2) 1e-9) "solve: a tiny matrix"
+check (near? (solve (list (vec 1e12 0) (vec 0 2e12)) (vec 1 1)) (vec 1e-12 5e-13) 1e-20) "solve: a huge matrix"
 
 ; --- machine learning ---
 ; points along the x axis: the first direction is (1 0) up to sign
@@ -190,6 +201,23 @@ var om (mp (vec 2 3 0.5 0) Dm 3 0.001 (record (list 'orthogonal 1)))
 check (< (get om 'error) 1e-9) "mp: orthogonal pursuit refits the weights: exact"
 check (equal? (get (mp (vec 1 0 0 0) Dm 5 0.01 (list)) 'atoms) (list 0)) "mp: stops when the error is under the threshold"
 check (== (length (get (mp (vec 0 0 0 0) Dm 3 0.01 (list)) 'atoms)) 0) "mp: nothing for silence"
+; plain pursuit takes an atom again when the residual asks for it (two atoms that are not orthogonal); orthogonal pursuit
+; takes each once and is exact with both
+var Dn (list->mat (list (list 1 0) (list 0.8 0.6)))
+var rp (mp (vec 0 1) Dn 60 1e-6 (list))
+check (< (get rp 'error) 1e-3) "mp: plain pursuit reuses atoms and converges"
+check (== (length (get rp 'atoms)) 2) "mp: an atom taken again is listed once, its weights summed"
+check (near? (vec (get rp 'approx)) (vec 0 1) 1e-3) "mp: the reconstruction"
+var ro (mp (vec 0 1) Dn 5 0 (list (list "orthogonal" 1)))
+check (and (== (length (get ro 'atoms)) 2) (< (get ro 'error) 1e-12)) "mp: orthogonal pursuit, each atom once, exact (string keys too)"
+; non-negative orthogonal pursuit refits by non-negative least squares (Lawson-Hanson): better than clamping the
+; least-squares weights (0.523 here), and the Kuhn-Tucker conditions hold
+var Dk (list->mat (list (list -1 0 0 2) (list 2 1 -1 1) (list 0 2 1 -1) (list 2 1 0 0)))
+var rk (mp (vec 1 2 1 2) Dk 4 0 (record (list 'nonneg 1 'orthogonal 1)))
+check (< (get rk 'error) (+ (/ 0.49507377 (sqrt 10)) 1e-6)) "mp: nonneg orthogonal is the non-negative least squares"
+check (>= (min (vec (get rk 'weights))) 0) "mp: nonneg weights"
+var gk (map (get rk 'atoms) (function (a) (dot (getidx Dk a) (get rk 'residual))))
+check (all? (zip (get rk 'weights) gk) (function (p) (if (> (head p) 0) (< (abs (last p)) 1e-9) (<= (last p) 1e-9)))) "mp: nonneg, the Kuhn-Tucker conditions"
 check (contains? (error-of (function () (mp (vec 1 2) Dm 1 0 (list)))) "length") "mp: atoms must match the signal"
 
 ; --- display ---

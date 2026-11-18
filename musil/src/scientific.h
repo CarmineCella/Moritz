@@ -70,14 +70,19 @@ inline vptr sci_transpose(vlist& a, Interp& i) {
 }
 
 // --- decompositions by Gaussian elimination with partial pivoting ---
-// Reduce M in place to row echelon form; returns (rank, determinant-if-square, singular?)
+// The tolerances are relative to the matrix's scale (its largest element), so a matrix and the same matrix
+// times 1e-12 have the same rank, determinant (to the factor) and inverse (times 1e12).
+inline double max_abs(const mat& m, size_t cols) { double s = 0; for (size_t r = 0; r < m.r; r++) for (size_t c = 0; c < cols && c < m.c; c++) s = std::max(s, std::fabs(m(r, c))); return s; }
+// Reduce M in place to row echelon form; a pivot below rel times the scale of the first `cols` columns (all by
+// default) counts as zero; returns (rank, determinant-if-square, singular?)
 struct elim_result { size_t rank; double det; bool singular; };
-inline elim_result eliminate(mat& m, double eps = 1e-12) {
+inline elim_result eliminate(mat& m, double rel = 1e-12, size_t cols = (size_t)-1) {
     size_t r = 0; double det = 1; bool sq = m.r == m.c;
-    for (size_t c = 0; c < m.c && r < m.r; c++) {
+    double eps = rel * max_abs(m, cols);
+    for (size_t c = 0; c < m.c && c < cols && r < m.r; c++) {
         size_t piv = r; double best = std::fabs(m(r, c));
         for (size_t k = r + 1; k < m.r; k++) if (std::fabs(m(k, c)) > best) { best = std::fabs(m(k, c)); piv = k; }
-        if (best < eps) { det = 0; continue; }
+        if (best <= eps) { det = 0; continue; }
         if (piv != r) { for (size_t j = 0; j < m.c; j++) std::swap(m(r, j), m(piv, j)); det = -det; }
         det *= m(r, c);
         for (size_t k = r + 1; k < m.r; k++) { double f = m(k, c) / m(r, c); if (f == 0) continue; for (size_t j = c; j < m.c; j++) m(k, j) -= f * m(r, j); }
@@ -121,12 +126,13 @@ inline vptr sci_rank(vlist& a, Interp& i) { mat m = to_mat(i, a[0]); return v_nu
 // (inv M) by Gauss-Jordan on [M | I]
 inline vptr sci_inv(vlist& a, Interp& i) {
     mat m = to_mat(i, a[0]); square(i, m); size_t n = m.r;
+    double eps = 1e-12 * max_abs(m, n);
     mat aug(n, 2 * n);
     for (size_t r = 0; r < n; r++) { for (size_t c = 0; c < n; c++) aug(r, c) = m(r, c); aug(r, n + r) = 1; }
     for (size_t c = 0; c < n; c++) {
         size_t piv = c; double best = std::fabs(aug(c, c));
         for (size_t k = c + 1; k < n; k++) if (std::fabs(aug(k, c)) > best) { best = std::fabs(aug(k, c)); piv = k; }
-        if (best < 1e-12) i.bad("matrix is singular");
+        if (best <= eps) i.bad("matrix is singular");
         if (piv != c) for (size_t j = 0; j < 2 * n; j++) std::swap(aug(c, j), aug(piv, j));
         double p = aug(c, c); for (size_t j = 0; j < 2 * n; j++) aug(c, j) /= p;
         for (size_t k = 0; k < n; k++) { if (k == c) continue; double f = aug(k, c); if (f == 0) continue; for (size_t j = 0; j < 2 * n; j++) aug(k, j) -= f * aug(c, j); }
@@ -140,7 +146,7 @@ inline vptr sci_solve(vlist& a, Interp& i) {
     if (b.size() != n) i.bad("b must have " + std::to_string(n) + " elements, got " + std::to_string(b.size()));
     mat aug(n, n + 1);
     for (size_t r = 0; r < n; r++) { for (size_t c = 0; c < n; c++) aug(r, c) = A(r, c); aug(r, n) = b[r]; }
-    elim_result e = eliminate(aug);
+    elim_result e = eliminate(aug, 1e-12, n);                 // the pivots of A, against A's scale (not b's)
     if (e.rank < n) i.bad("matrix is singular");
     varr x(0.0, n);
     for (size_t k = n; k-- > 0;) { double s = aug(k, n); for (size_t j = k + 1; j < n; j++) s -= aug(k, j) * x[j]; x[k] = s / aug(k, k); }
@@ -148,13 +154,55 @@ inline vptr sci_solve(vlist& a, Interp& i) {
 }
 
 // --- matching pursuit ---
-// (mp x D iterations threshold options) => a record: atoms (the indices of the chosen rows of D, in the order chosen),
-//   weights, residual, error (the residual's norm over x's), and approx (the reconstruction). x a vector, D a
+// least squares on the normal equations G w = b (G p x p, symmetric positive semi-definite): false if G is singular
+inline bool ls_solve(const mat& G, const std::vector<double>& b, const std::vector<size_t>& idx, std::vector<double>& w) {
+    size_t p = idx.size(); mat A(p, p + 1);
+    for (size_t u = 0; u < p; u++) { for (size_t v = 0; v < p; v++) A(u, v) = G(idx[u], idx[v]); A(u, p) = b[idx[u]]; }
+    elim_result e = eliminate(A, 1e-12, p);
+    if (e.rank < p) return false;
+    w.assign(p, 0.0);
+    for (size_t k = p; k-- > 0;) { double s = A(k, p); for (size_t j = k + 1; j < p; j++) s -= A(k, j) * w[j]; w[k] = s / A(k, k); }
+    return true;
+}
+// Non-negative least squares (Lawson & Hanson 1974, on the normal equations): the w >= 0 that minimises
+// |x - sum w_u d_u|^2, given G (the atoms' inner products) and b (their inner products with x). The active set
+// grows by the variable whose gradient is largest; a step that would make a weight negative stops at the boundary
+// and frees that variable
+inline std::vector<double> nnls(const mat& G, const std::vector<double>& b) {
+    size_t p = b.size(); std::vector<double> w(p, 0.0); std::vector<char> in(p, 0);
+    double bmax = 0; for (double v : b) bmax = std::max(bmax, std::fabs(v));
+    const double tol = 1e-12 * bmax;                                   // a gradient below this is 0
+    for (size_t outer = 0; outer < 3 * p + 3; outer++) {
+        std::vector<double> grad(p);                                  // b - G w: the gradient of the fit
+        for (size_t u = 0; u < p; u++) { double s = b[u]; for (size_t v = 0; v < p; v++) s -= G(u, v) * w[v]; grad[u] = s; }
+        long j = -1; double best = tol;
+        for (size_t u = 0; u < p; u++) if (!in[u] && grad[u] > best) { best = grad[u]; j = (long)u; }
+        if (j < 0) break;                                             // the Kuhn-Tucker conditions hold
+        in[(size_t)j] = 1;
+        for (size_t inner = 0; inner < 3 * p + 3; inner++) {
+            std::vector<size_t> idx; for (size_t u = 0; u < p; u++) if (in[u]) idx.push_back(u);
+            std::vector<double> s;
+            if (!ls_solve(G, b, idx, s)) { in[(size_t)j] = 0; return w; }   // dependent atoms: keep what we have
+            bool feasible = true; for (double v : s) if (v <= 0) feasible = false;
+            if (feasible) { std::fill(w.begin(), w.end(), 0.0); for (size_t k = 0; k < idx.size(); k++) w[idx[k]] = s[k]; break; }
+            double alpha = 1;                                          // the step to the first weight that reaches 0
+            for (size_t k = 0; k < idx.size(); k++) if (s[k] <= 0) { double d = w[idx[k]] - s[k]; if (d > 0) alpha = std::min(alpha, w[idx[k]] / d); }
+            for (size_t k = 0; k < idx.size(); k++) w[idx[k]] += alpha * (s[k] - w[idx[k]]);
+            double wmax = 0; for (size_t k = 0; k < idx.size(); k++) wmax = std::max(wmax, std::fabs(w[idx[k]]));
+            for (size_t k = 0; k < idx.size(); k++) if (w[idx[k]] <= 1e-14 * wmax) { w[idx[k]] = 0; in[idx[k]] = 0; }
+        }
+    }
+    return w;
+}
+// (mp x D iterations threshold options) => a record: atoms (the indices of the chosen rows of D, in the order first
+//   chosen), weights, residual, error (the residual's norm over x's), and approx (the reconstruction). x a vector, D a
 //   dictionary (a matrix: one atom per row, the same length as x). Greedy: the atom most correlated with the
 //   residual is taken with its projection weight and subtracted, until iterations are done, the error is below
-//   threshold, or no atom helps. options: a record with 'nonneg (1: only atoms with a positive projection, weights
-//   kept positive; the choice for magnitude spectra) and 'orthogonal (1: orthogonal matching pursuit, every weight
-//   refitted by least squares after each pick)
+//   threshold, or no atom helps. Plain matching pursuit may take an atom again (its weight grows: it is listed once);
+//   orthogonal pursuit takes each atom once and refits every weight by least squares after each pick.
+//   options: a record (keys symbols or strings) with 'nonneg (1: only atoms with a positive projection, weights kept
+//   positive; the choice for magnitude spectra; with 'orthogonal the refit is a non-negative least squares,
+//   Lawson-Hanson) and 'orthogonal (1: orthogonal matching pursuit)
 inline vptr sci_mp(vlist& a, Interp& i) {
     const varr& xv = i.num(a[0]); mat D = to_mat(i, a[1]); long iters = (long)i.scalar(a[2]); double threshold = i.scalar(a[3]);
     bool nonneg = false, orth = false;
@@ -168,18 +216,21 @@ inline vptr sci_mp(vlist& a, Interp& i) {
         double rnorm = 0; for (double v : r) rnorm += v * v; rnorm = std::sqrt(rnorm); if (rnorm / xnorm < threshold) break;
         long best = -1; double bestc = 0;
         for (size_t k = 0; k < m; k++) {
-            if (norms[k] <= 0) continue; bool used = false; for (size_t q : atoms) if (q == k) used = true; if (used && !orth) continue;
+            if (norms[k] <= 0) continue;
+            if (orth && std::find(atoms.begin(), atoms.end(), k) != atoms.end()) continue;   // orthogonal: each atom once
             double dot = 0; for (size_t j = 0; j < n; j++) dot += r[j] * D(k, j); double c = dot / norms[k];
             if (nonneg ? c > bestc : std::fabs(c) > std::fabs(bestc)) { bestc = c; best = (long)k; }
         }
         if (best < 0 || bestc == 0) break;
         double w = bestc / norms[(size_t)best];
-        atoms.push_back((size_t)best); weights.push_back(w);
-        if (orth) {                                            // refit every weight: least squares on the chosen atoms
-            size_t p = atoms.size(); mat G(p, p + 1);
-            for (size_t u = 0; u < p; u++) { for (size_t v = 0; v < p; v++) { double s = 0; for (size_t j = 0; j < n; j++) s += D(atoms[u], j) * D(atoms[v], j); G(u, v) = s; } double s = 0; for (size_t j = 0; j < n; j++) s += D(atoms[u], j) * x[j]; G(u, p) = s; }
-            elim_result e = eliminate(G);
-            if (e.rank == p) { std::vector<double> wv(p); for (size_t k = p; k-- > 0;) { double s = G(k, p); for (size_t j = k + 1; j < p; j++) s -= G(k, j) * wv[j]; wv[k] = s / G(k, k); } for (size_t u = 0; u < p; u++) weights[u] = nonneg ? std::max(0.0, wv[u]) : wv[u]; }
+        auto seen = std::find(atoms.begin(), atoms.end(), (size_t)best);
+        if (seen != atoms.end()) weights[(size_t)(seen - atoms.begin())] += w;   // plain pursuit: the atom again
+        else { atoms.push_back((size_t)best); weights.push_back(w); }
+        if (orth) {                                            // refit every weight on the chosen atoms
+            size_t p = atoms.size(); mat G(p, p); std::vector<double> bx(p);
+            for (size_t u = 0; u < p; u++) { for (size_t v = 0; v < p; v++) { double s = 0; for (size_t j = 0; j < n; j++) s += D(atoms[u], j) * D(atoms[v], j); G(u, v) = s; } double s = 0; for (size_t j = 0; j < n; j++) s += D(atoms[u], j) * x[j]; bx[u] = s; }
+            if (nonneg) weights = nnls(G, bx);
+            else { std::vector<size_t> idx(p); for (size_t u = 0; u < p; u++) idx[u] = u; std::vector<double> wv; if (ls_solve(G, bx, idx, wv)) weights = wv; }
             r = x; for (size_t u = 0; u < p; u++) for (size_t j = 0; j < n; j++) r[j] -= weights[u] * D(atoms[u], j);
         } else { for (size_t j = 0; j < n; j++) r[j] -= w * D((size_t)best, j); }
     }
@@ -206,12 +257,14 @@ inline vptr sci_median_filter(vlist& a, Interp& i) {
 // eigenvalues descending, eigenvectors as rows in the same order, each with its largest component positive.
 inline vptr sci_eig_sym(vlist& a, Interp& i) {
     mat A = to_mat(i, a[0]); square(i, A); size_t n = A.r;
+    double scale = max_abs(A, n), total = 0;                   // tolerances relative to the matrix's scale
+    for (double v : A.d) total += v * v;
     for (size_t p = 0; p < n; p++) for (size_t q = p + 1; q < n; q++)
-        if (std::fabs(A(p, q) - A(q, p)) > 1e-9 * (1 + std::fabs(A(p, q)))) i.bad("matrix is not symmetric");
+        if (std::fabs(A(p, q) - A(q, p)) > 1e-9 * scale) i.bad("matrix is not symmetric");
     mat V(n, n); for (size_t k = 0; k < n; k++) V(k, k) = 1;
     for (int sweep = 0; sweep < 100; sweep++) {
         double off = 0; for (size_t p = 0; p < n; p++) for (size_t q = p + 1; q < n; q++) off += A(p, q) * A(p, q);
-        if (off < 1e-22) break;
+        if (off <= 1e-30 * total) break;                       // the off-diagonal part under 1e-15 of the matrix's norm
         for (size_t p = 0; p < n; p++) for (size_t q = p + 1; q < n; q++) {
             if (std::fabs(A(p, q)) < 1e-300) continue;
             double theta = (A(q, q) - A(p, p)) / (2 * A(p, q));

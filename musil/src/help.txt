@@ -559,13 +559,15 @@
   => x with A x = b
 #mp
   (mp x D iterations threshold options)
-  => a record: atoms (the indices of the chosen rows of D, in the order chosen),
-  weights, residual, error (the residual's norm over x's), and approx (the reconstruction). x a vector, D a
+  => a record: atoms (the indices of the chosen rows of D, in the order first
+  chosen), weights, residual, error (the residual's norm over x's), and approx (the reconstruction). x a vector, D a
   dictionary (a matrix: one atom per row, the same length as x). Greedy: the atom most correlated with the
   residual is taken with its projection weight and subtracted, until iterations are done, the error is below
-  threshold, or no atom helps. options: a record with 'nonneg (1: only atoms with a positive projection, weights
-  kept positive; the choice for magnitude spectra) and 'orthogonal (1: orthogonal matching pursuit, every weight
-  refitted by least squares after each pick)
+  threshold, or no atom helps. Plain matching pursuit may take an atom again (its weight grows: it is listed once);
+  orthogonal pursuit takes each atom once and refits every weight by least squares after each pick.
+  options: a record (keys symbols or strings) with 'nonneg (1: only atoms with a positive projection, weights kept
+  positive; the choice for magnitude spectra; with 'orthogonal the refit is a non-negative least squares,
+  Lawson-Hanson) and 'orthogonal (1: orthogonal matching pursuit)
 #median-filter
   (median-filter v order)
   the running median of width order
