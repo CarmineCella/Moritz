@@ -41,12 +41,7 @@ inline bool storeBuffer(Patch* patch, const std::string& name, const std::vector
     for (int c = 0; c < (int)chans.size(); ++c)
         for (long f = 0; f < out.frames && f < (long)chans[(size_t)c].size(); ++f)
             out.data[(size_t)f * out.channels + c] = chans[(size_t)c][(size_t)f];
-    {
-        std::lock_guard<std::mutex> lk(patch->mutex());
-        b->buf = std::move(out);
-        ++b->version;
-    }
-    patch->rebuild();
+    b->replace(std::move(out));         // swapped in under the lock; nothing compiles again
     return true;
 }
 

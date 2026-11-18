@@ -140,6 +140,8 @@ public:
     virtual int outputChannels() const { return 0; }      // the highest output channel it writes (dac~)
     virtual void attached() {}         // box joined a patch (GUI thread): load files, start timers
     virtual void resolve() {}          // during compile, DSP lock held: look up buffers/taps
+    // a buffer~'s contents were replaced (GUI thread, lock not held): conv~ prepares again
+    virtual void buffersChanged() {}
     virtual void audioChanged() {}     // audio started, stopped or reopened (GUI thread)
     virtual void midiIn(const std::vector<unsigned char>& msg) {}   // a MIDI message arrived (GUI thread)
     // send~ / receive~: the chain runs a send~ before the receive~s of its name
@@ -379,6 +381,7 @@ public:
     std::atomic<int> ioBufferFrames{0};   // device buffer (I/O vector) size; kept while off
     std::atomic<float> cpuLoad{0.f};      // share of each buffer's time spent computing, smoothed
     int renderDepth = 0;                  // moritz: how deep this patch is rendered inside others
+    uint64_t compiles = 0;                // root: how many times the graph was compiled (tests)
     void audioChanged() { forEachBox([](Box* b) { b->audioChanged(); }); }
 
     // ---- MIDI (GUI thread): input goes to every box; output to the root's hook

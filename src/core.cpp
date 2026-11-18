@@ -623,7 +623,7 @@ int Patch::maxOutputChannel() const {
 // Orders signal boxes so every box runs after the boxes feeding it, and
 // points each signal inlet at the output buffers connected to it.
 void Patch::compile() {
-    if (!parent) planRate_ = sampleRate.load();
+    if (!parent) { planRate_ = sampleRate.load(); ++compiles; }
     // inner patches first: their inlets/outlets decide the owner's ports
     for (auto& b : boxes)
         if (b->inner()) {

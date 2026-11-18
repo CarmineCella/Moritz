@@ -71,12 +71,12 @@ namespace {
 // [to]]" (ms) or bang plays it, "stop" stops.
 class PlayBox : public Box {
 public:
-    explicit PlayBox(const Message& a) : name_(argstr(a, 0)) {
+    explicit PlayBox(const Message& a) : ref_(argstr(a, 0)) {
         setPorts({P::Signal}, std::vector<Port>((size_t)std::clamp((int)argf(a, 1, 1.f), 1, 8), P::Signal));
     }
-    void resolve() override { b_ = findBuffer(patch, name_); }
+    void resolve() override { ref_.resolve(patch); }
     void message(int, const Message& m) override {
-        if (m[0].is("set") && m.size() > 1) { name_ = m[1].str(); patch->rebuild(); return; }
+        if (m[0].is("set") && m.size() > 1) { ref_.set(patch, m[1].str()); return; }
         if (m[0].is("stop")) { cmd_.store(2); return; }
         if (m[0].is("bang") || m[0].is("start")) {
             startMs_.store(m.size() > 1 && m[1].isFloat() ? m[1].f : 0.f);
@@ -86,7 +86,7 @@ public:
     }
     void dsp(int n) override {
         int c = cmd_.exchange(0);
-        const SampleBuffer* b = b_ ? &b_->buf : nullptr;
+        const SampleBuffer* b = ref_.get();
         double ms2fr = b ? b->sr / 1000.0 : 0.0;
         if (c == 1 && b) {
             pos_ = startMs_.load() * ms2fr;
@@ -113,8 +113,7 @@ public:
     }
 
 private:
-    std::string name_;
-    BufferBox* b_ = nullptr;
+    BufferRef ref_;
     std::atomic<int> cmd_{0};
     std::atomic<float> startMs_{0.f}, endMs_{-1.f};
     double pos_ = 0.0, end_ = 0.0;
@@ -128,23 +127,23 @@ private:
 // turns looping on. Last outlet: sync signal (0..1 through the loop).
 class GrooveBox : public Box {
 public:
-    explicit GrooveBox(const Message& a) : name_(argstr(a, 0)) {
+    explicit GrooveBox(const Message& a) : ref_(argstr(a, 0)) {
         int ch = std::clamp((int)argf(a, 1, 1.f), 1, 8);
         std::vector<Port> outs((size_t)ch + 1, P::Signal);
         setPorts({P::Signal, P::Control, P::Control}, outs);
     }
-    void resolve() override { b_ = findBuffer(patch, name_); }
+    void resolve() override { ref_.resolve(patch); }
     void message(int in, const Message& m) override {
         if (in > 0) { if (m[0].isFloat()) setScalar(in, std::max(0.f, m[0].f)); return; }
         if (m[0].is("loop") && m.size() > 1) loop_.store(m[1].isFloat() && m[1].f != 0.f);
-        else if (m[0].is("set") && m.size() > 1) { name_ = m[1].str(); patch->rebuild(); }
+        else if (m[0].is("set") && m.size() > 1) { ref_.set(patch, m[1].str()); }
         else if (m[0].is("startloop")) jumpMs_.store(scalar(1));
         else if (m[0].isFloat() && std::isfinite(m[0].f)) jumpMs_.store(std::max(0.f, m[0].f));
     }
     void dsp(int n) override {
         int ch = numOuts() - 1;
         float* sync = sigOut(ch);
-        const SampleBuffer* b = b_ ? &b_->buf : nullptr;
+        const SampleBuffer* b = ref_.get();
         if (!b || b->frames < 2) {
             for (int k = 0; k <= ch; ++k) dsp::fill(sigOut(k), 0.f, n);
             return;
@@ -173,8 +172,7 @@ public:
     }
 
 private:
-    std::string name_;
-    BufferBox* b_ = nullptr;
+    BufferRef ref_;
     std::atomic<bool> loop_{false};
     std::atomic<float> jumpMs_{-1.f};
     double pos_ = 0.0;
@@ -186,22 +184,22 @@ private:
 // stopping at the end. Outlet: sync signal (0..1 through the buffer).
 class RecordBox : public Box {
 public:
-    explicit RecordBox(const Message& a) : name_(argstr(a, 0)) {
+    explicit RecordBox(const Message& a) : ref_(argstr(a, 0)) {
         int ch = std::clamp((int)argf(a, 1, 1.f), 1, 8);
         setPorts(std::vector<Port>((size_t)ch, P::Signal), {P::Signal});
     }
-    void resolve() override { b_ = findBuffer(patch, name_); }
+    void resolve() override { ref_.resolve(patch); }
     void message(int in, const Message& m) override {
         if (in != 0) return;
         if (m[0].is("loop") && m.size() > 1) loop_.store(m[1].isFloat() && m[1].f != 0.f);
-        else if (m[0].is("set") && m.size() > 1) { name_ = m[1].str(); patch->rebuild(); }
+        else if (m[0].is("set") && m.size() > 1) { ref_.set(patch, m[1].str()); }
         else if (m[0].isFloat()) cmd_.store(m[0].f != 0.f ? 1 : 2);
     }
     void dsp(int n) override {
         int c = cmd_.exchange(0);
         if (c == 1) { pos_ = 0; rec_ = true; }
         if (c == 2) rec_ = false;
-        SampleBuffer* b = b_ ? &b_->buf : nullptr;
+        SampleBuffer* b = ref_.get();
         float* sync = sigOut(0);
         const float* in[8];                       // at most 8 channels: nothing allocated here
         for (int k = 0; k < numIns() && k < 8; ++k) in[k] = sigIn(k, n);
@@ -222,8 +220,7 @@ public:
     }
 
 private:
-    std::string name_;
-    BufferBox* b_ = nullptr;
+    BufferRef ref_;
     std::atomic<int> cmd_{0};
     std::atomic<bool> loop_{false};
     long pos_ = 0;
@@ -549,7 +546,7 @@ private:
 // end" sets the selection and outputs it, "set name" shows another buffer~.
 class WaveformBox : public Box {
 public:
-    explicit WaveformBox(const Message& a) : name_(argstr(a, 0)) {
+    explicit WaveformBox(const Message& a) : ref_(argstr(a, 0)) {
         kind = BoxKind::UI;
         setPorts({P::Control}, {P::Control, P::Control});
         w_ = std::clamp((int)argf(a, 1, 320.f), 80, 2000);
@@ -557,10 +554,10 @@ public:
     }
     void uiSize(int& w, int& h) const override { w = w_; h = h_; }
     bool animated() const override { return true; }   // follows record~ while it writes
-    void resolve() override { b_ = findBuffer(patch, name_); }
+    void resolve() override { ref_.resolve(patch); }
     void message(int, const Message& m) override {
         if (m[0].isFloat()) { cursor_ = m[0].f; patch->redraw(); }
-        else if (m[0].is("set") && m.size() > 1) { name_ = m[1].str(); b_ = findBuffer(patch, name_); patch->redraw(); }
+        else if (m[0].is("set") && m.size() > 1) { ref_.set(patch, m[1].str()); patch->redraw(); }
         else if (m[0].is("select") && m.size() > 2) { s0_ = argf(m, 1, 0.f); s1_ = argf(m, 2, 0.f); output(); }
     }
     void uiMouse(int e, int mx, int) override {
@@ -573,11 +570,12 @@ public:
         int x0 = X + 3, y0 = Y + 3, W = w - 6, H = h - 6;
         fl_color(fl_rgb_color(22, 24, 28));
         zd::rectf(x0, y0, W, H);
-        const SampleBuffer* sb = b_ ? &b_->buf : nullptr;
+        BufferBox* bb = ref_.box();
+        const SampleBuffer* sb = bb ? &bb->buf : nullptr;
         zd::font(kFont, 9);
         if (!sb || sb->frames <= 0) {
             fl_color(kDim);
-            zd::draw((sb ? name_ + ": empty" : "no buffer~ " + name_).c_str(), x0 + 6, y0 + H / 2 + 3);
+            zd::draw((sb ? ref_.name() + ": empty" : "no buffer~ " + ref_.name()).c_str(), x0 + 6, y0 + H / 2 + 3);
             return;
         }
         double dur = sb->frames / sb->sr * 1000.0;
@@ -613,14 +611,15 @@ public:
         }
         fl_color(kDim);
         char label[96];
-        std::snprintf(label, sizeof label, "%s  %.0f ms", name_.c_str(), dur);
+        std::snprintf(label, sizeof label, "%s  %.0f ms", ref_.name().c_str(), dur);
         zd::draw(label, x0 + 4, y0 + 10);
     }
 
 private:
     float msAt(int mx) const {
-        if (!b_ || b_->buf.frames <= 0) return 0.f;
-        double dur = b_->buf.frames / b_->buf.sr * 1000.0;
+        BufferBox* bb = ref_.box();
+        if (!bb || bb->buf.frames <= 0) return 0.f;
+        double dur = bb->buf.frames / bb->buf.sr * 1000.0;
         return (float)(std::clamp((mx - 3.0) / (w - 6.0), 0.0, 1.0) * dur);
     }
     void output() {
@@ -628,8 +627,7 @@ private:
         outletFloat(1, s1_);
         outletFloat(0, s0_);
     }
-    std::string name_;
-    BufferBox* b_ = nullptr;
+    BufferRef ref_;
     int w_, h_;
     float cursor_ = -1.f, s0_ = 0.f, s1_ = 0.f, anchor_ = 0.f;
 };

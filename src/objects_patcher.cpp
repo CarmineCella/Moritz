@@ -885,41 +885,42 @@ private:
 // index~ name [channel]: reads a buffer~ at a sample index (no interpolation)
 class IndexBox : public Box {
 public:
-    explicit IndexBox(const Message& a) : name_(argstr(a, 0)), ch_((int)argf(a, 1, 1.f) - 1) {
+    explicit IndexBox(const Message& a) : ref_(argstr(a, 0)), ch_((int)argf(a, 1, 1.f) - 1) {
         setPorts({P::Signal}, {P::Signal});
     }
-    void resolve() override { b_ = findBuffer(patch, name_); }
+    void resolve() override { ref_.resolve(patch); }
     void message(int, const Message& m) override {
-        if (m[0].is("set") && m.size() > 1) { name_ = m[1].str(); patch->rebuild(); }
+        if (m[0].is("set") && m.size() > 1) { ref_.set(patch, m[1].str()); }
         else if (m[0].isFloat()) setScalar(0, m[0].f);
     }
     void dsp(int n) override {
         const float* x = sigIn(0, n);
         float* y = sigOut(0);
-        for (int i = 0; i < n; ++i) y[i] = b_ ? b_->buf.at((long)x[i], std::max(0, ch_)) : 0.f;
+        const SampleBuffer* b = ref_.get();
+        for (int i = 0; i < n; ++i) y[i] = b ? b->at((long)x[i], std::max(0, ch_)) : 0.f;
     }
 
 private:
-    std::string name_;
+    BufferRef ref_;
     int ch_;
-    BufferBox* b_ = nullptr;
 };
 
 // poke~ name [channel]: writes the left signal into a buffer~ at the sample
 // index given by the right signal; indices outside the buffer are ignored
 class PokeBox : public Box {
 public:
-    explicit PokeBox(const Message& a) : name_(argstr(a, 0)), ch_((int)argf(a, 1, 1.f) - 1) {
+    explicit PokeBox(const Message& a) : ref_(argstr(a, 0)), ch_((int)argf(a, 1, 1.f) - 1) {
         setPorts({P::Signal, P::Signal}, {});
     }
-    void resolve() override { b_ = findBuffer(patch, name_); }
+    void resolve() override { ref_.resolve(patch); }
     void message(int in, const Message& m) override {
-        if (m[0].is("set") && m.size() > 1) { name_ = m[1].str(); patch->rebuild(); }
+        if (m[0].is("set") && m.size() > 1) { ref_.set(patch, m[1].str()); }
         else if (m[0].isFloat()) setScalar(in, m[0].f);
     }
     void dsp(int n) override {
-        if (!b_) return;
-        SampleBuffer& b = b_->buf;
+        SampleBuffer* bp = ref_.get();
+        if (!bp) return;
+        SampleBuffer& b = *bp;
         const float *x = sigIn(0, n), *idx = sigIn(1, n);
         int c = std::clamp(ch_, 0, b.channels - 1);
         for (int i = 0; i < n; ++i) {
@@ -929,9 +930,8 @@ public:
     }
 
 private:
-    std::string name_;
+    BufferRef ref_;
     int ch_;
-    BufferBox* b_ = nullptr;
 };
 
 }  // namespace

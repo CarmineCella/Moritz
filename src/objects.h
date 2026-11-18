@@ -225,7 +225,8 @@ public:
         replace(std::move(b));
     }
     // New contents (GUI thread): made aside, swapped in under the lock (O(1)), the old ones
-    // freed after unlocking.
+    // freed after unlocking; the boxes that prepare from a buffer~ (conv~) look again. Nothing is
+    // compiled again: who refers to it by name still does (BufferRef).
     void replace(SampleBuffer&& b) {
         {
             std::lock_guard<std::mutex> lk(patch->mutex());
@@ -233,6 +234,7 @@ public:
             ++version;
         }
         b = SampleBuffer();
+        patch->root()->forEachBox([](Box* x) { x->buffersChanged(); });
     }
     void message(int, const Message& m) override {
         std::string err;
@@ -243,20 +245,20 @@ public:
             { std::lock_guard<std::mutex> lk(patch->mutex()); copy = buf; }
             if (!writeWavFile(patch->resolvePath(m[1].str()), copy, err)) patch->print(err);
         } else if (m[0].is("size") && m.size() > 1 && m[1].isFloat()) {
-            {
-                std::lock_guard<std::mutex> lk(patch->mutex());
-                buf.frames = std::max(0L, (long)(m[1].f / 1000.0 * buf.sr));
-                buf.data.resize((size_t)buf.frames * buf.channels, 0.f);
-                ++version;
-            }
-            patch->rebuild();
+            SampleBuffer b;                              // made aside, swapped in: nothing compiles again
+            b.channels = buf.channels;
+            b.sr = buf.sr;
+            b.frames = std::max(0L, (long)(m[1].f / 1000.0 * buf.sr));
+            b.data.assign((size_t)b.frames * b.channels, 0.f);
+            std::copy_n(buf.data.begin(), std::min(buf.data.size(), b.data.size()), b.data.begin());
+            replace(std::move(b));
         } else if (m[0].is("clear")) {
-            {
-                std::lock_guard<std::mutex> lk(patch->mutex());
-                std::fill(buf.data.begin(), buf.data.end(), 0.f);
-                ++version;
-            }
-            patch->rebuild();
+            SampleBuffer b;
+            b.channels = buf.channels;
+            b.sr = buf.sr;
+            b.frames = buf.frames;
+            b.data.assign(buf.data.size(), 0.f);
+            replace(std::move(b));
         }
     }
     std::vector<std::string> menuItems() override { return {"Load file...", "Save as WAV...", "Clear"}; }
@@ -281,13 +283,48 @@ private:
         std::string err;
         if (!decodeAudioFile(patch->resolvePath(file), b, err)) { patch->print("buffer~ " + name + ": " + err); return; }
         replace(std::move(b));
-        patch->rebuild();        // objects that prepare the data (conv~) reload it
     }
     std::string file_;
     float ms_ = 0.f;
 };
 
 BufferBox* findBuffer(Patch* p, const std::string& name);   // searches the whole patch tree
+
+// BufferRef: a box's reference to a buffer~ by name (play~, groove~, record~, index~, poke~,
+// conv~, sparkle~, nebula~, waveform~). resolve() looks the name up again (at compile); set()
+// names another buffer~ and looks it up at once, for this box alone: `set name` compiles
+// nothing. get() is the storage for the audio thread (its callback holds the patch's lock, under
+// which buffers are swapped and removed), box() the buffer~ for the GUI thread; changed() tells
+// the GUI side that the buffer~ or its contents changed since it last asked.
+class BufferRef {
+public:
+    explicit BufferRef(std::string name = "") : name_(std::move(name)) {}
+    const std::string& name() const { return name_; }
+    void resolve(Patch* p) { box_.store(p && !name_.empty() ? findBuffer(p, name_) : nullptr, std::memory_order_release); }
+    void set(Patch* p, const std::string& name) {
+        name_ = name;
+        resolve(p);
+    }
+    BufferBox* box() const { return box_.load(std::memory_order_acquire); }
+    SampleBuffer* get() const {
+        BufferBox* b = box();
+        return b ? &b->buf : nullptr;
+    }
+    bool changed() {
+        BufferBox* b = box();
+        int v = b ? b->version : -1;
+        if (b == seenBox_ && v == seenVersion_) return false;
+        seenBox_ = b;
+        seenVersion_ = v;
+        return true;
+    }
+
+private:
+    std::string name_;
+    std::atomic<BufferBox*> box_{nullptr};
+    BufferBox* seenBox_ = nullptr;
+    int seenVersion_ = -2;
+};
 
 // Musil's spherical harmonics (sh_gains) into g, without allocating: for the audio thread
 // (objects_spatial.cpp; the engine tests check it against Musil's)

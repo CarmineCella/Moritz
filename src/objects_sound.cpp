@@ -50,8 +50,8 @@ class SparkleBox : public Box {
 public:
     explicit SparkleBox(const Message& a) {
         size_t k = 0;
-        if (k < a.size() && a[k].isSymbol()) name_ = a[k++].s;
-        live_ = name_.empty();
+        if (k < a.size() && a[k].isSymbol()) ref_.set(nullptr, a[k++].s);
+        live_ = ref_.name().empty();
         ch_ = live_ ? 1 : std::clamp((int)argf(a, k++, 1.f), 1, 8);
         wn_ = std::clamp((int)argf(a, k++, 2048.f), 64, 16384);
         int olap = std::clamp((int)argf(a, k++, 8.f), 2, 32);
@@ -77,8 +77,8 @@ public:
         ready_ = 0;
     }
     void resolve() override {
-        b_ = live_ ? nullptr : findBuffer(patch, name_);
-        xb_ = crossName_.empty() ? nullptr : findBuffer(patch, crossName_);
+        if (!live_) ref_.resolve(patch);
+        xref_.resolve(patch);
     }
     void message(int in, const Message& m) override {
         if (in > 0) { if (m[0].isFloat()) setScalar(in, m[0].f); return; }
@@ -91,18 +91,18 @@ public:
         else if (m[0].is("threshold")) threshold_.store(std::max(0.f, argf(m, 1, 0.f)));
         else if (m[0].is("robot")) phaseMode_.store(argf(m, 1, 1.f) != 0.f ? 1 : 0);
         else if (m[0].is("whisper")) phaseMode_.store(argf(m, 1, 1.f) != 0.f ? 2 : 0);
-        else if (m[0].is("set") && m.size() > 1 && !live_) { name_ = m[1].str(); patch->rebuild(); }
+        else if (m[0].is("set") && m.size() > 1 && !live_) ref_.set(patch, m[1].str());   // nothing compiles
         else if (m[0].is("cross")) {
             crossMode_.store(std::clamp((int)argf(m, 1, 0.f), 0, 3));
-            crossName_ = m.size() > 2 ? m[2].str() : "";
-            patch->rebuild();
+            xref_.set(patch, m.size() > 2 ? m[2].str() : "");
         }
     }
     void dsp(int n) override {
         const float *spd = sigIn(0, n), *pitch = sigIn(1, n), *form = sigIn(2, n);
         const float *amount = sigIn(3, n), *other = sigIn(4, n);
-        if (float s = startAt_.exchange(-1.f); s >= 0.f && b_) {
-            pos_ = s / 1000.0 * b_->buf.sr;
+        const SampleBuffer* sb = live_ ? nullptr : ref_.get();
+        if (float s = startAt_.exchange(-1.f); s >= 0.f && sb) {
+            pos_ = s / 1000.0 * sb->sr;
             playing_ = true;
             for (auto& c : chans_) { c->voc->reset(); std::fill(c->ola.begin(), c->ola.end(), 0.f); }
             ready_ = 0;
@@ -135,7 +135,7 @@ private:
     };
     // one analysis/synthesis frame: overlap-adds a window into ola
     void frame(float pitch, float formant, float speed, float amount) {
-        const SampleBuffer* sb = b_ ? &b_->buf : nullptr;
+        const SampleBuffer* sb = live_ ? nullptr : ref_.get();
         bool active = live_ || (playing_ && sb && sb->frames > wn_);
         if (!active) { sync_ = 0.f; return; }
         double ratio = live_ ? 1.0 : sb->sr / patch->root()->sampleRate.load();
@@ -144,7 +144,7 @@ private:
         int C = cepstrum_.load(), D = hop_;
         float thr = threshold_.load();
         int xmode = crossMode_.load();
-        const SampleBuffer* xb = xb_ ? &xb_->buf : nullptr;
+        const SampleBuffer* xb = xref_.get();
         if (xb && xb->frames <= 0) xb = nullptr;
         // the second sound's read position: with the first one's when that
         // is a buffer, else its own, moving on in real time
@@ -198,16 +198,14 @@ private:
         return sb.at(f, c % sb.channels);
     }
 
-    std::string name_;
+    BufferRef ref_;                 // the buffer~ played (none: live)
     bool live_;
     int ch_, wn_, hop_;
     std::vector<float> ring_, ring2_;
-    std::string crossName_;
-    BufferBox* xb_ = nullptr;
+    BufferRef xref_;                // the second sound of the cross-synthesis
     double xpos_ = 0.0;
     std::atomic<int> crossMode_{0};
     std::vector<std::unique_ptr<Chan>> chans_;
-    BufferBox* b_ = nullptr;
     double pos_ = 0.0;
     bool playing_ = false;
     int ready_ = 0, readPos_ = 0, ringPos_ = 0;
@@ -226,35 +224,26 @@ private:
 // scales it. `set name` uses another buffer~ (and reloads it).
 class ConvBox : public Box {
 public:
-    explicit ConvBox(const Message& a) : name_(argstr(a, 0)) {
+    explicit ConvBox(const Message& a) : ref_(argstr(a, 0)) {
         ch_ = std::clamp((int)argf(a, 1, 1.f), 1, 8);
         setPorts(std::vector<Port>((size_t)ch_, P::Signal), std::vector<Port>((size_t)ch_, P::Signal));
         convs_.resize((size_t)ch_);
     }
+    // at compile (the lock held): the buffer~ looked up, the response prepared if it changed
     void resolve() override {
-        BufferBox* b = findBuffer(patch, name_);
-        const SampleBuffer* sb = b ? &b->buf : nullptr;
-        Key k{b, sb ? sb->data.data() : nullptr, sb ? sb->frames : 0, sb ? sb->channels : 0, b ? b->version : 0,
-              gain_, normalize_};
-        if (k == key_) return;          // unchanged: keep the prepared spectra
-        key_ = k;
-        for (int c = 0; c < ch_; ++c) {
-            if (!sb || sb->frames <= 0) { convs_[(size_t)c].setIR(nullptr, 0, 1, 1.f); continue; }
-            int irc = std::min(c, sb->channels - 1);
-            double e = 0;
-            for (long f = 0; f < sb->frames; ++f) e += (double)sb->at(f, irc) * sb->at(f, irc);
-            float g = gain_ * (normalize_ && e > 0 ? (float)(1.0 / std::sqrt(e)) : 1.f);
-            convs_[(size_t)c].setIR(sb->data.data() + irc, sb->frames, sb->channels, g);
-        }
+        ref_.resolve(patch);
+        std::vector<musil::dsp::PartConv<float>> next;
+        if (prepare(next)) convs_.swap(next);
     }
+    // a buffer~ changed, or a message: prepared aside, swapped in under the lock (nothing compiles)
+    void buffersChanged() override { reload(); }
     void message(int in, const Message& m) override {
-        if (m[0].is("set") && m.size() > 1) name_ = m[1].str();
+        if (m[0].is("set") && m.size() > 1) ref_.set(patch, m[1].str());
         else if (m[0].is("gain") && m.size() > 1) gain_ = argf(m, 1, 1.f);
         else if (m[0].is("normalize")) normalize_ = argf(m, 1, 1.f) != 0.f;
         else if (m[0].isFloat()) { setScalar(in, m[0].f); return; }
         else return;
-        key_ = Key();                 // recompute
-        patch->rebuild();
+        reload();
     }
     void dsp(int n) override {
         const float* x = nullptr;
@@ -267,6 +256,33 @@ public:
     }
 
 private:
+    void reload() {
+        std::vector<musil::dsp::PartConv<float>> next;
+        if (!prepare(next)) return;
+        {
+            std::lock_guard<std::mutex> lk(patch->mutex());
+            convs_.swap(next);
+        }
+    }                                    // the old responses go here, after unlocking
+    // the responses of the buffer~ into next; false if nothing changed since the last time
+    bool prepare(std::vector<musil::dsp::PartConv<float>>& next) {
+        BufferBox* b = ref_.box();
+        const SampleBuffer* sb = b ? &b->buf : nullptr;
+        Key k{b, sb ? sb->data.data() : nullptr, sb ? sb->frames : 0, sb ? sb->channels : 0, b ? b->version : 0,
+              gain_, normalize_};
+        if (k == key_) return false;     // unchanged: keep the prepared spectra
+        key_ = k;
+        next.resize((size_t)ch_);
+        for (int c = 0; c < ch_; ++c) {
+            if (!sb || sb->frames <= 0) { next[(size_t)c].setIR(nullptr, 0, 1, 1.f); continue; }
+            int irc = std::min(c, sb->channels - 1);
+            double e = 0;
+            for (long f = 0; f < sb->frames; ++f) e += (double)sb->at(f, irc) * sb->at(f, irc);
+            float g = gain_ * (normalize_ && e > 0 ? (float)(1.0 / std::sqrt(e)) : 1.f);
+            next[(size_t)c].setIR(sb->data.data() + irc, sb->frames, sb->channels, g);
+        }
+        return true;
+    }
     struct Key {
         const void* box = nullptr;
         const float* data = nullptr;
@@ -279,7 +295,7 @@ private:
                    version == o.version && gain == o.gain && normalize == o.normalize;
         }
     };
-    std::string name_;
+    BufferRef ref_;
     int ch_;
     float gain_ = 1.f;
     bool normalize_ = true;
@@ -330,12 +346,7 @@ public:
                 out.data[(size_t)f * ch + c] = std::isfinite(v) ? (float)v : 0.f;
             }
         }
-        {
-            std::lock_guard<std::mutex> lk(patch->mutex());
-            ob->buf = std::move(out);
-            ++ob->version;
-        }
-        patch->rebuild();       // conv~ and the others see the new data
+        ob->replace(std::move(out));   // swapped in under the lock; conv~ and the others see it
         outletBang(0);
     }
 };
@@ -653,7 +664,7 @@ public:
         for (int k = 0; k < 2; ++k) neb_.setWave(k, names_[k]);
     }
     void resolve() override {
-        for (int k = 0; k < 2; ++k) buf_[k] = Neb::isWave(names_[k]) ? nullptr : findBuffer(patch, names_[k]);
+        for (int k = 0; k < 2; ++k) buf_[k].set(patch, Neb::isWave(names_[k]) ? "" : names_[k]);
     }
     void message(int in, const Message& m) override {
         auto num = [&](size_t k, float def) { return argf(m, k, def); };
@@ -690,7 +701,7 @@ public:
             int k = h.is("proto1") ? 0 : 1;
             names_[k] = m[1].str();
             if (!neb_.setWave(k, names_[k])) neb_.setSound(k, nullptr, 0, 1, 44100.0);
-            buf_[k] = Neb::isWave(names_[k]) ? nullptr : findBuffer(patch, names_[k]);
+            buf_[k].set(patch, Neb::isWave(names_[k]) ? "" : names_[k]);
         }
     }
     void dsp(int n) override {
@@ -706,7 +717,7 @@ public:
         for (int k = 0; k < 2; ++k) {
             p.pitch[k] = pitch_[k].load(std::memory_order_relaxed);
             if (Neb::isWave(names_[k])) continue;
-            const SampleBuffer* b = buf_[k] ? &buf_[k]->buf : nullptr;        // the buffer as it is now
+            const SampleBuffer* b = buf_[k].get();        // the buffer as it is now
             if (b && b->frames > 0) neb_.setSound(k, b->data.data(), b->frames, b->channels, b->sr);
             else neb_.setSound(k, nullptr, 0, 1, 44100.0);
         }
@@ -717,7 +728,7 @@ private:
     using Neb = musil::dsp::Nebula<float>;     // Musil's nebula (musil/src/signals/nebula.h)
     Neb neb_;
     std::string names_[2];
-    BufferBox* buf_[2] = {nullptr, nullptr};
+    BufferRef buf_[2];
     std::atomic<bool> on_{false};
     std::atomic<float> density_{10.f}, densityRnd_{0.f}, length_{100.f}, lengthRnd_{0.f}, freq_{220.f},
         freqRnd_{0.f}, morph_{0.f}, amp_{.25f}, gliss_{0.f}, jitter_{.5f}, jitterRnd_{1.f}, speed_{1.f},
