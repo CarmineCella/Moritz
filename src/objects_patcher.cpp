@@ -744,20 +744,22 @@ public:
     explicit LrshiftBox(const Message& a) : n_((int)argf(a, 0, 0.f)) {
         setPorts({P::Signal}, {P::Signal});
     }
+    // a number sets the shift (as Max's lrshift~), not the signal
     void message(int, const Message& m) override {
-        if (m[0].isFloat()) setScalar(0, m[0].f);
+        if (m[0].isFloat() && std::isfinite(m[0].f)) n_.store((int)std::clamp(m[0].f, -1e6f, 1e6f));
     }
     void dsp(int n) override {
         const float* x = sigIn(0, n);
         float* y = sigOut(0);
+        int s = n_.load(std::memory_order_relaxed);
         for (int i = 0; i < n; ++i) {
-            int j = i - n_;
+            int j = i - s;
             y[i] = j >= 0 && j < n ? x[j] : 0.f;
         }
     }
 
 private:
-    int n_;
+    std::atomic<int> n_;
 };
 
 // phasewrap~: wraps into -pi..pi
