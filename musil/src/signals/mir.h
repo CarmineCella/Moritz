@@ -1,8 +1,13 @@
 // Copyright (c) 2026 Carmine-Emanuele Cella. SPDX-License-Identifier: BSD-2-Clause
 // mir.h — music information retrieval in C++, frame by frame and over whole sounds: spectrograms, mel bands
 // and MFCCs, chroma, spectral flux and onsets, tempo and beats, keys, self-similarity and novelty, loudness.
-// Maple and SoundTypes (music/maple.h, music/soundtypes.h) are built on it, and a host can use it directly
-// (Moritz's analysis objects, offline and live, do). It needs nothing but the standard library.
+// The one implementation of these analyses: Musil's builtins (chromagram, mel-spectrogram, mfcc-gram,
+// self-similarity, foote-novelty, tempogram, beat-track, key-scores, tempo-estimate-with) wrap it, Maple and
+// SoundTypes (music/maple.h, music/soundtypes.h) are built on it, and Moritz's analysis objects, offline and
+// live, use it: a script and a patch get the same numbers. The spectra are computed in double precision
+// whatever the samples are (float or double). It needs nothing but the standard library.
+//
+// Key names are spelled with sharps, as Musil's pitch names: C C# D D# E F F# G G# A A# B.
 //
 // A spectrogram has a frame every hop samples; frame f is centred on sample
 // f * hop (the signal is padded with n/2 zeros on both sides), so its time
@@ -27,7 +32,7 @@ namespace mir {
 constexpr double kPi = 3.14159265358979323846;
 constexpr double kTwoPi = 2.0 * kPi;
 
-// the FFT on floats of the signal engines (fft.h): unscaled inverse, inverse(forward(x)) == n * x
+// the FFT on floats of the signal engines (fft.h): unscaled inverse, inverse(forward(x)) == n * x (Maple's)
 using FFT = dsp::FFT<float>;
 
 using Vec = std::vector<double>;
@@ -39,22 +44,25 @@ constexpr double kFloorDb = -100.0;
 inline double toDb(double power) { return std::max(kFloorDb, 10.0 * std::log10(power + 1e-30)); }
 
 // ------------------------------------------------------------------ spectra
-// Magnitudes of one frame (n samples, already windowed or not): n/2 + 1 bins.
+// Magnitudes of one frame (n samples, a power of two, Hann-windowed here): n/2 + 1 bins, in double precision
+// whatever the samples are.
 class FrameSpectrum {
 public:
     void init(int n) {
         n_ = n;
         fft_.init(n);
-        re_.assign((size_t)n, 0.f);
-        im_.assign((size_t)n, 0.f);
+        buf_.assign((size_t)n, 0.0);
+        re_.assign((size_t)n / 2 + 1, 0.0);
+        im_.assign((size_t)n / 2 + 1, 0.0);
         win_.resize((size_t)n);
-        for (int k = 0; k < n; ++k) win_[(size_t)k] = (float)(.5 - .5 * std::cos(kTwoPi * k / n));
+        for (int k = 0; k < n; ++k) win_[(size_t)k] = .5 - .5 * std::cos(kTwoPi * k / n);
     }
     int size() const { return n_; }
-    // x: n samples; mag gets n/2 + 1 amplitudes (a full-scale sine = 1)
-    void magnitudes(const float* x, Vec& mag) {
-        for (int k = 0; k < n_; ++k) { re_[(size_t)k] = x[k] * win_[(size_t)k]; im_[(size_t)k] = 0.f; }
-        fft_.forward(re_.data(), im_.data());
+    // x: n samples (float or double); mag gets n/2 + 1 amplitudes (a full-scale sine = 1)
+    template <class T>
+    void magnitudes(const T* x, Vec& mag) {
+        for (int k = 0; k < n_; ++k) buf_[(size_t)k] = (double)x[k] * win_[(size_t)k];
+        fft_.forward(buf_.data(), re_.data(), im_.data());
         mag.resize((size_t)n_ / 2 + 1);
         double scale = 4.0 / n_;
         for (int b = 0; b <= n_ / 2; ++b) mag[(size_t)b] = std::hypot(re_[(size_t)b], im_[(size_t)b]) * scale;
@@ -62,24 +70,25 @@ public:
 
 private:
     int n_ = 0;
-    FFT fft_;
-    std::vector<float> re_, im_, win_;
+    dsp::RealFFT<double> fft_;
+    std::vector<double> buf_, re_, im_, win_;
 };
 
 inline int frameCount(long length, int hop) { return (int)(length / hop) + 1; }
 
-// frames x (n/2 + 1) magnitudes of a mono signal
-inline Mat magSpectrogram(const std::vector<float>& x, int n, int hop, const Tick& tick = {}) {
+// frames x (n/2 + 1) magnitudes of a mono signal (float or double samples)
+template <class T>
+inline Mat magSpectrogram(const std::vector<T>& x, int n, int hop, const Tick& tick = {}) {
     int frames = frameCount((long)x.size(), hop);
     Mat mag((size_t)frames);
     FrameSpectrum fs;
     fs.init(n);
-    std::vector<float> buf((size_t)n);
+    std::vector<double> buf((size_t)n);
     for (int f = 0; f < frames; ++f) {
         long start = (long)f * hop - n / 2;
         for (int k = 0; k < n; ++k) {
             long i = start + k;
-            buf[(size_t)k] = (i >= 0 && i < (long)x.size()) ? x[(size_t)i] : 0.f;
+            buf[(size_t)k] = (i >= 0 && i < (long)x.size()) ? (double)x[(size_t)i] : 0.0;
         }
         fs.magnitudes(buf.data(), mag[(size_t)f]);
         if (tick && f % 64 == 0 && !tick((double)f / frames)) return {};
@@ -266,7 +275,8 @@ inline double correlation(const Vec& a, const Vec& b) {
 // ------------------------------------------------------------------ onsets
 // The sample within [start, start + n) where the energy rises most (64-sample
 // blocks): a hit is placed where it starts, not a window early.
-inline long onsetRefine(const std::vector<float>& x, long start, int n) {
+template <class T>
+inline long onsetRefine(const std::vector<T>& x, long start, int n) {
     const int blk = 64;
     start = std::max(0L, start);
     long len = std::min((long)n, (long)x.size() - start);
@@ -287,7 +297,8 @@ inline long onsetRefine(const std::vector<float>& x, long start, int n) {
 // Onset times in seconds: the peaks of the flux above threshold times its
 // moving median over width frames (plus 1% of its maximum), at least `gap`
 // seconds apart, each refined to the sample where the energy jumps.
-inline Vec onsetTimes(const std::vector<float>& x, double sr, int n, int hop, const Vec& flux, double threshold,
+template <class T>
+inline Vec onsetTimes(const std::vector<T>& x, double sr, int n, int hop, const Vec& flux, double threshold,
                       int width, double gap) {
     Vec out;
     if (flux.size() < 3) return out;
@@ -321,12 +332,13 @@ inline Vec autocorr(const Vec& x, int maxLag) {
 // read at the lags of 30..300 bpm, weighted by a log-normal prior on the
 // tempo a listener taps, centred on `centre` bpm, `width` octaves wide (the
 // pulse of the eighths or of the bars is often as periodic as the beat's:
-// the prior decides between the octaves).
+// the prior decides between the octaves). Only lags under half the curve's
+// length are read (a longer lag has too few products to mean anything).
 inline double tempoEstimate(const Vec& flux, double fps, double centre = 100, double width = .6) {
     Vec c(flux);
     double m = meanOf(c);
     for (auto& v : c) v -= m;
-    Vec ac = autocorr(c, (int)std::ceil(fps * 60 / 30) + 2);
+    Vec ac = autocorr(c, std::min((int)std::ceil(fps * 60 / 30) + 2, (int)c.size() / 2 - 1));
     double best = 0, bestBpm = centre;
     for (double bpm = 30; bpm <= 300; bpm += .5) {
         double lag = fps * 60 / bpm;
@@ -429,11 +441,11 @@ inline Mat tempogram(const Vec& flux, double fps, int win, int step) {
 }
 
 // ------------------------------------------------------------------ key
-// the tonic of a key as musicians usually spell it (Eb major, C# minor)
+// the tonic of a key, with sharps (as Musil's pitch names): C C# D D# E F F# G G# A A# B, major and minor alike
 inline const char* keyName(int k, bool minor = false) {
-    static const char* const major[12] = {"C", "Db", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"};
-    static const char* const minorNames[12] = {"C", "C#", "D", "Eb", "E", "F", "F#", "G", "G#", "A", "Bb", "B"};
-    return (minor ? minorNames : major)[((k % 12) + 12) % 12];
+    static const char* const names[12] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
+    (void)minor;
+    return names[((k % 12) + 12) % 12];
 }
 // Krumhansl & Kessler's profiles (probe-tone experiments, Krumhansl 1990)
 inline const std::array<double, 12>& majorProfile() {
@@ -550,7 +562,8 @@ struct Biquad2 {
 };
 // The level of every hop in dB, roughly as the ear weighs it (below 150 Hz
 // and above 8 kHz taken out); a value a frame, centred like the spectra.
-inline Vec loudnessCurve(const std::vector<float>& x, double sr, int hop, int n) {
+template <class T>
+inline Vec loudnessCurve(const std::vector<T>& x, double sr, int hop, int n) {
     Biquad2 hp, lp;
     hp.design(true, sr, 150, .7);
     lp.design(false, sr, std::min(8000.0, .45 * sr), .7);

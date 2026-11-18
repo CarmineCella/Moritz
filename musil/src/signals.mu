@@ -778,17 +778,7 @@ var minor-profile (vec (list 6.33 2.68 3.52 5.38 2.60 3.53 2.54 4.75 3.98 2.69 3
 function chroma-mean (C) (vec (map C mean))
 ; (rotate-vec v k)         the vector rotated right by k (v[0] goes to position k)
 function rotate-vec (v k) (vec (map (vec->list (range (length v))) (function (j) (getidx v (mod (- j k) (length v))))))
-; (key-scores chroma)      every key against a pitch-class distribution (a vector of 12, C first: chroma-mean of a
-;                          chromagram): the correlation of the distribution with the Krumhansl-Kessler profile of each
-;                          major and minor key (Krumhansl 1990); => (list (list "D" 'minor r) ...), best first
-function key-scores (chroma) {
-    var out (list)
-    each (vec->list (range 12)) (function (k) {
-        push out (list (getidx key-names k) 'major (correlation chroma (rotate-vec major-profile k)))
-        push out (list (getidx key-names k) 'minor (correlation chroma (rotate-vec minor-profile k)))
-    })
-    return (reverse (sort-by out last))
-}
+; (key-scores chroma) is C++ (signals.h, mir.h's keyScores: Moritz's keyfind too); key names with sharps
 ; (correlation a b)        Pearson's correlation of two vectors
 function correlation (a b) {
     var da (- a (mean a))
@@ -801,28 +791,11 @@ function key-estimate (chroma) (head (key-scores chroma))
 ; (key-name k)             "D minor" from a key-scores entry
 function key-name (k) (concat (head k) " " (str (getidx k 1)))
 ; (tempo-estimate flux fps)   the tempo of an onset strength (a vector, fps values a second): the autocorrelation
-;                          of the flux read at the lags of 30..300 bpm, weighted by a log-normal prior on the tempo a
+;                          of the flux read at the lags of 30..300 bpm (tempo-estimate-with), weighted by a log-normal prior on the tempo a
 ;                          listener taps, centred on 100 bpm and 0.6 octaves wide (the pulse of the eighths or the
 ;                          bars is often as periodic as the beat's: the prior decides between the octaves); => bpm
 function tempo-estimate (flux fps) (tempo-estimate-with flux fps 100 0.6)
-; (tempo-estimate-with flux fps centre width)   the same with the prior's centre (bpm) and width (octaves) given;
-;                          (tempo-estimate-with flux fps 120 10) is the autocorrelation's own peak
-function tempo-estimate-with (flux fps centre width) {
-    var ac (autocorr (- flux (mean flux)))
-    var best 0
-    var best-bpm centre
-    for (var bpm 30) (<= bpm 300) (var bpm (+ bpm 0.5)) {
-        var lag (/ (* fps 60) bpm)
-        var l0 (floor lag)
-        if (< (+ l0 1) (length ac)) {
-            var v (+ (* (getidx ac l0) (- 1 (- lag l0))) (* (getidx ac (+ l0 1)) (- lag l0)))
-            var w (exp (* -0.5 (pow (/ (log2 (/ bpm centre)) width) 2)))
-            if (> (* v w) best) { set best (* v w)
-                                  set best-bpm bpm }
-        }
-    }
-    return best-bpm
-}
+; (tempo-estimate-with flux fps centre width) is C++ (signals.h, mir.h's tempoEstimate: Moritz's beats too)
 ; (beats x sr n hop)       the beat times of a recording in seconds: the onset strength (n, hop as onset-strength),
 ;                          its tempo (tempo-estimate) and the beats tracked on it (beat-track, tightness 100); a
 ;                          frame's time is the middle of its window (the flux rises when an attack enters it);

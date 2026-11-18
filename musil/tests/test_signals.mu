@@ -628,4 +628,37 @@ var bs (beat-sync (list (vec 1 2 3 4 5 6) (vec 0 0 0 1 1 1)) (vec 0 0.5) 4)    ;
 check (equal? bs (list (vec 1.5 4.5) (vec 0 0.75))) "beat-sync: the columns averaged between beats"
 check (equal? (mat-log1p (list (vec 0 (- (exp 1) 1))) 1) (list (vec 0 1))) "mat-log1p"
 
+
+; --- the analyses are mir.h's (as Moritz's objects): the same as the Musil they replaced ---
+function key-scores-mu (chroma) {
+    var out (list)
+    each (vec->list (range 12)) (function (k) {
+        push out (list (getidx key-names k) 'major (correlation chroma (rotate-vec major-profile k)))
+        push out (list (getidx key-names k) 'minor (correlation chroma (rotate-vec minor-profile k)))
+    })
+    return (reverse (sort-by out last))
+}
+function tempo-estimate-with-mu (flux fps centre width) {
+    var ac (autocorr (- flux (mean flux)))
+    var best 0
+    var best-bpm centre
+    for (var bpm 30) (<= bpm 300) (var bpm (+ bpm 0.5)) {
+        var lag (/ (* fps 60) bpm)
+        var l0 (floor lag)
+        if (< (+ l0 1) (length ac)) {
+            var v (+ (* (getidx ac l0) (- 1 (- lag l0))) (* (getidx ac (+ l0 1)) (- lag l0)))
+            var w (exp (* -0.5 (pow (/ (log2 (/ bpm centre)) width) 2)))
+            if (> (* v w) best) { set best (* v w)
+                                  set best-bpm bpm }
+        }
+    }
+    return best-bpm
+}
+var pcd (vec 0.9 0.1 0.5 0.1 0.7 0.6 0.1 0.8 0.1 0.5 0.1 0.4)
+check (all? (zip (key-scores pcd) (key-scores-mu pcd)) (function (p) (and (equal? (head (head p)) (head (last p))) (equal? (getidx (head p) 1) (getidx (last p) 1)) (near? (last (head p)) (last (last p)) 1e-12)))) "key-scores: as written in Musil (sharps)"
+check (equal? (key-name (key-estimate pcd)) "C major") "key-estimate: C major"
+var pulse (vec (map (vec->list (range 600)) (function (k) (if (== (mod k 25) 0) 1 (* 0.1 (mod (* k 7) 3))))))
+check (== (tempo-estimate-with pulse 50 100 0.6) (tempo-estimate-with-mu pulse 50 100 0.6)) "tempo-estimate-with: as written in Musil"
+check (== (tempo-estimate pulse 50) 120) "tempo-estimate: a pulse every 25 frames at 50 fps is 120 bpm"
+
 report "test_signals"

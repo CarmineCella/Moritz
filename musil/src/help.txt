@@ -958,6 +958,18 @@
   => an ncoeff x frames matrix: the mel-frequency cepstral coefficients of every
   frame (the DCT-II of the mel spectrogram in dB, nmel filters, the first ncoeff coefficients: a smooth description of
   the spectral envelope, the timbre; coefficient 0 is the overall level)
+#key-scores
+  (key-scores chroma)
+  every key against a pitch-class distribution (a vector of 12, C first: chroma-mean of a
+  chromagram): the correlation of the distribution with the Krumhansl-Kessler profile of each major and minor key
+  (Krumhansl 1990; mir.h's keyScores, as Moritz's keyfind); => (list (list "D" 'minor r) ...), best first. Key
+  names with sharps (C C# D D# E F F# G G# A A# B)
+#tempo-estimate-with
+  (tempo-estimate-with flux fps centre width)
+  the tempo of an onset strength (a vector, fps values a second): its
+  autocorrelation (the mean removed) read at the lags of 30..300 bpm (half-bpm steps, a lag under half the curve's
+  length), weighted by a log-normal prior on the tempo a listener taps, centred on centre bpm, width octaves wide
+  (mir.h's tempoEstimate, as Moritz's beats); (tempo-estimate-with flux fps 120 10) is the autocorrelation's own peak
 #sine
   (sine sr freq dur)
   a sine of freq Hz lasting dur seconds
@@ -1374,11 +1386,6 @@
 #rotate-vec
   (rotate-vec v k)
   the vector rotated right by k (v[0] goes to position k)
-#key-scores
-  (key-scores chroma)
-  every key against a pitch-class distribution (a vector of 12, C first: chroma-mean of a
-  chromagram): the correlation of the distribution with the Krumhansl-Kessler profile of each
-  major and minor key (Krumhansl 1990); => (list (list "D" 'minor r) ...), best first
 #correlation
   (correlation a b)
   Pearson's correlation of two vectors
@@ -1391,13 +1398,9 @@
 #tempo-estimate
   (tempo-estimate flux fps)
   the tempo of an onset strength (a vector, fps values a second): the autocorrelation
-  of the flux read at the lags of 30..300 bpm, weighted by a log-normal prior on the tempo a
+  of the flux read at the lags of 30..300 bpm (tempo-estimate-with), weighted by a log-normal prior on the tempo a
   listener taps, centred on 100 bpm and 0.6 octaves wide (the pulse of the eighths or the
   bars is often as periodic as the beat's: the prior decides between the octaves); => bpm
-#tempo-estimate-with
-  (tempo-estimate-with flux fps centre width)
-  the same with the prior's centre (bpm) and width (octaves) given;
-  (tempo-estimate-with flux fps 120 10) is the autocorrelation's own peak
 #beats
   (beats x sr n hop)
   the beat times of a recording in seconds: the onset strength (n, hop as onset-strength),
