@@ -242,6 +242,7 @@ public:
     virtual std::vector<std::string> menuItems() { return {}; }
     virtual void menuAction(int item) {}
     virtual bool animated() const { return false; }      // redraw continuously (meter~, scope~)
+    virtual bool working() const { return false; }       // a worker thread computes for its next hop (tests wait)
 
     bool isSignal() const;
     int numIns() const { return (int)ins.size(); }

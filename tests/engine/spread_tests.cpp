@@ -52,11 +52,19 @@ TEST(sparkle_worker_matches_offline) {
     std::string err;
     live.p.load(kPatch, err);
     std::vector<float> b, buf(2 * 64);
+    Box* s = live.box("s");
+    bool finished = true;
     for (int k = 0; k < 22050 / 64 + 1; ++k) {
+        // each frame is given the time it needs (a machine under load, or a sanitizer, is slower than real
+        // time: a frame late is skipped by design, which is not what this compares)
+        auto t0 = std::chrono::steady_clock::now();
+        while (s->working() && std::chrono::steady_clock::now() - t0 < std::chrono::seconds(10))
+            std::this_thread::sleep_for(std::chrono::microseconds(100));
+        finished = finished && !s->working();
         live.p.process(nullptr, 0, buf.data(), 2, 64);
         for (int i = 0; i < 64; ++i) b.push_back(buf[(size_t)i * 2]);
-        std::this_thread::sleep_for(std::chrono::microseconds(1450));   // about real time
     }
+    CHECK(finished);
     double worst = 0, peak = 0;
     for (size_t i = 0; i < a.size() && i < b.size(); ++i) {
         worst = std::max(worst, (double)std::fabs(a[i] - b[i]));

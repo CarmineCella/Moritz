@@ -168,6 +168,11 @@ private:
         unsigned gen = 0;
     };
     enum { kIdle, kBusy, kDone };
+
+public:
+    bool working() const override { return state_.load(std::memory_order_acquire) == kBusy; }
+
+private:
     // At each hop: the frame computed during the last hop is overlap-added (heard from now on),
     // and the next frame's input is taken and handed to the worker (or computed at once offline).
     void hop(float pitch, float formant, float speed, float amount) {
