@@ -27,6 +27,7 @@ public:
     CodeWindow();
     ~CodeWindow() override;
     bool load(const std::string& path);
+    bool startFile(const std::string& path);      // a file not there yet: empty, written by Save
     bool save();
     bool saveAs();
     bool confirmDiscard();                        // asks to save when edited; false: cancel

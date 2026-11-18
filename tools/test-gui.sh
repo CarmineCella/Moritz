@@ -87,6 +87,12 @@ printf '{"patcher":{"boxes":[{"box":{"id":"obj-1","maxclass":"newobj","text":"po
 run --import "$T/max/sub/main.maxpat" "$T/max/sub/main.moritz"
 if [ $status -eq 0 ] && [ ! -e "$T/max/x.moritz" ] && grep -q "outside the folder" "$out"; then ok; else fail "Max import stays in its folder"; fi
 
+# 10. opening the script of a code box whose file is missing does not make the file
+mkdir -p "$T/code"
+cp "$G/missing.moritz" "$T/code/"
+run "$T/code/missing.moritz" --window-png none open=c1 act=state
+if [ $status -eq 0 ] && [ ! -e "$T/code/missing-script.mu" ]; then ok; else fail "a missing script is not made by opening it"; fi
+
 # 11. Recent files hold absolute paths, whatever the command line said
 ( cd "$G" && "$MORITZ" numbers.moritz --window-png none > "$out" 2>&1 )
 if grep -rq "numbers.moritz" "$HOME" 2>/dev/null && ! grep -rq "^0:numbers.moritz" "$HOME" 2>/dev/null; then ok

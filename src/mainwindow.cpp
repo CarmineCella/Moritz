@@ -32,7 +32,6 @@
 #include <cstdlib>
 #include <ctime>
 #include <cmath>
-#include <fstream>
 
 #ifdef __APPLE__
 #include <FL/platform.H>
@@ -790,9 +789,11 @@ CodeWindow* App::openCodeFor(CodeSource* s) {
     auto* w = new CodeWindow();
     std::string f = s->file();
     if (!f.empty()) {
-        if (!w->load(f)) {                              // a file not written yet: it is made on Save
-            std::ofstream make(f, std::ios::app);
-            if (!make || !w->load(f)) { delete w; print("code: can't open " + f); return nullptr; }
+        // a file that is not there yet is not made now: the editor starts empty and Save writes it
+        if (fileio::isFile(f) ? !w->load(f) : !w->startFile(f)) {
+            delete w;
+            print("code: can't open " + f);
+            return nullptr;
         }
     } else {
         w->setText(s->script());

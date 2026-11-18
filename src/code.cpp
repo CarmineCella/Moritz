@@ -399,6 +399,18 @@ bool CodeWindow::load(const std::string& path) {
     return true;
 }
 
+bool CodeWindow::startFile(const std::string& path) {
+    text_->text("");
+    path_ = path;
+    dirty_ = false;
+    errorLine_ = 0;
+    restyle();
+    refreshOutline();
+    refreshTitle();
+    setStatus(path.substr(path.find_last_of("/\\") + 1) + " is not there yet: Cmd-S writes it");
+    return true;
+}
+
 void CodeWindow::applyFont() {
     editor_->highlight_data(style_, styleTable(), 10, 'A', nullptr, nullptr);   // the sizes, measured again
     editor_->textsize(settings().codeSize);
@@ -411,6 +423,10 @@ void CodeWindow::bind(CodeSource* s) {
                     " defines, after each run (in1, in2... are its inlets).").c_str());
     refreshTitle();
     refreshVariables();
+    if (!s->file().empty() && !fileio::isFile(s->file())) {
+        setStatus(s->title() + " is not there yet: Cmd-S writes it · Cmd-Enter runs the block in the box");
+        return;
+    }
     setStatus(s->file().empty() ? "the script of " + s->title() + ": Cmd-S puts it back into the box · Cmd-Enter runs the block in the box"
                                 : "the file of " + s->title() + " · Cmd-Enter runs the block in the box");
 }
@@ -425,7 +441,7 @@ void CodeWindow::rebind(CodeSource* s) {
     if (!dirty_) {                                  // nothing edited here: the text of the box that is there now
         std::string f = s->file();
         if (f.empty()) { path_.clear(); setText(s->script()); }
-        else if (f != path_) load(f);
+        else if (f != path_ && !load(f)) startFile(f);
     }
     bind(s);
 }
