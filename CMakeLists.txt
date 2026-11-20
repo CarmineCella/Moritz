@@ -134,7 +134,10 @@ endif()
 
 # ---------------------------------------------------------------- Moritz
 # miniaudio (audio) and RtMidi (MIDI), compiled once, quietly
-file(WRITE ${CMAKE_BINARY_DIR}/miniaudio_impl.c "#define MINIAUDIO_IMPLEMENTATION\n#include \"miniaudio.h\"\n")
+# (written aside and copied only when it differs: rewriting it at each configure compiled miniaudio again and
+# linked, staged and signed the app again on every make)
+file(WRITE ${CMAKE_BINARY_DIR}/miniaudio_impl.c.in "#define MINIAUDIO_IMPLEMENTATION\n#include \"miniaudio.h\"\n")
+configure_file(${CMAKE_BINARY_DIR}/miniaudio_impl.c.in ${CMAKE_BINARY_DIR}/miniaudio_impl.c COPYONLY)
 add_library(moritz_io STATIC ${CMAKE_BINARY_DIR}/miniaudio_impl.c ${RTMIDI_DIR}/RtMidi.cpp)
 target_include_directories(moritz_io PUBLIC ${MA_DIR} ${RTMIDI_DIR})
 target_compile_options(moritz_io PRIVATE -w)

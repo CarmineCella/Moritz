@@ -27,8 +27,17 @@ ifneq (,$(findstring _NT,$(UNAME)))          # MSYS2
 CMAKE_ARGS += -G "MSYS Makefiles"
 endif
 
+# configured once (cmake --build configures again by itself when a CMake file changes); VERSION= or SIGN_ID=
+# configure again; make configure does it by hand
+ifneq (,$(VERSION)$(SIGN_ID))
 all: configure
+else
+all: $(BUILD)/CMakeCache.txt
+endif
 	cmake --build $(BUILD) -j$(JOBS)
+
+$(BUILD)/CMakeCache.txt:
+	cmake -S . -B $(BUILD) $(CMAKE_ARGS)
 
 configure:
 	cmake -S . -B $(BUILD) $(CMAKE_ARGS)
