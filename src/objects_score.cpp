@@ -264,9 +264,8 @@ public:
     void dsp(int n) override;
 
     // the interface: name and summary
-    void uiSize(int& w, int& h) const override {
-        zd::font(kFont, kFontSize);
-        w = std::max(150, (int)zd::width(label().c_str()) + 16);
+    void uiSize(int& w, int& h) const override {      // measured without the fonts: made where there is no display too
+        w = std::max(170, (int)label().size() * (kFontSize * 3 / 5 + 1) + 16);
         h = kBoxH + 14;
     }
     void drawUI(int X, int Y) override {
