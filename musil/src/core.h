@@ -541,6 +541,16 @@ inline bool path_under(const fs::path& p, const std::vector<std::string>& roots)
 }
 
 struct Frame { vptr name; sptr file; int line; };   // call-stack entry; formatted lazily on error
+// An opaque value that answers as a record (a score, an event of a score: music/score_musil.h). A library
+// registers the functions for its tag in Interp::records; get, opt, has?, put! and pairs (std.h) reach them.
+//   get(i, v, key, found)   the value of key (found false when absent)
+//   put(i, v, key, value)   key set in place
+//   pairs(i, v)             a new record (list of (key value)) with what it holds now
+struct OpaqueRecord {
+    vptr (*get)(Interp&, const vptr&, const vptr&, bool&) = nullptr;
+    void (*put)(Interp&, const vptr&, const vptr&, const vptr&) = nullptr;
+    vptr (*pairs)(Interp&, const vptr&) = nullptr;
+};
 struct Interp {
     eptr library;                              // the builtins and the libraries (files found on the load path)
     eptr global;                               // the program's names, and the library's too (shared until the program redefines one)
@@ -585,6 +595,12 @@ struct Interp {
     bool& allow_blocking = caps.blocking;   // false: builtins that wait (sleep, input, exec) refuse to run;
                                             // a host whose code must answer at once (a box in a patch) sets it
     std::unordered_map<const void*, std::shared_ptr<void>> extensions;   // state<T>()
+    std::unordered_map<std::string, OpaqueRecord> records;                // opaque values that answer as records, by tag
+    const OpaqueRecord* record_of(const vptr& v) const {
+        if (!v || v->t != Value::OPAQUE) return nullptr;
+        auto it = records.find(v->opaque_tag);
+        return it == records.end() ? nullptr : &it->second;
+    }
     vptr quote_op;                          // the quote builtin itself: apply quotes its arguments with it
 
     Interp();
@@ -1208,7 +1224,9 @@ inline vptr fn_ne(vlist& a, Interp& i) {
 inline vptr fn_equalp(vlist& a, Interp&) { return v_bool(equal(a[0], a[1])); }
 // (same? a b) are a and b the same object (not merely equal in value)? For records and lists: the very one, however
 //   large; a number or a string is never the same object as another copy of it
-inline vptr fn_samep(vlist& a, Interp&) { return v_bool(a[0] == a[1]); }
+inline vptr fn_samep(vlist& a, Interp&) {      // two handles of the same C++ object (a score) are the same thing
+    return v_bool(a[0] == a[1] || (a[0] && a[1] && a[0]->t == Value::OPAQUE && a[1]->t == Value::OPAQUE && a[0]->opaque && a[0]->opaque == a[1]->opaque));
+}
 // (sin x) (cos x) (tan x) (asin x) (acos x) (atan x) (sqrt x) (exp x) (log x) (log2 x) (log10 x) trigonometry and logs, elementwise
 // (abs x) (floor x) (ceil x) (round x) rounding and magnitude, elementwise
 // (tanh x) hyperbolic tangent, elementwise (a soft clip for signals)

@@ -1,9 +1,11 @@
 ; music.mu — the score: things placed in time, and what to do with them
 ; Copyright (c) 2026 Carmine-Emanuele Cella. SPDX-License-Identifier: BSD-2-Clause
 ;
-; A score is a record: name, sample rate, a list of events, a layout. An event is a record
-; with an onset (at, seconds), a duration (dur), a kind, its source, a gain and a position
-; (azimuth, elevation for the spatial layouts). What an event can hold:
+; A score is a value of its own, (type s) "opaque:score": the C++ structure Moritz plays too (music/score.h), read and
+; written as a .score file (score-read, score-write), Musil data that nothing runs. It answers as a record: name, sample
+; rate, its events, a tempo and a meter, a layout. An event, "opaque:event", answers as a record too: an onset (at,
+; seconds), a duration (dur), a kind, its source, a gain and a position (azimuth, elevation for the spatial layouts);
+; put! changes it in its score. What an event can hold:
 ;     (event s 0 3.5 "bells.wav")                    a sound file (read when rendered, cached)
 ;     (event s 2 3.6 buffer)                         a buffer: a vector, or a list of channel vectors
 ;     (event s 4 1 (note db 'Vn 'C5 'mf 'ord))       a sound from a database (nearest pitch, shifted)
@@ -27,8 +29,13 @@ load "live.mu"
 load "plot.mu"
 
 ; --- the score ------------------------------------------------------------------------------
-; (score name sr)          a new, empty score at a sample rate
-function score (name sr) (record (list 'name name 'sr sr 'events (list) 'layout "stereo" 'reverb (list 0.7 0.3) 'bpm 60))
+; (score name sr)          a new, empty score at a sample rate (60 bpm, 4/4, laid out in stereo, heard in the hall)
+function score (name sr) {
+    var s (score-make name sr)
+    put! s 'layout "stereo"
+    put! s 'reverb (list 0.7 0.3)
+    return s
+}
 ; (score-tempo! s bpm) (score-bpm s)   the score's tempo, for times written in beats (60 by default: a beat is a second)
 function score-tempo! (s bpm) (put! s 'bpm bpm)
 function score-bpm (s) (opt s 'bpm 60)
@@ -37,14 +44,13 @@ function beat->sec (s b) (* b (/ 60 (score-bpm s)))
 ; (score-reverb! s dry wet)   how much of the score is heard dry and through the hall when it is played (0.7 and 0.3
 ;                          by default; (score-reverb! s 1 0) plays it dry)
 function score-reverb! (s dry wet) (put! s 'reverb (list dry wet))
-; (score-events s) (score-sr s) (score-duration s)   its events (in the order they were added), rate, end time
+; (score-events s) (score-sr s)   its events (in the order they were added), its rate; (score-duration s) is when it ends
 function score-events (s) (get s 'events)
 function score-sr (s) (get s 'sr)
-function score-duration (s) (if (== (length (get s 'events)) 0) 0 (max-of (map (get s 'events) event-end)))
 ; (event-end e)            when the event ends
 function event-end (e) (+ (get e 'at) (get e 'dur))
 ; (event s at dur what)    add an event; what is a path, a buffer, a note, an instrument, a call, or a function;
-;                          => the event record (its at and dur can be changed later with put!)
+;                          => the event (its at and dur can be changed later with put!)
 function event (s at dur what) (event-at s at dur what 0 0)
 ; (event-at s at dur what az el)   the same, placed at an azimuth and an elevation (degrees, 0 in front, left positive)
 function event-at (s at dur what az el) {
@@ -59,27 +65,21 @@ function event-at (s at dur what az el) {
     put! e 'az az
     put! e 'el el
     if (not (has? e 'gain)) { put! e 'gain 1 }                               ; a payload may carry its gain (fragment-gain)
-    put! e 'id (score-next-id! s)
-    push (get s 'events) e
-    return e
+    return (score-add! s e)                                                  ; a fresh id; a score inside itself refused
 }
 ; (score-next-id! s)       a fresh event number: ids are never reused, even after events are removed (the roll and
 ;                          score-choose! find events by their id)
-function score-next-id! (s) {
-    var n (opt s 'next-id nil)
-    if (equal? (type n) "nil") { set n (+ 1 (if (== (length (get s 'events)) 0) 0 (max-of (map (get s 'events) (function (e) (get e 'id)))))) }
-    put! s 'next-id (+ n 1)
-    return n
-}
+function score-next-id! (s) (score-take-id! s)
 ; (payload->event what)    the event record of a payload (kind and source), without its time
 function payload->event (what) {
     var t (type what)
+    if (equal? t "opaque:score") { return (record (list 'kind 'score 'source what 'label (concat "score " (get what 'name)))) }   ; a score inside a score
+    if (equal? t "opaque:event") { return (pairs what) }                                                                    ; another event: copied
     if (equal? t "string") { return (record (list 'kind 'file 'source what 'label (filename what))) }
     if (equal? t "vec") { return (record (list 'kind 'buffer 'source what 'label (concat "buffer " (str (length what))))) }
     if (equal? t "function") { return (record (list 'kind 'call 'source what 'args (list 'dur) 'label (concat "call " (fn-name what)))) }
     if (equal? t "list") {
         if (and (> (length what) 0) (equal? (type (head what)) "vec")) { return (record (list 'kind 'buffer 'source what 'label (concat "buffer x" (str (length what))))) }
-        if (has? what 'events) { return (record (list 'kind 'score 'source what 'label (concat "score " (get what 'name)))) }   ; a score inside a score
         if (has? what 'kind) { return (map what (function (p) (list (head p) (last p)))) }   ; a note, chord, instrument or call record: copied
     }
     error "event: cannot place a " t " in a score"
@@ -167,13 +167,18 @@ function render-event (e sr) {
     var chans nil
     if (equal? kind 'file) {
         var w (load-sound (get e 'source))
-        set chans (to-rate (getidx w 1) (head w) sr)
+        set chans (to-rate (sound-region (getidx w 1) (head w) (opt e 'from 0) (opt e 'to -1)) (head w) sr)
     }
     if (equal? kind 'buffer) {
         var src (get e 'source)
+        if (equal? (type src) "string") { error "render-event: " src " is a buffer~ of Moritz, not a sound Musil holds" }
         set chans (if (equal? (type src) "vec") (list src) src)
     }
-    if (equal? kind 'note) { set chans (note-sound e sr) }
+    if (or (equal? kind 'message) (equal? kind 'patch)) { return (list (zeros 1)) }    ; for Moritz: no sound here
+    if (equal? kind 'note) {
+        if (not (has? e 'db)) { error "render-event: note " (get e 'id) " has no sound yet (score-bind! gives the notes of a score one from a database)" }
+        set chans (note-sound e sr)
+    }
     if (equal? kind 'synth) {
         var n (max 1 (floor (* (get e 'dur) sr)))
         var gate (ones n)
@@ -192,11 +197,17 @@ function render-event (e sr) {
         set chans (list (reduce parts (function (acc p) (+ acc (vec p (zeros (- n (length p)))))) (zeros n)))
     }
     if (equal? kind 'score) {                                            ; a score inside: rendered in stereo (score-render places it in any layout itself)
-        set chans (score-render-at-depth (get e 'source) "stereo" sr (+ 1 render-depth))
+        set chans (score-render-at-depth (placement-of e) "stereo" sr (+ 1 render-depth))
     }
     if (equal? (type chans) "nil") { error "render-event: unknown kind " kind }
     if (equal? kind 'synth) { return (map chans (function (c) (* (get e 'gain) c))) }      ; a synth's gate is its duration; its release plays on
     return (map chans (function (c) (* (get e 'gain) (fit-duration c (get e 'dur) sr))))
+}
+; (sound-region chans sr from to)   the part of a sound's channels from one time to another, in seconds (to < 0: to the end)
+function sound-region (chans sr from to) {
+    if (and (<= from 0) (< to 0)) { return chans }
+    var a (max 0 (floor (* from sr)))
+    return (map chans (function (c) (if (< to 0) (drop c (min a (length c))) (slice c a (max 0 (- (floor (* to sr)) a))))))
 }
 ; (fit-duration x dur sr)  x cut to dur seconds with a fade-out over the last 20 ms (or a quarter of dur), if longer
 function fit-duration (x dur sr) {
@@ -228,7 +239,7 @@ function place (chans layout az el sr) {
     if (equal? (type layout) "scalar") { return (concat-list (list mono) (map (vec->list (range (- nch 1))) (function (k) (* 0 mono)))) }
     if (equal? (type layout) "vec") { return (pan-n mono layout az) }
     if (equal? layout "mono") { return (list mono) }
-    if (equal? layout "stereo") { return (pan-azimuth mono az) }
+    if (equal? layout "stereo") { return (map (vec->list (score-pan-gains az 2)) (function (g) (* mono g))) }   ; pan-azimuth's law, Moritz's too
     if (equal? layout "binaural") { return (binaural mono az el sr) }
     var o (num (trim (slice layout 4 4)))
     return (ambi-encode mono o az el)
@@ -244,18 +255,29 @@ function score-render-at-depth (s layout sr depth) {
     var total (max 1 (+ (floor (* (score-duration s) sr)) (floor (* 0.6 sr))))    ; room for the last event's release and fades
     var out (map (vec->list (range nch)) (function (k) (zeros total)))
     each (get s 'events) (function (e) {
-        var placed (if (equal? (get e 'kind) 'score)
-                        (map (score-render-at-depth (get e 'source) layout sr (+ depth 1)) (function (c) (* (get e 'gain) (fit-duration c (get e 'dur) sr))))
-                        (place (render-event e sr) layout (get e 'az) (get e 'el) sr))
-        set render-depth depth
-        var start (floor (* (get e 'at) sr))
-        each (zip out placed) (function (p) {
-            var room (- total start)
-            if (> room 0) { add-at! (head p) start (take (last p) (min (length (last p)) room)) }
-        })
-        breathe                                                            ; the windows stay alive during a long render
+        var kind (get e 'kind)
+        if (not (or (equal? kind 'message) (equal? kind 'patch))) {           ; a message or a patch is Moritz's: no sound here
+            var placed (if (equal? kind 'score)
+                            (map (score-render-at-depth (placement-of e) layout sr (+ depth 1)) (function (c) (* (get e 'gain) (fit-duration c (get e 'dur) sr))))
+                            (place (render-event e sr) layout (get e 'az) (get e 'el) sr))
+            set render-depth depth
+            var start (floor (* (get e 'at) sr))
+            each (zip out placed) (function (p) {
+                var room (- total start)
+                if (> room 0) { add-at! (head p) start (take (last p) (min (length (last p)) room)) }
+            })
+            breathe                                                        ; the windows stay alive during a long render
+        }
     })
     return out
+}
+; (placement-of e)         the score a score event places, as it sounds there: stretched, transposed and turned by
+;                          the event (score-placed); the score itself when the event leaves it as it is
+function placement-of (e) {
+    var k (opt e 'stretch 1)
+    var t (opt e 'transpose 0)
+    if (and (== k 1) (== t 0) (== (get e 'az) 0) (== (get e 'el) 0)) { return (get e 'source) }
+    return (score-placed (get e 'source) k t (get e 'az) (get e 'el))
 }
 ; (render-buffer s layout)   the score as channels, in the concert hall as the roll plays it (score-reverb!: the dry
 ;                          and wet amounts; (score-reverb! s 1 0) renders dry), scaled down when it would clip; the
@@ -327,6 +349,8 @@ function score-play-now (s gain from) {
         var when (+ t0 (max 0 (- (get e 'at) from)))
         var skip (max 0 (- from (get e 'at)))
         var kind (get e 'kind)
+        if (or (equal? kind 'message) (equal? kind 'patch)) { } {           ; a message or a patch is Moritz's
+        if (and (equal? kind 'note) (not (has? e 'db))) { print "play-score: note" (get e 'id) "has no sound (score-bind! gives it one from a database), left out" } {
         if (or (equal? kind 'note) (equal? kind 'file)) {
             var rate (if (equal? kind 'note) (pow 2 (/ (+ (opt e 'shift 0) (/ (opt e 'cents 0) 100)) 12)) 1)
             push cues (list when (if (equal? kind 'note) (note-path e) (get e 'source)) skip (- (get e 'dur) skip) rate (* level (get e 'gain)) (azimuth->pan (get e 'az)))
@@ -347,6 +371,8 @@ function score-play-now (s gain from) {
                 }
             }
         }
+        }
+        }
     }))
     var end (+ t0 (- (score-duration s) from) 1)
     play-cues cues
@@ -358,26 +384,6 @@ function score-play-now (s gain from) {
 function azimuth->pan (az) {
     var a (max -90 (min 90 (if (> az 90) (- 180 az) (if (< az -90) (- -180 az) az))))
     return (/ (- 0 a) 90)
-}
-; (score-flatten s depth)  the score's events with those of the scores inside brought to the top: copies at absolute
-;                          times, the gains multiplied, cut to their score's event; => a list
-function score-flatten (s depth) {
-    if (> depth 16) { error "score-flatten: scores nested more than 16 deep (a score inside itself?)" }
-    var out (list)
-    each (get s 'events) (function (e) {
-        if (equal? (get e 'kind) 'score) {
-            var inner (get e 'source)
-            var window (get e 'dur)
-            each (score-flatten inner (+ depth 1)) (function (x) {
-                var at (+ (get e 'at) (get x 'at))
-                if (< (get x 'at) window) {
-                    var c (put (put (put x 'at at) 'dur (min (get x 'dur) (- window (get x 'at)))) 'gain (* (get e 'gain) (get x 'gain)))
-                    push out c
-                }
-            })
-        } { push out e }
-    })
-    return out
 }
 ; (score-hall-mix s sr)    the score rendered in stereo and put in the hall, at a rate; kept in the score (its
 ;                          'cache) with a signature of the events, so playing again without a change is instant
@@ -749,6 +755,26 @@ function note (db instr pitch dyn tech) {
     var shift (- want (get entry 'midi))
     return (record (list 'kind 'note 'source (get entry 'file) 'db db 'entry entry 'instr (str instr) 'pitch pname 'midi want
                          'dyn (str dyn) 'tech (str tech) 'shift shift 'cents 0 'label (concat (str instr) " " pname " " (str dyn))))
+}
+; (score-bind! s db)       the notes of a score that have no sound yet (read from a .score file, made by Moritz) given
+;                          one from a database, as note chooses it (dynamics mf and technique ord when they have none);
+;                          the scores placed inside too; => how many notes were given a sound
+function score-bind! (s db) {
+    var bound 0
+    each (get s 'events) (function (e) {
+        var kind (get e 'kind)
+        if (equal? kind 'score) { set bound (+ bound (score-bind! (get e 'source) db)) }
+        if (and (equal? kind 'note) (not (has? e 'db))) {
+            var dyn (if (equal? (get e 'dyn) "") 'mf (get e 'dyn))
+            var tech (if (equal? (get e 'tech) "") 'ord (get e 'tech))
+            var made (try (note db (get e 'instr) (round (get e 'midi)) dyn tech) catch err nil)
+            if (not (equal? (type made) "nil")) {
+                each (list 'db 'entry 'source 'shift) (function (k) (put! e k (get made k)))
+                set bound (+ bound 1)
+            }
+        }
+    })
+    return bound
 }
 ; (note-cents! n cents)    a note's tuning away from its pitch, in cents (shown in the roll; used by the orchestrators
 ;                          that know the target's exact frequencies); the shift by resampling follows it
@@ -2428,7 +2454,7 @@ function score-remove! (s e) (put! s 'events (reject (get s 'events) (function (
 ; (score-merge s1 s2)      a new score with the events of both (s2's after s1's end when shifted with score-shift!)
 function score-merge (s1 s2) {
     var out (score (concat (get s1 'name) "+" (get s2 'name)) (get s1 'sr))
-    each (concat-list (get s1 'events) (get s2 'events)) (function (e) (push (get out 'events) (map e (function (p) (list (head p) (last p))))))
+    put! out 'events (concat-list (get s1 'events) (get s2 'events))       ; copies (the ids of s2 that s1 uses renumbered)
     return out
 }
 ; (score-print s)          the events, one line each

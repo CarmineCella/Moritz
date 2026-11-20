@@ -1,6 +1,7 @@
 // music.h — music, C++ half: sample databases in the SOL/Orchidea layout, pitch names, Orchidea's search, Maple's
 // matching pursuit (music/maple.h) and SoundTypes (music/soundtypes.h).
-// The Musil half (music.mu) holds the score: events in time, rendering, playback, the roll.
+// The score itself is a C++ structure (music/score.h), a value of the language (music/score_musil.h), written to
+// .score files as Musil data (music/score_text.h); the Musil half (music.mu) renders it, plays it, draws its roll.
 //
 // Copyright (c) 2026 Carmine-Emanuele Cella. SPDX-License-Identifier: BSD-2-Clause
 //
@@ -20,6 +21,7 @@
 #include "music/orchidea.h"
 #include "music/maple.h"
 #include "music/soundtypes.h"
+#include "music/score_musil.h"
 #include <cmath>
 #include <fstream>
 #include <sstream>
@@ -912,6 +914,7 @@ inline void add_music(Interp& i) {
     i.def("orchidea-analyse", mus_orchidea_analyse, 7, 7); i.def("orchidea-search", mus_orchidea_search, 4, 4);
     i.def("mimetic-seating", mus_mimetic_seating, 1, 1); i.def("continuation-plan", mus_continuation_plan, 2, 2); i.def("db-sounds-folder", mus_db_sounds_folder, 2, 2);
     add_atoms_and_types(i);
+    add_score(i);
 }
 
 } // namespace musil

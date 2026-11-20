@@ -249,10 +249,10 @@ function fmt-pct (x d) (concat (fmt-fixed (* x 100) d) "%")
 ; the key. (get rec key) the value of key, an error when absent; (opt rec key default) or default; (has? rec key);
 ; (put! rec key value) sets a key in place, replacing an existing pair or adding one, and returns the record
 ; (put rec key value)      a new record with the key set, the original untouched
-function put (rec key value) (put! (map rec (function (o) (list (head o) (last o)))) key value)
+function put (rec key value) (put! (map (pairs rec) (function (o) (list (head o) (last o)))) key value)
 ; (keys rec) (values rec)  the keys, the values, in order
-function keys (rec) (map rec head)
-function values (rec) (map rec last)
+function keys (rec) (map (pairs rec) head)
+function values (rec) (map (pairs rec) last)
 ; (record key value ...)   a record from alternating keys and values: (record 'freq 440 'dur 0.5)
 function record (kv) {
     var out (list)
