@@ -1,0 +1,5 @@
+; the sound editor's tests (tools/test-gui.sh): a buffer~ read from a file, and two objects that use it
+(patch
+  (obj snd buffer~ voice ../../data/anechoic1.wav (pos 20 20))
+  (obj pl play~ voice (pos 20 70))
+  (obj gr groove~ voice (pos 120 70)))

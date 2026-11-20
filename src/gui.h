@@ -42,6 +42,7 @@ namespace moritz {
 class DocumentWindow;
 class CodeWindow;
 class CodeSource;
+class SoundWindow;
 
 // A folder bundled with the app ("examples", "library", "help"): inside the
 // .app's Resources, or next to the executable when run from the source tree.
@@ -277,7 +278,7 @@ private:
 // Round toolbar button (audio on/off, edit mode, code view).
 class ToolButton : public Fl_Button {
 public:
-    enum Icon { Power, Pencil, Code, Minus, Plus, None, Browser, Console, Record };
+    enum Icon { Power, Pencil, Code, Minus, Plus, None, Browser, Console, Record, Play, Stop, Loop, ToStart };
     // toggle: keeps its state (audio, edit); otherwise a push button
     ToolButton(int x, int y, int w, int h, Icon icon, const char* label, bool toggle = true);
     void draw() override;
@@ -383,6 +384,13 @@ public:
     void abstractionSaved(Patch* a);                 // other copies of its file follow it
     void closeCode(CodeWindow* w);      // already confirmed
     CodeWindow* frontCode();            // the code window in front, if one is
+    // the sound editors (sound_window.cpp): a sound file, or a buffer~ of the open patches
+    SoundWindow* openSound(const std::string& path);         // a file (already open: brought forward)
+    void openSoundDialog();                                  // File > Open Sound...
+    SoundWindow* editBuffer(Patch* root, const std::string& name);   // the buffer~ of that name
+    void closeSound(SoundWindow* w);                         // already confirmed
+    SoundWindow* frontSound();                               // the sound window in front, if one is
+    const std::vector<SoundWindow*>& soundWindows() const { return soundWindows_; }
     const std::vector<CodeWindow*>& codeWindows() const { return codeWindows_; }
     Fl_Double_Window* consoleWindow() { return console_; }
     void clearConsole();
@@ -429,6 +437,7 @@ private:
     App() = default;
     std::vector<PatchTextWindow*> textWindows_;
     std::vector<CodeWindow*> codeWindows_;
+    std::vector<SoundWindow*> soundWindows_;
     Fl_Menu_Bar* sysMenu_ = nullptr;          // macOS: one menu bar for all windows
     Fl_Double_Window* console_ = nullptr;
     Fl_Text_Display* consoleView_ = nullptr;

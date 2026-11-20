@@ -59,6 +59,23 @@ void ToolButton::draw() {
     } else if (icon_ == Record) {
         fl_color(on ? FL_WHITE : fl_rgb_color(220, 70, 70));
         fl_pie(cx - r + 1, cy - r + 1, 2 * r - 2, 2 * r - 2, 0, 360);
+    } else if (icon_ == Play || icon_ == Stop || icon_ == ToStart || icon_ == Loop) {
+        // the transport's icons, centred when the button has no label
+        int mx = label() && *label() ? cx : X + W / 2, my = Y + H / 2, a = std::max(3, H / 2 - 6);
+        fl_line_style(FL_SOLID, 1);
+        if (icon_ == Play) {
+            fl_polygon(mx - a + 1, my - a, mx - a + 1, my + a, mx + a + 1, my);
+        } else if (icon_ == Stop) {
+            fl_rectf(mx - a + 1, my - a + 1, 2 * a - 1, 2 * a - 1);
+        } else if (icon_ == ToStart) {
+            fl_rectf(mx - a, my - a, 2, 2 * a + 1);
+            fl_polygon(mx + a + 1, my - a, mx + a + 1, my + a, mx - a + 2, my);
+        } else {                                           // a loop: an open ring with an arrow head
+            fl_line_style(FL_SOLID | FL_CAP_ROUND, 2);
+            fl_arc(mx - a, my - a, 2 * a, 2 * a, 60, 380);
+            fl_line_style(FL_SOLID, 1);
+            fl_polygon(mx + a - 4, my - a - 3, mx + a + 3, my - a, mx + a - 3, my - a + 4);
+        }
     }
     fl_line_style(0);
     if (alert) {                                           // a red dot at the top right

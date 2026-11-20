@@ -639,36 +639,6 @@ void loadBuffer(PlotState& st, const SampleBuffer& sb, int channel) {
     ++st.version;
 }
 
-// ---------------------------------------------------------------- buffer~ windows
-// One window per buffer~ name, following its contents while it is shown.
-struct BufferView {
-    std::shared_ptr<PlotState> state = std::make_shared<PlotState>();
-    PlotWindow* win = nullptr;
-    Patch* root = nullptr;       // the root patch lives as long as the program (or the render)
-    int seen = -1;
-};
-std::map<std::string, BufferView>& bufferViews() {
-    static std::map<std::string, BufferView> v;
-    return v;
-}
-void refreshBufferView(const std::string& name, BufferView& v) {
-    BufferBox* b = findBuffer(v.root, name);
-    if (!b || b->version == v.seen) return;
-    v.seen = b->version;
-    loadBuffer(*v.state, b->buf, -1);
-    char info[160];
-    double dur = b->buf.sr > 0 ? b->buf.frames / b->buf.sr : 0;
-    std::snprintf(info, sizeof info, "buffer~ %s  ·  %d channel%s, %.2f s, %.0f Hz", name.c_str(), b->buf.channels,
-                  b->buf.channels == 1 ? "" : "s", dur, b->buf.sr);
-    v.win->refresh(info);
-}
-void bufferViewTick(void*) {
-    bool any = false;
-    for (auto& kv : bufferViews())
-        if (kv.second.win && kv.second.win->shown()) { refreshBufferView(kv.first, kv.second); any = true; }
-    if (any) Fl::repeat_timeout(0.25, bufferViewTick);
-}
-
 // ---------------------------------------------------------------- plot
 class PlotBox : public Box {
 public:
@@ -893,21 +863,6 @@ private:
 };
 
 }  // namespace
-
-void openBufferWindow(Patch* p, const std::string& name) {
-    if (!p || !findBuffer(p, name)) { if (p) p->print("no buffer~ " + name); return; }
-    fl_open_display();
-    BufferView& v = bufferViews()[name];
-    v.root = p->root();
-    if (!v.win) {
-        v.state->title = name;
-        v.win = new PlotWindow(v.state);
-    }
-    v.seen = -1;
-    refreshBufferView(name, v);
-    v.win->show();
-    if (!Fl::has_timeout(bufferViewTick)) Fl::add_timeout(0.25, bufferViewTick);
-}
 
 void registerPlotObjects(ClassTable& t) {
     t.insert(t.end(), {

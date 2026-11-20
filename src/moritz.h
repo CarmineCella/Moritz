@@ -330,8 +330,8 @@ bool openWithSystem(const std::string& pathOrUrl);
 // A file dialog (the GUI): "" when cancelled. filter as FLTK's ("Audio\t*.wav")
 std::string chooseFile(bool save, const std::string& title, const std::string& filter = "",
                        const std::string& preset = "");
-// The window of a buffer~ (its waveform, zoom, pan), following its contents
-void openBufferWindow(Patch* p, const std::string& name);
+// The sound editor on a buffer~ of the patches p belongs with (sound_window.cpp): it edits the buffer~ in place
+void openBufferEditor(Patch* p, const std::string& name);
 std::vector<std::string> libraryNames();        // abstractions in the libraries, sorted
 // Help patches: "<name>.help.moritz" in helpPath() or next to a library
 // abstraction. Related objects share one (+~ -~ *~ /~ -> arith~). Returns ""

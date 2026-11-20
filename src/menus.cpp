@@ -10,6 +10,7 @@
 #include "ui_util.h"
 #include "settings.h"
 #include "codewindow.h"
+#include "sound_editor.h"
 
 #include <FL/filename.H>
 #ifdef __APPLE__
@@ -71,11 +72,16 @@ App& app() { return App::get(); }
 // what the commands act on
 DocumentWindow* doc() { return app().targetDoc(); }
 bool haveDoc() { return doc() != nullptr; }
-bool textOrDoc() { return frontTextEditor() || haveDoc(); }
-bool canvasOrText() { return frontTextEditor() || app().activeCanvas(); }
-bool editableCanvas() { return frontTextEditor() || (app().activeCanvas() && !app().activeCanvas()->readOnly()); }
+SoundEditor* sound() { return app().frontSound() ? app().frontSound()->editor() : nullptr; }
+bool textOrDoc() { return sound() || frontTextEditor() || haveDoc(); }
+bool canvasOrText() { return sound() || frontTextEditor() || app().activeCanvas(); }
+bool editableCanvas() {
+    return sound() || frontTextEditor() || (app().activeCanvas() && !app().activeCanvas()->readOnly());
+}
 
-void editText(int (*kf)(int, Fl_Text_Editor*), void (Canvas::*onCanvas)()) {
+// a sound window in front: on its sound; a text: on its text; else on the canvas
+void editText(int (*kf)(int, Fl_Text_Editor*), void (Canvas::*onCanvas)(), void (SoundEditor::*onSound)()) {
+    if (auto* s = sound()) { (s->*onSound)(); return; }
     if (auto* ed = frontTextEditor()) { kf(0, ed); return; }
     if (auto* c = app().activeCanvas()) (c->*onCanvas)();
 }
@@ -86,53 +92,62 @@ const std::vector<Command>& table() {
         {"file.new", "File/New", FL_COMMAND + 'n', 0, [] { app().newDocument(); }, nullptr, nullptr},
         {"file.newcode", "File/New Code", FL_COMMAND + FL_SHIFT + 'n', 0, [] { app().newCode(); }, nullptr, nullptr},
         {"file.open", "File/Open...", FL_COMMAND + 'o', 0, [] { app().openDialog(); }, nullptr, nullptr},
+        {"file.opensound", "File/Open Sound...", FL_COMMAND + FL_SHIFT + 'o', 0, [] { app().openSoundDialog(); },
+         nullptr, nullptr},
         {"@recent", "File/Open Recent", 0, 0, nullptr, nullptr, nullptr},
         {"file.import", "File/Import from Max...", FL_COMMAND + FL_SHIFT + 'i', FL_MENU_DIVIDER,
          [] { app().importDialog(); }, nullptr, nullptr},
         {"file.save", "File/Save", FL_COMMAND + 's', 0,
          [] {
+             if (auto* s = app().frontSound()) { s->save(); return; }
              if (auto* c = app().frontCode()) { c->save(); return; }
              if (auto* d = doc()) d->saveFront();
          },
-         [] { return app().frontCode() != nullptr || haveDoc(); }, nullptr},
+         [] { return app().frontSound() || app().frontCode() != nullptr || haveDoc(); }, nullptr},
         {"file.saveas", "File/Save As...", FL_COMMAND + FL_SHIFT + 's', 0,
          [] {
+             if (auto* s = app().frontSound()) { s->saveAs(); return; }
              if (auto* c = app().frontCode()) { c->saveAs(); return; }
              if (auto* d = doc()) d->saveAs();
          },
-         [] { return app().frontCode() != nullptr || haveDoc(); }, nullptr},
+         [] { return app().frontSound() || app().frontCode() != nullptr || haveDoc(); }, nullptr},
         {"file.revert", "File/Revert to Saved", 0, FL_MENU_DIVIDER, [] { if (auto* d = doc()) d->revert(); },
-         [] { auto* d = app().frontCode() ? nullptr : doc(); return d && !d->path().empty() && d->doc.anyDirty(); },
+         [] {
+             auto* d = app().frontCode() || app().frontSound() ? nullptr : doc();
+             return d && !d->path().empty() && d->doc.anyDirty();
+         },
          nullptr},
         {"file.close", "File/Close", FL_COMMAND + 'w', FL_MENU_DIVIDER, [] { app().closeFront(); }, nullptr, nullptr},
         {"file.quit", "File/Quit", FL_COMMAND + 'q', 0, [] { app().quit(); }, nullptr, nullptr},
         // ---- Edit: with a text in front, on its text
         {"edit.undo", "Edit/Undo", FL_COMMAND + 'z', 0,
          [] {
+             if (auto* s = sound()) { s->undo(); return; }
              if (auto* ed = frontTextEditor()) { Fl_Text_Editor::kf_undo(0, ed); return; }
              if (auto* d = doc()) d->undo();
          },
          textOrDoc, nullptr},
         {"edit.redo", "Edit/Redo", FL_COMMAND + FL_SHIFT + 'z', FL_MENU_DIVIDER,
          [] {
+             if (auto* s = sound()) { s->redo(); return; }
              if (auto* ed = frontTextEditor()) { Fl_Text_Editor::kf_redo(0, ed); return; }
              if (auto* d = doc()) d->redo();
          },
          textOrDoc, nullptr},
-        {"edit.cut", "Edit/Cut", FL_COMMAND + 'x', 0, [] { editText(Fl_Text_Editor::kf_cut, &Canvas::cutSelection); },
+        {"edit.cut", "Edit/Cut", FL_COMMAND + 'x', 0, [] { editText(Fl_Text_Editor::kf_cut, &Canvas::cutSelection, &SoundEditor::cut); },
          editableCanvas, nullptr},
-        {"edit.copy", "Edit/Copy", FL_COMMAND + 'c', 0, [] { editText(Fl_Text_Editor::kf_copy, &Canvas::copySelection); },
+        {"edit.copy", "Edit/Copy", FL_COMMAND + 'c', 0, [] { editText(Fl_Text_Editor::kf_copy, &Canvas::copySelection, &SoundEditor::copy); },
          canvasOrText, nullptr},
-        {"edit.paste", "Edit/Paste", FL_COMMAND + 'v', 0, [] { editText(Fl_Text_Editor::kf_paste, &Canvas::paste); },
+        {"edit.paste", "Edit/Paste", FL_COMMAND + 'v', 0, [] { editText(Fl_Text_Editor::kf_paste, &Canvas::paste, &SoundEditor::paste); },
          editableCanvas, nullptr},
         {"edit.duplicate", "Edit/Duplicate", FL_COMMAND + 'd', 0,
          [] { if (auto* c = app().activeCanvas()) c->duplicateSelection(15, 15); },
          [] { return app().activeCanvas() && !app().activeCanvas()->readOnly(); }, nullptr},
         // no shortcut: Backspace and Delete are the canvas's own (a menu would take them from text fields)
         {"edit.delete", "Edit/Delete", 0, FL_MENU_DIVIDER,
-         [] { editText(Fl_Text_Editor::kf_delete, &Canvas::deleteSelection); }, editableCanvas, nullptr},
+         [] { editText(Fl_Text_Editor::kf_delete, &Canvas::deleteSelection, &SoundEditor::erase); }, editableCanvas, nullptr},
         {"edit.selectall", "Edit/Select All", FL_COMMAND + 'a', 0,
-         [] { editText(Fl_Text_Editor::kf_select_all, &Canvas::selectAll); }, canvasOrText, nullptr},
+         [] { editText(Fl_Text_Editor::kf_select_all, &Canvas::selectAll, &SoundEditor::selectAll); }, canvasOrText, nullptr},
 #ifndef __APPLE__
         {"edit.settings", "Edit/Settings...", FL_COMMAND + ',', FL_MENU_DIVIDER, [] { showSettings(); }, nullptr,
          nullptr},                               // (on macOS: Moritz > Settings…)

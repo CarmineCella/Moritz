@@ -9,6 +9,7 @@
 #include "maximport.h"
 #include "objects.h"
 #include "sysopen.h"
+#include "sound_editor.h"
 
 #include <FL/Fl_Native_File_Chooser.H>
 #include <FL/fl_ask.H>
@@ -204,6 +205,13 @@ DocumentWindow* App::openDocument(const std::string& given) {
         openCode(path);
         return nullptr;
     }
+    std::string low = path;
+    for (auto& ch : low) ch = (char)std::tolower((unsigned char)ch);
+    for (const char* ext : {".wav", ".wave", ".aif", ".aiff", ".flac", ".mp3"})
+        if (endsWith(low, ext)) {                     // a sound: the sound editor
+            openSound(path);
+            return nullptr;
+        }
     DocumentWindow* d = frontDoc();
     bool fresh = !(d && d->isEmptyUntitled());
     if (fresh) d = newDocument();
@@ -231,7 +239,7 @@ void App::openDialog() {
     Fl_Native_File_Chooser fc;
     fc.title("Open");
     fc.type(Fl_Native_File_Chooser::BROWSE_FILE);
-    fc.filter("Moritz patch or Musil script\t*.{moritz,mu,mlsp}\nAll files\t*");
+    fc.filter("Moritz patch, Musil script or sound\t*.{moritz,mu,mlsp,wav,wave,aif,aiff,flac,mp3}\nAll files\t*");
     DocumentWindow* front = frontDoc();
     std::string dir = front && !front->path().empty() ? dirOf(front->path()) : examplesDir();
     if (!dir.empty()) fc.directory(dir.c_str());
@@ -301,6 +309,10 @@ void App::closeFront() {
     if (w && w == console_) { w->hide(); return; }
     if (auto tw = dynamic_cast<PatchTextWindow*>(w)) { tw->do_callback(); return; }
     if (auto cw = dynamic_cast<CodeWindow*>(w)) { cw->do_callback(); return; }
+    if (auto sw = dynamic_cast<SoundWindow*>(w)) {
+        if (sw->confirmDiscard()) closeSound(sw);
+        return;
+    }
     if (auto d = dynamic_cast<DocumentWindow*>(w)) {
         if (d->confirmDiscard()) closeDocument(d);
     }
@@ -316,7 +328,13 @@ void App::quit() {
         c->show();
         if (!c->confirmDiscard()) return;
     }
+    for (auto* s : std::vector<SoundWindow*>(soundWindows_)) {
+        s->show();
+        if (!s->confirmDiscard()) return;
+    }
     for (auto* c : codeWindows_) c->hide();
+    for (auto* s : soundWindows_) s->editor()->stop();
+    for (auto* s : soundWindows_) s->hide();
     quitting = true;
     host.onDsp = nullptr;      // a dspstate~ reacting to the stop can't restart audio
     audio.stop();

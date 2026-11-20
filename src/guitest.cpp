@@ -40,13 +40,26 @@
 //   act=canvas                print: the front patch window, locked or not, its boxes, the help patch it shows
 //   act=buffer:<name>         print: the frames of a buffer~
 //   act=boxes                 print: the boxes of the front document
+//   act=soundopen:<file>      File > Open Sound... with that file
+//   act=sound                 print: the front sound window (its title, frames, channels, selection, playhead, undo)
+//   act=sounddrag:<s>,<s>[:shift]   the mouse pressed on the front sound window's waveform at a time (seconds),
+//                             dragged to the other and released (shift: Shift held at the press)
+//   act=soundop:<op>          an edit of its Edit menu (cut copy paste delete trim silence fadein fadeout normalize
+//                             reverse selectall undo redo), or play stop fit zoomin zoomout
+//   act=soundgain:<dB>        the Gain dialog answered
+//   act=soundkey:<key>[:cmd][:shift]   a key typed in the front sound window (space, delete, or a letter)
+//   act=soundsave             its File > Save (saveas=<path> answers a Save As)
+//   act=soundspec             waits for its spectrogram (at most 20 s), then prints how many frames it has
+//   act=soundpng:<file>       the front sound window drawn into a PNG file
 
 #include "gui.h"
 #include "codewindow.h"
 #include "fileio.h"
 #include "objects.h"
+#include "sound_editor.h"
 
 #include <FL/Fl_Image_Surface.H>
+#include <FL/Fl_PNG_Image.H>
 
 #include <chrono>
 #include <cstdio>
@@ -95,6 +108,24 @@ void key(Canvas* c, char ch) {
     Fl::e_keysym = ch == ',' ? FL_Enter : (unsigned char)ch;
     Fl::e_number = FL_KEYBOARD;
     c->handle(FL_KEYBOARD);
+}
+
+SoundWindow* frontSound() {
+    App& app = App::get();
+    if (SoundWindow* s = app.frontSound()) return s;
+    return app.soundWindows().empty() ? nullptr : app.soundWindows().back();
+}
+
+void soundMouse(SoundView* v, int ex, int event, int keys) {
+    int wy, wh, sy, sh;
+    v->areas(wy, wh, sy, sh);
+    Fl::e_x = Fl::e_x_root = ex;
+    Fl::e_y = Fl::e_y_root = (wh > 0 ? wy + wh / 2 : sy + sh / 2);
+    Fl::e_state = keys | (event == FL_RELEASE ? 0 : FL_BUTTON1);
+    Fl::e_clicks = 0;
+    Fl::e_keysym = FL_Button + FL_LEFT_MOUSE;
+    Fl::e_number = event;
+    v->handle(event);
 }
 
 std::string escape(const std::string& t) {
@@ -313,6 +344,89 @@ bool act(const std::string& a) {
         BufferBox* b = d ? findBuffer(&d->patch, arg) : nullptr;
         state("buffer %s frames %s", arg, b ? std::to_string(b->buf.frames) : std::string("none"));
         return true;
+    }
+    if (verb == "soundopen") return app.openSound(arg) != nullptr;
+    if (verb.rfind("sound", 0) == 0) {
+        SoundWindow* w = frontSound();
+        if (!w) return false;
+        SoundEditor* e = w->editor();
+        SoundDoc& d = e->doc();
+        if (verb == "sound") {
+            state("sound %s", w->label() ? w->label() : "");
+            state("sound frames %s channels %s", std::to_string(d.frames()), std::to_string(d.channels()));
+            state("sound selection %s playhead %s", std::to_string(d.sel.start) + " " + std::to_string(d.sel.end),
+                  std::to_string(d.playhead));
+            state("sound undo %s edited %s", d.canUndo() ? "yes" : "no", d.needsSaving() ? "yes" : "no");
+            e->refreshInfo();
+            state("sound info%s", e->info());
+            return true;
+        }
+        if (verb == "sounddrag") {
+            size_t comma = arg.find(',');
+            if (comma == std::string::npos) return false;
+            double a = std::atof(arg.c_str()), b = std::atof(arg.c_str() + comma + 1);
+            int keys = arg.find(":shift") != std::string::npos ? FL_SHIFT : 0;
+            SoundView* v = e->view();
+            soundMouse(v, e->xOf(a * d.sr()), FL_PUSH, keys);
+            soundMouse(v, e->xOf((a + b) / 2 * d.sr()), FL_DRAG, keys);
+            soundMouse(v, e->xOf(b * d.sr()), FL_DRAG, keys);
+            soundMouse(v, e->xOf(b * d.sr()), FL_RELEASE, keys);
+            return true;
+        }
+        if (verb == "soundop") {
+            static const std::pair<const char*, void (SoundEditor::*)()> ops[] = {
+                {"cut", &SoundEditor::cut}, {"copy", &SoundEditor::copy}, {"paste", &SoundEditor::paste},
+                {"delete", &SoundEditor::erase}, {"trim", &SoundEditor::trim}, {"silence", &SoundEditor::silence},
+                {"fadein", &SoundEditor::fadeIn}, {"fadeout", &SoundEditor::fadeOut},
+                {"normalize", &SoundEditor::normalize}, {"reverse", &SoundEditor::reverse},
+                {"selectall", &SoundEditor::selectAll}, {"undo", &SoundEditor::undo}, {"redo", &SoundEditor::redo},
+                {"play", &SoundEditor::play}, {"stop", &SoundEditor::stop}, {"fit", &SoundEditor::fit},
+                {"zoomin", &SoundEditor::zoomIn}, {"zoomout", &SoundEditor::zoomOut}};
+            for (auto& o : ops)
+                if (arg == o.first) {
+                    (e->*o.second)();
+                    return true;
+                }
+            return false;
+        }
+        if (verb == "soundgain") { e->gain(std::atof(arg.c_str())); return true; }
+        if (verb == "soundkey") {
+            std::string k = arg.substr(0, arg.find(':'));
+            static char text[2];
+            int key = k == "space" ? ' ' : k == "delete" ? FL_BackSpace : (unsigned char)k[0];
+            text[0] = key < 128 ? (char)key : 0;
+            text[1] = 0;
+            Fl::e_text = text;
+            Fl::e_length = text[0] ? 1 : 0;
+            Fl::e_state = (arg.find(":cmd") != std::string::npos ? FL_COMMAND : 0) |
+                          (arg.find(":shift") != std::string::npos ? FL_SHIFT : 0);
+            Fl::e_keysym = key;
+            Fl::e_number = FL_KEYBOARD;
+            Fl::first_window(w);
+            e->handle(FL_KEYBOARD);
+            return true;
+        }
+        if (verb == "soundsave") return w->save() || true;
+        if (verb == "soundspec") {
+            auto t0 = std::chrono::steady_clock::now();
+            while ((!e->spectrogram() || e->spectrogramPending()) &&
+                   std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count() < 20)
+                Fl::wait(0.02);
+            Fl::wait(0.05);
+            state("spectrogram frames %s", std::to_string(e->spectrogram() ? e->spectrogram()->cols : -1));
+            return true;
+        }
+        if (verb == "soundpng") {
+            Fl_Image_Surface surf(w->w(), w->h());
+            Fl_Surface_Device::push_current(&surf);
+            surf.draw(w);
+            Fl_Surface_Device::pop_current();
+            Fl_RGB_Image* img = surf.image();
+            int r = fl_write_png(arg.c_str(), img);
+            delete img;
+            return r == 0;
+        }
+        return false;
     }
     if (verb == "boxes") {
         DocumentWindow* d = front();

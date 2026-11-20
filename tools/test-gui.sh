@@ -197,6 +197,71 @@ if cmp -s "$HERE/help/metro.help.moritz" "$(dirname "$MORITZ")/../Resources/help
    cmp -s "$HERE/help/metro.help.moritz" "$(dirname "$MORITZ")/help/metro.help.moritz"; then ok
 else fail "the shipped help patch is as it was"; fi
 
+# 19. the sound editor on a buffer~: a double-click (locked) opens it; a selection dragged and cut through the
+#     menu changes the buffer~ in place (one undo step, put back by Undo); the patch is not marked edited (a
+#     buffer~ is patch memory); Save writes a WAV copy where asked; closing it asks nothing
+run "$G/sound.moritz" --window-png none act=dblclick:snd act=sound act=sounddrag:0.1,0.3 act=menu:edit.cut \
+    act=buffer:voice act=sound act=menu:edit.undo act=buffer:voice act=state "saveas=$T/voice-copy.wav" act=soundsave \
+    act=closefront act=state
+frames=$(grep "state: buffer voice frames" "$out" | sed 's/.*frames //' | tr '\n' ' ')
+cut=${frames%% *}
+if [ $status -eq 0 ] && grep -q "state: sound buffer~ voice — Moritz" "$out" && [ "$cut" -lt 27731 ] 2>/dev/null &&
+   [ "$cut" -gt 18000 ] && [ "${frames#* }" = "27731 " ] && grep -q "state: front $G/sound.moritz edited no" "$out" &&
+   [ -s "$T/voice-copy.wav" ] && ! grep -q "^ask:" "$out" && grep -q "state: documents 1" "$out"; then ok
+else fail "the sound editor cuts a buffer~ in place, undoes, saves a copy (frames: $frames)"; fi
+
+expect "the status line says which objects use the buffer~" "used by play~ groove~ (2 boxes in 1 patch)"
+expect "and the sound's rate, channels and length" "state: sound info  44.1 kHz · 1 ch · 0:00.629"
+
+# 19b. Shift-drag extends the selection from its far end; a click without a drag sets the playhead, nothing selected
+run "$G/sound.moritz" --window-png none act=dblclick:snd act=sounddrag:0.1,0.2 act=sound act=sounddrag:0.4,0.4:shift \
+    act=sound act=sounddrag:0.3,0.3 act=sound
+sel=$(grep "state: sound selection" "$out" | sed 's/state: sound selection //' | tr '\n' '|')
+a1=$(echo "$sel" | cut -d'|' -f1 | cut -d' ' -f1)
+a2=$(echo "$sel" | cut -d'|' -f2 | cut -d' ' -f1)
+e2=$(echo "$sel" | cut -d'|' -f2 | cut -d' ' -f2)
+third=$(echo "$sel" | cut -d'|' -f3)
+if [ $status -eq 0 ] && [ "$a1" = "$a2" ] && [ "$e2" -gt 17000 ] 2>/dev/null && [ "$e2" -lt 18000 ] &&
+   echo "$third" | grep -q "^\([0-9]*\) \1 playhead \1$"; then ok
+else fail "Shift-drag extends the selection, a click sets the playhead (got $sel)"; fi
+
+# 20. keys in the sound editor: Cmd+A selects all, Backspace deletes, Cmd+Z undoes, Shift+Cmd+Z redoes
+run "$G/sound.moritz" --window-png none act=dblclick:snd act=soundkey:a:cmd act=soundkey:delete act=buffer:voice \
+    act=soundkey:z:cmd act=buffer:voice act=soundkey:z:cmd:shift act=buffer:voice
+frames=$(grep "state: buffer voice frames" "$out" | sed 's/.*frames //' | tr '\n' ' ')
+if [ $status -eq 0 ] && [ "$frames" = "0 27731 0 " ]; then ok; else fail "keys in the sound editor (frames: $frames)"; fi
+
+# 21. a sound file: edits make it unsaved; closing asks (Cancel keeps it open, Save writes the file in place);
+#     undoing back to the file leaves nothing to save
+cp "$HERE/data/anechoic1.wav" "$T/s.wav"
+run --window-png none "act=soundopen:$T/s.wav" act=sounddrag:0.1,0.3 act=soundop:cut act=soundop:selectall \
+    act=soundgain:-6 act=sound answer=0 act=closefront act=sound answer=1 act=closefront act=state
+expect "an edited sound asks before closing" "ask: Save changes to the sound \"s.wav\"?"
+expect "Cancel keeps it" "state: sound s.wav — edited — Moritz"
+cutframes=$(grep "state: sound frames" "$out" | head -1 | sed 's/state: sound frames \([0-9]*\).*/\1/')
+run --window-png none "act=soundopen:$T/s.wav" act=sound
+if [ $status -eq 0 ] && [ "$cutframes" -lt 27731 ] 2>/dev/null && grep -q "state: sound frames $cutframes channels 1" "$out"
+then ok; else fail "Save wrote the file in place ($cutframes frames)"; fi
+run --window-png none "act=soundopen:$T/s.wav" act=sounddrag:0.1,0.2 act=soundop:reverse act=soundop:undo \
+    act=closefront act=state
+if [ $status -eq 0 ] && ! grep -q "^ask:" "$out"; then ok; else fail "undone back to the file: closing asks nothing"; fi
+
+# 22. the clipboard of samples goes from one editor to another (a file into a buffer~), and the spectrogram is
+#     computed in the background
+run "$G/sound.moritz" --window-png none "act=soundopen:$T/s.wav" act=soundspec act=sounddrag:0,0.1 act=soundop:copy \
+    act=sound act=raise:doc act=dblclick:snd act=sounddrag:0.2,0.2 act=soundop:paste act=buffer:voice
+copied=$(grep "state: sound selection 0 " "$out" | head -1 | sed 's/state: sound selection 0 \([0-9]*\).*/\1/')
+if [ $status -eq 0 ] && [ "$copied" -gt 0 ] 2>/dev/null && grep -q "state: buffer voice frames $((27731 + copied))$" "$out" &&
+   grep -q "state: spectrogram frames [1-9]" "$out"; then ok
+else fail "paste between sound editors ($copied frames), the spectrogram"; fi
+
+# 23. the patch holding the buffer~ closed while its editor is open: the editor keeps the samples and says so;
+#     editing them goes on (it changes no buffer~ any more)
+run "$G/sound.moritz" --window-png none act=dblclick:snd act=raise:doc act=close act=wait:0.3 act=sound \
+    act=sounddrag:0.1,0.2 act=soundop:reverse act=soundop:undo act=sound
+expect "the buffer~ gone" "state: sound buffer~ voice (not in any open patch now) — Moritz"
+expect "edits go on" "state: sound frames 27731 channels 1"
+
 rm -rf "$T"
 echo "$count interface cases, $fails failed"
 [ $fails -eq 0 ]

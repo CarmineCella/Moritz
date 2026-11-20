@@ -4,6 +4,8 @@
 
 #include "gui.h"
 #include "ui_util.h"
+#include "preview.h"
+#include "sound_editor.h"
 
 #include <FL/Fl_Check_Button.H>
 #include <FL/Fl_Choice.H>
@@ -21,6 +23,12 @@ namespace moritz {
 // ---- tools: zoom, interface size, quick recorder, the toolbar's meters
 
 void App::zoomFront(int steps) {
+    if (SoundWindow* s = frontSound()) {             // a sound: zoomed in time; 0 shows all of it
+        if (steps > 0) s->editor()->zoomIn();
+        else if (steps < 0) s->editor()->zoomOut();
+        else s->editor()->fit();
+        return;
+    }
     if (Canvas* c = activeCanvas()) c->zoomBy(steps);
 }
 
@@ -377,6 +385,7 @@ void App::toolTimer(void*) {
     for (size_t c = 0; c < peaks.size(); ++c) peaks[c] = app.audio.takePeak((int)c);
     for (auto* d : app.docs) d->updateMeters(cpu, peaks);
     if (app.audio.recorder.recording()) app.refreshTools();
+    app.audio.preview().collect();                    // what the sound editor's preview is done with
     Fl::repeat_timeout(1.0 / 15, toolTimer);
 }
 

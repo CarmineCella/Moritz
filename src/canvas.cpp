@@ -1229,11 +1229,12 @@ int Canvas::handle(int e) {
                 std::string helpLabel = "Help for " + b->cls;
                 for (size_t k = 0; k < helpLabel.size(); ++k)     // menu labels treat / and & specially
                     if (helpLabel[k] == '/' || helpLabel[k] == '&') helpLabel.insert(k++, 1, '\\');
-                // Help, Open (a subpatcher), Show buffer~ (when the first
+                // Help, Open (a subpatcher), Edit buffer~ (when the first
                 // argument names one), then the box's own items
                 std::vector<std::string> own = b->menuItems();
                 std::string buf = bufferOf(b);
-                std::string showLabel = "Show buffer~ " + buf;
+                if (b->cls == "buffer~") buf.clear();             // its own menu has Edit...
+                std::string showLabel = "Edit buffer~ " + buf + "...";
                 for (size_t k = 0; k < showLabel.size(); ++k)
                     if (showLabel[k] == '/' || showLabel[k] == '&') showLabel.insert(k++, 1, '\\');
                 std::vector<Fl_Menu_Item> items(5 + own.size());
@@ -1256,7 +1257,7 @@ int Canvas::handle(int e) {
                 if (pick == 0) App::get().openHelp(b->cls);
                 else if (pick == refAt) App::get().showReference(b->cls);
                 else if (pick == openAt) ed_->openSubpatch(b);
-                else if (pick == showAt) openBufferWindow(patch_, buf);
+                else if (pick == showAt) openBufferEditor(patch_, buf);
                 else if (pick >= ownAt && pick < ownAt + own.size()) b->menuAction((int)(pick - ownAt));
                 redraw();
                 return 1;
@@ -1282,8 +1283,8 @@ int Canvas::handle(int e) {
                         if (dot != std::string::npos && mx > dotX) dragStep_ = 0.01;
                     }
                 } else if (h.box && Fl::event_clicks() && h.box->cls != "plot" && !bufferOf(h.box).empty()) {
-                    Fl::event_clicks(0);                            // double-click: the buffer's waveform
-                    openBufferWindow(patch_, bufferOf(h.box));
+                    Fl::event_clicks(0);                            // double-click: the buffer~ in the sound editor
+                    openBufferEditor(patch_, bufferOf(h.box));
                     return 1;
                 } else if (h.box && h.box->kind == BoxKind::UI) {
                     // playing with an interface box is not an edit: no undo step (what it saves marks
