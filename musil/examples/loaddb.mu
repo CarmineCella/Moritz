@@ -1,12 +1,13 @@
 ; loaddb: a sample database in the *SOL layout (a feature file next to a folder of the same
 ; name holding the sounds), loaded, questioned, and used for notes. The bundled
 ; data/microsol is a tiny one (four instruments, 32 sounds); TinySOL, OrchideaSOL or any
-; database in the same layout loads the same way: (db-load "path/to/X.spectrum.db").
-; Usage: musil loaddb.mu [path/to/features.db]
+; database in the same layout loads the same way: (db-load "path/to/X.spectrum.db"), or by its
+; name when it is a dataset ((datasets) lists them): (db-load "tinysol").
+; Usage: musil loaddb.mu [path/to/features.db or a dataset's name]
 load "music.mu"
 
-var db (db-load (if (> (length args) 0) (getidx args 0) "../../data/microsol/microsol.spectrum.db"))
-; a full set, after ./fetch_tinysol.sh:  musil loaddb.mu ../datasets/TinySOL.spectrum.db
+var db (db-load (if (> (length args) 0) (getidx args 0) "microsol"))
+; a full set, after (dataset-fetch "tinysol"):  musil loaddb.mu tinysol
 print "database:" (get db 'path)
 print "  " (db-size db) "entries;" (get db 'type) "features of" (get db 'ncoeff) "coefficients, block" (get db 'block) "hop" (get db 'hop)
 print "  instruments (orchestral order):" (db-instruments db)

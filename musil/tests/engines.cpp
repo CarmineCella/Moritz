@@ -6,6 +6,7 @@
 // Copyright (c) 2026 Carmine-Emanuele Cella. SPDX-License-Identifier: BSD-2-Clause
 
 #include "musil.h"
+#include "stored_zip.h"
 
 #include <chrono>
 #include <complex>
@@ -272,6 +273,137 @@ static void test_key_names() {
     expect(ok, "key names: Db Eb F# Ab Bb major, C# Eb F# G# Bb minor, for any tonic number");
 }
 
+// --- datasets (music/datasets.h): SHA-256, the installation of an archive (a zip made here: nothing is downloaded; the
+// "download" is curl reading a file:// URL), the order of the names, a configuration written by two threads, a code
+// box's profile refusing the download ---
+static void test_datasets() {
+    namespace fs = std::filesystem;
+    namespace ds = datasets;
+    auto sha = [](const std::string& s) { ds::Sha256 h; h.update(reinterpret_cast<const unsigned char*>(s.data()), s.size()); return h.hex(); };
+    expect(sha("") == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "SHA-256 of nothing");
+    expect(sha("abc") == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", "SHA-256 of abc");
+    expect(sha("abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq") == "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1", "SHA-256 of two blocks");
+    expect(sha(std::string(1000000, 'a')) == "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0", "SHA-256 of a million a");
+
+    fs::path root = fs::temp_directory_path() / "musil_engines_datasets";
+    std::error_code ec; fs::remove_all(root, ec); fs::create_directories(root, ec);
+    fs::path folder = root / "datasets";
+    const std::string db = "spectrum 2048 256 2\n/Vn/Vn-ord-C4-mf.wav;1;2\n/Vc/Vc-ord-C3-mf.wav;3;4\n";
+    std::string zip = (root / "TestSOL.zip").string();
+    expect(ziptest::write(zip, {{"TestSOL/", ""}, {"TestSOL/Vn/", ""}, {"TestSOL/Vc/", ""}, {"TestSOL/Vn/Vn-ord-C4-mf.wav", ziptest::wav()},
+                                {"TestSOL/Vc/Vc-ord-C3-mf.wav", ziptest::wav()}, {"TestSOL.spectrum.db", db}}), "a zip to install");
+    std::string good = ds::sha256_file(zip);
+    auto leftovers = [&](const fs::path& d) { size_t n = 0; for (fs::directory_iterator it(d, ec), end; !ec && it != end; it.increment(ec)) n += it->path().filename().string()[0] == '.'; return n; };
+    auto has = [&](const char* rel) { return fs::exists(folder / rel, ec); };
+    // a damaged archive: nothing installed
+    std::string err;
+    try { ds::install(zip, folder.string(), std::string(64, '0'), "TestSOL"); } catch (const std::exception& e) { err = e.what(); }
+    expect(err.find("damaged") != std::string::npos && !has("TestSOL.spectrum.db") && !has("TestSOL"), "install: a wrong SHA-256 installs nothing");
+    // unzip may be missing on this system: then say so and test no further
+    err.clear();
+    std::string installed;
+    try { installed = ds::install(zip, folder.string(), good, "TestSOL"); } catch (const std::exception& e) { err = e.what(); }
+    if (err.find("cannot run") != std::string::npos) { std::cout << "engines: " << err << ": the installation is not tested here\n"; fs::remove_all(root, ec); return; }
+    expect(err.empty(), "install: " + err);
+    expect(installed == (folder / "TestSOL.spectrum.db").generic_string(), "install: the feature file in the folder");
+    expect(has("TestSOL/Vn/Vn-ord-C4-mf.wav") && has("TestSOL/Vc/Vc-ord-C3-mf.wav"), "install: the sounds next to it");
+    expect(leftovers(folder) == 0, "install: no temporary folder left");
+    err.clear();
+    try { ds::install(zip, folder.string(), good, "TestSOL"); } catch (const std::exception& e) { err = e.what(); }
+    expect(err.find("already there") != std::string::npos, "install: twice, refused (" + err + ")");
+    // found by name, in order: registered, the folder chosen, the default, the bundled
+    ds::Place place; place.config = (root / "datasets.mu").string(); place.default_folder = folder.string();
+    ds::add_bundled_near(place, "../src");
+    expect(ds::resolve(place, "testsol") == installed, "resolve: in the default folder");
+    expect(ds::resolve(place, "microsol").find("microsol.spectrum.db") != std::string::npos, "resolve: the bundled MicroSOL");
+    fs::create_directories(root / "chosen", ec);
+    { std::ofstream f(root / "chosen" / "TestSOL.spectrum.db"); f << db; }
+    ds::set_folder(place.config, (root / "chosen").string());
+    expect(ds::resolve(place, "testsol").find("/chosen/") != std::string::npos, "resolve: the folder chosen before the default");
+    { std::ofstream f(root / "mine.spectrum.db"); f << db; }
+    ds::register_dataset(place.config, "TestSOL", (root / "mine.spectrum.db").string());
+    expect(ds::resolve(place, "testsol").find("mine.spectrum.db") != std::string::npos, "resolve: registered before the folders");
+    auto all = ds::list(place, ds::read_config(place.config));
+    expect(all.size() >= 4 && all[0].where == "registered" && all[1].where == "folder" && all[2].where == "default" && all.back().where == "bundled",
+           "list: registered, folder, default, bundled");
+    err.clear();
+    try { ds::resolve(place, "nosuchsol"); } catch (const std::exception& e) { err = e.what(); }
+    expect(err.find("no dataset named \"nosuchsol\"") != std::string::npos, "resolve: a missing name, a clear error");
+    // the configuration written by two threads at once: every registration kept, the file always whole
+    {
+        std::thread t1([&] { for (int k = 0; k < 20; ++k) ds::register_dataset(place.config, "a" + std::to_string(k), (root / "mine.spectrum.db").string()); });
+        std::thread t2([&] { for (int k = 0; k < 20; ++k) ds::register_dataset(place.config, "b" + std::to_string(k), (root / "mine.spectrum.db").string()); });
+        t1.join(); t2.join();
+    }
+    expect(ds::read_config(place.config).registered.size() == 41, "the configuration: registrations from two threads all kept");
+    expect(leftovers(root) == 0, "the configuration: no temporary file left");
+    // a cancelled installation leaves nothing
+    fs::path folder2 = root / "other";
+    err.clear();
+    try { ds::install(zip, folder2.string(), "", "TestSOL", [](double, const std::string& w) { return w != "unpacking"; }); }
+    catch (const ds::Cancelled&) { err = "cancelled"; } catch (const std::exception& e) { err = e.what(); }
+    expect(err == "cancelled" && !fs::exists(folder2 / "TestSOL.spectrum.db", ec) && !fs::exists(folder2 / "TestSOL", ec) && leftovers(folder2) == 0,
+           "install: cancelled, nothing left");
+    // archives that are not datasets
+    std::string nodb = (root / "nodb.zip").string(), baddb = (root / "baddb.zip").string(), nested = (root / "nested.zip").string();
+    ziptest::write(nodb, {{"x/", ""}, {"x/a.wav", ziptest::wav()}});
+    ziptest::write(baddb, {{"BadSOL/", ""}, {"BadSOL/a.wav", ziptest::wav()}, {"BadSOL.spectrum.db", "not a header\n"}});
+    ziptest::write(nested, {{"pkg/", ""}, {"pkg/NestSOL/", ""}, {"pkg/NestSOL/Vn-ord-C4-mf.wav", ziptest::wav()}, {"pkg/NestSOL.spectrum.db", "spectrum 2048 256 1\n/Vn-ord-C4-mf.wav;1\n"}});
+    err.clear(); try { ds::install(nodb, folder2.string(), ""); } catch (const std::exception& e) { err = e.what(); }
+    expect(err.find("no feature file") != std::string::npos, "install: an archive without a feature file (" + err + ")");
+    err.clear(); try { ds::install(baddb, folder2.string(), ""); } catch (const std::exception& e) { err = e.what(); }
+    expect(err.find("not readable") != std::string::npos && !fs::exists(folder2 / "BadSOL", ec), "install: a malformed feature file (" + err + ")");
+    err.clear(); try { ds::install(nested, folder2.string(), ""); } catch (const std::exception& e) { err = e.what(); }
+    expect(err.empty() && fs::exists(folder2 / "NestSOL.spectrum.db", ec) && fs::exists(folder2 / "NestSOL" / "Vn-ord-C4-mf.wav", ec),
+           "install: an archive with one folder at its top (" + err + ")");
+    // the "download": curl reading the archive from a file:// URL, its size and SHA-256 checked, then installed
+    std::string gz = fs::path(zip).generic_string();
+    std::string url = "file://" + std::string(gz.size() && gz[0] != '/' ? "/" : "") + gz;
+    std::string stem = "TestSOL";
+    ds::Source src{"testsol", url.c_str(), good.c_str(), (std::uintmax_t)fs::file_size(zip, ec), stem.c_str(), "a test"};
+    fs::path folder3 = root / "fetched";
+    double last = -1; bool monotone = true;
+    err.clear();
+    try {
+        std::string f = ds::fetch(src, folder3.string(), [&](double p, const std::string&) { monotone = monotone && p >= last - 1e-9; last = p; return true; });
+        expect(f == (folder3 / "TestSOL.spectrum.db").generic_string(), "fetch: installed");
+    } catch (const std::exception& e) { err = e.what(); }
+    if (err.find("cannot run curl") != std::string::npos) std::cout << "engines: " << err << ": the download is not tested here\n";
+    else {
+        expect(err.empty(), "fetch: " + err);
+        expect(monotone && last == 1.0, "fetch: the progress grows to 1");
+        expect(fs::exists(folder3 / "TestSOL" / "Vn" / "Vn-ord-C4-mf.wav", ec) && leftovers(folder3) == 0, "fetch: the sounds in place, nothing else");
+        ds::Source wrong = src; std::string bad64(64, 'f'); wrong.sha256 = bad64.c_str();
+        fs::path folder4 = root / "fetched-bad";
+        err.clear(); try { ds::fetch(wrong, folder4.string()); } catch (const std::exception& e) { err = e.what(); }
+        expect(err.find("damaged") != std::string::npos && !fs::exists(folder4 / "TestSOL.spectrum.db", ec), "fetch: a damaged download is not installed");
+        size_t left = 0; for (fs::directory_iterator it(folder4, ec), end; !ec && it != end; it.increment(ec)) ++left;
+        expect(left == 0, "fetch: nothing left of a failed download");
+        // stopped while curl runs
+        fs::path folder5 = root / "fetched-stopped";
+        err.clear();
+        try { ds::fetch(src, folder5.string(), [](double, const std::string& w) { return w != "downloading"; }); }
+        catch (const ds::Cancelled&) { err = "cancelled"; } catch (const std::exception& e) { err = e.what(); }
+        left = 0; for (fs::directory_iterator it(folder5, ec), end; !ec && it != end; it.increment(ec)) ++left;
+        expect(err == "cancelled" && left == 0, "fetch: stopped, nothing left");
+    }
+    // a code box's profile: no download, no registration outside its folders
+    {
+        Interp I; make_env(I); std::ostringstream out; I.out = &out;
+        I.caps = Capabilities::sandboxed({root.string()});
+        auto refused = [&](const std::string& code) {
+            try { I.run("load \"music.mu\"\n" + code, "<sandbox>"); } catch (const std::exception& e) { return std::string(e.what()).find("not allowed") != std::string::npos; }
+            return false;
+        };
+        expect(refused("dataset-fetch \"tinysol\"\n"), "a sandboxed interpreter may not download a dataset");
+        expect(refused("dataset-install \"testsol\" \"" + fs::path(zip).generic_string() + "\"\n"), "a sandboxed interpreter may not run unzip");
+        expect(refused("dataset-register! \"x\" \"" + (root / "mine.spectrum.db").generic_string() + "\"\n"), "a sandboxed interpreter may not register a dataset in the user's configuration");
+        try { I.run("print (dataset \"microsol\")\n", "<sandbox>"); } catch (const std::exception& e) { std::cerr << e.what() << "\n"; }
+        expect(out.str().find("microsol.spectrum.db") != std::string::npos, "a sandboxed interpreter finds a dataset by name");
+    }
+    fs::remove_all(root, ec);
+}
+
 int main() {
     test_key_names();
     test_nebula_switch();
@@ -283,6 +415,7 @@ int main() {
     test_resample();
     test_midi();
     test_orchidea();
+    test_datasets();
     if (failures == 0) std::cout << "engines: all checks passed\n";
     return failures == 0 ? 0 : 1;
 }

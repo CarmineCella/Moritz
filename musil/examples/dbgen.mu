@@ -22,7 +22,7 @@ var e (head (db-query db 'Vn 'C4 'mf 'ord))
 print "an entry:" (get e 'file) "-> features" (length (db-features e)) "values, the first four" (fixed (take (db-features e) 4) 4)
 
 ; --- against the feature file that came with MicroSOL (the same analysis): identical features ------------------------
-var ref (db-load "../../data/microsol/microsol.spectrum.db")
+var ref (db-load "microsol")
 var mine (db-features e)
 var theirs (db-features (head (db-query ref 'Vn 'C4 'mf 'ord)))
 print "correlation with MicroSOL's own features:" (fixed (/ (dot mine theirs) (* (norm mine) (norm theirs))) 4)

@@ -50,6 +50,27 @@
   and `db-load` skip a subfolder they may not enter (a system folder in the temporary directory made
   the walk throw: an error in a script, a crash in a program calling the C++ directly), follow no
   link to a folder, and walk 64 levels and a million entries at most.
+- **Datasets by name, in one place for Musil and Moritz** (`music/datasets.h`). `(dataset "fullsol")`
+  is the feature file of a dataset: a path registered for the name (`dataset-register!`, once, for a
+  set that lives elsewhere such as FullSOL), then the datasets folder chosen (`datasets-folder!`), then
+  the default folder `~/Documents/Moritz/datasets`, then the MicroSOL that comes with Musil; in a
+  folder, `X.spectrum.db` at its top or one folder down, named `x` without a trailing year
+  (FullSOL2020 is `fullsol`). `(datasets)` lists what is known and where; `dataset?`,
+  `dataset-forget!`, `datasets-folder` and `datasets-config` complete it. The configuration is one
+  file in Musil's syntax, `~/.musil/datasets.mu`, read at each use and written atomically; Moritz's
+  Datasets window reads and writes the same. A malformed configuration is an error naming its line.
+- **`db-load` and `db-load-first` take names**: the examples say
+  `(db-load-first (list "fullsol" "tinysol" "microsol"))` instead of relative paths, and run with
+  whatever is there.
+- **`(dataset-fetch "tinysol")` downloads TinySOL** from Musil's release assets into the datasets
+  folder (curl), checks its size and SHA-256, unpacks it in a temporary folder there and moves it into
+  place, the feature file last; Ctrl-C stops it and leaves nothing. It uses the network and runs
+  programs, so a sandboxed interpreter (a code box in Moritz) is refused; `fetch_tinysol.sh` calls it.
+  `(dataset-install name archive)` installs a zip already on disk the same way.
+- **The analysis of `db-gen` is a C++ function of its own** (`db_generate`), which Moritz's Datasets
+  window and `orchestra` call; it writes the feature file through a temporary file renamed at the end,
+  so a stopped or failed analysis leaves nothing half written, and `db-gen` now checks the capability
+  profile (reading the folder, writing the file) like every builtin that touches files.
 
 ## 0.11
 

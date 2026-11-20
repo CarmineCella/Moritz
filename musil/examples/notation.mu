@@ -9,7 +9,7 @@
 ; Usage: musil notation.mu [seed]
 load "music.mu"
 seed (if (> (length args) 0) (num (getidx args 0)) 1)
-var db (db-load-first (list "../datasets/TinySOL.spectrum.db" "../../data/microsol/microsol.spectrum.db"))   ; TinySOL after ./fetch_tinysol.sh, else the bundled MicroSOL
+var db (db-load-first (list "fullsol" "tinysol" "microsol"))   ; FullSOL where you registered it, else TinySOL (dataset-fetch "tinysol"), else the bundled MicroSOL: Ob, Hn, Vn, Vc, C4-G4 (a sketch)
 var sr 44100
 var here (db-instruments-available db)
 var orch (orchestra (filter (list 'Ob 'Hn 'Vn 'Vn 'Vc) (function (i) (contains? here (str i)))))

@@ -1801,16 +1801,27 @@ from a folder of sounds (Orchidea's dbgen, in C++: the energy-weighted average s
 \musil{db-make} generates and loads. Several databases whose features agree load as one:
 \musil{(db-load (list "a.db" "b.db"))} or \musil{db-merge}; every entry keeps its own
 sounds' folder, and \musil{note} draws on all of them. \musil{db-load-first} loads the first
-of a list of feature files that is on disk: the examples name TinySOL (or FullSOL) first and
-the bundled MicroSOL last, and run with what is there. \musil{note} finds the entry
+of a list of feature files or datasets' names that is there: the examples name FullSOL and TinySOL
+first and the bundled MicroSOL last, \musil{(db-load-first (list "fullsol" "tinysol" "microsol"))},
+and run with what is there. \musil{note} finds the entry
 for an instrument, pitch, dynamics and technique, or the nearest available pitch of that
 instrument, and shifts it by resampling; only sounds present on disk are candidates, so a
 feature file describing more than is present still works. A sharp in a pitch is written as
 a string (\musil{"D\#5"}) or a symbol (\musil{'D\#5}). The bundled
 \texttt{data/microsol} at the root of Moritz's tree (MicroSOL: oboe, horn, violin, cello, C4--G4, 32 sounds)
-makes every example run from a fresh clone; the full TinySOL is fetched into
-\texttt{datasets/} (ignored by git) with \texttt{./fetch\_tinysol.sh}, and each example has
-a commented line to switch to it.
+makes every example run from a fresh clone.
+
+\textbf{Datasets by name.} Musil and Moritz find databases in one place. \musil{(dataset "fullsol")}
+is the feature file of a dataset: a path registered under that name, then the datasets folder
+chosen, then \texttt{\textasciitilde/Documents/Moritz/datasets}, then the bundled MicroSOL; in a folder,
+\texttt{X.spectrum.db} at its top or one folder down, named \texttt{x} without a trailing year
+(FullSOL2020 is \texttt{fullsol}). \musil{db-load} takes a name as well as a path. \musil{(datasets)}
+lists what is known and where. A set that lives elsewhere is registered once,
+\musil{(dataset-register! "fullsol" "/path/to/FullSOL2020.spectrum.db")}; \musil{(dataset-fetch "tinysol")}
+downloads TinySOL (about 750~MB, a release asset, its SHA-256 checked) into the datasets folder
+and installs it whole or not at all. The configuration is one file in Musil's syntax,
+\texttt{\textasciitilde/.musil/datasets.mu} (\texttt{folder "..."}, \texttt{dataset name "..."}),
+read at each use; Moritz's Datasets window reads and writes the same file.
 
 \textbf{Atoms: Maple.} Matching pursuit explains a sound as a sum of atoms taken from a
 dictionary, the strongest first; the list of atoms is a \emph{book}. A dictionary is of

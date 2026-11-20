@@ -1881,6 +1881,51 @@
   (or dir itself) under which one of the first 20 entries' files is found, whatever the folder is called; else the
   first folder next to it holding any sound; else dir (a relative dir is looked for as a file to read is: here, else
   next to the script)
+#dataset
+  (dataset name)
+  the feature file of a dataset, by name: "fullsol", "tinysol", "microsol", or the name of any
+  X.spectrum.db found (FullSOL2020.spectrum.db is "fullsol"; a trailing number may be left out).
+  Looked for in order: a path registered for the name (dataset-register!), the datasets folder
+  chosen (datasets-folder!), the default folder ~/Documents/Moritz/datasets (Moritz's too), then
+  the MicroSOL that comes with Musil; in a folder, at its top and one folder down. When there is
+  none, the error says where it looked and how to get it. db-load and db-load-first take names.
+#dataset?
+  (dataset? name)
+  is there a dataset of that name (as dataset finds it)?
+#datasets
+  (datasets)
+  every dataset known, in the order a name is looked for: records with 'name, 'path (its feature
+  file), 'where (registered, folder: the folder chosen, default: ~/Documents/Moritz/datasets,
+  bundled: what comes with Musil) and 'present (is the file on disk; a registered one may be gone)
+#dataset-register!
+  (dataset-register! name path)
+  a dataset that lives elsewhere, found by name from now on, by Musil and by Moritz (FullSOL,
+  where you keep it: (dataset-register! "fullsol" "/Volumes/Samples/FullSOL2020.spectrum.db")); it
+  is written in ~/.musil/datasets.mu. => the feature file, its path made absolute
+#dataset-forget!
+  (dataset-forget! name)
+  the registration of a name removed (the files stay where they are); 1 if there was one
+#datasets-folder
+  (datasets-folder)
+  the datasets folder: the one chosen, else ~/Documents/Moritz/datasets; downloads go there
+#datasets-folder!
+  (datasets-folder! path)
+  the datasets folder chosen, for Musil and Moritz ("" or nil: the default again); => the folder
+#datasets-config datasets-config
+  (datasets-config)  (datasets-config path)
+  the configuration file the dataset functions read and write
+  (~/.musil/datasets.mu); with a path, this interpreter uses that file instead
+#dataset-fetch
+  (dataset-fetch name)
+  downloads a dataset into the datasets folder (datasets-folder): "tinysol", from Musil's release
+  assets (about 750 MB), its SHA-256 checked, unpacked, then put in place (TinySOL.spectrum.db
+  next to TinySOL/); nothing is done when it is there. It uses the network and runs curl and
+  unzip: a code box in Moritz may not (use Extras > Datasets...). => the feature file
+#dataset-install
+  (dataset-install name archive)
+  a dataset installed from a zip archive on disk into the datasets folder: its feature file
+  (X.spectrum.db) and the folder of its sounds, put in place once unpacked and read; for tinysol
+  the archive is the release's (its SHA-256 is checked). => the feature file
 #orchidea-analyse
   (orchidea-analyse x sr type block hop ncoeff opts)
   the target's segments for a mimetic orchestration: x a vector at
@@ -2298,13 +2343,20 @@
   (db-load path)
   load a database from its feature file: TinySOL.spectrum.db with the sounds in TinySOL/ next
   to it (the paths in the file are relative to that folder); when no such folder exists the
-  sounds are looked for next to the file itself. => a record with 'path, 'root (the sounds'
-  folder), 'type, 'block, 'hop, 'ncoeff and 'entries (records: file instr tech pitch dyn
-  other midi features). The sounds are not read: notes open them when rendered or played.
+  sounds are looked for next to the file itself. A dataset's name instead of a path
+  ((db-load "tinysol"), "fullsol", "microsol") is found as dataset finds it. => a record with
+  'path, 'root (the sounds' folder), 'type, 'block, 'hop, 'ncoeff and 'entries (records: file
+  instr tech pitch dyn other midi features). The sounds are not read: notes open them when
+  rendered or played.
 #db-load-first
   (db-load-first paths)
-  load the first database of a list that is on disk: the examples name the set they prefer
-  first (TinySOL, FullSOL) and the bundled MicroSOL last, and run with what is there
+  load the first database of a list that is there: paths or datasets' names, the set preferred
+  first and the bundled MicroSOL last, (db-load-first (list "fullsol" "tinysol" "microsol")), so
+  that a program runs with what is there
+#dataset-name?
+  (dataset-name? x)
+  is x a dataset's name rather than a path: a text with no folder separator and no .db at its
+  end that is not a file here ("fullsol", 'tinysol)
 #db-merge
   (db-merge dbs)
   one database out of a list of several, when their features agree (same type and number of

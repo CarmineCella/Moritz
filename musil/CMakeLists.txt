@@ -153,6 +153,7 @@ if(MUSIL_TESTS)
   add_test(NAME live    COMMAND musil ${T}/test_live.mu)
   add_test(NAME music   COMMAND musil ${T}/test_music.mu)
   add_test(NAME score   COMMAND musil ${T}/test_score.mu)
+  add_test(NAME datasets COMMAND musil ${T}/test_datasets.mu)
   add_test(NAME atoms   COMMAND musil ${T}/test_atoms.mu)
   if(MUSIL_FLTK)
     add_test(NAME plot COMMAND musil ${T}/test_plot.mu)
@@ -279,6 +280,11 @@ if(MUSIL_TESTS)
     endif()
   endforeach()
   # tests and examples say (load "std.mu") etc.: point them at the source tree
+  # ... in a home of their own: the datasets the user registered or downloaded (~/.musil/datasets.mu,
+  # ~/Documents/Moritz/datasets) are not seen, so an example runs on the bundled MicroSOL and a test finds what it made
+  set(MUSIL_TEST_HOME ${CMAKE_CURRENT_BINARY_DIR}/test-home)
+  file(MAKE_DIRECTORY ${MUSIL_TEST_HOME})
   get_property(ALL_TESTS DIRECTORY PROPERTY TESTS)
-  set_tests_properties(${ALL_TESTS} PROPERTIES ENVIRONMENT "MUSIL_PATH=${CMAKE_CURRENT_SOURCE_DIR}/src;MUSIL_NOSHOW=1;MUSIL_NULL_AUDIO=1")
+  set_tests_properties(${ALL_TESTS} PROPERTIES ENVIRONMENT
+    "MUSIL_PATH=${CMAKE_CURRENT_SOURCE_DIR}/src;MUSIL_NOSHOW=1;MUSIL_NULL_AUDIO=1;HOME=${MUSIL_TEST_HOME};USERPROFILE=${MUSIL_TEST_HOME}")
 endif()

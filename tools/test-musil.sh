@@ -20,6 +20,15 @@ case "$(uname -s)" in *_NT*) WINDOWS=1 ;; *) WINDOWS= ;; esac
 export MUSIL_NOSHOW=1 MUSIL_NULL_AUDIO=1
 [ "$MODE" = musil ] && export MUSIL_PATH="$ROOT/musil/src"
 TMP=$(mktemp -d 2>/dev/null || mktemp -d -t musil)
+# a home of their own: the user's datasets (~/.musil/datasets.mu, ~/Documents/Moritz/datasets) and preferences are
+# not seen, so the examples run on the bundled MicroSOL
+HOME="$TMP/home"
+USERPROFILE="$TMP/home"
+XDG_CONFIG_HOME="$TMP/home/.config"
+APPDATA="$TMP/home/AppData/Roaming"
+LOCALAPPDATA="$TMP/home/AppData/Local"
+export HOME USERPROFILE XDG_CONFIG_HOME APPDATA LOCALAPPDATA
+mkdir -p "$HOME"
 fails=0
 count=0
 
@@ -38,7 +47,7 @@ hosted() {
 
 # --- the tests of each library
 cd "$ROOT/musil/tests" || exit 1
-TESTS="test_core test_std test_system test_scientific test_signals test_live test_music test_atoms test_plot test_memory test_stress test_smoke test_load test_robust test_semantics"
+TESTS="test_core test_std test_system test_scientific test_signals test_live test_music test_datasets test_atoms test_plot test_memory test_stress test_smoke test_load test_robust test_semantics"
 [ "$MODE" = moritz ] && TESTS=$(echo "$TESTS" | sed 's/test_live//; s/test_plot//')
 # MUSIL_SKIP_TESTS="test_a test_b": left out (CI's thread-sanitizer job: test_robust nests deeper than TSan follows)
 kept=

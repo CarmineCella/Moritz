@@ -16,7 +16,7 @@
 ; Usage: musil gran_orchestration2.mu [seed]
 load "music.mu"
 seed (if (> (length args) 0) (num (getidx args 0)) 5)
-var db (db-load-first (list "../datasets/TinySOL.spectrum.db" "../../data/microsol/microsol.spectrum.db"))   ; TinySOL after ./fetch_tinysol.sh (or FullSOL2020), else the bundled MicroSOL: Ob, Hn, Vn, Vc, C4-G4 (a sketch)
+var db (db-load-first (list "fullsol" "tinysol" "microsol"))   ; FullSOL where you registered it, else TinySOL (dataset-fetch "tinysol"), else the bundled MicroSOL: Ob, Hn, Vn, Vc, C4-G4 (a sketch)
 var sr 44100
 
 ; --- the orchestra: ossia players (the band decides the instrument), all in one group so they strike together -------

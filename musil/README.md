@@ -95,14 +95,21 @@ datasets/
   TinySOL/Strings/Violin/ordinario/Vn-ord-C4-mf-4c-N.wav ...
 ```
 
-with `(db-load "path/to/TinySOL.spectrum.db")`; the file names carry instrument, technique,
-pitch and dynamics; `db-gen` makes such a feature file from any folder of sounds. The
-repository bundles **MicroSOL** (`data/microsol` at the root of Moritz's tree: oboe, horn, violin, cello, C4-G4,
-32 sounds) so that every example and test runs from a fresh clone. The full sets are large
-and are not in git: `./fetch_tinysol.sh` downloads TinySOL (about 800 MB, a release asset)
-into `datasets/`, which git ignores; any other *SOL set goes there by hand. The examples use
-MicroSOL by default and each has a commented `db-load` line for `../datasets/TinySOL.spectrum.db`;
-switching is that one line.
+with `(db-load "path/to/TinySOL.spectrum.db")`, or by name: `(db-load "tinysol")`; the file
+names carry instrument, technique, pitch and dynamics; `db-gen` makes such a feature file from
+any folder of sounds. The repository bundles **MicroSOL** (`data/microsol` at the root of
+Moritz's tree: oboe, horn, violin, cello, C4-G4, 32 sounds) so that every example and test runs
+from a fresh clone.
+
+**Datasets by name.** Musil and Moritz find the sets in one place. `(dataset "fullsol")` looks
+for a path registered under that name, then in the datasets folder you chose, then in
+`~/Documents/Moritz/datasets`, then at the bundled MicroSOL; `(datasets)` lists what is there.
+The full sets are large and not in git: `(dataset-fetch "tinysol")` (or `./fetch_tinysol.sh`,
+or Moritz's Extras > Datasets...) downloads TinySOL (about 750 MB, a release asset, its SHA-256
+checked) into the datasets folder; a set that lives elsewhere, such as FullSOL, is registered
+once: `(dataset-register! "fullsol" "/path/to/FullSOL2020.spectrum.db")`. The configuration
+is `~/.musil/datasets.mu`, one setting a line (`folder "..."`, `dataset name "..."`). The
+examples say `(db-load-first (list "fullsol" "tinysol" "microsol"))` and run with what is there.
 
 The version number lives in one place, `MUSIL_VERSION` in `src/core.h`; CMake, the deploy
 scripts, the VS Code extension and the manual read it from there.

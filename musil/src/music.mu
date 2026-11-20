@@ -581,11 +581,14 @@ function display (s) (if (defined? "show") (show (score-roll s) 1100 (min 900 (m
 ; --- databases (the *SOL layout: a feature file next to a folder of the same name holding the sounds) -----------
 ; (db-load path)           load a database from its feature file: TinySOL.spectrum.db with the sounds in TinySOL/ next
 ;                          to it (the paths in the file are relative to that folder); when no such folder exists the
-;                          sounds are looked for next to the file itself. => a record with 'path, 'root (the sounds'
-;                          folder), 'type, 'block, 'hop, 'ncoeff and 'entries (records: file instr tech pitch dyn
-;                          other midi features). The sounds are not read: notes open them when rendered or played.
+;                          sounds are looked for next to the file itself. A dataset's name instead of a path
+;                          ((db-load "tinysol"), "fullsol", "microsol") is found as dataset finds it. => a record with
+;                          'path, 'root (the sounds' folder), 'type, 'block, 'hop, 'ncoeff and 'entries (records: file
+;                          instr tech pitch dyn other midi features). The sounds are not read: notes open them when
+;                          rendered or played.
 function db-load (path) {
     if (equal? (type path) "list") { return (db-merge (map path db-load)) }
+    if (dataset-name? path) { set path (dataset path) }
     var r (db-read path)
     var full (resolve-path path)
     if (not (exists? full)) { set full (find-file path) }
@@ -595,12 +598,20 @@ function db-load (path) {
     var root (db-sounds-folder dir (getidx r 4))
     return (record (list 'path full 'root root 'type (head r) 'block (getidx r 1) 'hop (getidx r 2) 'ncoeff (getidx r 3) 'entries (getidx r 4)))
 }
-; (db-load-first paths)    load the first database of a list that is on disk: the examples name the set they prefer
-;                          first (TinySOL, FullSOL) and the bundled MicroSOL last, and run with what is there
+; (db-load-first paths)    load the first database of a list that is there: paths or datasets' names, the set preferred
+;                          first and the bundled MicroSOL last, (db-load-first (list "fullsol" "tinysol" "microsol")), so
+;                          that a program runs with what is there
 function db-load-first (paths) {
-    var here (find-first paths (function (p) (or (exists? p) (not (equal? (find-file p) "")))))
-    if (equal? (type here) "nil") { error "db-load-first: none of " paths " is on disk" }
+    var here (find-first paths (function (p) (if (dataset-name? p) (dataset? p) (or (exists? p) (not (equal? (find-file p) ""))))))
+    if (equal? (type here) "nil") { error "db-load-first: none of " paths " is there (the datasets known: (datasets))" }
     return (db-load here)
+}
+; (dataset-name? x)        is x a dataset's name rather than a path: a text with no folder separator and no .db at its
+;                          end that is not a file here ("fullsol", 'tinysol)
+function dataset-name? (x) {
+    if (not (or (equal? (type x) "string") (equal? (type x) "symbol"))) { return 0 }
+    var s (str x)
+    return (and (> (length s) 0) (not (contains? s "/")) (not (contains? s "\\")) (not (ends-with? s ".db")) (not (exists? s)))
 }
 ; (db-sounds-folder dir entries) is C++ (music.h): the folder next to the feature file (or dir itself) under which the
 ;                          first entries' files are found, whatever the folder is called (TinySOL/, tinysol/, a copy

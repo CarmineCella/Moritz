@@ -68,7 +68,7 @@ print "score-merge     :" (length (score-events (score-merge s s))) "events in t
 ; --- 5. A database and notes ---------------------------------------------------------------------
 print ""
 print "--- database ---"
-var db (db-load "../../data/microsol/microsol.spectrum.db")
+var db (db-load "microsol")
 print "db-load         :" (db-size db) "entries;" (get db 'type) "features," (get db 'ncoeff) "coefficients; root" (filename (get db 'root))
 print "db-instruments  :" (db-instruments db)
 print "db-techniques   :" (db-techniques db) " db-dynamics:" (db-dynamics db) " db-pitches:" (length (db-pitches db))

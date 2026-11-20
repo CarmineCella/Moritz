@@ -5,8 +5,8 @@
 ; Usage: musil simple_score.mu      (renders and opens the roll: Play there)
 load "music.mu"
 
-var db (db-load "../../data/microsol/microsol.spectrum.db")           ; the bundled MicroSOL: Ob, Hn, Vn, Vc, C4-G4
-; var db (db-load "../datasets/TinySOL.spectrum.db")           # the full TinySOL, after ./fetch_tinysol.sh (or any *SOL set)
+var db (db-load "microsol")           ; the bundled MicroSOL: Ob, Hn, Vn, Vc, C4-G4
+; var db (db-load "tinysol")           # the full TinySOL, after (dataset-fetch "tinysol") (or any *SOL set, by name or path)
 var s (score "chorale" 44100)
 var q 0.6                                  ; a quarter note, in seconds (100 bpm)
 

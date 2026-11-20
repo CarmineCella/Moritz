@@ -211,35 +211,74 @@ inline void db_walk(const std::filesystem::path& root, const std::function<void(
     };
     walk(root, 0);
 }
-inline vptr mus_db_gen(vlist& a, Interp& i) {
+// The analysis itself, C++ of its own (db_generate), shared by db-gen and by the programs that embed Musil's engines
+// (Moritz's Datasets window and orchestra's analyse): every WAV under folder analysed, in the order of their paths, the
+// feature file written whole or not at all (a temporary file next to it, checked, then renamed). progress(k, n) is
+// called before each sound (false stops: std::runtime_error "cancelled", nothing written); skipped(rel, why) for a sound
+// that cannot be read. => the number of sounds analysed. Throws std::runtime_error.
+struct db_gen_params { std::string type = "spectrum"; int block = 2048, hop = 256, ncoeff = 1024; };   // dbgen's defaults
+inline void db_gen_check(const db_gen_params& p) {
+    static const char* types[] = {"spectrum", "logspec", "specpeaks", "specenv", "mfcc", "moments"};
+    if (std::find_if(std::begin(types), std::end(types), [&](const char* t) { return p.type == t; }) == std::end(types))
+        throw std::runtime_error("unknown feature type " + p.type + " (spectrum, logspec, specpeaks, specenv, mfcc, moments)");
+    if (p.block < 16 || p.block > (1 << 20) || (p.block & (p.block - 1))) throw std::runtime_error("block must be a power of 2 >= 16");
+    if (p.hop < 1 || p.hop > p.block) throw std::runtime_error("hop must be in 1..block");
+    if (p.ncoeff < 1 || p.ncoeff > p.block / 2) throw std::runtime_error("ncoeff must be in 1..block/2");
+    if (p.type == "moments" && p.ncoeff < 4) throw std::runtime_error("moments: ncoeff must be >= 4");
+}
+inline size_t db_generate(const std::string& folder, const std::string& outpath, const db_gen_params& p,
+                          const std::function<bool(size_t, size_t)>& progress = nullptr,
+                          const std::function<void(const std::string&, const std::string&)>& skipped = nullptr) {
     namespace fs = std::filesystem;
-    std::string folder = i.read_path(i.str(a[0])), outpath = i.str(a[1]), type = i.str(a[2]);
-    int block = (int)i.scalar(a[3]), hop = (int)i.scalar(a[4]), ncoeff = (int)i.scalar(a[5]);
-    if (block < 16 || (block & (block - 1))) i.bad("block must be a power of 2 >= 16");
-    if (hop < 1 || hop > block) i.bad("hop must be in 1..block");
-    if (ncoeff < 1 || ncoeff > block / 2) i.bad("ncoeff must be in 1..block/2");
-    std::error_code ec; if (!fs::is_directory(folder, ec)) i.bad("db-gen: not a folder: " + i.str(a[0]));
+    db_gen_check(p);
+    std::error_code ec; if (!fs::is_directory(folder, ec)) throw std::runtime_error("not a folder: " + folder);
     std::vector<fs::path> files;
-    db_walk(folder, [&](const fs::path& p) { std::string ext = p.extension().string(); for (auto& c : ext) c = (char)std::tolower((unsigned char)c); if (ext == ".wav" && p.filename().string()[0] != '.') files.push_back(p); });
+    db_walk(folder, [&](const fs::path& f) { std::string ext = f.extension().string(); for (auto& c : ext) c = (char)std::tolower((unsigned char)c); if (ext == ".wav" && f.filename().string()[0] != '.') files.push_back(f); });
     std::sort(files.begin(), files.end());
-    std::ofstream out(outpath); if (!out) i.bad("db-gen: cannot write " + outpath);
-    out << type << " " << block << " " << hop << " " << ncoeff << "\n";
+    fs::path target(outpath), tmp = target;
+    tmp += ".tmp-" + std::to_string((unsigned long long)std::chrono::steady_clock::now().time_since_epoch().count() % 1000000007ull);
+    struct remove_tmp { fs::path p; bool keep = false; ~remove_tmp() { std::error_code e; if (!keep) fs::remove(p, e); } } guard{tmp};
     size_t done = 0;
-    for (size_t k = 0; k < files.size(); k++) {
-        std::string rel = fs::relative(files[k], folder, ec).generic_string();
-        WAVHeader h{}; std::vector<std::vector<double>> chans;
-        try { chans = read_wav_raw(files[k].string().c_str(), h); } catch (std::exception& e) { *i.out << "db-gen: skipped " << rel << ": " << e.what() << "\n"; continue; }
-        if (chans.empty()) continue;
-        std::vector<double> mono(chans[0].size(), 0.0); for (auto& c : chans) for (size_t j = 0; j < mono.size() && j < c.size(); j++) mono[j] += c[j] / chans.size();
-        if (h.sampleRate != 44100) { varr v(mono.size()); for (size_t j = 0; j < mono.size(); j++) v[j] = mono[j]; varr r = resample_sinc(v, 44100.0 / h.sampleRate); mono.assign(std::begin(r), std::end(r)); }
-        std::vector<double> f;
-        try { f = db_features_of(mono, block, hop, ncoeff, type); } catch (std::exception& e) { i.bad(std::string("db-gen: ") + e.what()); }
-        out << "/" << rel; for (double v : f) out << ";" << (float)v; out << "\n";
-        done++;
-        if (files.size() >= 50 && (k + 1) % std::max<size_t>(1, files.size() / 10) == 0) { *i.out << "db-gen: " << (k + 1) << "/" << files.size() << "\n" << std::flush; }
-        i.yield_check();
+    {
+        std::ofstream out(tmp, std::ios::binary | std::ios::trunc); if (!out) throw std::runtime_error("cannot write " + outpath);
+        out << p.type << " " << p.block << " " << p.hop << " " << p.ncoeff << "\n";
+        for (size_t k = 0; k < files.size(); k++) {
+            if (progress && !progress(k, files.size())) throw std::runtime_error("cancelled");
+            std::string rel = fs::relative(files[k], folder, ec).generic_string();
+            WAVHeader h{}; std::vector<std::vector<double>> chans;
+            try { chans = read_wav_raw(files[k].string().c_str(), h); } catch (std::exception& e) { if (skipped) skipped(rel, e.what()); continue; }
+            if (chans.empty() || chans[0].empty() || h.sampleRate <= 0) { if (skipped) skipped(rel, "no samples"); continue; }
+            std::vector<double> mono(chans[0].size(), 0.0); for (auto& c : chans) for (size_t j = 0; j < mono.size() && j < c.size(); j++) mono[j] += c[j] / chans.size();
+            if (h.sampleRate != 44100) { varr v(mono.size()); for (size_t j = 0; j < mono.size(); j++) v[j] = mono[j]; varr r = resample_sinc(v, 44100.0 / h.sampleRate); mono.assign(std::begin(r), std::end(r)); }
+            std::vector<double> f = db_features_of(mono, p.block, p.hop, p.ncoeff, p.type);
+            out << "/" << rel; for (double v : f) out << ";" << (float)v; out << "\n";
+            done++;
+        }
+        out.flush(); if (!out) throw std::runtime_error("cannot write " + outpath + " (is the disk full?)");
+        out.close(); if (out.fail()) throw std::runtime_error("cannot close " + outpath);
     }
-    return v_num((double)done);
+    if (progress) progress(files.size(), files.size());
+    fs::rename(tmp, target, ec);
+    if (ec) throw std::runtime_error("cannot replace " + outpath + ": " + ec.message());
+    guard.keep = true;
+    return done;
+}
+inline vptr mus_db_gen(vlist& a, Interp& i) {
+    std::string folder = i.read_path(i.str(a[0])), outpath = i.writable(i.str(a[1]));
+    i.require_read(folder);
+    db_gen_params p; p.type = i.str(a[2]);
+    p.block = (int)std::clamp(i.scalar(a[3]), -1.0, 1e9); p.hop = (int)std::clamp(i.scalar(a[4]), -1.0, 1e9); p.ncoeff = (int)std::clamp(i.scalar(a[5]), -1.0, 1e9);
+    try { db_gen_check(p); } catch (std::exception& e) { i.bad(e.what()); }
+    std::error_code ec; if (!std::filesystem::is_directory(folder, ec)) i.bad("db-gen: not a folder: " + i.str(a[0]));
+    try {
+        return v_num((double)db_generate(folder, outpath, p,
+            [&](size_t k, size_t n) {
+                if (n >= 50 && k > 0 && k % std::max<size_t>(1, n / 10) == 0) { *i.out << "db-gen: " << k << "/" << n << "\n" << std::flush; }
+                i.yield_check();
+                return true;
+            },
+            [&](const std::string& rel, const std::string& why) { *i.out << "db-gen: skipped " << rel << ": " << why << "\n"; }));
+    } catch (std::runtime_error& e) { i.bad(std::string("db-gen: ") + e.what()); }
 }
 
 // --- finding the sounds: an index of every WAV under a folder, by file name ------------------------
@@ -295,6 +334,148 @@ inline vptr mus_db_sounds_folder(vlist& a, Interp& i) {
     if (probes.empty()) return v_str(dir);
     std::string found = db_sounds_folder(here, probes);
     return v_str(found == here ? dir : found);
+}
+
+} // namespace musil
+#include "music/datasets.h"
+namespace musil {
+
+// --- datasets by name (music/datasets.h): one folder for Musil and Moritz ---------------------------------------------
+// What an interpreter knows of where datasets are: the configuration file (~/.musil/datasets.mu, or the one
+// datasets-config gave it), the default folder, and the MicroSOL that comes with the libraries (data/microsol next to
+// the folder of music.mu, or what the host adds to bundled).
+struct datasets_state { std::string config; bool config_set = false; std::vector<std::string> bundled; };
+inline datasets::Place datasets_place(Interp& i) {
+    auto& st = i.state<datasets_state>();
+    datasets::Place p;
+    if (st.config_set) p.config = st.config;
+    p.bundled = st.bundled;
+    for (auto& d : i.load_path) datasets::add_bundled_near(p, d);
+    std::string lib = i.find_file("music.mu");
+    if (!lib.empty()) datasets::add_bundled_near(p, std::filesystem::path(lib).parent_path().string());
+    return p;
+}
+inline std::string dataset_name_arg(const vptr& v, Interp& i) {
+    if (!v || (v->t != Value::STR && v->t != Value::SYM)) i.bad(std::string("expected a dataset's name, got ") + type_name(v));
+    return v->s;
+}
+inline datasets::Config datasets_config_of(Interp& i, const datasets::Place& p) {
+    try { return datasets::read_config(p.config); } catch (const std::exception& e) { i.bad(e.what()); }
+}
+// (dataset name)           the feature file of a dataset, by name: "fullsol", "tinysol", "microsol", or the name of any
+//                          X.spectrum.db found (FullSOL2020.spectrum.db is "fullsol"; a trailing number may be left out).
+//                          Looked for in order: a path registered for the name (dataset-register!), the datasets folder
+//                          chosen (datasets-folder!), the default folder ~/Documents/Moritz/datasets (Moritz's too), then
+//                          the MicroSOL that comes with Musil; in a folder, at its top and one folder down. When there is
+//                          none, the error says where it looked and how to get it. db-load and db-load-first take names.
+inline vptr mus_dataset(vlist& a, Interp& i) {
+    std::string name = dataset_name_arg(a[0], i);
+    datasets::Place p = datasets_place(i);
+    datasets::Config c = datasets_config_of(i, p);
+    std::string why, f = datasets::find(p, c, name, &why);
+    if (f.empty()) i.bad(why);
+    return v_str(f);
+}
+// (dataset? name)          is there a dataset of that name (as dataset finds it)?
+inline vptr mus_dataset_p(vlist& a, Interp& i) {
+    std::string name = dataset_name_arg(a[0], i);
+    datasets::Place p = datasets_place(i);
+    return v_bool(!datasets::find(p, datasets_config_of(i, p), name).empty());
+}
+// (datasets)               every dataset known, in the order a name is looked for: records with 'name, 'path (its feature
+//                          file), 'where (registered, folder: the folder chosen, default: ~/Documents/Moritz/datasets,
+//                          bundled: what comes with Musil) and 'present (is the file on disk; a registered one may be gone)
+inline vptr mus_datasets(vlist&, Interp& i) {
+    datasets::Place p = datasets_place(i);
+    vlist out;
+    for (auto& e : datasets::list(p, datasets_config_of(i, p)))
+        out.push_back(v_list({ v_list({ v_sym("name"), v_str(e.name) }), v_list({ v_sym("path"), v_str(e.path) }),
+                               v_list({ v_sym("where"), v_str(e.where) }), v_list({ v_sym("present"), v_bool(e.present) }) }));
+    return v_list(std::move(out));
+}
+// (dataset-register! name path)   a dataset that lives elsewhere, found by name from now on, by Musil and by Moritz (FullSOL,
+//                          where you keep it: (dataset-register! "fullsol" "/Volumes/Samples/FullSOL2020.spectrum.db")); it
+//                          is written in ~/.musil/datasets.mu. => the feature file, its path made absolute
+inline vptr mus_dataset_register(vlist& a, Interp& i) {
+    std::string name = dataset_name_arg(a[0], i), path = i.readable(i.str(a[1]));
+    datasets::Place p = datasets_place(i);
+    i.require_write(p.config);
+    try { datasets::register_dataset(p.config, name, path); } catch (const std::exception& e) { i.bad(e.what()); }
+    return v_str(resolved_path(path).generic_string());
+}
+// (dataset-forget! name)   the registration of a name removed (the files stay where they are); 1 if there was one
+inline vptr mus_dataset_forget(vlist& a, Interp& i) {
+    std::string name = dataset_name_arg(a[0], i);
+    datasets::Place p = datasets_place(i);
+    i.require_write(p.config);
+    try { return v_bool(datasets::forget_dataset(p.config, name)); } catch (const std::exception& e) { i.bad(e.what()); }
+}
+// (datasets-folder)        the datasets folder: the one chosen, else ~/Documents/Moritz/datasets; downloads go there
+inline vptr mus_datasets_folder(vlist&, Interp& i) {
+    datasets::Place p = datasets_place(i);
+    return v_str(datasets::folder_in_use(p, datasets_config_of(i, p)));
+}
+// (datasets-folder! path)  the datasets folder chosen, for Musil and Moritz ("" or nil: the default again); => the folder
+inline vptr mus_datasets_folder_set(vlist& a, Interp& i) {
+    std::string f = a[0]->t == Value::NIL ? "" : i.str(a[0]);
+    datasets::Place p = datasets_place(i);
+    i.require_write(p.config);
+    try { return v_str(datasets::folder_in_use(p, datasets::set_folder(p.config, f))); } catch (const std::exception& e) { i.bad(e.what()); }
+}
+// (datasets-config) (datasets-config path)   the configuration file the dataset functions read and write
+//                          (~/.musil/datasets.mu); with a path, this interpreter uses that file instead
+inline vptr mus_datasets_config(vlist& a, Interp& i) {
+    auto& st = i.state<datasets_state>();
+    if (!a.empty()) { st.config = resolved_path(i.str(a[0])).generic_string(); st.config_set = true; }
+    return v_str(datasets_place(i).config);
+}
+// a download or an installation as a builtin: its progress printed, a stop request (Ctrl-C, Stop) obeyed
+inline vptr datasets_job(Interp& i, const char* who, const std::function<std::string(const datasets::Progress&)>& work) {
+    waiting_scope w(i);
+    int last = -1; std::string stage;
+    auto progress = [&](double f, const std::string& what) {
+        int pct = (int)std::floor(f * 100);
+        if (what != stage || pct / 10 != last / 10) { *i.out << who << ": " << what << " " << pct << "%\n" << std::flush; stage = what; last = pct; }
+        if (i.yield_fn) i.yield_fn();
+        i.idle();
+        return !i.stopping();
+    };
+    try { return v_str(work(progress)); }
+    catch (const datasets::Cancelled&) { i.check_stop(); i.bad("cancelled"); }
+    catch (const std::exception& e) { i.bad(e.what()); }
+}
+// (dataset-fetch name)     downloads a dataset into the datasets folder (datasets-folder): "tinysol", from Musil's release
+//                          assets (about 750 MB), its SHA-256 checked, unpacked, then put in place (TinySOL.spectrum.db
+//                          next to TinySOL/); nothing is done when it is there. It uses the network and runs curl and
+//                          unzip: a code box in Moritz may not (use Extras > Datasets...). => the feature file
+inline vptr mus_dataset_fetch(vlist& a, Interp& i) {
+    std::string name = dataset_name_arg(a[0], i);
+    const datasets::Source* s = datasets::source(name);
+    if (!s) i.bad("nothing to download for \"" + name + "\": tinysol is downloaded; register another with dataset-register!");
+    i.require_net(std::string("download ") + s->url);
+    i.require_exec("curl");
+    i.require_blocking("dataset-fetch");
+    datasets::Place p = datasets_place(i);
+    std::string folder = datasets::folder_in_use(p, datasets_config_of(i, p));
+    if (folder.empty()) i.bad("no datasets folder (no home folder): choose one with datasets-folder!");
+    i.require_write(folder);
+    return datasets_job(i, "dataset-fetch", [&](const datasets::Progress& pr) { return datasets::fetch(*s, folder, pr); });
+}
+// (dataset-install name archive)   a dataset installed from a zip archive on disk into the datasets folder: its feature file
+//                          (X.spectrum.db) and the folder of its sounds, put in place once unpacked and read; for tinysol
+//                          the archive is the release's (its SHA-256 is checked). => the feature file
+inline vptr mus_dataset_install(vlist& a, Interp& i) {
+    std::string name = dataset_name_arg(a[0], i), archive = i.readable(i.str(a[1]));
+    const datasets::Source* s = datasets::source(name);
+    i.require_exec("unzip");
+    i.require_blocking("dataset-install");
+    datasets::Place p = datasets_place(i);
+    std::string folder = datasets::folder_in_use(p, datasets_config_of(i, p));
+    if (folder.empty()) i.bad("no datasets folder (no home folder): choose one with datasets-folder!");
+    i.require_write(folder);
+    return datasets_job(i, "dataset-install", [&](const datasets::Progress& pr) {
+        return datasets::install(archive, folder, s ? s->sha256 : "", s ? s->stem : name, pr);
+    });
 }
 
 // --- mimetic orchestration: Orchidea's search (music/orchidea.h) -------------------------------------------------
@@ -913,6 +1094,11 @@ inline void add_music(Interp& i) {
     i.def("db-read", mus_db_read, 1, 1); i.def("db-gen", mus_db_gen, 6, 6); add_midi(i); i.def("db-locate", mus_db_locate, 2, 2); i.def("db-index-size", mus_db_index_size, 1, 1);
     i.def("orchidea-analyse", mus_orchidea_analyse, 7, 7); i.def("orchidea-search", mus_orchidea_search, 4, 4);
     i.def("mimetic-seating", mus_mimetic_seating, 1, 1); i.def("continuation-plan", mus_continuation_plan, 2, 2); i.def("db-sounds-folder", mus_db_sounds_folder, 2, 2);
+    i.def("dataset", mus_dataset, 1, 1); i.def("dataset?", mus_dataset_p, 1, 1); i.def("datasets", mus_datasets, 0, 0);
+    i.def("dataset-register!", mus_dataset_register, 2, 2); i.def("dataset-forget!", mus_dataset_forget, 1, 1);
+    i.def("datasets-folder", mus_datasets_folder, 0, 0); i.def("datasets-folder!", mus_datasets_folder_set, 1, 1);
+    i.def("datasets-config", mus_datasets_config, 0, 1);
+    i.def("dataset-fetch", mus_dataset_fetch, 1, 1); i.def("dataset-install", mus_dataset_install, 2, 2);
     add_atoms_and_types(i);
     add_score(i);
 }
