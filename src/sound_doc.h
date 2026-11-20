@@ -95,9 +95,9 @@ public:
     bool save(std::string& err);                             // to path(): a temporary file, renamed
     bool saveTo(const std::string& path, std::string& err);  // Save As: the document's file is then path
     bool exportTo(const std::string& path, std::string& err) const;   // a copy (buffer~: Save as WAV)
-    bool dirty() const { return dirty_; }
+    bool dirty() const { return topSerial() != savedSerial_; }   // undone back to the file: not dirty
     // closing it loses something: a file's (or a new sound's) unsaved edits; never a buffer~'s
-    bool needsSaving() const { return dirty_ && !bound_; }
+    bool needsSaving() const { return dirty() && !bound_; }
 
     // ---- a buffer~ of the open patches (root: the patch the names live in)
     void bindBuffer(Patch* root, const std::string& name);  // its samples now, copied
@@ -151,6 +151,7 @@ private:
     };
     struct Step {
         std::string name;
+        uint64_t serial = 0;
         std::vector<Splice> splices;    // applied in order (undone in reverse)
         Selection selBefore, selAfter;
         long playBefore = 0, playAfter = 0;
@@ -169,7 +170,8 @@ private:
     uint64_t generation_ = 0;
     std::vector<Step> undo_, redo_;
     std::string path_;
-    bool dirty_ = false;
+    uint64_t nextSerial_ = 1, savedSerial_ = 0;   // each step its number; the one the file holds
+    uint64_t topSerial() const { return undo_.empty() ? 0 : undo_.back().serial; }
     bool bound_ = false;
     Patch* root_ = nullptr;
     std::string bufName_;

@@ -292,6 +292,8 @@ TEST(sound_save_and_export) {
     d.select(0, 100);
     CHECK(d.erase());
     CHECK(d.dirty() && d.needsSaving());
+    CHECK(d.undo() && !d.dirty());                     // undone back to what the file holds
+    CHECK(d.redo() && d.dirty());
     CHECK(d.save(err));
     SampleBuffer back;
     CHECK(decodeAudioFile(path, back, err));

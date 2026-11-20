@@ -113,7 +113,7 @@ bool computeSpectrogram(const SampleBuffer& s, Spectrogram& out, const std::func
     g.fmax = g.sr / 2;
     g.fmin = std::min(std::max(40.0, 2 * g.sr / g.n), g.fmax / 2);
     const long frames = s.frames;
-    g.hop = std::max<long>(g.n / 8, (frames + maxCols - 1) / std::max(1, maxCols));
+    g.hop = std::max<long>(64, (frames + maxCols - 1) / std::max(1, maxCols));
     g.cols = frames > 0 ? (int)(frames / g.hop) + 1 : 0;
     g.v.assign((size_t)g.cols * g.rows, 0);
     // each row: the bins under it (their largest magnitude), or, where a row is narrower than a bin, the
@@ -181,6 +181,7 @@ void SoundDoc::setSound(SampleBuffer&& b) {
     summary_.build(*sound_);
     undo_.clear();
     redo_.clear();
+    savedSerial_ = 0;                                    // as it is now: nothing unsaved
     select(sel.start, sel.end);
     playhead = std::clamp(playhead, 0L, frames());
     ++generation_;
@@ -196,7 +197,7 @@ bool SoundDoc::load(const std::string& path, std::string& err) {
     path_ = fileio::absolute(path);
     sel = {};
     playhead = 0;
-    dirty_ = false;
+    savedSerial_ = 0;
     setSound(std::move(b));
     return true;
 }
@@ -211,14 +212,14 @@ bool SoundDoc::save(std::string& err) {
         return false;
     }
     if (!writeWavFile(path_, *sound_, err, 24)) return false;
-    dirty_ = false;
+    savedSerial_ = topSerial();
     return true;
 }
 
 bool SoundDoc::saveTo(const std::string& path, std::string& err) {
     if (!writeWavFile(path, *sound_, err, 24)) return false;
     path_ = fileio::absolute(path);
-    dirty_ = false;
+    savedSerial_ = topSerial();
     return true;
 }
 
@@ -231,7 +232,7 @@ void SoundDoc::bindBuffer(Patch* root, const std::string& name) {
     bufName_ = name;
     bound_ = true;
     path_.clear();
-    dirty_ = false;
+    savedSerial_ = 0;
     sel = {};
     playhead = 0;
     seenBox_ = nullptr;
@@ -315,7 +316,6 @@ void SoundDoc::changed(Sound next) {
     sound_ = std::move(next);
     summary_.build(*sound_);
     ++generation_;
-    dirty_ = true;
     if (bound_)
         if (BufferBox* b = buffer()) {
             SampleBuffer copy = *sound_;                 // made here, swapped in under the lock, the old freed after
@@ -339,6 +339,7 @@ void SoundDoc::commit(Step&& st, Sound next) {
     redo_.clear();
     sel = st.selAfter;
     playhead = st.playAfter;
+    st.serial = nextSerial_++;
     undo_.push_back(std::move(st));
     trimHistory();
     changed(std::move(next));
