@@ -335,6 +335,25 @@ mf and ff, shortened to 1.5 s) come from TinySOL (Cella, Ghisi, Lostanlen,
 Lévy, Fineberg and Maresz, IRCAM, CC BY 4.0). Short excerpts of John Cage
 speaking and of a Beach Boys song are used for the rematch example.
 
+### Datasets
+
+The sample databases that `orchestra`, `orchidea` and Musil's music library
+use (Ircam's TinySOL, OrchideaSOL, FullSOL: a feature file `X.spectrum.db`
+next to a folder `X/` of sounds) are found by name, the same way in Moritz
+and in Musil: `orchestra band fullsol`, `(db-load "tinysol")`. A name is
+looked for in a file registered under it, then in the datasets folder
+(`~/Documents/Moritz/datasets` unless you choose another in Settings), then
+in MicroSOL, which comes with Moritz (`data/microsol`: oboe, horn, violin,
+cello around C4-G4, 32 sounds). Extras > Datasets... lists them and where
+they are; it downloads TinySOL (about 750 MB, from Musil's release assets,
+its checksum verified) into the datasets folder, registers a feature file
+that lives elsewhere (FullSOL, where you keep it: choose its `.spectrum.db`
+once), and analyses a folder of your own sounds, named as in the *SOL
+databases (`Vn-ord-C4-mf.wav`), into a feature file next to it, registered
+by the name you give (Orchidea's dbgen; `orchestra`'s `analyse folder` does
+the same from a patch). The configuration is one small file both read,
+`~/.musil/datasets.mu`.
+
 ## License and credits
 
 Moritz is released under the BSD 2-Clause License; see `LICENSE`. Created by

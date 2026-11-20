@@ -2401,16 +2401,21 @@ See also: `soundtypes` `typegen` `pursuit` `atoms`
 
 A database of instrumental samples and the players who play it, shared by name with orchidea. The database is a feature file in the layout of the *SOL databases (Ircam's TinySOL, OrchideaSOL, FullSOL, or the MicroSOL that comes with Moritz: microsol/microsol.spectrum.db), as Musil's db-load reads it: the first line says the features (type, block, hop, number of coefficients), then a line per sound, its path and its features; the names of the files carry instrument, technique, pitch and dynamics (Vn-ord-D#5-mf.wav). The sounds are found in the folder next to the file that holds them, whatever it is called. Reading runs as a background job; when it is done, the number of sounds and the players come out.
 
+The database can be named instead of given as a file: orchestra band fullsol, read tinysol, read microsol. A name is found as Musil's (dataset name) finds it, in one place both share: a file registered under that name (FullSOL, where you keep it: Extras > Datasets..., Register a file), then the datasets folder (Settings, or Extras > Datasets...; by default ~/Documents/Moritz/datasets, where Download TinySOL puts TinySOL), then the MicroSOL that comes with Moritz. The name of X.spectrum.db is x, without a trailing year: FullSOL2020.spectrum.db is fullsol.
+
+analyse makes a database out of a folder of sounds named as in the *SOL databases (Orchidea's dbgen, the analysis of Musil's db-gen): every WAV under the folder, its features in folder.spectrum.db next to the folder (never over a file already there), which is then read. The Datasets window does the same and registers the file by a name (Analyse a folder...).
+
 Without players, the orchestra is Orchidea's default (two of each wind and brass, a bass tuba, two of each string), of what the database has. A player is an instrument code as the database names it (Fl, Ob, ClBb, Bn, Hn, TpC, Tbn, BTb, Vn, Va, Vc, Cb...); Fl|Picc is one player who doubles. Right-click the box for Info.
 
 | Argument | |
 | --- | --- |
 | `name` | the name orchidea uses (required) |
-| `database` | a feature file to read when the box is made (none) |
+| `database` | a feature file, or a dataset's name (fullsol, tinysol, microsol), to read when the box is made (none) |
 
 | Message | |
 | --- | --- |
-| `read file` | reads a database (a background job); the sounds are looked for next to it |
+| `read file` | reads a database (a background job): a feature file, or a dataset's name (read fullsol); the sounds are looked for next to it |
+| `analyse folder [type block hop ncoeff]` | analyses every WAV under the folder into folder.spectrum.db next to it (a background job; spectrum 2048 256 1024 by default; logspec, specpeaks, specenv, mfcc 13, moments 4), then reads it |
 | `players instrument [n] ...` | the players, an instrument a player, a number after one making it that many players (players Vn 4 Va 2 Vc 2 Fl); no instrument: the default orchestra |
 | `add instrument [n]` | more players of an instrument |
 | `remove instrument` | every player of an instrument |
@@ -2422,14 +2427,14 @@ Without players, the orchestra is Orchidea's default (two of each wind and brass
 
 | Inlet | |
 | --- | --- |
-| 1 | messages |
+| 1 | read file.db or a dataset's name (fullsol, tinysol, microsol); analyse folder [type block hop ncoeff]; players Vn 2 Va ...; add, remove, range, techniques, dynamics, info, stop |
 
 | Outlet | |
 | --- | --- |
-| 1 | messages |
-| 2 | messages |
-| 3 | messages |
-| 4 | messages |
+| 1 | progress of reading (or analysing), 0 to 1 |
+| 2 | bang: the database is read |
+| 3 | the number of sounds in the database |
+| 4 | the players, a list of instruments (Fl\|Picc: one player who doubles); bang: none |
 
 See also: `orchidea` `buffer~`
 
@@ -2487,14 +2492,14 @@ A search of 300 individuals over 300 epochs on TinySOL takes well under a second
 
 | Inlet | |
 | --- | --- |
-| 1 | messages |
+| 1 | run target [out]: buffer~ names; population, epochs, seed, segmentation, partials... ; choose segment n, notes, show, report, write file, roll buffer, stop |
 
 | Outlet | |
 | --- | --- |
-| 1 | messages |
-| 2 | messages |
-| 3 | messages |
-| 4 | messages |
+| 1 | progress of the search, 0 to 1 |
+| 2 | bang: done (the notes are out) |
+| 3 | a note a message: number, instrument, pitch, dynamics, technique, onset (ms), duration (ms), the sound's path, cents off the target's partial, player |
+| 4 | the distance: the mean cost of the chosen solutions (lower is nearer the target) |
 
 See also: `orchestra` `buffer~` `play~` `code`
 
