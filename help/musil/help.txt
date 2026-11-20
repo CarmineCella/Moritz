@@ -1017,6 +1017,13 @@
   (zcr x)
   the zero-crossing rate, per sample: how many times x changes sign (0 counts as positive) over its length
   (mir.h; descriptors~ gives it per second)
+#fade-in fade-out
+  (fade-in x n)  (fade-out x n)
+  linear fades over the first (last) n samples (signals/edit.h: sample k of a fade in
+  times k / n, a fade out the same backwards; Moritz's sound editor fades with it)
+#normalize-peak
+  (normalize-peak x)
+  x scaled so its peak is 1; silence stays silent (signals/edit.h, as the sound editor's Normalize)
 #sine
   (sine sr freq dur)
   a sine of freq Hz lasting dur seconds
@@ -1043,15 +1050,9 @@
 #pan
   (pan x pos)
   a mono signal to (list left right), equal power; pos from -1 (left) to 1 (right)
-#fade-in fade-out
-  (fade-in x n)  (fade-out x n)
-  linear fades over n samples
 #rms
   (rms x)
   root mean square
-#normalize-peak
-  (normalize-peak x)
-  scale so the peak is 1; (normalize-rms x target) so the rms is target
 #normalize-rms
   (normalize-rms x target)
   scale so the rms is target
