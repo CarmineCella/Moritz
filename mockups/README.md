@@ -100,6 +100,17 @@ and real sounds from `examples/sounds`.
   the transport, its events sent from its outlets. Double-click opens it large, as timeline or roll
   (the same panel).
 - **Each editor is written once, as a panel** (mockup 8), first in its own window.
+- **Musil and Moritz: a shared language and engines, separate host services.** Musil's language and
+  its C++ engines (signals, music, scientific, the score) are shared: one implementation, which Moritz
+  calls directly or through the interpreter. What shows, plays or finds data is a service of the
+  host, behind the same functions: a script calls `show`, `play`, `figure` or the live functions the
+  same way everywhere; Musil alone answers with its own windows and audio, Moritz with its windows and
+  its engine, so a script runs in both and Moritz has one audio engine and one way of drawing (the
+  `plot` object and Musil's `show` share one renderer, in Musil). Musil alone keeps its live audio and
+  its read-only roll; the editable roll is Moritz's. Until Musil's live functions play through Moritz's
+  engine, Moritz says so clearly instead of "undefined". Datasets (TinySOL downloaded from GitHub's
+  assets, MicroSOL bundled as a fallback, FullSOL where the user says it is) live in one folder that
+  both look in. Scores, colls and buffers pass between code boxes and objects by reference.
 
 ## Plan
 
@@ -113,8 +124,11 @@ and real sounds from `examples/sounds`.
   moved as blocks; their notes are edited with the roll.
 - **0.14: the roll and the active `score` object** (mockups 5 and 2): editing notes, the inline
   score box, the Generate and Transform panel (Musil offline), coll (mockup 9).
-- **Later:** notation, MusicXML import, spectral painting, the patch dock (layout C), and the parts
-  of mockups 10 to 14 not done by then.
+- **Musil in Moritz, alongside 0.12 and 0.13:** a clear message for Musil's live functions in
+  Moritz; Musil's plots as a host service (show and save-png in Moritz, one renderer with the plot
+  object); one datasets folder with the TinySOL download, for both.
+- **Later:** notation, MusicXML import, spectral painting, the patch dock (layout C), Musil's live
+  functions played through Moritz's engine, and the parts of mockups 10 to 14 not done by then.
 
 Each version is worked on in its own branch, on macOS, validated by hand; CI runs once, when the
 version is ready, before it is merged into main and tagged.
