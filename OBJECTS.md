@@ -1722,45 +1722,6 @@ The live spectrum of its signal: a 2048-point FFT with a Hann window, frequency 
 
 See also: `scope~` `meter~` `spectrogram` `descriptors~` `melbands~`
 
-### `descriptors~`
-
-`descriptors~ [size] [hop] [names...]`
-
-Low-level descriptors of its signal, measured over the last `size` samples every `hop` samples while audio runs, one outlet each. The names choose the outlets and their order; without names there are all eleven, in this order: rms (root mean square level), centroid (Hz, the amplitude-weighted mean frequency), spread (Hz, the standard deviation around the centroid), skewness, kurtosis (3 for a Gaussian shape), flux (how much the spectrum grew since the last frame), hfc (high frequency content: the energy weighted by bin number), zcr (zero crossings per second), flatness (0 tonal to 1 noisy), periodicity (the height of the autocorrelation peak, 0 to 1) and f0 (Hz).
-
-f0 is read from the autocorrelation and is 0 when the frame is not periodic enough (periodicity under 0.4). It is found between about 4 sr / size and 50 sr / size (86 to 1077 Hz with size 2048 at 44.1 kHz): a larger size reaches lower notes. The formulas are those of sound_math's features.h.
-
-| Argument | |
-| --- | --- |
-| `size` | the frame, in samples, a power of 2 from 256 to 8192 (2048) |
-| `hop` | the step between analyses, in samples, 32 or more (1024) |
-| `names` | any of rms centroid spread skewness kurtosis flux hfc zcr flatness periodicity f0 (all of them) |
-
-| Message | |
-| --- | --- |
-| `bang` | analyses the latest frame now |
-| `hop n` | sets the step between analyses (samples) |
-
-| Inlet | |
-| --- | --- |
-| 1 | signal to analyse; bang: analyse now; hop n |
-
-| Outlet | |
-| --- | --- |
-| 1 | rms: root mean square level |
-| 2 | centroid (Hz): amplitude-weighted mean frequency |
-| 3 | spread (Hz): spectral standard deviation around the centroid |
-| 4 | skewness: asymmetry of the spectrum |
-| 5 | kurtosis: peakedness of the spectrum |
-| 6 | flux: how much the spectrum grew since the last frame |
-| 7 | hfc: high frequency content |
-| 8 | zcr: zero crossings per second |
-| 9 | flatness: 0 tonal .. 1 noisy |
-| 10 | periodicity: autocorrelation peak, 0..1 |
-| 11 | f0 (Hz) from the autocorrelation; 0 when unvoiced |
-
-See also: `melbands~` `mfcc~` `chroma~` `onset~` `knn` `plot`
-
 ### `spectrogram`
 
 `spectrogram [size] [hop]`
@@ -2084,6 +2045,47 @@ Curves of a buffer~ over time, written to another buffer~ as a background job, o
 | 2 | bang: the curve buffer~ is ready |
 
 See also: `descriptors~` `spectrogram` `plot` `soundtypes`
+
+### `descriptors~`
+
+`descriptors~ [size] [hop] [names...]`
+
+Low-level descriptors of its signal, measured over the last `size` samples every `hop` samples while audio runs, one outlet each. The names choose the outlets and their order; without names there are the eleven numbers, in this order: rms (root mean square level), centroid (Hz, the amplitude-weighted mean frequency), spread (Hz, the standard deviation around the centroid), skewness, kurtosis (3 for a Gaussian shape), flux (how much the spectrum grew since the last frame), hfc (high frequency content: the energy weighted by bin number), zcr (zero crossings per second), flatness (0 tonal to 1 noisy), periodicity (0 to 1) and f0 (Hz). Three names give lists instead: mfcc (13 MFCCs over 40 mel bands, as mfcc~), chroma (the 12 pitch classes, as chroma~) and melbands (40 mel bands in dB, as melbands~), at this box's size. All of them come from one FFT a frame.
+
+f0 is found by YIN (de Cheveigné and Kawahara): the first period at which the frame's normalised difference with itself dips under the threshold (0.1), refined between samples and checked against the windows around it. A weak or missing fundamental does not send it an octave up. It is 0 when no period dips under the threshold (noise, silence), and is searched between 50 and 4000 Hz (range), and no lower than 2 sr / size (43 Hz with size 2048 at 44.1 kHz): a larger size reaches lower notes. periodicity is 1 minus the normalised difference at that period: 1 for a periodic sound, near 0 for noise. The formulas are Musil's (descriptors, yin, spectral-moments...), so a script gets the same numbers.
+
+| Argument | |
+| --- | --- |
+| `size` | the frame, in samples, a power of 2 from 256 to 32768 (2048) |
+| `hop` | the step between analyses, in samples, 16 or more (1024) |
+| `names` | any of rms centroid spread skewness kurtosis flux hfc zcr flatness periodicity f0 mfcc chroma melbands (the eleven numbers) |
+
+| Message | |
+| --- | --- |
+| `bang` | analyses the latest frame now |
+| `hop n` | sets the step between analyses (samples) |
+| `threshold t` | sets YIN's threshold, 0.001 to 1 (0.1); higher calls more frames voiced |
+| `range lo hi` | sets the f0 searched, in Hz (50 4000) |
+
+| Inlet | |
+| --- | --- |
+| 1 | signal to analyse; bang: analyse now; hop n; threshold t; range lo hi |
+
+| Outlet | |
+| --- | --- |
+| 1 | rms: root mean square level |
+| 2 | centroid (Hz): amplitude-weighted mean frequency |
+| 3 | spread (Hz): spectral standard deviation around the centroid |
+| 4 | skewness: asymmetry of the spectrum |
+| 5 | kurtosis: peakedness of the spectrum |
+| 6 | flux: how much the spectrum grew since the last frame |
+| 7 | hfc: high frequency content |
+| 8 | zcr: zero crossings per second |
+| 9 | flatness: 0 tonal .. 1 noisy |
+| 10 | periodicity: YIN's 1 - aperiodicity, 0..1 |
+| 11 | f0 (Hz) by YIN; 0 when unvoiced |
+
+See also: `melbands~` `mfcc~` `chroma~` `onset~` `knn` `plot`
 
 ### `melbands~`
 

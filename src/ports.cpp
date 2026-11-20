@@ -334,16 +334,19 @@ std::string portHelp(const Box* b, bool outlet, int i) {
             {"hfc", "hfc: high frequency content"},
             {"zcr", "zcr: zero crossings per second"},
             {"flatness", "flatness: 0 tonal .. 1 noisy"},
-            {"periodicity", "periodicity: autocorrelation peak, 0..1"},
-            {"f0", "f0 (Hz) from the autocorrelation; 0 when unvoiced"}};
+            {"periodicity", "periodicity: YIN's 1 - aperiodicity, 0..1"},
+            {"f0", "f0 (Hz) by YIN; 0 when unvoiced"},
+            {"mfcc", "mfcc: a list of 13 MFCCs (40 mel bands)"},
+            {"chroma", "chroma: a list of the 12 pitch classes, C first"},
+            {"melbands", "melbands: a list of 40 mel bands (dB)"}};
         std::vector<std::string> chosen;
         for (auto& x : b->args)
             if (x.isSymbol())
                 for (auto& e : d)
                     if (e.first == x.s) chosen.push_back(e.second);
         if (chosen.empty())
-            for (auto& e : d) chosen.push_back(e.second);
-        if (!outlet) text = "signal to analyse; bang: analyse now; hop n";
+            for (size_t k = 0; k < 11; ++k) chosen.push_back(d[k].second);   // the scalars
+        if (!outlet) text = "signal to analyse; bang: analyse now; hop n; threshold t; range lo hi";
         else if (i < (int)chosen.size()) text = chosen[(size_t)i];
     } else if (c == "groove~" && outlet && i == nOuts - 1) {
         text = "sync: position in the loop, 0 to 1";

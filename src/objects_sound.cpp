@@ -1,11 +1,10 @@
 // Copyright (c) 2024-2026 Carmine-Emanuele Cella. SPDX-License-Identifier: BSD-2-Clause
 // objects_sound.cpp — sound processing from the author's tools: sparkle~
 // (sparkle's phase vocoder), conv~ (pconv/condec convolution), condec
-// (convolution and deconvolution of buffers), descriptors~ (low-level
-// descriptors and f0) and function (a breakpoint editor)
+// (convolution and deconvolution of buffers) and function (a breakpoint
+// editor). descriptors~ is with the live analyses, in objects_mir.cpp.
 
 #include "objects.h"
-#include "signals/fft.h"   // Musil's FFT
 #include "zoom.h"
 #include "signals/convolution.h"   // Musil's convolution engines
 #include "signals/vocoder.h"   // Musil's phase vocoder engine, as its pvoc
@@ -23,12 +22,6 @@
 
 namespace moritz {
 namespace {
-
-int nextPow2(long n) {
-    int p = 1;
-    while (p < n) p <<= 1;
-    return p;
-}
 
 // ---------------------------------------------------------------- sparkle~
 // sparkle~ [buffer] [channels] [window] [overlap]: sparkle's phase vocoder,
@@ -448,154 +441,6 @@ public:
     }
 };
 
-// ---------------------------------------------------------------- descriptors~
-// descriptors~ [size] [hop] [names...]: low-level descriptors of its signal,
-// every hop samples (1024 by default) over a frame of size samples (2048),
-// while audio runs; bang analyses now. Names choose the outlets and their
-// order (all of them, in this order, by default):
-//   rms          root mean square level
-//   centroid     spectral centroid (Hz): the amplitude-weighted mean frequency
-//   spread       spectral spread (Hz): standard deviation around the centroid
-//   skewness     asymmetry of the spectrum around the centroid
-//   kurtosis     peakedness of the spectrum (3 for a Gaussian shape)
-//   flux         spectral flux: how much the spectrum grew since the last frame
-//   hfc          high frequency content: energy weighted by bin number
-//   zcr          zero crossings per second
-//   flatness     geometric over arithmetic mean of the spectrum (0 tonal .. 1 noise)
-//   periodicity  height of the autocorrelation peak (0..1): how periodic the frame is
-//   f0           fundamental frequency (Hz) from the autocorrelation; 0 when unvoiced
-// The formulas are those of sound_math's features.h; f0 follows its
-// acfF0Estimate, with the autocorrelation computed by FFT.
-class DescriptorsBox : public Box {
-public:
-    explicit DescriptorsBox(const Message& a) : ring_(new std::atomic<float>[kRing]), hops_(1024) {
-        std::vector<float> nums;
-        for (auto& x : a) {
-            if (x.isFloat()) nums.push_back(x.f);
-            else if (index(x.s) >= 0) which_.push_back(index(x.s));
-        }
-        n_ = std::clamp(nextPow2((long)(nums.size() > 0 ? nums[0] : 2048)), 256, kRing / 2);
-        hops_.setHop(std::clamp((int)(nums.size() > 1 ? nums[1] : 1024), 32, 65536));
-        if (which_.empty())
-            for (int k = 0; k < kCount; ++k) which_.push_back(k);
-        setPorts({P::Signal}, std::vector<Port>(which_.size(), P::Control));
-        for (int i = 0; i < kRing; ++i) ring_[i].store(0.f);
-        fft_.init(2 * n_);
-        prevAmp_.assign((size_t)n_ / 2 + 1, 0.f);
-    }
-    void attached() override { tick(); }
-    void message(int, const Message& m) override {
-        if (m[0].is("bang")) analyse(wpos_.load(std::memory_order_acquire));
-        else if (m[0].is("hop") && m.size() > 1) hops_.setHop(std::clamp((int)argf(m, 1, 1024.f), 32, 65536));
-    }
-    void dsp(int n) override {
-        const float* x = sigIn(0, n);
-        size_t w = wpos_.load(std::memory_order_relaxed);
-        for (int i = 0; i < n; ++i) ring_[(w + i) & (kRing - 1)].store(x[i], std::memory_order_relaxed);
-        wpos_.store(w + n, std::memory_order_release);
-        hops_.advance(w + n, n);                         // hops counted in samples, not GUI time
-    }
-    static const char* name(int k) {
-        static const char* const names[kCount] = {"rms", "centroid", "spread", "skewness", "kurtosis", "flux",
-                                                   "hfc", "zcr", "flatness", "periodicity", "f0"};
-        return names[k];
-    }
-
-private:
-    static constexpr int kRing = 65536, kCount = 11;
-    static int index(const std::string& s) {
-        for (int k = 0; k < kCount; ++k)
-            if (s == name(k)) return k;
-        return -1;
-    }
-    // the frames that ended since the last look, each analysed where it ended (every hop samples)
-    void tick() {
-        size_t end;
-        while (hops_.next(end)) {
-            size_t w = wpos_.load(std::memory_order_acquire);
-            if (patch->root()->dspRunning && w - end + (size_t)n_ <= (size_t)kRing) analyse(end);
-        }
-        patch->schedule(this, hops_.interval(patch->root()->sampleRate.load()), [this] { tick(); });
-    }
-    void analyse(size_t end) {
-        double sr = patch->root()->sampleRate.load();
-        int N = n_, H = N / 2;
-        std::vector<float> x((size_t)N);
-        for (int i = 0; i < N; ++i) x[(size_t)i] = ring_[(end - N + (size_t)i) & (kRing - 1)].load(std::memory_order_relaxed);
-        float v[kCount] = {};
-        // temporal: level and zero crossings
-        double e = 0;
-        int zc = 0;
-        for (int i = 0; i < N; ++i) {
-            e += (double)x[(size_t)i] * x[(size_t)i];
-            if (i && ((x[(size_t)i - 1] < 0.f) != (x[(size_t)i] < 0.f))) ++zc;
-        }
-        v[0] = (float)std::sqrt(e / N);
-        v[7] = (float)(zc * sr / N);
-        // spectrum: Hann window, amplitudes scaled so that a full-scale sine is 1
-        std::vector<float> re((size_t)2 * N, 0.f), im((size_t)2 * N, 0.f);
-        for (int i = 0; i < N; ++i) re[(size_t)i] = x[(size_t)i] * (float)(.5 - .5 * std::cos(dsp::kTwoPi * i / N));
-        musil::dsp::FFT<float> f;
-        f.init(N);
-        f.forward(re.data(), im.data());
-        std::vector<float> amp((size_t)H + 1);
-        for (int k = 0; k <= H; ++k) amp[(size_t)k] = std::hypot(re[(size_t)k], im[(size_t)k]) * 4.f / N;
-        double sa = 0, sf = 0;
-        for (int k = 0; k <= H; ++k) { sa += amp[(size_t)k]; sf += amp[(size_t)k] * (k * sr / N); }
-        double cen = sa > 0 ? sf / sa : 0, m2 = 0, m3 = 0, m4 = 0;
-        for (int k = 0; k <= H && sa > 0; ++k) {
-            double d = k * sr / N - cen, a = amp[(size_t)k] / sa;
-            m2 += a * d * d; m3 += a * d * d * d; m4 += a * d * d * d * d;
-        }
-        double spread = std::sqrt(m2);
-        v[1] = (float)cen;
-        v[2] = (float)spread;
-        v[3] = spread > 0 ? (float)(m3 / (spread * spread * spread)) : 0.f;
-        v[4] = spread > 0 ? (float)(m4 / (spread * spread * spread * spread)) : 0.f;
-        double flux = 0, hfc = 0, hn = 0, logs = 0;
-        for (int k = 0; k <= H; ++k) {
-            float a = amp[(size_t)k], d = a - prevAmp_[(size_t)k];
-            flux += d > 0 ? d : 0;
-            hfc += (double)a * a * k;
-            hn += k;
-            logs += std::log(a + 1e-12);
-        }
-        prevAmp_ = amp;
-        v[5] = (float)flux;
-        v[6] = (float)(hn > 0 ? hfc / hn : 0);
-        double mean = sa / (H + 1);
-        v[8] = mean > 1e-9 ? (float)(std::exp(logs / (H + 1)) / mean) : 0.f;
-        // autocorrelation by FFT (zero-padded to 2N, so not circular)
-        std::fill(re.begin(), re.end(), 0.f);
-        std::fill(im.begin(), im.end(), 0.f);
-        for (int i = 0; i < N; ++i) re[(size_t)i] = x[(size_t)i];
-        fft_.forward(re.data(), im.data());
-        for (size_t k = 0; k < re.size(); ++k) { re[k] = re[k] * re[k] + im[k] * im[k]; im[k] = 0.f; }
-        fft_.inverse(re.data(), im.data());
-        // acfF0Estimate: skip the first lobe, take the highest peak after it
-        std::vector<float> r((size_t)H);
-        for (int i = 0; i < H; ++i) r[(size_t)i] = re[(size_t)i] * (float)(H - i) / N;   // its unbiasing
-        int j = (int)(N * .02);
-        float t = r[0];
-        while (j < H && r[(size_t)j] < t) t = r[(size_t)j++];
-        t = 0.f;
-        for (int i = j; i < H; ++i)
-            if (r[(size_t)i] > t) { j = i; t = r[(size_t)i]; }
-        float per = (r[0] > 0 && j < H) ? r[(size_t)j] / r[0] : 0.f;
-        v[9] = std::clamp(per, 0.f, 1.f);
-        v[10] = (j > 0 && j < H && per >= .4f && j <= N / 4) ? (float)(sr / j) : 0.f;
-        for (int k = (int)which_.size() - 1; k >= 0; --k) outletFloat(k, v[which_[(size_t)k]]);
-    }
-
-    std::unique_ptr<std::atomic<float>[]> ring_;
-    std::atomic<size_t> wpos_{0};
-    HopFrames hops_;
-    int n_;
-    std::vector<int> which_;
-    std::vector<float> prevAmp_;
-    musil::dsp::FFT<float> fft_;
-};
-
 // ---------------------------------------------------------------- function
 // function [domain] [lo] [hi] [x y ...]: a breakpoint editor. In locked mode,
 // click to add a point, drag to move it, Shift-click to delete it; the first
@@ -856,7 +701,6 @@ void registerSoundObjects(ClassTable& t) {
         {"sparkle~", "Spectral", "phase vocoder: [buffer] [channels] [window] [overlap]", with<SparkleBox>()},
         {"conv~", "Filters", "zero-latency convolution with a buffer~: buffer [channels]", with<ConvBox>()},
         {"condec", "Samples", "convolve / deconvolve buffers: conv|deconv x h out", plain<CondecBox>()},
-        {"descriptors~", "Analysis", "low-level descriptors and f0: [size] [hop] [names]", with<DescriptorsBox>()},
         {"function", "Interface", "breakpoint editor: [domain ms] [lo] [hi]", with<FunctionBox>()},
         {"nebula~", "Oscillators", "granular synthesis (sound_math's nebula): [proto1] [proto2]", with<NebulaBox>()},
     });

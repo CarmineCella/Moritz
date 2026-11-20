@@ -1,0 +1,55 @@
+; descriptors.moritz - cross-test: descriptors~ against Musil's descriptors (rms ... flatness, and YIN's
+; periodicity and f0) and mfcc-gram, on the same samples of a voice (tools/test-patches.sh)
+(patch
+  (obj b buffer~ xsrc Vox.wav (pos 20 20))
+  (obj i buffer~ xin 2000 1 (pos 160 20))
+  (obj lb loadbang (pos 20 60))
+  (obj pl sig~ 1 (pos 20 90))
+  (obj gr groove~ xsrc (pos 20 120))
+  (obj r record~ xin 1 (pos 160 160))
+  (obj on message 1 (pos 160 90))
+  (obj d descriptors~ 2048 1024 rms centroid spread skewness kurtosis flux hfc zcr flatness periodicity f0 mfcc (pos 20 160))
+  (obj pk pack 0. 0. 0. 0. 0. 0. 0. 0. 0. 0. 0. (pos 20 200))
+  (obj dl delay 1650 (pos 300 60))
+  (obj c code 3 (pos 300 240)
+    (script
+      "; the eleven scalars of the latest frame (in2) and its MFCCs (in3) against Musil's descriptors and"
+      "; mfcc-gram of the samples descriptors~ received (recorded from the start): frame k of descriptors~ ends"
+      "; at (k + 1) * 1024, Musil's frame k is centred on k * 1024 (2048 long): the same samples"
+      "var x (take (head (buffer \"xin\")) 81920)"
+      "var frames (transpose (descriptors x 44100 2048 1024))"
+      "var mfccs (transpose (mfcc-gram x 44100 2048 1024 40 13))"
+      "function err (a b) (max (/ (abs (- a b)) (+ 1e-9 (abs b))))"
+      "var best 0"
+      "var be 1e30"
+      "for (var k 0) (< k (length frames)) (var k (+ k 1)) {"
+      "    var e (err in2 (getidx frames k))"
+      "    if (< e be) {"
+      "        var be e"
+      "        var best k"
+      "    }"
+      "}"
+      "var want (getidx frames best)"
+      "var em (max (abs (- in3 (getidx mfccs best))))"
+      "print \"cross descriptors~: frame\" best \"f0\" (fixed (getidx in2 10) 2) (fixed (getidx want 10) 2) \"largest relative difference\" (fixed be 7) \"mfcc\" (fixed em 6)"
+      "if (or (> be 1e-4) (> em 1e-3) (< best 60) (== (getidx want 10) 0)) { print \"FAIL: descriptors~ and Musil's descriptors disagree\" } { print \"PASS: descriptors~ and Musil's descriptors agree\" }"))
+  (connect lb 0 on 0)
+  (connect on 0 r 0)
+  (connect pl 0 gr 0)
+  (connect gr 0 d 0)
+  (connect gr 0 r 0)
+  (connect d 0 pk 0)
+  (connect d 1 pk 1)
+  (connect d 2 pk 2)
+  (connect d 3 pk 3)
+  (connect d 4 pk 4)
+  (connect d 5 pk 5)
+  (connect d 6 pk 6)
+  (connect d 7 pk 7)
+  (connect d 8 pk 8)
+  (connect d 9 pk 9)
+  (connect d 10 pk 10)
+  (connect d 11 c 2)
+  (connect pk 0 c 1)
+  (connect lb 0 dl 0)
+  (connect dl 0 c 0))

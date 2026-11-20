@@ -5,7 +5,7 @@
 // mfccgram, chromagram (feature matrices), onsets, beats (tempo, beat times,
 // tempogram), keyfind, similarity (self-similarity matrix), novelty (section
 // boundaries) and curves (loudness, register, polyphony).
-// Live (on a signal, a list every hop): melbands~, mfcc~, chroma~, onset~.
+// Live (on a signal, every hop): descriptors~, melbands~, mfcc~, chroma~, onset~.
 //
 // A matrix is stored in a buffer~: one channel a row (a band, a pitch class,
 // a coefficient), one sample a frame, and the buffer's sample rate is the
@@ -596,9 +596,10 @@ private:
 };
 
 // ---------------------------------------------------------------- live analysis
-// The common shape of the live analyses: the signal goes into a ring; every
-// hop samples, while audio runs, the last size samples are analysed (bang
-// analyses now). As descriptors~.
+// The common shape of the live analyses (descriptors~, melbands~, mfcc~,
+// chroma~, onset~): the signal goes into a ring; every hop samples, while
+// audio runs, the last size samples are analysed (bang analyses now), one
+// FFT a frame (mir::FrameSpectrum), on the GUI thread.
 class LiveBox : public Box {
 public:
     LiveBox(int size, int hop, int outlets) : ring_(new std::atomic<float>[kRing]), hops_(std::clamp(hop, 16, 65536)) {
@@ -657,6 +658,96 @@ Message listOf(const Vec& v) {
     for (double x : v) m.push_back(Atom((float)x));
     return m;
 }
+
+// descriptors~ [size] [hop] [names...]: the low-level descriptors of the
+// signal, every hop samples (1024) over a frame of size samples (2048), one
+// outlet a name, in the order given (the eleven scalars, in this order, by
+// default). Musil's descriptors computes the same (mir::FrameDescriptors):
+//   rms centroid spread skewness kurtosis flux hfc zcr flatness   as before
+//   periodicity  YIN's 1 - aperiodicity (0..1)
+//   f0           YIN's fundamental (Hz; 0 when unvoiced), between 50 and 4000
+//                Hz (range), and no lower than 2 sr / size
+//   mfcc         a list of 13 MFCCs (40 mel bands), as mfcc~ at this size
+//   chroma       a list of the 12 pitch classes, as chroma~ at this size
+//   melbands     a list of 40 mel bands in dB, as melbands~ at this size
+// all from the one FFT of the frame. threshold t sets YIN's threshold (0.1);
+// range lo hi the f0 searched.
+class DescriptorsBox : public LiveBox {
+public:
+    explicit DescriptorsBox(const Message& a)
+        : LiveBox(pow2In(number(a, 0, 2048.f), 256, 32768), (int)number(a, 1, 1024.f), (int)chosen(a).size()),
+          which_(chosen(a)) {
+        for (int k : which_) {
+            if (k == kF0 || k == kPeriodicity) pitch_ = true;
+            if (k == kMfcc || k == kMelbands) mel_ = true;
+        }
+    }
+    static const char* name(int k) {
+        if (k < mir::kDescriptorCount) return mir::descriptorName(k);
+        static const char* const lists[] = {"mfcc", "chroma", "melbands"};
+        return k < kNames ? lists[k - mir::kDescriptorCount] : "";
+    }
+
+private:
+    enum { kPeriodicity = mir::kPeriodicity, kF0 = mir::kF0, kMfcc = mir::kDescriptorCount, kChroma, kMelbands, kNames };
+    static constexpr int kBands = 40, kCoeffs = 13;
+    // the k-th number among the arguments (names may come between them)
+    static float number(const Message& a, size_t k, float def) {
+        for (auto& x : a)
+            if (x.isFloat() && k-- == 0) return x.f;
+        return def;
+    }
+    static std::vector<int> chosen(const Message& a) {
+        std::vector<int> w;
+        for (auto& x : a)
+            if (x.isSymbol())
+                for (int k = 0; k < kNames; ++k)
+                    if (x.s == name(k)) w.push_back(k);
+        if (w.empty())
+            for (int k = 0; k < mir::kDescriptorCount; ++k) w.push_back(k);
+        return w;
+    }
+    void option(const Message& m) override {
+        if (m[0].is("threshold") && m.size() > 1) {
+            threshold_ = std::clamp(argf(m, 1, .1f), .001f, 1.f);
+            fd_.setThreshold(threshold_);
+        } else if (m[0].is("range") && m.size() > 2) {
+            float lo = argf(m, 1, 50.f), hi = argf(m, 2, 4000.f);
+            if (!(lo > 0.f) || !(hi > lo)) return;
+            fmin_ = lo;
+            fmax_ = hi;
+            if (fd_.matches(n_, sampleRate())) fd_.setRange(fmin_, fmax_);
+        }
+    }
+    void frame(const std::vector<float>& x, const Vec& mag, double sr) override {
+        if (!fd_.matches(n_, sr)) fd_.init(n_, sr, threshold_, fmin_, fmax_);
+        double v[mir::kDescriptorCount];
+        fd_.compute(x.data(), mag, v, pitch_);
+        if (mel_) {
+            if (!bank_.matches(sr, n_, kBands)) bank_.init(sr, n_, kBands);
+            bank_.apply(mag, bands_);
+            mir::dct(bands_, kCoeffs, coeffs_);
+        }
+        for (int k = (int)which_.size() - 1; k >= 0; --k) {   // right to left
+            int w = which_[(size_t)k];
+            if (w < mir::kDescriptorCount) outletFloat(k, (float)v[w]);
+            else if (w == kMfcc) outlet(k, listOf(coeffs_));
+            else if (w == kMelbands) outlet(k, listOf(bands_));
+            else {
+                if (!pc_.matches(sr, n_)) pc_.init(sr, n_);
+                mir::chroma(mag, pc_, chroma_);
+                outlet(k, listOf(chroma_));
+            }
+        }
+    }
+    std::vector<int> which_;
+    bool pitch_ = false, mel_ = false;
+    float threshold_ = .1f, fmin_ = 50.f, fmax_ = 4000.f;
+    mir::FrameDescriptors fd_;
+    mir::MelBank bank_;
+    mir::ChromaMap pc_;
+    Vec bands_, coeffs_, chroma_;
+};
 
 // melbands~ [bands] [size] [hop]: the mel spectrum of the signal, a list of
 // bands (40) values in dB, every hop samples (512) over size (2048).
@@ -766,6 +857,8 @@ void registerMirObjects(ClassTable& t) {
         {"similarity", "Analysis", "self-similarity matrix of a feature matrix: [frames]", with<SimilarityBox>()},
         {"novelty", "Analysis", "novelty curve and section boundaries of a similarity matrix: [width] [threshold]", with<NoveltyBox>()},
         {"curves", "Analysis", "loudness, register and polyphony curves of a buffer~: [size] [hop]", with<CurvesBox>()},
+        {"descriptors~", "Analysis", "low-level descriptors, f0 (YIN), MFCCs, chroma and mel bands: [size] [hop] [names]",
+         with<DescriptorsBox>()},
         {"melbands~", "Analysis", "live mel spectrum (dB) as a list: [bands] [size] [hop]",
          [](M a, Patch*) { return std::make_unique<MelbandsBox>(a, false); }},
         {"mfcc~", "Analysis", "live MFCCs as a list: [coeffs] [bands] [size] [hop]",
