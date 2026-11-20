@@ -2,12 +2,13 @@
 # own system, with the same CMake build a user runs), renders every patch on
 # each system (tools/test-patches.sh), runs Musil's tests on Musil itself and
 # on Musil in Moritz (tools/test-musil.sh), and keeps the downloads as artifacts.
-# Pushing a tag v<version> also publishes them as a GitHub release.
+# Pushing a tag v<version> also publishes them as a GitHub release. It runs for a tag, a pull request or by
+# hand (gh workflow run build.yml --ref <branch>), not for every push: work is checked on macOS while it
+# goes on, and here once a version is ready.
 name: build
 
 on:
   push:
-    branches: [main]
     tags: ['v*']
   pull_request:
   workflow_dispatch:
