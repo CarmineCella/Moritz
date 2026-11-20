@@ -136,6 +136,21 @@ the editor's command table and undo rule), YIN, `descriptors~` on the shared ana
 - [ ] More examples for every orchestration mode and idea (mimetic, morphological, granular, queries,
       a sound file orchestrated over time, a score as target), and a tutorial on orchestration.
 
+### Documents
+
+Guides shipped as PDFs in `docs/` (Help > Documents), written as tutorials with patches to open
+alongside, in the style of `docs/hybridization/` (LaTeX source next to the PDF), each finished with the
+feature it describes:
+
+- [ ] **Orchestration**: the topic taught through Moritz: targets, databases and queries, orchestras,
+      the mimetic, morphological and granular modes, reading and editing the result as a score, the
+      pieces (Grisey, Haas, Atmosphères) as worked examples.
+- [ ] **The sound editor**: views, selection and edits, processing with objects, patches and Musil
+      scripts, markers and regions, from sounds to scores.
+- [ ] **Scores, timeline and roll**: the score as data and as an object, the transport, the timeline,
+      the roll, generating and transforming, Musil and scores.
+- [ ] **Multitrack**: recording, the mixer, arranging and rendering (with the multitrack mode).
+
 ### Later
 
 - [ ] Multitrack mode, as in Reaper: recording into tracks (arming, several inputs, punch-in,
