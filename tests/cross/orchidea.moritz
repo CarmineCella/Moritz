@@ -1,0 +1,54 @@
+; orchidea.moritz - cross-test: the orchidea object against Musil's orchestrate-mimetic (tools/test-patches.sh): the
+; same target, database, orchestra, onsets and seed give the same notes (instrument, pitch, dynamics, technique,
+; onset, duration, cents, player, sound), the same distance, and the object's mix is score-render's (a small search,
+; so that another seed gives other notes)
+(patch
+  (obj b1 buffer~ xtgt microsol/microsol/Strings/Vc/Vc-ord-E4-mf-1c.wav (pos 20 20))
+  (obj b2 buffer~ xmix (pos 260 20))
+  (obj or orchestra xband microsol/microsol.spectrum.db (pos 20 50))
+  (obj lb loadbang (pos 20 80))
+  (obj m message "seed 3, population 16, epochs 4, partials 0.05, onsets 0 800, run xtgt xmix" (pos 20 110))
+  (obj oi orchidea xband (pos 20 140))
+  (obj cm message compare (pos 20 175))
+  (obj c code 2 (pos 20 210)
+    (script
+      "; every note of the object arrives here (in1), then compare; in2 is the object's distance"
+      "var got (try got catch e (list))"
+      "if (not (equal? in1 \"compare\")) { push got in1 } {"
+      "    load \"music.mu\""
+      "    var db (db-load \"../../data/microsol/microsol.spectrum.db\")"
+      "    var sr (buffer-rate \"xtgt\")"
+      "    var r (orchestrate-mimetic db (orchestra (list 'Ob 'Ob 'Hn 'Hn 'Vn 'Vn 'Vc 'Vc)) (head (buffer \"xtgt\")) sr (record (list 'segmentation (list 0 0.8) 'seed 3 'population 16 'epochs 4 'partials 0.05 'quiet 1)))"
+      "    var f (mimetic-connection r)"
+      "    var bad (if (== (length f) (length got)) 0 1)"
+      "    each (zip f got) (function (p) {"
+      "        var n (last (head p))"
+      "        var g (last p)"
+      "        var same (and (equal? (str (getidx g 1)) (get n 'instr)) (equal? (str (getidx g 2)) (get n 'pitch)) (equal? (str (getidx g 3)) (get n 'dyn)) (equal? (str (getidx g 4)) (get n 'tech))"
+      "                      (< (abs (- (getidx g 5) (* 1000 (head (head p))))) 0.05) (< (abs (- (getidx g 6) (* 1000 (getidx (head p) 1)))) 0.05)"
+      "                      (== (getidx g 8) (get n 'cents)) (== (getidx g 9) (get n 'player)) (equal? (filename (str (getidx g 7))) (filename (note-path n))))"
+      "        if (not same) { set bad (+ bad 1) }"
+      "    })"
+      "    var cost (mean (vec (map (zip (get r 'segments) (get r 'choices)) (function (q) (head (getidx (get (head q) 'solutions) (last q)))))))"
+      "    var s (score \"cross\" sr)"
+      "    connect! s 0 r (get r 'choices)"
+      "    var want (score-render s \"stereo\")"
+      "    var have (buffer \"xmix\")"
+      "    function corr (a b) {"
+      "        var n (min (length a) (length b))"
+      "        var u (take a n)"
+      "        var v (take b n)"
+      "        return (/ (dot u v) (* (+ 1e-12 (norm u)) (+ 1e-12 (norm v))))"
+      "    }"
+      "    var cl (corr (head have) (head want))"
+      "    var cr (corr (last have) (last want))"
+      "    var held (length (filter f (function (x) (> (getidx x 1) 1))))"
+      "    print \"cross orchidea:\" (length got) \"notes,\" (length f) \"in Musil,\" bad \"differ;\" held \"held across the onset; distance\" (fixed in2 3) (fixed cost 3) \"; mix\" (fixed cl 6) (fixed cr 6)"
+      "    if (or (> bad 0) (== (length f) 0) (> (abs (- in2 cost)) (* 1e-4 cost)) (< cl 0.9999) (< cr 0.9999) (!= (length (head have)) (length (head want)))) { print \"FAIL: the orchidea object and Musil's orchestrate-mimetic disagree\" } { print \"PASS: the orchidea object and Musil's orchestrate-mimetic agree\" }"
+      "}"))
+  (connect lb 0 m 0)
+  (connect m 0 oi 0)
+  (connect oi 2 c 0)
+  (connect oi 3 c 1)
+  (connect oi 1 cm 0)
+  (connect cm 0 c 0))
