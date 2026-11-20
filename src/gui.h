@@ -43,6 +43,7 @@ class DocumentWindow;
 class CodeWindow;
 class CodeSource;
 class SoundWindow;
+struct SampleBuffer;
 
 // A folder bundled with the app ("examples", "library", "help"): inside the
 // .app's Resources, or next to the executable when run from the source tree.
@@ -388,6 +389,7 @@ public:
     SoundWindow* openSound(const std::string& path);         // a file (already open: brought forward)
     void openSoundDialog();                                  // File > Open Sound...
     SoundWindow* editBuffer(Patch* root, const std::string& name);   // the buffer~ of that name
+    SoundWindow* newSound(SampleBuffer&& samples);           // a sound made in the editor (unsaved, Untitled)
     void closeSound(SoundWindow* w);                         // already confirmed
     void closeAllSounds();                                   // at once, nothing asked (the tests' exit)
     SoundWindow* frontSound();                               // the sound window in front, if one is

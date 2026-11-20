@@ -644,7 +644,8 @@ bool SoundDoc::replaceSelection(const std::string& name, const SampleBuffer& r) 
     st.selAfter = {s.start, s.start + sp.insertedFrames};
     st.playAfter = s.start;
     Sound next = spliced(sound_, sp.at, sp.removedFrames, sp.inserted->data(), sp.insertedFrames);
-    message = name + ": " + secs(seconds(s.length())) + " became " + secs(seconds(sp.insertedFrames));
+    message = sp.insertedFrames == s.length() ? name + ": " + secs(seconds(s.length())) + " processed"
+                                              : name + ": " + secs(seconds(s.length())) + " became " + secs(seconds(sp.insertedFrames));
     st.splices.push_back(std::move(sp));
     commit(std::move(st), std::move(next));
     return true;

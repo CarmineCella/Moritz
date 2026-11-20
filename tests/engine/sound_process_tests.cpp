@@ -14,7 +14,9 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <chrono>
 #include <fstream>
+#include <thread>
 
 #include <FL/Fl.H>
 
@@ -426,7 +428,7 @@ TEST(process_script_stopped_from_another_thread) {
     std::string path = temp("moritz-engine-forever.mu");
     {
         std::ofstream f(path);
-        f << "function process (x sr) { var k 0\n (while true (set! k (+ k 1))) }\n";
+        f << "function process (x sr) { var k 0\n  while true { set k (+ k 1) }\n}\n";
     }
     bool sync = jobsSynchronous;
     jobsSynchronous = false;
@@ -434,7 +436,8 @@ TEST(process_script_stopped_from_another_thread) {
     {
         ScriptProcess sp;
         sp.start(path, counting(10, 1), [&](bool, SampleBuffer, std::string) { ++called; });
-        CHECK(sp.running());
+        std::this_thread::sleep_for(std::chrono::milliseconds(150));
+        CHECK(sp.running());                             // it loops
         sp.stop();                                       // it stops at its next step; done is never called
     }                                                    // and the process is gone while its thread ends
     for (int k = 0; k < 200; ++k) {

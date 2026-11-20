@@ -18,7 +18,7 @@
 
 namespace moritz {
 
-SoundWindow::SoundWindow(std::shared_ptr<SoundDoc> doc) : Fl_Double_Window(1120, 640) {
+SoundWindow::SoundWindow(std::shared_ptr<SoundDoc> doc) : Fl_Double_Window(kW, kH) {
     color(kStatusBg);
 #ifndef __APPLE__
     menu_ = new Fl_Menu_Bar(0, 0, w(), kMenuH);
@@ -53,6 +53,7 @@ void SoundWindow::updateTitle() {
 int SoundWindow::handle(int e) {
     if (e == FL_SHORTCUT && Fl::event_key() == FL_Escape) {
         editor_->stop();
+        editor_->stopWork();                     // a process or an analysis running
         return 1;
     }
     int r = Fl_Double_Window::handle(e);
@@ -137,6 +138,18 @@ SoundWindow* App::openSound(const std::string& given) {
     w->show();
     addRecent(path);
     log("opened sound " + path);
+    return w;
+}
+
+SoundWindow* App::newSound(SampleBuffer&& samples) {
+    fl_open_display();
+    auto doc = std::make_shared<SoundDoc>();
+    doc->setSound(std::move(samples));
+    doc->markUnsaved();                          // nothing of it is on the disk: closing asks
+    auto* w = new SoundWindow(doc);
+    place(w, (int)soundWindows_.size());
+    soundWindows_.push_back(w);
+    w->show();
     return w;
 }
 

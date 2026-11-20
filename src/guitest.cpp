@@ -53,6 +53,25 @@
 //   act=soundpng:<file>       the front sound window drawn into a PNG file
 //   act=datasets...           the Datasets window (datasets_ui.cpp: datasets, datasetsfolder, datasetsregister,
 //                             datasetsforget, datasetsanalyse)
+//   act=soundsample:<frame>   print: the sample at that frame (channel 0)
+//   act=soundtool:<tool>      select, draw or marker
+//   act=soundzoom:<f>,<s>     the view: f frames a pixel, from second s
+//   act=sounddraw:<s>,<v>/<s>,<v>/...[:<ch>]   with the mouse on channel ch's lane (0): pressed at (second, value),
+//                             dragged through the others, released at the last
+//   act=soundpinch:<dy>       a trackpad's pinch (FL_ZOOM_GESTURE, dy = magnification x 1000) over the middle
+//   act=soundmarks            print: the markers and the regions
+//   act=soundmark:<op>        the Markers menu and the regions panel: add onsets beats novelty types regiononsets
+//                             addregion clear clearregions delete:<k> deleteregion:<k> rename:<k>:<name>
+//                             row:<k> (a click on row k of the table) rowdouble:<k> move:<k>:<s> (marker k dragged
+//                             in its lane to second s) lane:<s> (a click in the markers lane) coll (To coll; saveas=)
+//                             toscore (print: the button's state)
+//   act=process:<kind>[:k=v,...]   a Process menu item run with these settings (no dialog)
+//   act=processdialog:<kind>  its dialog (batch mode: what it would ask is printed)
+//   act=processpatch:<file>, act=processscript:<file>   A patch..., A Musil script...
+//   act=processresult:<new|replace>   the menu's Result
+//   act=processwait           waits (at most 60 s) for the process or analysis, then prints how it ended
+//   act=processstop           Process > Stop
+//   act=soundmenus            print: the items of the Process and Markers menus
 
 #include "gui.h"
 #include "codewindow.h"
@@ -60,6 +79,9 @@
 #include "fileio.h"
 #include "objects.h"
 #include "sound_editor.h"
+#include "sound_process.h"
+
+#include <map>
 
 #include <FL/Fl_Image_Surface.H>
 #include <FL/Fl_PNG_Image.H>
@@ -119,16 +141,33 @@ SoundWindow* frontSound() {
     return app.soundWindows().empty() ? nullptr : app.soundWindows().back();
 }
 
-void soundMouse(SoundView* v, int ex, int event, int keys) {
-    int wy, wh, sy, sh;
-    v->areas(wy, wh, sy, sh);
+void soundMouseAt(Fl_Widget* v, int ex, int ey, int event, int keys, int clicks = 0) {
     Fl::e_x = Fl::e_x_root = ex;
-    Fl::e_y = Fl::e_y_root = (wh > 0 ? wy + wh / 2 : sy + sh / 2);
+    Fl::e_y = Fl::e_y_root = ey;
     Fl::e_state = keys | (event == FL_RELEASE ? 0 : FL_BUTTON1);
-    Fl::e_clicks = 0;
+    Fl::e_clicks = clicks;
     Fl::e_keysym = FL_Button + FL_LEFT_MOUSE;
     Fl::e_number = event;
     v->handle(event);
+}
+
+void soundMouse(SoundView* v, int ex, int event, int keys) {
+    int wy, wh, sy, sh;
+    v->areas(wy, wh, sy, sh);
+    soundMouseAt(v, ex, wh > 0 ? wy + wh / 2 : sy + sh / 2, event, keys);
+}
+
+std::string menuItems(const Fl_Menu_Button* m) {
+    std::string t;
+    for (int k = 0; m->menu() && k < m->size() - 1; ++k) {
+        const Fl_Menu_Item& it = m->menu()[k];
+        if (!it.label()) continue;
+        if (!t.empty()) t += " | ";
+        t += it.label();
+        if (!it.active()) t += " (inactive)";
+        if ((it.flags & FL_MENU_RADIO) && it.value()) t += " (on)";
+    }
+    return t;
 }
 
 std::string escape(const std::string& t) {
@@ -349,7 +388,7 @@ bool act(const std::string& a) {
         return true;
     }
     if (verb == "soundopen") return app.openSound(arg) != nullptr;
-    if (verb.rfind("sound", 0) == 0) {
+    if (verb.rfind("sound", 0) == 0 || verb.rfind("process", 0) == 0) {
         SoundWindow* w = frontSound();
         if (!w) return false;
         SoundEditor* e = w->editor();
@@ -360,8 +399,10 @@ bool act(const std::string& a) {
             state("sound selection %s playhead %s", std::to_string(d.sel.start) + " " + std::to_string(d.sel.end),
                   std::to_string(d.playhead));
             state("sound undo %s edited %s", d.canUndo() ? "yes" : "no", d.needsSaving() ? "yes" : "no");
+            state("sound loop %s view %s", e->loop() ? "yes" : "no", std::to_string(e->framesPerPixel()));
             e->refreshInfo();
             state("sound info%s", e->info());
+            state("sound status %s", e->status());
             return true;
         }
         if (verb == "sounddrag") {
@@ -417,6 +458,139 @@ bool act(const std::string& a) {
                 Fl::wait(0.02);
             Fl::wait(0.05);
             state("spectrogram frames %s", std::to_string(e->spectrogram() ? e->spectrogram()->cols : -1));
+            return true;
+        }
+        if (verb == "soundsample") {             // print: a sample's value (frame, channel 0)
+            long f = std::atol(arg.c_str());
+            char b[64];
+            std::snprintf(b, sizeof b, "%.4f", f >= 0 && f < d.frames() ? d.sound()->data[(size_t)f * d.channels()] : 0.f);
+            state("sound sample %s %s", std::to_string(f), b);
+            return true;
+        }
+        if (verb == "soundtool") {
+            e->setTool(arg == "draw" ? SoundEditor::Tool::Draw : arg == "marker" ? SoundEditor::Tool::Marker : SoundEditor::Tool::Select);
+            return true;
+        }
+        if (verb == "soundzoom") {
+            size_t comma = arg.find(',');
+            e->setView(comma == std::string::npos ? 0 : std::atof(arg.c_str() + comma + 1) * d.sr(), std::atof(arg.c_str()));
+            return true;
+        }
+        if (verb == "sounddraw") {
+            int ch = 0;
+            std::string pts = arg;
+            if (size_t c = arg.rfind(':'); c != std::string::npos) {
+                ch = std::atoi(arg.c_str() + c + 1);
+                pts = arg.substr(0, c);
+            }
+            std::vector<std::pair<double, double>> p;
+            for (size_t a = 0; a < pts.size();) {
+                size_t b = pts.find('/', a);
+                std::string one = pts.substr(a, b == std::string::npos ? std::string::npos : b - a);
+                size_t comma = one.find(',');
+                if (comma != std::string::npos) p.push_back({std::atof(one.c_str()), std::atof(one.c_str() + comma + 1)});
+                if (b == std::string::npos) break;
+                a = b + 1;
+            }
+            if (p.empty()) return false;
+            SoundView* v = e->view();
+            for (size_t k = 0; k < p.size(); ++k)
+                soundMouseAt(v, e->xOf(p[k].first * d.sr()), v->valueY(ch, p[k].second), k == 0 ? FL_PUSH : FL_DRAG, 0);
+            soundMouseAt(v, e->xOf(p.back().first * d.sr()), v->valueY(ch, p.back().second), FL_RELEASE, 0);
+            return true;
+        }
+        if (verb == "soundpinch") {
+            SoundView* v = e->view();
+            Fl::e_x = Fl::e_x_root = v->laneX() + v->laneW() / 2;
+            Fl::e_y = Fl::e_y_root = v->y() + v->h() / 2;
+            Fl::e_dy = std::atoi(arg.c_str());
+            Fl::e_number = FL_ZOOM_GESTURE;
+            return e->handle(FL_ZOOM_GESTURE) != 0;
+        }
+        if (verb == "soundmarks") {
+            const SoundMarks& m = d.marks();
+            std::string t;
+            for (auto& k : m.markers) t += " " + std::to_string(k.at) + ":" + k.name;
+            state("sound markers %s%s", std::to_string(m.markers.size()), t);
+            for (size_t k = 0; k < m.regions.size(); ++k) {
+                const Region& r = m.regions[k];
+                char b[200];
+                std::snprintf(b, sizeof b, " %ld %ld type %s energy %.2f pitch %s", r.start, r.end, typeName(r.type).c_str(),
+                              r.energy, pitchName(r.pitch).c_str());
+                state("sound region %s%s", std::to_string(k + 1) + " " + r.name, b);
+            }
+            state("sound regions %s selected %s", std::to_string(m.regions.size()), std::to_string(e->selectedRegion() + 1));
+            return true;
+        }
+        if (verb == "soundmark") {
+            std::string op = arg.substr(0, arg.find(':')), rest = arg.find(':') == std::string::npos ? "" : arg.substr(arg.find(':') + 1);
+            int k = std::atoi(rest.c_str()) - 1;
+            if (op == "add") e->addMarkerAtPlayhead();
+            else if (op == "onsets" || op == "beats" || op == "novelty") e->markersFrom(op);
+            else if (op == "types") e->regionsFrom("types");
+            else if (op == "regiononsets") e->regionsFrom("onsets");
+            else if (op == "addregion") e->addRegion();
+            else if (op == "clear") e->clearMarkers();
+            else if (op == "clearregions") e->clearRegions();
+            else if (op == "delete") e->deleteMarker(k);
+            else if (op == "deleteregion") e->deleteRegion(k);
+            else if (op == "rename") e->renameRegion(k, rest.substr(rest.find(':') + 1));
+            else if (op == "row" || op == "rowdouble") {
+                RegionTable* t = e->regionTable();
+                int y = t->y() + RegionTable::kRowH * (k + 1) + 4;
+                soundMouseAt(t, t->x() + 40, y, FL_PUSH, 0, op == "rowdouble" ? 1 : 0);
+                soundMouseAt(t, t->x() + 40, y, FL_RELEASE, 0);
+            } else if (op == "move") {
+                const auto& ms = d.marks().markers;
+                if (k < 0 || k >= (int)ms.size()) return false;
+                SoundView* v = e->view();
+                int y = v->markersY() + SoundView::kMarkersH / 2, to = e->xOf(std::atof(rest.substr(rest.find(':') + 1).c_str()) * d.sr());
+                soundMouseAt(v, e->xOf((double)ms[(size_t)k].at), y, FL_PUSH, 0);
+                soundMouseAt(v, to, y, FL_DRAG, 0);
+                soundMouseAt(v, to, y, FL_RELEASE, 0);
+            } else if (op == "lane") {
+                SoundView* v = e->view();
+                int y = v->markersY() + SoundView::kMarkersH / 2, x = e->xOf(std::atof(rest.c_str()) * d.sr());
+                soundMouseAt(v, x, y, FL_PUSH, 0);
+                soundMouseAt(v, x, y, FL_RELEASE, 0);
+            } else if (op == "coll") e->toColl();
+            else if (op == "toscore") state("sound to score %s", e->toScoreButton()->active() ? "active" : "inactive");
+            else return false;
+            return true;
+        }
+        if (verb == "soundmenus") {
+            e->refreshMenus();
+            state("sound process menu: %s", menuItems(e->processMenu()));
+            state("sound markers menu: %s", menuItems(e->marksMenu()));
+            return true;
+        }
+        if (verb == "process") {
+            std::string kind = arg.substr(0, arg.find(':'));
+            std::map<std::string, std::string> params;
+            if (size_t c = arg.find(':'); c != std::string::npos) {
+                std::string rest = arg.substr(c + 1);
+                for (size_t a = 0; a < rest.size();) {
+                    size_t b = rest.find(',', a);
+                    std::string kv = rest.substr(a, b == std::string::npos ? std::string::npos : b - a);
+                    size_t eq = kv.find('=');
+                    if (eq != std::string::npos) params[kv.substr(0, eq)] = kv.substr(eq + 1);
+                    if (b == std::string::npos) break;
+                    a = b + 1;
+                }
+            }
+            e->runProcess(kind, params);
+            return true;
+        }
+        if (verb == "processdialog") { e->processDialog(arg); return true; }
+        if (verb == "processpatch") { e->processPatch(arg); return true; }
+        if (verb == "processscript") { e->processScript(arg); return true; }
+        if (verb == "processresult") { e->setResultNew(arg == "new"); return true; }
+        if (verb == "processstop") { e->stopWork(); return true; }
+        if (verb == "processwait") {
+            auto t0 = std::chrono::steady_clock::now();
+            while (e->working() && std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count() < 60) Fl::wait(0.02);
+            Fl::wait(0.05);
+            state("process %s", e->lastWork());
             return true;
         }
         if (verb == "soundpng") {

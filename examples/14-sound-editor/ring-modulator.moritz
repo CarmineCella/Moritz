@@ -1,0 +1,20 @@
+; ring-modulator.moritz - a patch for the sound editor's Process > A patch...: the selection comes in
+; through inlet~ (left channel to the first inlet~, right to the second), is rendered offline through
+; the patch, and what reaches the outlet~s replaces it (or opens as a new sound). Any patch with
+; inlet~ and outlet~ works so: a reverb, a filter bank, a whole chain of effects.
+(patch
+  (obj title comment "Process > A patch...: inlet~ in, outlet~ out" (pos 20 12))
+  (obj inl inlet~ (pos 20 50))
+  (obj inr inlet~ (pos 200 50))
+  (obj osc cycle~ 220 (pos 380 50))
+  (obj ml *~ (pos 20 120))
+  (obj mr *~ (pos 200 120))
+  (obj outl outlet~ (pos 20 190))
+  (obj outr outlet~ (pos 200 190))
+  (obj note comment "a carrier at 220 Hz: try 30 for a tremolo, 1000 for bells" (pos 380 120))
+  (connect inl 0 ml 0)
+  (connect osc 0 ml 1)
+  (connect inr 0 mr 0)
+  (connect osc 0 mr 1)
+  (connect ml 0 outl 0)
+  (connect mr 0 outr 0))

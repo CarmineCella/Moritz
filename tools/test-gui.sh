@@ -279,6 +279,99 @@ run --window-png none act=datasetsforget:fullsol "act=datasetsfolder:$T/sounds" 
 if [ $status -eq 0 ] && ! grep -q "dataset fullsol" "$out" && grep -q "state: datasets folder .*/sounds" "$out"; then ok
 else fail "a registration forgotten, the datasets folder chosen"; fi
 
+# 24. the Process menu: its items (To Score inactive without a score object), a dialog's questions (in batch mode,
+#     printed), a filter over the selection as one undo step, pvoc's stretch to a new sound (Result: a new sound)
+run "$G/sound.moritz" --window-png none "act=soundopen:$T/s.wav" act=soundmenus act=soundmark:toscore \
+    act=processdialog:typematch act=processdialog:pvoc act=sounddrag:0.1,0.3 act=sound \
+    act=process:filter:type=lowpass,freq=500 act=processwait act=sound act=soundop:undo act=sound \
+    act=processresult:new act=soundmenus act=process:pvoc:stretch=2 act=processwait act=sound
+expect "the Process menu" "state: sound process menu: pursuit: rebuild with atoms... | typematch: replace by units of... | hpss: keep... | nmf: keep components... | pvoc: stretch or transpose... | sparkle~: cross with... | filter (filterdesign)... | condec: convolve with... | A patch (inlet~ to outlet~)... | A Musil script (process x sr)... | Result: replace the selection (on) | Result: a new sound | Stop (Esc)"
+expect "To Score waits for the score object" "To Score (with the score object, 0.13) (inactive)"
+expect "the To score button too" "state: sound to score inactive"
+expect "a dialog asks for the other sound among the buffer~s" "ask: typematch: the selection rebuilt with the units of another sound: with=[buffer~ voice|"
+expect "and for its settings" "ask: pvoc: stretch or transpose the selection: stretch=1 transpose=0 formants=keep window=2048 result=replace"
+expect "a filter replaces the selection" "state: process filter: 0.200 s processed"
+expect "Result: a new sound" "state: process pvoc: a new sound of 0:00.40"
+expect "the menu says so" "Result: replace the selection | Result: a new sound (on)"
+undo=$(grep "state: sound undo" "$out" | tr '\n' '|')
+if [ $status -eq 0 ] && [ "$undo" = "state: sound undo no edited no|state: sound undo yes edited yes|state: sound undo no edited no|state: sound undo no edited yes|" ]
+then ok; else fail "a process is one undo step; a new sound is unsaved ($undo)"; fi
+
+# 25. A patch... and A Musil script... over the selection (examples/14-sound-editor), the recent list they share, a
+#     script's error on the status line with its line, a patch without inlet~
+E="$HERE/examples/14-sound-editor"
+printf 'function process (x sr) {\n  var y 1\n  (no-such-function x)\n}\n' > "$T/bad.mu"
+printf '(patch (obj g *~ 0.5 (pos 20 20)))\n' > "$T/noin.moritz"
+run --window-png none "act=soundopen:$T/s.wav" act=sounddrag:0.1,0.3 "act=processscript:$E/tremolo.mu" act=processwait \
+    "act=processpatch:$E/ring-modulator.moritz" act=processwait act=sound "act=processscript:$T/bad.mu" act=processwait \
+    "act=processpatch:$T/noin.moritz" act=sound act=soundmenus act=soundop:undo act=soundop:undo act=sound
+expect "a script processes the selection" "state: process tremolo.mu: 0.200 s processed"
+expect "a patch too" "state: process ring-modulator.moritz: 0.200 s processed"
+expect "a script's error, with its line" "bad.mu:3"
+expect "a patch needs inlet~ and outlet~" "state: sound status noin.moritz: the patch needs an inlet~"
+expect "the recent list" "Recent: bad.mu | Recent: ring-modulator.moritz | Recent: tremolo.mu"
+expect "both undone" "state: sound undo no edited no"
+
+# 26. markers and regions: M at the playhead, the Marker tool's click, a marker dragged in its lane, undo; a region
+#     from the selection, renamed, chosen by its row; To coll; saved beside the file and read back with it
+cp "$HERE/data/anechoic1.wav" "$T/m.wav"
+run --window-png none "act=soundopen:$T/m.wav" act=sounddrag:0.1,0.1 act=soundkey:m act=soundtool:marker \
+    act=sounddrag:0.3,0.3 act=soundmark:move:1:0.2 act=soundmarks act=soundop:undo act=soundmarks act=soundtool:select \
+    act=sounddrag:0.2,0.4 act=soundmark:addregion act=soundmark:rename:1:voice act=sounddrag:0,0 act=soundmark:row:1 \
+    act=soundmark:rowdouble:1 act=soundmarks "saveas=$T/m.coll" act=soundmark:coll act=soundsave act=closefront \
+    "act=soundopen:$T/m.wav" act=soundmarks
+# (the mouse lands on a pixel: a frame within a pixel's width of the time aimed at)
+if grep -q "state: sound markers 2 88[0-9][0-9]:marker 1 132[0-9][0-9]:marker 2" "$out"; then ok
+else fail "M and the Marker tool place markers; one dragged"; fi
+if [ "$(grep -c "state: sound markers 2 44[0-9][0-9]:marker 1 132[0-9][0-9]:marker 2" "$out")" = 3 ]; then ok
+else fail "undo puts it back; the markers are read back with the file"; fi
+if grep -q "state: sound region 1 voice 88[0-9][0-9] 176[0-9][0-9] type - energy" "$out"; then ok
+else fail "a region from the selection, renamed"; fi
+expect "its row selects it" "state: sound regions 1 selected 1"
+expect "a double-click on its row asks its name" "ask: Name of region 1 (voice)"
+if grep -q '(1 0.2[0-9]* 0.4[0-9]* "-" ' "$T/m.coll" && grep -q '"voice")' "$T/m.coll" && grep -q "(columns index start end type energy pitch name)" "$T/m.coll"
+then ok; else fail "To coll writes the regions as rows"; fi
+if grep -q '(marker 0.1[0-9]* "marker 1" hand)' "$T/m.wav.markers" && grep -q '(region 0.2[0-9]* 0.4[0-9]* "voice"' "$T/m.wav.markers"
+then ok; else fail "markers saved beside the file"; fi
+
+# 27. markers from onsets, regions from types (background jobs); the regions of an analysis replace the last one's
+run --window-png none "act=soundopen:$HERE/data/drums.wav" act=soundmark:onsets act=processwait act=soundmark:regiononsets \
+    act=processwait act=soundmark:types act=processwait act=soundmarks
+onsets=$(grep "state: process Markers from Onsets: " "$out" | sed 's/.*Onsets: \([0-9]*\) found/\1/')
+types=$(grep "state: process Regions from Types: " "$out" | sed 's/.*Types: \([0-9]*\)$/\1/')
+if [ $status -eq 0 ] && [ "$onsets" -gt 20 ] 2>/dev/null && [ "$types" -gt 8 ] 2>/dev/null &&
+   grep -q "state: sound markers $onsets 64:onset 1 " "$out" && grep -q "state: sound regions $types selected 0" "$out" &&
+   grep -q "state: sound region 1 A 1 0 " "$out"
+then ok; else fail "markers from onsets ($onsets), regions from types replacing those from onsets ($types)"; fi
+
+# 28. the Draw tool: zoomed in, a stroke moves the samples it crosses (joined between the mouse's events), one undo
+#     step; zoomed out it says to zoom in; Cmd+L loops (L alone does nothing); a trackpad's pinch zooms
+run --window-png none "act=soundopen:$T/s.wav" act=soundtool:draw act=sounddrag:0.1,0.1 act=sound act=soundzoom:0.1,0.2 \
+    "act=sounddraw:0.2,0.5/0.2004,-0.5" act=soundsample:8820 act=soundsample:8829 act=soundsample:8838 act=sound \
+    act=soundop:undo act=sound act=soundpinch:500 act=sound act=soundkey:l act=sound act=soundkey:l:cmd act=sound
+samples=$(grep "state: sound sample" "$out" | sed 's/state: sound sample [0-9]* //' | tr '\n' ' ')
+case "$samples" in
+    "0.50"*" "*"0.0"*" -0.50"*) ok ;;
+    *) fail "the Draw tool's stroke ($samples)" ;;
+esac
+undo=$(grep "state: sound undo" "$out" | head -3 | tr '\n' '|')
+if [ "$undo" = "state: sound undo no edited no|state: sound undo yes edited yes|state: sound undo no edited no|" ]; then ok
+else fail "a stroke is one undo step ($undo)"; fi
+expect "Draw asks to zoom in" "Draw: zoom in until each sample has a pixel"
+expect "a pinch zooms in" "state: sound loop no view 0.066667"
+expect "Cmd+L loops" "state: sound loop yes view"
+if [ "$(grep -c "state: sound loop no" "$out")" = 5 ]; then ok; else fail "L alone does not loop"; fi
+
+# 29. threads: a process stopped (Process > Stop), then the window closed while another runs, and a script that never
+#     ends stopped by closing its window (its thread finds the editor gone)
+printf 'function process (x sr) { var k 0\n  while true { set k (+ k 1) }\n}\n' > "$T/forever.mu"
+run --window-png none "act=soundopen:$HERE/data/beachboys.wav" act=process:pvoc:stretch=4 act=processstop act=processwait \
+    act=process:pvoc:stretch=4 act=closefront "act=soundopen:$T/s.wav" "act=processscript:$T/forever.mu" act=wait:0.3 \
+    act=processstop act=processwait "act=processscript:$T/forever.mu" act=wait:0.2 act=closefront act=wait:0.3 act=state
+expect "Stop stops a process" "state: process pvoc: stopped"
+expect "and a script" "state: process forever.mu: stopped"
+expect "closing while they run" "state: documents 0"
+
 rm -rf "$T"
 echo "$count interface cases, $fails failed"
 [ $fails -eq 0 ]
