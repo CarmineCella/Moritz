@@ -14,6 +14,7 @@ is generated from `help/reference/` by `moritz --reference-md`.
 - [Spatial](#spatial)
 - [Analysis](#analysis)
 - [Atoms and types](#atoms-and-types)
+- [Orchestration](#orchestration)
 - [Learning](#learning)
 - [I/O](#io)
 - [MIDI](#midi)
@@ -2391,6 +2392,111 @@ SoundTypes' rematch, as a background job: every frame, unit or gesture of sound 
 | 2 | bang: done |
 
 See also: `soundtypes` `typegen` `pursuit` `atoms`
+
+## Orchestration
+
+### `orchestra`
+
+`orchestra name [database]`
+
+A database of instrumental samples and the players who play it, shared by name with orchidea. The database is a feature file in the layout of the *SOL databases (Ircam's TinySOL, OrchideaSOL, FullSOL, or the MicroSOL that comes with Moritz: microsol/microsol.spectrum.db), as Musil's db-load reads it: the first line says the features (type, block, hop, number of coefficients), then a line per sound, its path and its features; the names of the files carry instrument, technique, pitch and dynamics (Vn-ord-D#5-mf.wav). The sounds are found in the folder next to the file that holds them, whatever it is called. Reading runs as a background job; when it is done, the number of sounds and the players come out.
+
+Without players, the orchestra is Orchidea's default (two of each wind and brass, a bass tuba, two of each string), of what the database has. A player is an instrument code as the database names it (Fl, Ob, ClBb, Bn, Hn, TpC, Tbn, BTb, Vn, Va, Vc, Cb...); Fl|Picc is one player who doubles. Right-click the box for Info.
+
+| Argument | |
+| --- | --- |
+| `name` | the name orchidea uses (required) |
+| `database` | a feature file to read when the box is made (none) |
+
+| Message | |
+| --- | --- |
+| `read file` | reads a database (a background job); the sounds are looked for next to it |
+| `players instrument [n] ...` | the players, an instrument a player, a number after one making it that many players (players Vn 4 Va 2 Vc 2 Fl); no instrument: the default orchestra |
+| `add instrument [n]` | more players of an instrument |
+| `remove instrument` | every player of an instrument |
+| `range instrument lo hi` | the instrument plays only from lo to hi (pitch names, G3, or MIDI numbers); range instrument: its whole range again |
+| `techniques name ...` | only sounds of these techniques (ord, pizz-lv...) enter the search; none: every technique |
+| `dynamics name ...` | only sounds of these dynamics (pp, mf...); none: every dynamics |
+| `info` | prints the database (sounds, instruments, their ranges and techniques) and the players in the Console |
+| `stop` | cancels the reading |
+
+| Inlet | |
+| --- | --- |
+| 1 | messages |
+
+| Outlet | |
+| --- | --- |
+| 1 | messages |
+| 2 | messages |
+| 3 | messages |
+| 4 | messages |
+
+See also: `orchidea` `buffer~`
+
+### `orchidea`
+
+`orchidea orchestra`
+
+Assisted orchestration, after Orchidea (Cella, Esling): a target sound in a buffer~ imitated by the players of an orchestra object. The target is cut into segments (one for a static target, or at its onsets), each analysed into the database's features and into the pitches of its partials; for each segment a genetic search finds the combinations of sounds, one per player or a rest, whose summed spectrum is nearest the target's, with an asymmetric distance (a partial the target lacks costs more than one it has and the solution lacks). The search runs as a background job, on Musil's engine: Musil's orchestrate-mimetic with the same target, database, orchestra and seed finds the same notes, on every system.
+
+When it is done, the solution comes out as one message a note: its number (from 1), instrument, pitch, dynamics, technique, onset and duration (ms), the sound's path, the cents the target's partial is away from the pitch, and the player (from 0), then the done outlet bangs (not after a run that failed with a message); a note the target holds across segments on the same player is one longer note. The distance (the mean cost of the chosen solutions) comes out on the last outlet. With an out buffer~, the chosen samples are summed into it in stereo, the players seated as in Orchidea's mixes, so that the orchestration is heard at once (scaled down when it would clip). The ten best solutions of each segment are kept: choose puts another in place, show lists them, report says what each segment found. Right-click the box for Report and Save the solution...
+
+A search of 300 individuals over 300 epochs on TinySOL takes well under a second for a static target; a segmented target takes that per segment.
+
+| Argument | |
+| --- | --- |
+| `orchestra` | the name of an orchestra object |
+
+| Message | |
+| --- | --- |
+| `run target [out]` | orchestrates the buffer~ target (mixed to mono); the sum of the chosen samples goes to the buffer~ out |
+| `population n` | individuals of the genetic search, 2 to 20000 (300) |
+| `epochs n` | generations at most, 1 to 100000 (300) |
+| `patience n` | generations without a better population before a search stops (150) |
+| `sparsity x` | how often a player is left out of a solution, 0 to 1 (0.001; 0.1 for a single instrument as target) |
+| `seed n` | the random seed: the same seed gives the same orchestration (1) |
+| `pursuit k` | 0, a random first population; k, the first population drawn from the k sounds nearest the target per player (0) |
+| `crossover x` | the crossover rate (0.8) |
+| `mutation x` | the mutation rate (0.01) |
+| `positive x` | the cost of a partial the solution has and the target lacks (0.5) |
+| `negative x` | the cost of a partial the target has and the solution lacks (10) |
+| `regularization x` | above 0, solutions with fewer players are preferred (0) |
+| `segmentation none \| flux \| frames` | none, one segment (a static target, the default); flux, at the peaks of the spectral flux above threshold, timegate apart; frames, every block of the database |
+| `onsets ms ...` | the segments start at these times instead |
+| `threshold x` | the flux's peaks above this share of its largest count as onsets (2: none does) |
+| `timegate ms` | onsets at least this far apart (100) |
+| `partials x` | the target's partials above this share of the strongest give the pitches the sounds must have, 0 to 1 (0.2); 0, no pitch filter: every sound may serve (noisy targets) |
+| `window n` | the window the partials are read with, a power of two (32768: large for a low target) |
+| `pitches name ...` | pitches every segment admits besides its partials' |
+| `octaves n ...` | the pitch filter widened by octaves (octaves 0 -1: the partials' pitches and the octave below) |
+| `connection closest \| best \| path` | how a solution is chosen per segment: closest to the one before in timbre (Orchidea's), the best of each, or the path with the least melodic movement (closest) |
+| `solutions n` | the best solutions kept per segment (10) |
+| `hysteresis x` | above 0, each segment leans in timbre towards the solutions chosen before (0) |
+| `dovetail x` | above 0, a solution that drops the pitches of the one before costs more (0) |
+| `movement x` | for connection path, the cost of a semitone a player moves (1) |
+| `sustain 1/0` | 1, a player whose pitch the target keeps holds its sound on into the next segment (1) |
+| `hold ms` | a held note is never longer than this; the player starts it again (no limit) |
+| `seating 1/0` | 1, the mix seats the players as Orchidea's mixes do (violins left, cellos right); 0, all in the middle (1) |
+| `choose segment n` | solution n (from 1, best first) of a segment (from 1) in place of the one chosen: the notes and the mix again |
+| `notes` | the notes again |
+| `show segment` | prints the solutions of a segment with their costs and sounds (the chosen one starred) |
+| `report` | prints a line per segment: its cost, players, players holding on, sounds in the search space, and the target's pitches no instrument of the orchestra has |
+| `write file` | saves the notes as an Orchidea connection file (Musil's score-load reads it) |
+| `roll buffer` | writes the notes into a buffer~, a frame a note: onset (s), pitch (MIDI, with its cents), player, duration (s); plot in scatter mode draws it as a roll, a colour a player |
+| `stop` | cancels the search |
+
+| Inlet | |
+| --- | --- |
+| 1 | messages |
+
+| Outlet | |
+| --- | --- |
+| 1 | messages |
+| 2 | messages |
+| 3 | messages |
+| 4 | messages |
+
+See also: `orchestra` `buffer~` `play~` `code`
 
 ## Learning
 
