@@ -29,7 +29,15 @@ if(CMAKE_HOST_SYSTEM_NAME STREQUAL "Darwin" AND NOT CMAKE_TOOLCHAIN_FILE)
 endif()
 
 file(STRINGS ${CMAKE_CURRENT_SOURCE_DIR}/VERSION MORITZ_VERSION_FILE LIMIT_COUNT 1)
-set(MORITZ_VERSION "${MORITZ_VERSION_FILE}" CACHE STRING "the version, shown in About and in the downloads' names")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/VERSION)
+# A version given with -D stays; one that came from the file follows the file when it changes (a build
+# folder configured before this rule, without MORITZ_VERSION_FROM_FILE, took its version from the file too).
+if(NOT DEFINED CACHE{MORITZ_VERSION} OR "$CACHE{MORITZ_VERSION}" STREQUAL ""
+   OR (DEFINED CACHE{MORITZ_VERSION_FROM_FILE} AND "$CACHE{MORITZ_VERSION}" STREQUAL "$CACHE{MORITZ_VERSION_FROM_FILE}")
+   OR (NOT DEFINED CACHE{MORITZ_VERSION_FROM_FILE} AND EXISTS ${CMAKE_BINARY_DIR}/CMakeCache.txt))
+  set(MORITZ_VERSION "${MORITZ_VERSION_FILE}" CACHE STRING "the version, shown in About and in the downloads' names" FORCE)
+endif()
+set(MORITZ_VERSION_FROM_FILE "${MORITZ_VERSION_FILE}" CACHE INTERNAL "the file VERSION when last configured")
 project(Moritz LANGUAGES C CXX)
 message(STATUS "Moritz ${MORITZ_VERSION}")
 
