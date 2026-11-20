@@ -2,10 +2,10 @@
 // gui.h — FLTK editor: canvas, document windows, subpatcher windows, the application
 //
 //   Document (document.h)        a patch file: the patch, its file, what is unsaved, undo; no interface
-//   PatchEditor (editor.h)       what a canvas asks of its document; read-only for help patches
+//   PatchEditor (editor.h)       what a canvas asks of its document
 //   Canvas (canvas.cpp)          draws a patch, turns the mouse and keys into edits through its editor
 //   DocumentWindow               a document's window: toolbar, canvas, status bar (document_window.cpp)
-//   PatchWindow                  a subpatcher, abstraction or help patch (patch_window.cpp)
+//   PatchWindow                  a subpatcher or abstraction (patch_window.cpp); a help patch is a document
 //   App                          one per program: audio, MIDI, the windows (app.cpp, menus.cpp ...)
 #pragma once
 
@@ -35,6 +35,8 @@
 #include <FL/Fl_Text_Display.H>
 #include <FL/Fl_Text_Editor.H>
 
+class Fl_Native_File_Chooser;
+
 namespace moritz {
 
 class DocumentWindow;
@@ -61,6 +63,12 @@ bool batchMode();
 void setBatchAnswer(int a);
 int askUser(const char* fmt, const char* b0, const char* b1, const char* b2, ...);
 void alertUser(const char* fmt, ...);
+// A Save As chooser shown: the file chosen (portable path), "" when cancelled. In batch mode nothing is
+// shown: what it proposes is printed, and the answer is saveas=<path> (none: cancelled).
+std::string showSaveChooser(Fl_Native_File_Chooser& fc);
+void setBatchSavePath(const std::string& path);
+// In batch mode copy and paste go through this, not the system's clipboard: tests leave the user's alone
+std::string& batchClipboard();
 // --window-png ... act=...: the actions of a test, in order (guitest.cpp); the number that failed
 int runTestActions(int argc, char** argv);
 
@@ -79,7 +87,7 @@ public:
     // deleted later, by FLTK; until then it draws nothing and takes no events)
     void detach();
     PatchEditor* editor() const { return ed_; }
-    bool readOnly() const { return !ed_->editable(); }   // help patches: always locked
+    bool readOnly() const { return !ed_->editable(); }   // always locked, nothing edited
 
     void draw() override;
     int handle(int e) override;
@@ -221,21 +229,17 @@ private:
     std::unordered_map<const Box*, Layout> layouts_;
 };
 
-// A window showing a subpatcher, abstraction or pfft~ patch, or a help patch.
+// A window showing a subpatcher, abstraction or pfft~ patch.
 class PatchWindow : public Fl_Double_Window {
 public:
-    // doc: the document the patch belongs to (nullptr for help patches, which are read-only);
-    // helpRoot: a help patch's own window (closing it stops the help patch)
-    PatchWindow(DocumentWindow* doc, Patch* p, const std::string& title, bool help = false, bool helpRoot = true);
+    // doc: the document the patch belongs to
+    PatchWindow(DocumentWindow* doc, Patch* p, const std::string& title);
     ~PatchWindow() override;
     int handle(int e) override;
     void detach();          // forget the patch (it is being destroyed)
     Canvas* canvas = nullptr;
     Patch* patch;
     DocumentWindow* doc;
-    bool help;
-    bool helpRoot;
-    std::string helpClass;     // help windows: the object they are the help of
 };
 
 // A patch as text, in its own window: a second view on the same patch,
@@ -347,10 +351,8 @@ public:
     // the document the commands act on: the front patch window's; nullptr when that is a help window
     DocumentWindow* targetDoc();
     Fl_Window* frontPatchWindow();                  // the front window showing a patch (any kind)
-    bool helpInFront();                             // the front patch window is a help patch
+    bool helpInFront();                             // the front patch window shows a help patch
     Canvas* activeCanvas();                         // canvas of the front patch window
-    ReadOnlyEditor& helpEditor() { return helpEditor_; }
-    void openHelpSubpatch(Box* b);                  // a subpatcher inside a help patch
 
     void setAudio(bool on);
     void toggleAudio() { setAudio(!audio.running()); }
@@ -410,9 +412,8 @@ public:
     void showText(DocumentWindow* doc, Patch* p, const std::string& title, bool readOnly);
     void closeText(Patch* p);                // hide its text window, if any
     PatchTextWindow* textWindow(Patch* p);
-    void openHelp(const std::string& cls);   // the object's help patch, or its description
+    void openHelp(const std::string& cls);   // the object's help patch (a document of its own), or its description
     void showReference(const std::string& cls);   // the object's reference, in its window
-    void closeHelp(Patch* p);
     // the menus (menus.cpp)
     void buildMenu(Fl_Menu_Bar* m);
     void refreshMenus();                     // enabled and checked items; the macOS bar only when they change
@@ -426,10 +427,8 @@ public:
 
 private:
     App() = default;
-    std::vector<PatchWindow*> helpWindows_;
     std::vector<PatchTextWindow*> textWindows_;
     std::vector<CodeWindow*> codeWindows_;
-    ReadOnlyEditor helpEditor_;
     Fl_Menu_Bar* sysMenu_ = nullptr;          // macOS: one menu bar for all windows
     Fl_Double_Window* console_ = nullptr;
     Fl_Text_Display* consoleView_ = nullptr;
@@ -495,6 +494,10 @@ public:
     bool openFile(const std::string& path);   // into this window
     // a patch converted from elsewhere: Untitled, edited, saved as name.moritz in dir
     bool loadConverted(const std::string& src, const std::string& dir, const std::string& name);
+    // the help patch of a class, into this window (Document::loadHelp): locked, its Reference button shown
+    bool openHelp(const std::string& path, const std::string& cls);
+    bool isHelp() const { return !doc.helpFile().empty(); }
+    const std::string& helpClass() const { return helpClass_; }
     bool save();                              // the patch (Save As when it has no file yet)
     bool saveAs();
     bool saveAbstraction(Patch* a);           // an abstraction edited in its window, into its file
@@ -521,7 +524,6 @@ public:
     void openSubpatch(Box* b) override;
 
     // subpatcher windows
-    void openHelp(const std::string& cls) { App::get().openHelp(cls); }
     void closeSubpatchWindows(Patch* p);    // p is being destroyed
     void closeAllSubwindows();
     void forgetWindow(PatchWindow* w);
@@ -544,6 +546,9 @@ private:
     void afterRestore(Patch* restored);
     Fl_Menu_Bar* menu_ = nullptr;   // Windows and Linux: each window has its menu
     Fl_Box* statusBar_;
+    Fl_Button* refBtn_ = nullptr;   // a help patch's Reference
+    std::string helpClass_;         // a help patch: the class it is the help of
+    void showHelpBar(bool on);
     ToolButton* audioBtn_;
     ToolButton* editBtn_;
     ToolButton* textBtn_;

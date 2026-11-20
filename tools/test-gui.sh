@@ -48,9 +48,11 @@ expect() {   # expect <name> <text the output must contain>
 run "$G/animated.moritz" --window-png none act=draw act=close act=wait:0.3 act=state
 expect "close with an animated box" "state: documents 0"
 
-# 2. Patch > New with a help window in front: help patches are read-only (it crashed)
-run --window-png none act=help:metro act=state act=new:print act=state
+# 2. Patch > New with a help window in front: the box goes into the help patch (it crashed when help patches were
+#    read-only)
+run --window-png none act=help:metro act=state act=canvas act=new:print act=canvas
 expect "Patch > New in a help window" "state: help in front yes"
+expect "the box is in the help patch" "state: canvas boxes 26"
 
 # 3. the code view replaces the number box being typed into; typing goes on (it wrote into freed memory)
 run "$G/numbers.moritz" --window-png none act=click:n1 "act=text:$G/numbers-edited.txt" act=keys:5, act=boxes
@@ -106,21 +108,23 @@ if [ $status -eq 0 ] && [ ! -e "$T/code/missing-script.mu" ]; then ok; else fail
 if grep -rq "numbers.moritz" "$HOME" 2>/dev/null && ! grep -rq "^0:numbers.moritz" "$HOME" 2>/dev/null; then ok
 else fail "recent files: absolute paths"; fi
 
-# 12. with a help window in front, Undo and Edit Mode act on nothing (not on a document behind it)
-run "$G/numbers.moritz" --window-png none act=help:metro act=menu:edit.undo act=menu:patch.edit act=menu:edit.paste
-expect "Undo with a help window in front" "state: menu edit.undo disabled"
-expect "Edit Mode with a help window in front" "state: menu patch.edit disabled"
+# 12. with a help window in front, Edit Mode, New and Undo act on the help patch, not on the document behind it
+run "$G/numbers.moritz" --window-png none act=help:metro act=wait:0.3 act=menu:patch.edit act=new:button act=canvas \
+    act=menu:edit.undo act=canvas act=state
+expect "Edit Mode with a help window in front" "state: canvas metro help — edited — Moritz locked no"
+if [ "$(grep "state: canvas boxes" "$out" | tr '\n' '|')" = "state: canvas boxes 26|state: canvas boxes 25|" ]; then ok
+else fail "New and Undo with a help window in front"; fi
+expect "the document behind is left alone" "state: front $G/numbers.moritz edited no"
 run "$G/numbers.moritz" --window-png none act=menu:patch.edit act=state
 expect "Edit Mode on a document" "state: front"
 
-# 13. a code window comes to the front after a help window: Save (Cmd+S) is active again, Undo acts on its text
-# (the waits let the windows come to the front first: slower under a sanitizer or on X11)
-run "$G/undo.moritz" --window-png none open=c1 act=help:metro act=wait:0.5 act=menuitem:file.save act=menuitem:edit.undo \
-    act=raise:code act=wait:0.5 act=menuitem:file.save act=menuitem:edit.undo
-expect "Save with a help window in front" "state: menu item file.save inactive"
-expect "Undo with a help window in front" "state: menu item edit.undo inactive"
-if [ "$(grep -c "state: menu item file.save active" "$out")" = 1 ] &&
-   [ "$(grep -c "state: menu item edit.undo active" "$out")" = 1 ]; then ok; else fail "Save in a code window after a help window"; fi
+# 13. a code window comes to the front after a document window: the menus follow it (Revert, active for the edited
+# document, is not for the code window; Save and Undo are, on its text) (the waits let the windows come to the
+# front first: slower under a sanitizer or on X11)
+run "$G/undo.moritz" --window-png none open=c1 act=new:button act=raise:doc act=wait:0.5 act=menuitem:file.revert \
+    act=raise:code act=wait:0.5 act=menuitem:file.revert act=menuitem:file.save act=menuitem:edit.undo
+if [ "$(grep "state: menu item" "$out" | tr '\n' '|')" = "state: menu item file.revert active|state: menu item file.revert inactive|state: menu item file.save active|state: menu item edit.undo active|" ]
+then ok; else fail "the menus follow a code window that comes to the front"; fi
 
 # 14. the code view, typed into, replaces a subpatcher whose window is open and animated: the window's timers
 #     must not walk the freed patch before FLTK deletes the window (the patch is long, so applying it takes
@@ -165,6 +169,31 @@ run "$G/cables.moritz" --window-png none act=menu:patch.edit "act=drag:306,255/2
 seq=$(grep "state: cable \|state: lit\|state: pos" "$out" | sed 's/state: //' | tr '\n' '|')
 if [ $status -eq 0 ] && [ "$seq" = "lit a 0 b 0|cable a 0 c 0|cable c 0 b 0|cable s 0 d 0|pos c 300 250|lit none|cable a 0 b 0|cable s 0 d 0|" ]
 then ok; else fail "a box dropped into a cable with Shift (got $seq)"; fi
+
+# 18. a help patch is a document to play with, edit and copy from: unlocked, its boxes are copied into a new patch;
+#     played with, it closes without a question; edited, Save asks where (not the shipped file, which stays as it
+#     was), and closing asks first
+run --window-png none act=help:metro act=menu:patch.edit act=menu:edit.selectall act=menu:edit.copy act=menu:file.new \
+    act=wait:0.3 act=menu:edit.paste act=canvas
+expect "boxes copied from a help patch" "state: canvas Untitled — edited — Moritz locked no"
+expect "all of them" "state: canvas boxes 25"
+run --window-png none act=help:function act=click:fn act=canvas act=closefront act=state   # a point added to its function
+if [ $status -eq 0 ] && grep -q "state: canvas function help — Moritz" "$out" && grep -q "state: documents 0" "$out" &&
+   ! grep -q "^ask:" "$out"; then ok
+else fail "a help patch played with closes without a question"; fi
+run --window-png none act=help:metro act=menu:patch.edit act=new:button act=save act=canvas
+expect "Save on a help patch asks where" "save as: metro-help.moritz in (the system's choice) -> cancelled"
+expect "cancelled, it is still the help patch" "state: canvas help "
+run --window-png none act=help:metro act=menu:patch.edit act=new:button answer=2 act=closefront act=state
+expect "closing an edited help patch asks" "ask: Keep your changes to the help patch \"metro.help.moritz\" as a patch of yours?"
+expect "Don't Save closes it" "state: documents 0"
+run --window-png none act=help:metro act=menu:patch.edit act=new:button "saveas=$T/mine.moritz" act=save act=canvas
+helpfile=$(grep "state: canvas help " "$out" | sed 's/state: canvas help //')
+if [ $status -eq 0 ] && grep -q "state: canvas mine.moritz — Moritz" "$out" && grep -q "(obj met metro 250" "$T/mine.moritz" &&
+   [ -z "$helpfile" ]; then ok; else fail "a help patch saved as a patch of the user's"; fi
+if cmp -s "$HERE/help/metro.help.moritz" "$(dirname "$MORITZ")/../Resources/help/metro.help.moritz" ||
+   cmp -s "$HERE/help/metro.help.moritz" "$(dirname "$MORITZ")/help/metro.help.moritz"; then ok
+else fail "the shipped help patch is as it was"; fi
 
 rm -rf "$T"
 echo "$count interface cases, $fails failed"

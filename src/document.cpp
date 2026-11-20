@@ -23,10 +23,21 @@ bool Document::load(const std::string& path, std::string& err) {
         return false;
     }
     path_ = fileio::absolute(path);
+    helpFile_.clear();
     suggested.clear();
     dirty_ = false;
     absDirty_.clear();
     clearHistory();
+    changed();
+    return true;
+}
+
+bool Document::loadHelp(const std::string& path, std::string& err) {
+    if (!load(path, err)) return false;
+    helpFile_ = path_;
+    path_.clear();                     // nothing writes the shipped file
+    std::string name = helpFile_.substr(helpFile_.find_last_of("/\\") + 1);
+    suggested = name.substr(0, name.find(".help.")) + "-help.moritz";
     changed();
     return true;
 }
@@ -39,6 +50,7 @@ bool Document::loadText(const std::string& src, const std::string& dir, std::str
         return false;
     }
     path_.clear();
+    helpFile_.clear();
     dirty_ = true;                     // not saved yet
     absDirty_.clear();
     clearHistory();
@@ -58,6 +70,7 @@ bool Document::saveTo(const std::string& path, std::string& err) {
     if (!fileio::writeAtomic(path, patch.serialize(), &err)) return false;   // path and folder stay as they were
     path_ = fileio::absolute(path);
     patch.dir = dirOf(path_);
+    helpFile_.clear();                 // a help patch saved: a patch of the user's now
     suggested.clear();
     dirty_ = false;
     changed();
@@ -79,6 +92,7 @@ Patch* Document::abstractionOf(Patch* p) const {
 }
 
 void Document::markDirty(Patch* p) {
+    if (!helpFile_.empty() && undo_.empty() && !dirty_) return;   // a help patch played with, not edited
     if (Patch* a = abstractionOf(p)) absDirty_.insert(a);
     else dirty_ = true;
     changed();

@@ -184,7 +184,10 @@ Moritz follows Max's conventions:
 - **Help and reference**: right-click any box and choose Help (or
   Option-click it in locked mode) for a working example, or Reference for
   every argument, message, inlet and outlet. Help windows have a Reference
-  button too.
+  button too. A help patch opens locked, as a patch of its own: play with it,
+  or unlock it (Cmd+E) to change it or to copy its boxes into your patch. Save
+  asks where to keep your version (the help patch itself is never written
+  over), and closing it asks only when you edited it, not when you played.
 - **Right-click** also offers what a box can do: load or save a `buffer~`,
   open a `plot`'s window or export it, choose the file of `sfplay~` and
   `sfrecord~`. Double-clicking an object that names a `buffer~` (locked)

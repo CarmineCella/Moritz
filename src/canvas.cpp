@@ -589,7 +589,8 @@ void Canvas::copySelection() {
     auto sel = selectedBoxes();
     if (sel.empty()) return;
     std::string t = patch_->serializeBoxes(sel);
-    Fl::copy(t.c_str(), (int)t.size(), 1);
+    if (batchMode()) batchClipboard() = t;
+    else Fl::copy(t.c_str(), (int)t.size(), 1);
     ed_->setStatus("copied " + std::to_string(sel.size()) + (sel.size() == 1 ? " box" : " boxes"));
 }
 
@@ -603,6 +604,7 @@ void Canvas::cutSelection() {
 void Canvas::paste() {
     if (editing_) { Fl::paste(*editor_, 1); return; }
     if (readOnly()) return;
+    if (batchMode()) { pasteText(batchClipboard()); return; }
     Fl::paste(*this, 1, Fl::clipboard_plain_text);   // arrives as FL_PASTE
 }
 
@@ -1117,8 +1119,8 @@ void Canvas::cancelEdit() {
 void Canvas::newBoxAt(const std::string& cls, int bx, int by) {
     if (!patch_) return;
     commitEdit();
-    if (readOnly()) {                               // a help patch: nothing is added to it
-        ed_->setStatus("a help patch can't be edited: copy its boxes into a patch of yours");
+    if (readOnly()) {
+        ed_->setStatus("this patch can't be edited");
         return;
     }
     if (locked_) setLocked(false);

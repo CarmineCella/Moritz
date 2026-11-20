@@ -70,7 +70,6 @@ App& app() { return App::get(); }
 
 // what the commands act on
 DocumentWindow* doc() { return app().targetDoc(); }
-bool notHelp() { return !app().helpInFront(); }
 bool haveDoc() { return doc() != nullptr; }
 bool textOrDoc() { return frontTextEditor() || haveDoc(); }
 bool canvasOrText() { return frontTextEditor() || app().activeCanvas(); }
@@ -141,8 +140,7 @@ const std::vector<Command>& table() {
         // ---- Patch
         {"@new", "Patch/New", 0, 0, nullptr, nullptr, nullptr},
         {"patch.edit", "Patch/Edit Mode", FL_COMMAND + 'e', FL_MENU_TOGGLE, [] { if (auto* d = doc()) d->toggleLock(); },
-         [] { return haveDoc() && notHelp(); },
-         [] { auto* c = app().activeCanvas(); return c && notHelp() && !c->locked(); }},
+         haveDoc, [] { auto* c = app().activeCanvas(); return c && !c->locked(); }},
         {"patch.code", "Patch/Code View", FL_COMMAND + 't', 0, [] { app().showText(); }, nullptr, nullptr},
         {"patch.audio", "Patch/Audio On", FL_COMMAND + '/', FL_MENU_TOGGLE | FL_MENU_DIVIDER,
          [] { app().toggleAudio(); }, nullptr, [] { return app().audio.running(); }},

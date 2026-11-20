@@ -5,6 +5,7 @@
 #include "ui_util.h"
 
 #include <FL/Fl_Choice.H>
+#include <FL/Fl_Native_File_Chooser.H>
 #include <FL/Fl_PNG_Image.H>
 #include <FL/Fl_Return_Button.H>
 #include <FL/fl_ask.H>
@@ -22,11 +23,30 @@ namespace moritz {
 namespace {
 bool gBatch = false;
 int gBatchAnswer = 0;
+std::string gBatchSavePath;
 }  // namespace
 
 void setBatchMode(bool on) { gBatch = on; }
 bool batchMode() { return gBatch; }
 void setBatchAnswer(int a) { gBatchAnswer = a; }
+void setBatchSavePath(const std::string& path) { gBatchSavePath = path; }
+
+std::string& batchClipboard() {
+    static std::string text;
+    return text;
+}
+
+std::string showSaveChooser(Fl_Native_File_Chooser& fc) {
+    if (gBatch) {
+        std::printf("save as: %s in %s -> %s\n", fc.preset_file() ? fc.preset_file() : "",
+                    fc.directory() && *fc.directory() ? fc.directory() : "(the system's choice)",
+                    gBatchSavePath.empty() ? "cancelled" : gBatchSavePath.c_str());
+        std::fflush(stdout);
+        return gBatchSavePath;
+    }
+    if (fc.show() != 0 || !fc.filename()) return "";
+    return portablePath(fc.filename());
+}
 
 int askUser(const char* fmt, const char* b0, const char* b1, const char* b2, ...) {
     char text[4096];

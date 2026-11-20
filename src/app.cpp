@@ -45,14 +45,6 @@ bool endsWith(const std::string& s, const char* tail) {
 }
 }  // namespace
 
-// ---- the read-only editor of help patches (editor.h)
-
-void ReadOnlyEditor::print(const std::string& s) { App::get().print(s); }
-void ReadOnlyEditor::setStatus(const std::string& s) {
-    if (!s.empty()) App::get().log(s);
-}
-void ReadOnlyEditor::openSubpatch(Box* b) { App::get().openHelpSubpatch(b); }
-
 App& App::get() {
     static App* app = new App;      // never destroyed: windows may outlive main's scope
     return *app;
@@ -91,14 +83,6 @@ void App::init() {
             d->doc.forget(p);
         }
         closeText(p);
-        for (auto* w : std::vector<PatchWindow*>(helpWindows_))
-            if (w->patch == p) {
-                w->detach();
-                helpWindows_.erase(std::remove(helpWindows_.begin(), helpWindows_.end(), w),
-                                   helpWindows_.end());
-                w->hide();
-                Fl::delete_widget(w);
-            }
     };
     host.onDsp = [this](bool on) { setAudio(on); };
     host.onPrint = [this](const std::string& s) { print(s); };
@@ -166,14 +150,16 @@ Fl_Window* App::frontPatchWindow() {
 }
 
 bool App::helpInFront() {
-    auto* pw = dynamic_cast<PatchWindow*>(frontPatchWindow());
-    return pw && pw->help;
+    Fl_Window* w = frontPatchWindow();
+    DocumentWindow* d = dynamic_cast<DocumentWindow*>(w);
+    if (auto pw = dynamic_cast<PatchWindow*>(w)) d = pw->doc;
+    return d && d->isHelp();
 }
 
 DocumentWindow* App::targetDoc() {
     Fl_Window* w = frontPatchWindow();
     if (auto mw = dynamic_cast<DocumentWindow*>(w)) return mw;
-    if (auto pw = dynamic_cast<PatchWindow*>(w)) return pw->help ? nullptr : pw->doc;
+    if (auto pw = dynamic_cast<PatchWindow*>(w)) return pw->doc;
     return docs.empty() ? nullptr : docs.back();
 }
 
@@ -309,7 +295,7 @@ void App::closeDocument(DocumentWindow* w) {
 void App::closeFront() {
     Fl_Window* w = Fl::first_window();
     if (auto pw = dynamic_cast<PatchWindow*>(w)) {
-        pw->do_callback();             // hides it (and closes a help patch)
+        pw->do_callback();             // hides it
         return;
     }
     if (w && w == console_) { w->hide(); return; }
@@ -335,7 +321,6 @@ void App::quit() {
     host.onDsp = nullptr;      // a dspstate~ reacting to the stop can't restart audio
     audio.stop();
     for (auto* d : std::vector<DocumentWindow*>(docs)) d->closeAllSubwindows();
-    for (auto* w : helpWindows_) w->hide();
     for (auto* w : textWindows_) w->hide();
     hideBrowser();
     if (console_) console_->hide();
@@ -556,7 +541,7 @@ void App::showText() {
             return;
         }
         if (auto pw = dynamic_cast<PatchWindow*>(w); pw && pw->patch) {
-            showText(pw->doc, pw->patch, pw->label() ? pw->label() : "patch", pw->help);
+            showText(pw->doc, pw->patch, pw->label() ? pw->label() : "patch", false);
             return;
         }
     }
@@ -598,6 +583,8 @@ void App::closeText(Patch* p) {
 
 // ---- help patches
 
+// A help patch is a document of its own, as in Max: it plays with the other patches, can be unlocked,
+// edited and copied from, and is never written over (Document::loadHelp).
 void App::openHelp(const std::string& cls) {
     std::string path = findHelp(cls);
     if (path.empty()) {
@@ -605,50 +592,20 @@ void App::openHelp(const std::string& cls) {
         print(cls + ": " + (d.empty() ? "no help patch" : d + " (no help patch yet)"));
         return;
     }
-    for (auto* w : helpWindows_)                        // already open: bring it forward
-        if (w->helpRoot && w->patch && w->patch->file == path) { w->show(); return; }
-    std::string src, err;
-    if (!fileio::read(path, src)) { print("can't read " + path); return; }
-    auto hp = std::make_unique<Patch>();
-    hp->dir = dirOf(path);
-    Patch* p = host.addExtra(std::move(hp));
-    p->file = path;                       // identifies the window; not an abstraction
-    if (!p->load(src, err)) {
-        print(baseName(path) + ": " + err);
-        host.removeExtra(p);
+    std::string file = fileio::absolute(path);
+    for (auto* d : docs)                                // already open: bring it forward
+        if (d->doc.helpFile() == file) { d->show(); return; }
+    DocumentWindow* front = frontDoc();
+    auto* d = new DocumentWindow(960, 640);
+    if (!d->openHelp(path, cls)) {
+        closeDocument(d);
         return;
     }
-    if (!err.empty()) print(baseName(path) + ": " + err);
-    p->loadbangAll();
     int W, H;
-    fitPatch(p, W, H);
-    std::string name = baseName(path);
-    name = name.substr(0, name.find(".help."));
-    auto* w = new PatchWindow(nullptr, p, name + " help", true);
-    w->helpClass = cls;
-    w->size(W, H);
-    centerOnScreen(w, frontDoc(), 40, 40);
-    helpWindows_.push_back(w);
-    w->show();
-    log("help: " + path);
-}
-
-void App::openHelpSubpatch(Box* b) {
-    Patch* p = b ? b->inner() : nullptr;
-    if (!p) return;
-    for (auto* w : helpWindows_)
-        if (w->patch == p) { w->show(); return; }
-    int W, H;
-    fitPatch(p, W, H);
-    auto* w = new PatchWindow(nullptr, p, patchTitle(p), true, false);
-    w->size(W, H);
-    centerOnScreen(w, frontDoc(), 60, 60);
-    helpWindows_.push_back(w);
-    w->show();
-}
-
-void App::closeHelp(Patch* p) {
-    host.removeExtra(p);   // its destruction closes and deletes the window
+    fitPatch(&d->patch, W, H);
+    d->size(std::max(W, 960), std::max(H + kMenuH + kToolH, 360));
+    centerOnScreen(d, front, 40, 40);
+    d->show();
 }
 
 // the settings changed (settings.cpp): every window shows them now

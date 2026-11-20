@@ -1,8 +1,12 @@
 // Copyright (c) 2026 Carmine-Emanuele Cella. SPDX-License-Identifier: BSD-2-Clause
 // editing_tests.cpp — edits the patch editor makes with the mouse, without a window: a cable's end moved
-// to another port, a box dropped into a cable
+// to another port, a box dropped into a cable; and a help patch as a document
 
 #include "rig.h"
+#include "document.h"
+#include "fileio.h"
+
+#include <cstdlib>
 
 using namespace moritz;
 using etest::Rig;
@@ -14,6 +18,13 @@ std::string cables(const Patch& p) {
     for (auto& c : p.conns)
         s += c.from->id + " " + std::to_string(c.outlet) + " " + c.to->id + " " + std::to_string(c.inlet) + "|";
     return s;
+}
+
+std::string tempPath(const std::string& name) {
+    const char* t = std::getenv("TMPDIR");
+    std::string d = t && *t ? t : "/tmp";
+    if (d.back() != '/') d += '/';
+    return d + name;
 }
 
 }  // namespace
@@ -71,4 +82,35 @@ TEST(insert_into_cable_splices_a_box_or_changes_nothing) {
     CHECK(!p.insertIntoCable(1, r.box("g"), &err));                         // g is at an end of g -> d
     CHECK(cables(p) == before);
     r.run(256);
+}
+
+// A help patch is a document that never writes its file: no path (Save asks where), edited only by an edit
+// (one with an undo step), not by playing with it; saved elsewhere, it is a patch of the user's
+TEST(help_document_is_never_written_and_edited_only_by_an_edit) {
+    std::string help = tempPath("moritz-test-metro.help.moritz"), mine = tempPath("moritz-test-mine.moritz");
+    std::string shipped, now, err;
+    CHECK(fileio::read("help/metro.help.moritz", shipped));
+    CHECK(fileio::writeAtomic(help, shipped));
+    Rig r("");
+    Document d(r.p);
+    CHECK(d.loadHelp(help, err));
+    CHECK(d.path().empty());
+    CHECK(d.helpFile() == fileio::absolute(help));
+    CHECK(d.suggested == "moritz-test-metro-help.moritz");
+    CHECK(!r.p.boxes.empty());
+    d.markDirty(&r.p);                        // played with: an interface box saved something
+    CHECK(!d.dirty());
+    CHECK(!d.save(err));                      // no file to write: Save asks where
+    d.pushUndo(&r.p);                         // an edit
+    r.p.removeBoxes({r.p.boxes.back().get()});
+    d.markDirty(&r.p);
+    CHECK(d.dirty());
+    CHECK(d.saveTo(mine, err));
+    CHECK(d.helpFile().empty());
+    CHECK(d.path() == fileio::absolute(mine));
+    CHECK(!d.dirty());
+    CHECK(fileio::read(help, now) && now == shipped);
+    CHECK(fileio::read(mine, now) && now != shipped && now.find("(obj met metro 250") != std::string::npos);
+    std::remove(help.c_str());
+    std::remove(mine.c_str());
 }

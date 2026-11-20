@@ -3,12 +3,14 @@
 //
 // The actions run in order, as the user would do them, through the same code (menus, the canvas's
 // events, the code view); tools/test-gui.sh runs them, under the address sanitizer too. Questions are
-// answered answer=<n> (batch mode, gui.h). What a test checks is printed on stdout as "state: ...".
+// answered answer=<n>, a Save As saveas=<path> (none: cancelled) (batch mode, gui.h). What a test checks is
+// printed on stdout as "state: ...".
 //
 //   act=draw                  draw the front document (as the screen would: animated boxes start)
 //   act=wait:<seconds>        run the event loop that long (timers fire)
 //   act=close                 close the front document window, unsaved changes discarded
 //   act=confirmclose          the close box of the front document (questions: answer=<n>)
+//   act=closefront            File > Close on the front window (questions: answer=<n>)
 //   act=save, act=undo, act=redo   File > Save, Edit > Undo, Redo on the front document
 //   act=opensub:<id>          the window of a subpatcher or abstraction box
 //   act=help:<class>          open the help patch of a class
@@ -31,8 +33,10 @@
 //   act=codeedit:<text>       text added at the end of the front code editor
 //   act=codesave              the front code editor's Save
 //   act=raise:code            the first code editor's window comes to the front, as a click on it does
+//   act=raise:doc             the first document's window, the same
 //   act=menuitem:<command>    print: the command's item in the menu bar, active or not
 //   act=state                 print: the documents, the front one's state, the code editors
+//   act=canvas                print: the front patch window, locked or not, its boxes, the help patch it shows
 //   act=buffer:<name>         print: the frames of a buffer~
 //   act=boxes                 print: the boxes of the front document
 
@@ -118,6 +122,7 @@ bool act(const std::string& a) {
         app.closeDocument(d);
         return true;
     }
+    if (verb == "closefront") { app.closeFront(); return true; }
     if (verb == "confirmclose") {          // the close box: asks, then closes (or not)
         DocumentWindow* d = front();
         if (!d) return false;
@@ -259,11 +264,13 @@ bool act(const std::string& a) {
         return true;
     }
     if (verb == "raise") {
-        if (arg != "code" || app.codeWindows().empty()) return false;
-        CodeWindow* cw = app.codeWindows().front();
-        cw->show();
-        Fl::first_window(cw);
-        Fl::handle(FL_FOCUS, cw);           // what the system sends the window it brings to the front
+        Fl_Window* w = nullptr;
+        if (arg == "code" && !app.codeWindows().empty()) w = app.codeWindows().front();
+        if (arg == "doc") w = front();
+        if (!w) return false;
+        w->show();
+        Fl::first_window(w);
+        Fl::handle(FL_FOCUS, w);            // what the system sends the window it brings to the front
         return true;
     }
     if (verb == "menuitem") {
@@ -289,6 +296,16 @@ bool act(const std::string& a) {
         }
         return true;
     }
+    if (verb == "canvas") {
+        Canvas* c = app.activeCanvas();
+        if (!c || !c->patch()) return false;
+        Fl_Window* w = c->top_window();
+        state("canvas %s locked %s", w && w->label() ? w->label() : "", c->locked() ? "yes" : "no");
+        state("canvas boxes %s", std::to_string(c->patch()->boxes.size()));
+        auto* d = dynamic_cast<DocumentWindow*>(w);
+        if (d && d->isHelp()) state("canvas help %s", d->doc.helpFile());
+        return true;
+    }
     if (verb == "buffer") {
         DocumentWindow* d = front();
         BufferBox* b = d ? findBuffer(&d->patch, arg) : nullptr;
@@ -311,6 +328,7 @@ int runTestActions(int argc, char** argv) {
     for (int k = 1; k < argc; ++k) {
         std::string a = argv[k];
         if (a.rfind("answer=", 0) == 0) setBatchAnswer(std::atoi(a.c_str() + 7));
+        if (a.rfind("saveas=", 0) == 0) setBatchSavePath(a.substr(7));
         if (a.rfind("act=", 0) != 0) continue;
         if (!act(a.substr(4))) {
             std::printf("failed: %s\n", a.c_str());

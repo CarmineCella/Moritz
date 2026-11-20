@@ -3,8 +3,8 @@
 //
 // A canvas (canvas.cpp) draws a patch and turns the mouse and the keys into edits; every edit goes
 // through its PatchEditor, which keeps the undo history and knows what is edited and unsaved. A
-// document window is one; help patches and --render snapshots get a read-only one, so a canvas always
-// has an editor to call.
+// document window is one (help patches are documents too); --render snapshots get a detached one, so a
+// canvas always has an editor to call.
 #pragma once
 
 #include <string>
@@ -17,7 +17,7 @@ class Patch;
 class PatchEditor {
 public:
     virtual ~PatchEditor() = default;
-    // false: the patch can't be edited (help patches): always locked, nothing to undo or save
+    // false: the patch can't be edited: always locked, nothing to undo or save
     virtual bool editable() const = 0;
     // before an edit of p: an undo step holding p as it is
     virtual void pushUndo(Patch* p) = 0;
@@ -32,19 +32,6 @@ public:
     virtual void lockChanged() = 0;
     // a subpatcher, abstraction or pfft~ box asks for its window
     virtual void openSubpatch(Box* b) = 0;
-};
-
-// Help patches: they play and can be clicked in, but are never edited. Messages go to the console.
-class ReadOnlyEditor : public PatchEditor {
-public:
-    bool editable() const override { return false; }
-    void pushUndo(Patch*) override {}
-    void dropUndo() override {}
-    void markDirty(Patch*) override {}
-    void print(const std::string& s) override;          // the console (app.cpp)
-    void setStatus(const std::string& s) override;
-    void lockChanged() override {}
-    void openSubpatch(Box* b) override;                 // a read-only window too
 };
 
 // A canvas drawn on its own (moritz --render ... png=): editable, so edit mode can be drawn, but with

@@ -67,12 +67,24 @@ DocumentWindow::DocumentWindow(int w, int h)
     bar->end();
     canvas = new Canvas(0, kMenuH + kToolH, w, h - kMenuH - kToolH - kStatusH, this, &patch);
     canvas->onZoom = [this] { updateZoomLabel(); };
+    auto* status = new Fl_Group(0, h - kStatusH, w, kStatusH);   // the status line (and a help patch's Reference)
     statusBar_ = new Fl_Box(0, h - kStatusH, w, kStatusH);
     statusBar_->box(FL_FLAT_BOX);
     statusBar_->color(kStatusBg);
     statusBar_->labelcolor(kDim);
     statusBar_->labelsize(11);
     statusBar_->align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE | FL_ALIGN_CLIP);
+    refBtn_ = new Fl_Button(w - 96, h - kStatusH + 2, 92, kStatusH - 4, "Reference");
+    refBtn_->labelsize(11);
+    refBtn_->box(FL_FLAT_BOX);
+    refBtn_->color(kBoxFill);
+    refBtn_->labelcolor(kText);
+    refBtn_->tooltip("Every argument, message, inlet and outlet of the object");
+    refBtn_->callback([](Fl_Widget*, void* d) { App::get().showReference(static_cast<DocumentWindow*>(d)->helpClass_); },
+                      this);
+    refBtn_->hide();
+    status->resizable(statusBar_);
+    status->end();
     end();
     resizable(canvas);
     size_range(400, 300);
@@ -162,10 +174,25 @@ void DocumentWindow::setStatus(const std::string& s) {
 
 void DocumentWindow::updateTitle() {
     const std::string& path = doc.path();
-    std::string t = (path.empty() ? (doc.suggested.empty() ? std::string("Untitled") : doc.suggested + " (from Max)")
-                                  : baseName(path)) +
+    std::string name = baseName(doc.helpFile());
+    name = name.substr(0, name.find(".help.")) + " help";
+    std::string t = (!doc.helpFile().empty() ? name
+                     : path.empty() ? (doc.suggested.empty() ? std::string("Untitled") : doc.suggested + " (from Max)")
+                                    : baseName(path)) +
                     (doc.anyDirty() ? " — edited" : "") + " — Moritz";
     if (!label() || t != label()) copy_label(t.c_str());
+    showHelpBar(!doc.helpFile().empty());
+}
+
+// a help patch's status line has its Reference button; once saved as a patch of the user's, it goes
+void DocumentWindow::showHelpBar(bool on) {
+    if (!refBtn_ || (refBtn_->visible() != 0) == on) return;
+    Fl_Group* g = refBtn_->parent();
+    statusBar_->resize(g->x(), g->y(), g->w() - (on ? 100 : 0), g->h());
+    refBtn_->resize(g->x() + g->w() - 96, g->y() + 2, 92, g->h() - 4);
+    if (on) refBtn_->show();
+    else refBtn_->hide();
+    g->redraw();
 }
 
 void DocumentWindow::showRecording(bool on, const char* label) {
@@ -213,9 +240,15 @@ bool DocumentWindow::confirmDiscard() {
         if (r == 0) return false;
         if (r == 1 && !saveAbstraction(a)) return false;
     }
-    if (!doc.dirty()) return true;
-    std::string name = path().empty() ? "Untitled" : baseName(path());
-    int r = askUser("Save changes to \"%s\"?", "Cancel", "Save", "Don't Save", name.c_str());
+    if (!doc.dirty()) return true;            // a help patch is dirty only once edited, not played with
+    int r;
+    if (!doc.helpFile().empty()) {
+        r = askUser("Keep your changes to the help patch \"%s\" as a patch of yours?", "Cancel", "Save As...",
+                    "Don't Save", baseName(doc.helpFile()).c_str());
+    } else {
+        std::string name = path().empty() ? "Untitled" : baseName(path());
+        r = askUser("Save changes to \"%s\"?", "Cancel", "Save", "Don't Save", name.c_str());
+    }
     if (r == 0) return false;
     if (r == 1) return save();
     return true;
@@ -237,6 +270,26 @@ bool DocumentWindow::openFile(const std::string& path) {
     if (!err.empty()) print(baseName(path) + ":\n" + err);
     else setStatus("opened " + baseName(path));
     if (!patch.dspError.empty()) log(baseName(path) + ": " + patch.dspError);
+    patch.loadbangAll();
+    canvas->redraw();
+    return true;
+}
+
+bool DocumentWindow::openHelp(const std::string& path, const std::string& cls) {
+    std::string err;
+    canvas->reset();
+    closeAllSubwindows();
+    if (!doc.loadHelp(path, err)) {
+        print(baseName(path) + ": " + err);
+        return false;
+    }
+    helpClass_ = cls;
+    canvas->setLocked(true);
+    updateTitle();
+    log("help: " + path);
+    if (!err.empty()) print(baseName(path) + ": " + err);
+    else setStatus("help · runs with your patches while open · " + shortcutText(FL_COMMAND + 'e') +
+                   " to edit it or copy from it; Save keeps it as a patch of yours");
     patch.loadbangAll();
     canvas->redraw();
     return true;
@@ -281,11 +334,13 @@ bool DocumentWindow::saveAs() {
     fc.type(Fl_Native_File_Chooser::BROWSE_SAVE_FILE);
     fc.filter("Moritz patch\t*.moritz");
     fc.options(Fl_Native_File_Chooser::SAVEAS_CONFIRM | Fl_Native_File_Chooser::USE_FILTER_EXT);
-    if (path().empty() && !doc.suggested.empty() && !patch.dir.empty()) fc.directory(patch.dir.c_str());
+    // a patch imported from Max: next to the original; a help patch: not where help patches are shipped
+    if (path().empty() && !doc.suggested.empty() && !patch.dir.empty() && doc.helpFile().empty())
+        fc.directory(patch.dir.c_str());
     fc.preset_file(path().empty() ? (doc.suggested.empty() ? "Untitled.moritz" : doc.suggested.c_str())
                                   : baseName(path()).c_str());
-    if (fc.show() != 0) return false;
-    std::string p = portablePath(fc.filename());
+    std::string p = showSaveChooser(fc);
+    if (p.empty()) return false;
     const char* ext = fl_filename_ext(p.c_str());
     if (!ext || !*ext) p += std::string(".") + kExt;
     std::string err;

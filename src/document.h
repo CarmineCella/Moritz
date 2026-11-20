@@ -32,6 +32,11 @@ public:
     const std::string& path() const { return path_; }   // "" until loaded or saved
     std::string suggested;          // Save As proposes this name (patches imported from Max)
     bool load(const std::string& path, std::string& err);   // true with warnings in err
+    // A help patch: shown as a document of its own, to play with, edit, and copy from, as in Max. Its file
+    // is never written: the document has no path (Save asks where, proposing suggested), and it counts as
+    // edited only after an edit (an undo step), not when it is played with.
+    bool loadHelp(const std::string& path, std::string& err);
+    const std::string& helpFile() const { return helpFile_; }   // the help patch shown ("": none, or saved as a patch)
     // a patch converted from elsewhere: no file yet, unsaved; relative paths start in dir
     bool loadText(const std::string& src, const std::string& dir, std::string& err);
     bool save(std::string& err);                             // to path()
@@ -82,6 +87,7 @@ private:
         if (onChanged) onChanged();
     }
     std::string path_;
+    std::string helpFile_;
     bool dirty_ = false;
     std::set<Patch*> absDirty_;
     std::vector<Step> undo_, redo_;
