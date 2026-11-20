@@ -344,6 +344,9 @@ LangContext::LangContext(std::string l, ContextHooks h)
         if (!roots.empty()) I.write_dir = roots.front();
     }
     musilPaths(I);
+    // the command line's arguments: none here (moritz --run sets them), so that a script written for the
+    // command line, which reads args for its options, takes its defaults in the Console, the editor or a code box
+    I.def("args", musil::v_list(musil::vlist{}));
 #ifndef _WIN32
     I.stack_budget = (64u << 20) / 4 * 3;          // code runs on a thread of 64 MB (startThread)
 #endif

@@ -1,0 +1,10 @@
+; code-args.moritz - Musil's `args` (the command line's arguments) exists in every interpreter of Moritz, empty
+; outside moritz --run, so a script written for the command line (musil/examples/atmospheres.mu and others read
+; it for their options) takes its defaults in a code box, the Console or the code editor.
+(patch
+  (obj lb loadbang (pos 20 20))
+  (obj c code (pos 20 60)
+    (script
+      "var n (try (length args) catch e e)"
+      "if (== n 0) { print \"PASS: args is an empty list in a code box\" } { print \"FAIL: args\" n }"))
+  (connect lb 0 c 0))
