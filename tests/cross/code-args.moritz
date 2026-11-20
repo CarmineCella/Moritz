@@ -1,10 +1,18 @@
 ; code-args.moritz - Musil's `args` (the command line's arguments) exists in every interpreter of Moritz, empty
 ; outside moritz --run, so a script written for the command line (musil/examples/atmospheres.mu and others read
-; it for their options) takes its defaults in a code box, the Console or the code editor.
+; it for their options) takes its defaults in a code box, the Console or the code editor. Musil's live functions
+; stay undefined (a script asks (defined? "audio-start")), but the error says that live audio is Musil's alone,
+; and a script may still name its own function stop.
 (patch
   (obj lb loadbang (pos 20 20))
   (obj c code (pos 20 60)
     (script
       "var n (try (length args) catch e e)"
       "if (== n 0) { print \"PASS: args is an empty list in a code box\" } { print \"FAIL: args\" n }"))
-  (connect lb 0 c 0))
+  (obj l code (pos 220 60)
+    (script
+      "var e (try (audio-devices) catch e e)"
+      "function stop (x) (+ x 1)"
+      "if (and (equal? (type e) \"string\") (contains? e \"Musil's alone\") (not (defined? \"audio-start\")) (== (stop 41) 42)) { print \"PASS: Musil's live functions say they are Musil's alone\" } { print \"FAIL: live\" e }"))
+  (connect lb 0 c 0)
+  (connect lb 0 l 0))

@@ -202,6 +202,18 @@ int main() {
         A.run("serve-stop", "<A>");
 #endif
     }
+    std::cerr << "embed: absent names\n" << std::flush;   // where it stopped, if it crashes
+    {   // a host leaves a name out on purpose: still undefined, and the error says why
+        Interp I;
+        make_env(I);
+        std::ostringstream out; I.out = &out;
+        I.absent["frobnicate"] = "left out by this host";
+        std::string msg;
+        try { I.run("frobnicate 1 2 3\n", "<absent>"); } catch (const std::exception& ex) { msg = ex.what(); }
+        I.run("print (defined? \"frobnicate\")\n", "<absent>");
+        expect(msg.find("undefined: frobnicate (left out by this host)") != std::string::npos, "an absent name says why: " + msg);
+        expect(out.str() == "0\n", "an absent name is not defined: " + out.str());
+    }
     std::cerr << "embed: done\n" << std::flush;
     if (failures == 0) std::cout << "embed: all checks passed\n";
     return failures == 0 ? 0 : 1;

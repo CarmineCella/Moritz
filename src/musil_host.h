@@ -14,6 +14,7 @@
 #include "signals.h"
 #include "music.h"
 
+
 #ifdef OPAQUE      // Windows (wingdi.h) defines it; Musil has a value type of that name
 #undef OPAQUE
 #endif
@@ -27,6 +28,17 @@ inline musil::vptr musilSilentSynth(musil::vlist& a, musil::Interp& i) {
     return musil::v_arr(std::valarray<double>(0.0, (size_t)std::max(0.0, secs * sr)));
 }
 
+// the live library's functions (live.h's add_live, without synth-render), which Moritz leaves out
+inline constexpr const char* kMusilLive[] = {
+    "audio-open", "audio-close", "audio-start", "audio-stop", "audio-status", "audio-devices", "audio-time",
+    "play-buffer", "stop", "stop-all", "master-gain", "bus-reverb", "bus-reverb-off", "bus-limiter", "play-cues",
+    "stop-cues", "cues-status", "cue-cache-limit", "cue-lookahead", "bus-reverb-latency", "idle-hook!",
+    "idle-hook-off!", "idle-hooks", "voice-set", "voices", "synth", "set-param", "free", "synth-params", "synths",
+    "streamable", "tempo", "beat", "beat-time", "bpm", "live-loop", "stop-loop", "stop-loops", "loops",
+    "lookahead", "control", "toggle", "set-control", "control-value", "controls-list", "bind-control",
+    "unbind-control", "clear-controls", "osc-send", "osc-listen", "osc-map", "osc-stop", "osc-encode",
+    "osc-decode", "playhead!", "playhead-off!", "playhead"};
+
 // the C++ libraries, into an interpreter
 inline void musilLibraries(musil::Interp& i) {
     musil::add_std(i);
@@ -35,6 +47,10 @@ inline void musilLibraries(musil::Interp& i) {
     musil::add_signals(i);
     musil::add_music(i);
     i.def("synth-render", musilSilentSynth, 3, 4);
+    // the live library's functions stay undefined (scripts ask (defined? "audio-start")), but the error says
+    // why: Musil plays live on its own, Moritz plays with patches
+    for (const char* name : kMusilLive)
+        i.absent[name] = "live audio is Musil's alone: run this script with musil; in Moritz, sound is made by patches";
 }
 
 }  // namespace moritz

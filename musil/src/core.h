@@ -545,6 +545,12 @@ struct Interp {
     eptr library;                              // the builtins and the libraries (files found on the load path)
     eptr global;                               // the program's names, and the library's too (shared until the program redefines one)
     std::unordered_set<std::string> shared_names;   // the library's names the program has not redefined
+    // names a host leaves out on purpose, and why: still undefined (defined? says no), but the error says why
+    std::unordered_map<std::string, std::string> absent;
+    std::string undefined(const std::string& name) const {
+        auto it = absent.find(name);
+        return "undefined: " + name + (it == absent.end() ? "" : " (" + it->second + ")");
+    }
     std::vector<Frame> call_stack;
     int stack_depth = 0, max_stack = 100000;   // depth cap (secondary; the stack of the thread is the real guard)
     std::uintptr_t stack_base = 0;             // where the outermost evaluation on this thread started
@@ -762,7 +768,7 @@ inline vptr expr_atom(vlist& w, size_t& p, Interp& i, const eptr& e, bool run) {
         if (op_prec(a->s)) i.err("expr: unexpected operator " + a->s);
         p++; if (!run) return a;
         auto v = e->find(a->s);
-        if (!v) i.err("expr: undefined: " + a->s);
+        if (!v) i.err("expr: " + i.undefined(a->s));
         return v;
     }
     if (a->t == Value::LIST) {
@@ -944,7 +950,7 @@ try {
         if (expr->t != Value::SYM && expr->t != Value::LIST) { cleanup(); return expr; }
         if (expr->t == Value::SYM) {
             auto v = e->find(expr->s);
-            if (!v) err("undefined: " + expr->s);
+            if (!v) err(undefined(expr->s));
             cleanup(); return v;
         }
         if (expr->line) current_line = expr->line;
@@ -955,7 +961,7 @@ try {
         vptr head;
         if (l[0]->t == Value::SYM) {
             head = e->find(l[0]->s);
-            if (!head) err("undefined: " + l[0]->s);
+            if (!head) err(undefined(l[0]->s));
         } else if (l[0]->t == Value::FN) head = l[0];
         else { head = ev(l[0], e); MUSIL_FLOW(head); }
         op_t op = head->op;
