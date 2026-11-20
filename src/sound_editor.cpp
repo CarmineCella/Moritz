@@ -159,6 +159,7 @@ void SoundView::drawRuler(int X, int Y, int W) {
     fl_rectf(x(), Y, w(), kRulerH);
     double sr = d.sr() > 0 ? d.sr() : 44100.0;
     double spp = ed_->framesPerPixel(), t0 = ed_->start() / sr, t1 = (ed_->start() + spp * W) / sr;
+    if (d.frames() == 0) return;                          // nothing to measure
     double step = niceTimeStep(spp / sr, 70);
     fl_font(FL_HELVETICA, 10);
     for (double t = std::ceil(t0 / step) * step; t <= t1; t += step) {
@@ -533,6 +534,8 @@ SoundEditor::SoundEditor(int X, int Y, int W, int H, std::shared_ptr<SoundDoc> d
     end();
     resizable(view_);
     doc_->onChanged = [this] { contentsChanged(); };
+    audioBtn_->value(App::get().audio.running());
+    audioBtn_->copy_label(App::get().audio.running() ? "Audio On" : "Audio Off");
     fit();
     updateModeButtons();
     setStatus("Space plays the selection · Shift-click extends it · " + shortcutText(FL_COMMAND) +
@@ -666,7 +669,7 @@ void SoundEditor::play() {
 }
 
 void SoundEditor::stop() {
-    if (playId_) App::get().audio.preview().stop();
+    if (playing()) App::get().audio.preview().stop();   // only its own: another editor may be playing now
     playId_ = 0;
     playBtn_->value(0);
     lastPos_ = -1;

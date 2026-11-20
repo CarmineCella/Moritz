@@ -435,7 +435,7 @@ TEST(preview_threaded_survives_edits_and_closing) {
         long b0 = blocks.load();
         for (int k = 0; k < 2000 && blocks.load() < b0 + n; ++k) std::this_thread::sleep_for(std::chrono::microseconds(200));
     };
-    std::weak_ptr<const SampleBuffer> first;
+    std::weak_ptr<const SampleBuffer> first, last;
     {
         auto doc = std::make_unique<SoundDoc>();
         SampleBuffer b;
@@ -454,9 +454,27 @@ TEST(preview_threaded_survives_edits_and_closing) {
             pp.collect();
         }
         waitBlocks(5);
+        {                                                // a buffer~ replaced elsewhere while its editor plays it
+            Rig r("(patch (obj b buffer~ snd 100 2))");
+            BufferBox* b = findBuffer(&r.p, "snd");
+            b->replace(counting(3000, 2));
+            SoundDoc bd;
+            bd.bindBuffer(&r.p, "snd");
+            std::weak_ptr<const SampleBuffer> played = bd.sound();
+            uint64_t bid = pp.play(bd.sound(), 0, 0, true);
+            waitBlocks(5);
+            b->message(0, {Atom("clear")});
+            CHECK(bd.followBuffer());
+            b->message(0, {Atom("size"), Atom(10.f)});
+            waitBlocks(5);
+            CHECK(pp.active(bid) && !played.expired());   // what it plays is its own snapshot
+            last = doc->sound();                         // the edited sound, played as the editor closes
+            id = pp.play(doc->sound(), 0, 0, true);
+        }
+        waitBlocks(5);
         doc.reset();                                     // the editor closed while playing
         waitBlocks(10);
-        CHECK(!first.expired() && pp.active(id));
+        CHECK(!last.expired() && pp.active(id));     // the document is gone, its samples play on
         for (int k = 0; k < 30; ++k) {                   // replaced quickly, many times
             auto s = std::make_shared<SampleBuffer>(counting(500, 1));
             pp.play(s, 0, 0, k % 2 == 0);
@@ -468,7 +486,7 @@ TEST(preview_threaded_survives_edits_and_closing) {
     run.store(false);
     audio.join();
     pp.collect();
-    CHECK(first.expired());                              // everything handed back was freed
+    CHECK(first.expired() && last.expired());         // everything handed back was freed
     CHECK(pp.waiting() == 0);
     CHECK(sum.load() > 0.f);
 }
