@@ -290,7 +290,7 @@ Box::Box() = default;
 
 Box::~Box() {
     delete scal_.load(std::memory_order_relaxed);
-    delete inbox_.load(std::memory_order_relaxed);
+    delete inbox_.load(std::memory_order_acquire);
 }
 
 bool Box::isSignal() const {
@@ -406,7 +406,7 @@ void Box::beginBlock(uint64_t t0, int n, bool untimed) {
 }
 
 void Box::endBlock() {
-    Inbox* q = inbox_.load(std::memory_order_relaxed);
+    Inbox* q = inbox_.load(std::memory_order_acquire);
     if (!q || q->ndue == 0) return;
     Scalars* s = scal_.load(std::memory_order_acquire);
     for (int k = 0; k < q->ndue; ++k) {
@@ -417,13 +417,13 @@ void Box::endBlock() {
 }
 
 int Box::events() const {
-    Inbox* q = inbox_.load(std::memory_order_relaxed);
+    Inbox* q = inbox_.load(std::memory_order_acquire);
     return q ? q->ndue : 0;
 }
 
-const Event& Box::event(int k) const { return inbox_.load(std::memory_order_relaxed)->due[k]; }
+const Event& Box::event(int k) const { return inbox_.load(std::memory_order_acquire)->due[k]; }
 
-int Box::eventOffset(int k) const { return inbox_.load(std::memory_order_relaxed)->off[k]; }
+int Box::eventOffset(int k) const { return inbox_.load(std::memory_order_acquire)->off[k]; }
 
 const float* Box::sigIn(int i, int n) {
     const BoxIO* io = io_;
@@ -434,7 +434,7 @@ const float* Box::sigIn(int i, int n) {
     if (src.empty()) {                               // the inlet's value, changing at its events
         Scalars* s = scal_.load(std::memory_order_acquire);
         dsp::fill(buf, s && i < s->n ? s->cur[i] : 0.f, n);
-        if (Inbox* q = inbox_.load(std::memory_order_relaxed))
+        if (Inbox* q = inbox_.load(std::memory_order_acquire))
             for (int k = 0; k < q->ndue; ++k)
                 if (q->due[k].kind == kEvScalar && q->due[k].inlet == i && q->off[k] < n)
                     dsp::fill(buf + q->off[k], q->due[k].a, n - q->off[k]);
