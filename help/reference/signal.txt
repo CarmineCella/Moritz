@@ -324,8 +324,8 @@ see: send~ receive adc~
 @ tapin~
 syntax: tapin~ [max]
 Writes its input into a delay line, read by the tapout~ connected to its
-outlet. The memory is sized for 96 kHz, so at lower rates delays a little
-beyond `max` still work. Since the link does not order the two,
+outlet. The memory holds `max` ms at the rate it runs at (sized again when
+the rate changes); a longer delay is clipped to it. Since the link does not order the two,
 tapout~ -> ... -> tapin~ feedback is allowed.
 arg max: the longest delay in ms, 1-60000 (1000)
 msg clear: empties the delay line
@@ -343,8 +343,8 @@ see: tapin~ comb~ allpass~
 @ comb~
 syntax: comb~ [max] [delay] [a] [b] [c]
 Comb filter: `y = a x + b x[n-D] + c y[n-D]`, where D is the delay. The
-delay and the three gains are signals or floats; the memory is sized for
-96 kHz, as with tapin~.
+delay and the three gains are signals or floats; the memory holds `max` ms
+at the rate it runs at, as with tapin~.
 arg max: the longest delay in ms, 1-10000 (50)
 arg delay: the delay in ms (half of max)
 arg a: the gain of the input (1)
