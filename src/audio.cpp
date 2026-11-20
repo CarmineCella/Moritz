@@ -2,6 +2,7 @@
 // audio.cpp — the miniaudio engine driving Patch::process()
 
 #include "moritz.h"
+#include "preview.h"
 
 #include <algorithm>
 #include <chrono>
@@ -12,7 +13,7 @@
 namespace moritz {
 
 
-AudioEngine::AudioEngine(Patch& p) : patch_(p) {
+AudioEngine::AudioEngine(Patch& p) : patch_(p), preview_(std::make_unique<PreviewPlayer>()) {
     // the bus wider than the device (and the monitor's input): allocated once, here, never while
     // the callback may be reading it
     scratch_.assign((size_t)kScratchFrames * kMaxBus, 0.f);
@@ -22,7 +23,7 @@ AudioEngine::AudioEngine(Patch& p) : patch_(p) {
 }
 
 AudioEngine::~AudioEngine() {
-    close();
+    close();                     // no callback runs any more: the preview's voices can go
     if (contextOk_) ma_context_uninit(&context_);
 }
 
@@ -36,6 +37,12 @@ void AudioEngine::refreshDevices() {
     for (ma_uint32 i = 0; i < npb; ++i) outputs.push_back({pb[i].name, pb[i].id});
     for (ma_uint32 i = 0; i < ncap; ++i) inputs.push_back({cap[i].name, cap[i].id});
 }
+
+namespace {
+void clampOut(float* x, size_t n) {          // the preview added to what the patches made: kept in -1..1
+    for (size_t k = 0; k < n; ++k) x[k] = std::isfinite(x[k]) ? std::clamp(x[k], -1.f, 1.f) : 0.f;
+}
+}  // namespace
 
 void AudioEngine::callback(ma_device* d, void* out, const void* in, ma_uint32 frames) {
     static thread_local bool ftz = (dsp::flushDenormals(), true);
@@ -54,6 +61,7 @@ void AudioEngine::callback(ma_device* d, void* out, const void* in, ma_uint32 fr
         // own channels, or the binaural monitor on 1-2
         float* sc = self->scratch_.data();
         self->patch_.process(static_cast<const float*>(in), (int)d->capture.channels, sc, bus, (int)frames);
+        if (self->preview_->render(sc, bus, (int)frames, d->sampleRate)) clampOut(sc, (size_t)frames * bus);
         if (testing) self->addTest(sc, bus, (int)frames, d->sampleRate);
         if (mon) {
             self->renderMonitor(*mon, sc, bus, dst, devOut, (int)frames);
@@ -65,6 +73,7 @@ void AudioEngine::callback(ma_device* d, void* out, const void* in, ma_uint32 fr
         ch = bus;
     } else {
         self->patch_.process(static_cast<const float*>(in), (int)d->capture.channels, dst, devOut, (int)frames);
+        if (self->preview_->render(dst, devOut, (int)frames, d->sampleRate)) clampOut(dst, (size_t)frames * devOut);
         if (testing) self->addTest(dst, devOut, (int)frames, d->sampleRate);
     }
     if (!testing) self->lastTest_ = -1;

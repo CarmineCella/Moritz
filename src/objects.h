@@ -359,7 +359,8 @@ struct SampleBuffer {
 };
 
 bool decodeAudioFile(const std::string& path, SampleBuffer& out, std::string& err);
-bool writeWavFile(const std::string& path, const SampleBuffer& b, std::string& err);
+// a WAV file (16 or 24 bits) through the one writer (recorder.h): a temporary file, renamed once complete
+bool writeWavFile(const std::string& path, const SampleBuffer& b, std::string& err, int bits = 16);
 
 // ---------------------------------------------------------------- buffer~
 // buffer~ name [file] [ms] [channels]: named sample memory shared with

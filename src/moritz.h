@@ -605,6 +605,16 @@ private:
 // The audio thread is inside Patch::process (for the allocation guard of
 // the engine's tests: nothing in there may allocate or free).
 bool inAudioProcess();
+// Marks a stretch of the audio thread outside Patch::process that must not allocate either (the engine's
+// preview voice): inAudioProcess() is true inside it
+struct AudioScope {
+    AudioScope();
+    ~AudioScope();
+    AudioScope(const AudioScope&) = delete;
+    AudioScope& operator=(const AudioScope&) = delete;
+};
+
+class PreviewPlayer;   // preview.h
 
 // ====================================================================== audio
 
@@ -640,6 +650,8 @@ public:
     AudioSettings settings;
     std::vector<AudioDevice> outputs, inputs;
     Recorder recorder;                       // the quick recorder: what goes to the dac
+    // the sound editor's preview, played beside the patches (preview.h)
+    PreviewPlayer& preview() { return *preview_; }
     // the output's peaks since the interface last read them (takePeak)
     static constexpr int kMeterChannels = 64;
     static constexpr int kMaxBus = 64;    // the patch's output channels, at most
@@ -675,6 +687,7 @@ private:
     std::atomic<float> peak_[kMeterChannels] = {};
     std::atomic<int> bus_{2};
     std::vector<float> scratch_;              // the bus, when wider than the device (made once)
+    std::unique_ptr<PreviewPlayer> preview_;
     static constexpr int kScratchFrames = 8192;
     int notedBus_ = 0;
     struct Monitor {

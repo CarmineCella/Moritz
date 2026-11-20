@@ -36,10 +36,10 @@ bool decodeAudioFile(const std::string& path, SampleBuffer& out, std::string& er
     return true;
 }
 
-// 16-bit WAV through Moritz's one writer (recorder.h): a temporary file renamed once complete
-bool writeWavFile(const std::string& path, const SampleBuffer& b, std::string& err) {
+// a WAV file through Moritz's one writer (recorder.h): a temporary file renamed once complete
+bool writeWavFile(const std::string& path, const SampleBuffer& b, std::string& err, int bits) {
     WavWriter w;
-    if (!w.open(path, b.channels, (int)std::lround(b.sr), 16, &err)) return false;
+    if (!w.open(path, b.channels, (int)std::lround(b.sr), bits, &err)) return false;
     w.write(b.data.data(), (size_t)b.frames);
     return w.finish(&err);
 }

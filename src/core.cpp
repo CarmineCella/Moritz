@@ -260,6 +260,8 @@ const float kZeros[kMaxVector] = {};
 
 bool audioBuffersAvailable() { return tlBuffers; }
 bool inAudioProcess() { return tlInProcess > 0; }
+AudioScope::AudioScope() { ++tlInProcess; }
+AudioScope::~AudioScope() { --tlInProcess; }
 
 // the values of a box's inlets: the latest given (GUI), and the one in force
 // at the start of the block being run (audio)
