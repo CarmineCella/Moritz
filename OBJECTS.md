@@ -859,7 +859,9 @@ See also: `comb~` `tapin~` `reverb~` `fvcomb~`
 
 `buffer~ name [file] [ms] [channels]`
 
-Named sample memory. Every object that names it (play~, groove~, record~, index~, poke~, waveform~, conv~, sparkle~, pursuit, soundtypes...) reads or writes the same samples; names are shared by all open patches, as in Max. A file given as argument is read when the patch opens; otherwise the buffer is empty, or `ms` long at the audio's sample rate. Double-click it (locked) to see its waveform; right-click it to load, save or clear it.
+Named sample memory. Every object that names it (play~, groove~, record~, index~, poke~, waveform~, conv~, sparkle~, pursuit, soundtypes...) reads or writes the same samples; names are shared by all open patches, as in Max. A file given as argument is read when the patch opens; otherwise the buffer is empty, or `ms` long at the audio's sample rate. Right-click it to edit, load, save or clear it.
+
+Double-click it (locked), or any object that names it, to open the sound editor: an overview, a waveform per channel and the spectrogram (Wave, Spectrum or Both), zoomed with Cmd+ and Cmd- or Cmd and the wheel, scrolled with the wheel or the overview. Drag to select (Shift extends the selection, Cmd+A selects all), click to set the playhead; Space plays the selection, or from the playhead, through the audio output beside the patches (L loops it). The Edit menu (or the right button) cuts, copies, pastes (over the selection, or at the playhead), deletes, trims to the selection, silences, fades in or out, changes the gain, normalizes the peak to 0 dB and reverses; each edit is one step of Undo (Cmd+Z). The buffer~ changes at once for every object that uses it; it is patch memory, so nothing is marked unsaved, and Save writes a copy as a WAV file. Copied samples paste into any sound editor (a sound with other channels is mixed down or spread). File > Open Sound... edits a sound file the same way, as a document of its own that Save writes back (24-bit WAV).
 
 | Argument | |
 | --- | --- |
@@ -885,7 +887,7 @@ See also: `play~` `groove~` `record~` `waveform~` `index~` `poke~`
 
 `play~ name [channels]`
 
-Plays a buffer~ once, at its own sample rate, interpolating between samples. `start` or bang plays it from the beginning, or from `from` to `to` (ms). With a signal connected to its inlet it plays nothing by itself: it reads the buffer at that position in ms, for example from line~. Double-click it (locked) to see the buffer~.
+Plays a buffer~ once, at its own sample rate, interpolating between samples. `start` or bang plays it from the beginning, or from `from` to `to` (ms). With a signal connected to its inlet it plays nothing by itself: it reads the buffer at that position in ms, for example from line~. Double-click it (locked) to edit the buffer~ in the sound editor.
 
 | Argument | |
 | --- | --- |
@@ -913,7 +915,7 @@ See also: `buffer~` `groove~` `index~` `line~` `waveform~` `sfplay~`
 
 `groove~ name [channels]`
 
-Variable-speed playback of a buffer~: the signal in the left inlet is the rate (1 as recorded, 0.5 an octave down, negative backwards). Without looping it stops at either end; with `loop 1` it cycles between the loop start and end (inlets 2 and 3, ms). The last outlet is a sync ramp, 0 to 1 through the loop. Double-click it (locked) to see the buffer~.
+Variable-speed playback of a buffer~: the signal in the left inlet is the rate (1 as recorded, 0.5 an octave down, negative backwards). Without looping it stops at either end; with `loop 1` it cycles between the loop start and end (inlets 2 and 3, ms). The last outlet is a sync ramp, 0 to 1 through the loop. Double-click it (locked) to edit the buffer~ in the sound editor.
 
 | Argument | |
 | --- | --- |
@@ -944,7 +946,7 @@ See also: `play~` `buffer~` `sig~` `record~` `sparkle~`
 
 `record~ name [channels]`
 
-Records its signal inlets into a buffer~, from its beginning; the buffer keeps its length, so give it one (buffer~ name file, or buffer~ name ms). Recording stops at the end unless `loop 1` makes it wrap around. A buffer with more channels than inlets takes the inlets again in turn. Double-click it (locked) to see the buffer~.
+Records its signal inlets into a buffer~, from its beginning; the buffer keeps its length, so give it one (buffer~ name file, or buffer~ name ms). Recording stops at the end unless `loop 1` makes it wrap around. A buffer with more channels than inlets takes the inlets again in turn. Double-click it (locked) to edit the buffer~ in the sound editor.
 
 | Argument | |
 | --- | --- |
@@ -1083,7 +1085,7 @@ See also: `index~` `poke~` `phasor~` `line~` `sah~`
 
 `index~ name [channel]`
 
-Reads one channel of a buffer~ at the sample index in its inlet (a signal, or a number), without interpolation; indices outside the buffer read 0. Double-click it (locked) to see the buffer~.
+Reads one channel of a buffer~ at the sample index in its inlet (a signal, or a number), without interpolation; indices outside the buffer read 0. Double-click it (locked) to edit the buffer~ in the sound editor.
 
 | Argument | |
 | --- | --- |
@@ -1108,7 +1110,7 @@ See also: `poke~` `count~` `buffer~` `play~`
 
 `poke~ name [channel]`
 
-Writes the signal in its left inlet into one channel of a buffer~, at the sample index in its right inlet (signals or numbers); indices outside the buffer are ignored. Double-click it (locked) to see the buffer~.
+Writes the signal in its left inlet into one channel of a buffer~, at the sample index in its right inlet (signals or numbers); indices outside the buffer are ignored. Double-click it (locked) to edit the buffer~ in the sound editor.
 
 | Argument | |
 | --- | --- |

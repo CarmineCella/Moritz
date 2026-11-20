@@ -21,7 +21,8 @@ and the signal processing, analysis and learning of *Musil*.
 
 - **Synthesis**: oscillators, noise, FM, granular synthesis (`nebula~`, and a
   granulator built from `poly~`), polyphonic instruments.
-- **Sound files**: buffers, players, looping, recording, waveform views, and
+- **Sound files**: buffers, players, looping, recording, a sound editor
+  (waveform and spectrogram, selection, cut and paste, fades, undo), and
   offline rendering of whole patches into sound.
 - **Filters and effects**: resonant and state-variable filters, biquads
   designed and drawn on screen, delays, a reverb, zero-latency convolution
@@ -190,8 +191,20 @@ Moritz follows Max's conventions:
   over), and closing it asks only when you edited it, not when you played.
 - **Right-click** also offers what a box can do: load or save a `buffer~`,
   open a `plot`'s window or export it, choose the file of `sfplay~` and
-  `sfrecord~`. Double-clicking an object that names a `buffer~` (locked)
-  shows its waveform, as in Max.
+  `sfrecord~`.
+- **Sound editor**: double-click a `buffer~` (locked), or any object that
+  names one, to edit its sound; File > Open Sound... does the same for a
+  sound file. It shows an overview, a waveform per channel and the
+  spectrogram (Wave, Spectrum or Both), with a time ruler; Cmd+ and Cmd-
+  (or Cmd and the wheel) zoom, the wheel or the overview scrolls. Drag to
+  select, Shift-click to extend, click to set the playhead; Space plays the
+  selection (or from the playhead) through the audio output, beside the
+  patches, and L loops it. Edit (or the right button) cuts, copies, pastes,
+  deletes, trims, silences, fades in and out, changes the gain, normalizes
+  and reverses, each edit one step of Undo. A `buffer~` changes at once for
+  every object that uses it (the status line says which); a sound file is
+  saved back as a 24-bit WAV file, and closing it asks when it has edits.
+  Samples copied in one editor paste into another.
 - **Zoom**: Cmd+ and Cmd- (or the toolbar) zoom the patch; View > Interface
   makes the whole interface larger or smaller.
 - **Code view**: Cmd+T shows the patch as text beside the drawing. Edit

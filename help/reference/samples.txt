@@ -6,8 +6,24 @@ Named sample memory. Every object that names it (play~, groove~, record~,
 index~, poke~, waveform~, conv~, sparkle~, pursuit, soundtypes...) reads or
 writes the same samples; names are shared by all open patches, as in Max. A
 file given as argument is read when the patch opens; otherwise the buffer is
-empty, or `ms` long at the audio's sample rate. Double-click it (locked) to see
-its waveform; right-click it to load, save or clear it.
+empty, or `ms` long at the audio's sample rate. Right-click it to edit, load,
+save or clear it.
+
+Double-click it (locked), or any object that names it, to open the sound
+editor: an overview, a waveform per channel and the spectrogram (Wave,
+Spectrum or Both), zoomed with Cmd+ and Cmd- or Cmd and the wheel, scrolled
+with the wheel or the overview. Drag to select (Shift extends the selection,
+Cmd+A selects all), click to set the playhead; Space plays the selection, or
+from the playhead, through the audio output beside the patches (L loops it).
+The Edit menu (or the right button) cuts, copies, pastes (over the selection,
+or at the playhead), deletes, trims to the selection, silences, fades in or
+out, changes the gain, normalizes the peak to 0 dB and reverses; each edit is
+one step of Undo (Cmd+Z). The buffer~ changes at once for every object that
+uses it; it is patch memory, so nothing is marked unsaved, and Save writes a
+copy as a WAV file. Copied samples paste into any sound editor (a sound with
+other channels is mixed down or spread). File > Open Sound... edits a sound
+file the same way, as a document of its own that Save writes back (24-bit
+WAV).
 arg name: the name the other objects use (required)
 arg file: a sound file read when the patch opens: WAV, AIFF, FLAC or MP3, relative to the patch (or among the bundled sounds)
 arg ms: the length of an empty buffer, in milliseconds (0)
@@ -24,7 +40,7 @@ Plays a buffer~ once, at its own sample rate, interpolating between samples.
 `start` or bang plays it from the beginning, or from `from` to `to` (ms).
 With a signal connected to its inlet it plays nothing by itself: it reads the
 buffer at that position in ms, for example from line~. Double-click it
-(locked) to see the buffer~.
+(locked) to edit the buffer~ in the sound editor.
 arg name: the buffer~ to play (required)
 arg channels: the number of outlets, 1 to 8 (1); a mono buffer plays on all of them
 msg start [from [to]]: plays from `from` (ms, 0) to `to` (ms; the end when missing or 0)
@@ -39,7 +55,7 @@ Variable-speed playback of a buffer~: the signal in the left inlet is the
 rate (1 as recorded, 0.5 an octave down, negative backwards). Without looping
 it stops at either end; with `loop 1` it cycles between the loop start and
 end (inlets 2 and 3, ms). The last outlet is a sync ramp, 0 to 1 through the
-loop. Double-click it (locked) to see the buffer~.
+loop. Double-click it (locked) to edit the buffer~ in the sound editor.
 arg name: the buffer~ to play (required)
 arg channels: the number of audio outlets, 1 to 8 (1)
 msg number: jumps to that position (ms); in inlets 2 and 3, the loop start and end (ms; an end of 0, or not after the start, is the end of the buffer)
@@ -54,7 +70,7 @@ Records its signal inlets into a buffer~, from its beginning; the buffer
 keeps its length, so give it one (buffer~ name file, or buffer~ name ms).
 Recording stops at the end unless `loop 1` makes it wrap around. A buffer
 with more channels than inlets takes the inlets again in turn. Double-click
-it (locked) to see the buffer~.
+it (locked) to edit the buffer~ in the sound editor.
 arg name: the buffer~ to record into (required)
 arg channels: the number of signal inlets, 1 to 8 (1)
 msg 1 / 0: 1 starts recording from the beginning, 0 stops (left inlet)
@@ -122,7 +138,7 @@ see: index~ poke~ phasor~ line~ sah~
 syntax: index~ name [channel]
 Reads one channel of a buffer~ at the sample index in its inlet (a signal,
 or a number), without interpolation; indices outside the buffer read 0.
-Double-click it (locked) to see the buffer~.
+Double-click it (locked) to edit the buffer~ in the sound editor.
 arg name: the buffer~ to read (required)
 arg channel: the channel to read, from 1 (1)
 msg set name: reads another buffer~
@@ -132,7 +148,7 @@ see: poke~ count~ buffer~ play~
 syntax: poke~ name [channel]
 Writes the signal in its left inlet into one channel of a buffer~, at the
 sample index in its right inlet (signals or numbers); indices outside the
-buffer are ignored. Double-click it (locked) to see the buffer~.
+buffer are ignored. Double-click it (locked) to edit the buffer~ in the sound editor.
 arg name: the buffer~ to write (required)
 arg channel: the channel to write, from 1, at most the buffer's channels (1)
 msg set name: writes into another buffer~

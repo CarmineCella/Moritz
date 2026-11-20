@@ -12,6 +12,8 @@
   (obj cbuf comment "size keeps the start; clear fills it with silence" (pos 300 156))
   (obj wf waveform~ helpbuf 420 110 (pos 20 195))
   (obj cwf comment "waveform~ shows the buffer" (pos 450 196))
+  (obj ced comment "double-click buffer~ or play~ (locked): the sound editor" (pos 450 222))
+  (obj ced2 comment "drag to select, Space plays, Edit cuts, fades ..., Cmd+Z undoes" (pos 450 240))
   (obj st message start (pos 20 325))
   (obj cst comment "play it once" (pos 75 326))
   (obj pl play~ helpbuf (pos 20 360))
