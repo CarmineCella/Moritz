@@ -75,6 +75,7 @@ clock
 cluster-sizes
 coherence-time
 col-stack
+coll->score
 comb
 complex-mul
 compose
@@ -96,6 +97,7 @@ count-substr
 cov
 cumsum
 cwd
+data->score
 db->amp
 db-gen
 db-index-size
@@ -357,6 +359,7 @@ out
 outer
 pad-left
 pad-right
+pairs
 pan
 pan-azimuth
 pan-n
@@ -422,6 +425,25 @@ rotate-vec
 round
 same?
 schroeder-reverb
+score->coll
+score->data
+score->text
+score-add!
+score-bbt
+score-bbt->sec
+score-copy
+score-duration
+score-find
+score-flatten
+score-make
+score-pan-gains
+score-placed
+score-query
+score-read
+score-remove-id!
+score-take-id!
+score-write
+score?
 seed
 segments
 self-similarity
@@ -493,6 +515,7 @@ tau-const
 tempo-estimate
 tempo-estimate-with
 tempogram
+text->score
 times
 trace
 train-test-split

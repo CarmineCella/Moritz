@@ -46,6 +46,7 @@ const ClassTable& classDefs() {
         registerSoundtypesObjects(v);
         registerOrchideaObjects(v);
         registerCodeObjects(v);
+        registerScoreObjects(v);
         std::stable_sort(v.begin(), v.end(), [](const ClassDef& a, const ClassDef& b) {
             return groupRank(a.group) < groupRank(b.group);
         });

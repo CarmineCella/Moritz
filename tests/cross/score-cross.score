@@ -1,0 +1,10 @@
+; the score of score.moritz (a cross-test): sounds placed, cut, faded, a region, a gain, a placement inside
+(score "cross"
+  (sr 44100) (bpm 60) (meter 4 4) (next-id 6)
+  (sound 0.1 0.6 "../../data/Vox.wav" (id 1) (az 30))
+  (sound 0.4 0.5 "../../data/drums.wav" (id 2) (gain 0.5))
+  (sound 0.9 0.4 "../../data/cage.wav" (id 3) (az -60) (from 0.5) (to 0.7))
+  (msg 0.2 tonic 62 (id 4))
+  (score 0.95 (score "inner"
+      (sr 44100) (bpm 60) (meter 4 4) (next-id 2)
+      (sound 0 0.3 "../../data/Vox.wav" (id 1) (from 1))) (dur 0.25) (id 5) (gain 0.7) (az 20)))

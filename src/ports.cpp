@@ -225,6 +225,9 @@ const std::map<std::string, PortDocs>& docs() {
                         "I/O buffer size (samples)", "CPU load (% of the buffer's time)"}}},
         // timing
         {"metro", {{"1 or bang starts, 0 or stop stops", "interval (ms)"}, {"bang every interval"}}},
+        {"transport", {{"play, stop, locate bar [beat], seek ms, loop bar1 bar2, tempo bpm, meter n d, bang"},
+                       {"bar (from 1)", "beat (from 1)", "position in ms", "1 when it starts, 0 when it stops"}}},
+        {"score", {{"read/write file.score, clear, add note|sound|msg ..., play, stop, locate bar, info"}, {}}},
         {"delay", {{"bang starts (or restarts), stop cancels; a number sets the time and starts", "delay time (ms)"},
                    {"bang after the delay"}}},
         {"line", {{"target [time [grain]]: ramp to target", "ramp time (ms)", "grain: ms between outputs"},
@@ -305,7 +308,13 @@ std::string portHelp(const Box* b, bool outlet, int i) {
     std::string text;
 
     // objects whose ports depend on their arguments
-    if (c == "trigger" || c == "t") {
+    if (c == "score" && outlet) {
+        int ch = nOuts - 3;
+        if (i < ch) text = "its sounds, channel " + std::to_string(i + 1) + " of " + std::to_string(ch);
+        else if (i == ch) text = "notes: pitch velocity duration-ms row dynamics technique";
+        else if (i == ch + 1) text = "messages: name values... (patch events: patch name duration-ms args...)";
+        else text = "info: end when it plays past its last event; info rows events seconds";
+    } else if (c == "trigger" || c == "t") {
         if (!outlet) text = "anything: sent out of the outlets from right to left";
         else {
             char k = i < (int)b->args.size() ? b->args[(size_t)i].str()[0] : 'a';

@@ -1,0 +1,30 @@
+; score.moritz - cross-test: the score object playing score-cross.score against Musil's score-render of the same file
+; (tools/test-patches.sh): the same sounds on the same samples, cut, faded and placed the same way
+(patch
+  (obj lb loadbang (pos 20 20))
+  (obj s score cross score-cross.score 2 (pos 20 60))
+  (obj b buffer~ xscore 1500 2 (pos 260 20))
+  (obj on message 1 (pos 160 60))
+  (obj go message play (pos 100 20))
+  (obj r record~ xscore 2 (pos 20 110))
+  (obj dl delay 1600 (pos 300 60))
+  (obj c code (pos 300 100)
+    (script
+      "; what the score object played (recorded from its first sample) against Musil's dry stereo mix of the same file"
+      "load \"music.mu\""
+      "var s (score-read \"score-cross.score\")"
+      "var want (score-render s \"stereo\")"
+      "var got (buffer \"xscore\")"
+      "var n 60000"
+      "var d (max (max (abs (- (take (head got) n) (take (head want) n)))) (max (abs (- (take (last got) n) (take (last want) n)))))"
+      "var level (max (abs (take (head want) n)))"
+      "print \"cross score: largest difference\" d \"level\" (fixed level 3)"
+      "if (or (> d 1e-4) (< level 0.05)) { print \"FAIL: the score object and Musil's score-render disagree\" } { print \"PASS: the score object and Musil's score-render agree\" }"))
+  (connect lb 0 on 0)
+  (connect on 0 r 0)
+  (connect lb 0 go 0)
+  (connect go 0 s 0)
+  (connect s 0 r 0)
+  (connect s 1 r 1)
+  (connect lb 0 dl 0)
+  (connect dl 0 c 0))

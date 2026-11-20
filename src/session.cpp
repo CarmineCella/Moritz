@@ -7,6 +7,7 @@
 #include "musil_host.h"
 #include "gui.h"
 #include "objects.h"
+#include "transport.h"
 
 #include <FL/Fl.H>
 
@@ -162,9 +163,15 @@ void onMainWait(const std::function<void()>& f) {
     if (ex) std::rethrow_exception(ex);
 }
 
-// Musil values as a message: numbers, strings and symbols, lists spliced
+// Musil values as a message: numbers, strings and symbols, lists spliced; a score as `score <token>` (a copy without
+// what only Musil holds, made here on the code's thread, that a score object takes)
 void toMessage(const musil::vptr& v, Message& m) {
     if (!v || v->t == musil::Value::NIL) return;
+    if (musil::score_musil::isScore(v)) {
+        m.push_back(Atom("score"));
+        m.push_back(Atom(shareScore(musil::score_musil::detached(*std::static_pointer_cast<musil::score::Score>(v->opaque)))));
+        return;
+    }
     if (v->t == musil::Value::NUM) {
         for (double d : v->num) m.push_back(Atom(d));
     } else if (v->t == musil::Value::LIST) {
@@ -200,7 +207,8 @@ musil::vptr fnSend(musil::vlist& a, musil::Interp& I) {
     return musil::v_nil();
 }
 
-// (out k values...) out of outlet k of the code box (from 1); a list is sent as one message
+// (out k values...) out of outlet k of the code box (from 1); a list is sent as one message, a score (score-make,
+//   score-read...) as score <token>, which a score object takes
 musil::vptr fnOut(musil::vlist& a, musil::Interp& I) {
     int k = (int)I.scalar(a[0]);
     Message m;

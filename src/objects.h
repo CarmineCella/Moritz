@@ -74,6 +74,7 @@ void registerMapleObjects(ClassTable& t);
 void registerSoundtypesObjects(ClassTable& t);
 void registerOrchideaObjects(ClassTable& t);
 void registerCodeObjects(ClassTable& t);
+void registerScoreObjects(ClassTable& t);
 
 // abstraction lookup, used by makeBox for unknown class names
 std::unique_ptr<Box> makeAbstraction(const std::string& path, const Message& args, Patch* context);

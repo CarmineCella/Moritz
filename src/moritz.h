@@ -373,6 +373,7 @@ struct PatchPlan {
 
 class ReceiveBox;
 class BufferBox;
+class Transport;
 
 // ====================================================================== patch
 
@@ -538,6 +539,9 @@ public:
     int renderDepth = 0;                  // moritz: how deep this patch is rendered inside others
     uint64_t compiles = 0;                // root: how many times the graph was compiled (tests)
     void audioChanged() { forEachBox([](Box* b) { b->audioChanged(); }); }
+
+    // ---- the clock of transport and score (transport.h): one for the root and everything in it, made on first use
+    std::shared_ptr<Transport> transport;
 
     // ---- MIDI (GUI thread): input goes to every box; output to the root's hook
     std::function<void(const std::vector<unsigned char>&)> onMidiOut;
