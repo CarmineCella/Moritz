@@ -81,7 +81,7 @@ public:
         setScalar(0, live_ ? 0.f : 1.f);   // speed 1
         setScalar(1, 1.f);                  // pitch
         setScalar(2, 1.f);                  // formants
-        setScalar(3, .5f);                  // cross amount
+        setScalar(3, 1.f);                  // cross amount: the second sound fully
         ready_ = 0;
     }
     ~SparkleBox() override {

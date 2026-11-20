@@ -92,7 +92,7 @@ left inlet. A frame is computed while the next hop plays (on a thread of its own
 comes one hop late, and one window and one hop late when transforming the input. Pitch and formant ratios (inlets 2 and 3,
 0.05 to 8) are read once per frame. Cross-synthesis mixes in a second sound:
 a buffer~ (read at the same position, or on its own when the first sound is
-live), or else the signal in inlet 5; inlet 4 is the amount (0.5).
+live), or else the signal in inlet 5; inlet 4 is the amount (1).
 arg buffer: the buffer~ to play; without it the object transforms its input
 arg channels: with a buffer~, the number of channels, 1 to 8 (1)
 arg window: the window in samples, 64 to 16384 (2048); the FFT is twice the next power of two
