@@ -124,6 +124,12 @@ and real sounds from `examples/sounds`.
   moved as blocks; their notes are edited with the roll.
 - **0.14: the roll and the active `score` object** (mockups 5 and 2): editing notes, the inline
   score box, the Generate and Transform panel (Musil offline), coll (mockup 9).
+- **After the roll: a multitrack mode, as in Reaper.** The timeline of 0.13 is designed for it from
+  the start (tracks with a mixer strip, inputs and disk streaming in the model, even before they are
+  all built); then recording into tracks (arming, several inputs, punch-in, latency compensation),
+  long files streamed from disk, a mixer (faders, pan, mute and solo, sends and buses, meters),
+  non-destructive clip edits (fades, crossfades, gain, stretch), tracks processed on several cores.
+  VST/AU plug-ins, if ever, last: patches already are the effects.
 - **Musil in Moritz, alongside 0.12 and 0.13:** a clear message for Musil's live functions in
   Moritz; Musil's plots as a host service (show and save-png in Moritz, one renderer with the plot
   object); one datasets folder with the TinySOL download, for both.
