@@ -268,6 +268,8 @@ highest one used sets the number of inlets. `$f` and `$i` read them too,
 functions: sin cos tan asin acos atan sinh cosh tanh exp log log10 sqrt abs
 floor ceil int round, pow atan2 min max fmod random(lo, hi). A result that
 is not a finite number gives 0; errors are printed in the console.
+random() gives the same numbers at each run (its seed comes from the box's
+id); `seed n` seeds it again, at the next block.
 arg expression: the expression, e.g. `$v1 * (1 - $v3) + $v2 * $v3`
 see: expr +~ *~ clip~
 

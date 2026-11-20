@@ -97,8 +97,9 @@ Operators: + - * / % (dividing by 0 gives 0), the comparisons == != < > <=
 >= (1 or 0), && || ! (logic), unary minus, and ( ) for grouping. Functions
 of one argument: sin cos tan asin acos atan sinh cosh tanh exp log log10
 sqrt abs fabs floor ceil int round. Of two: pow(x, y), atan2(y, x),
-min(a, b), max(a, b), fmod(a, b), random(lo, hi) (a decimal from lo to hi).
-The constant pi.
+min(a, b), max(a, b), fmod(a, b), random(lo, hi) (a decimal from lo to hi:
+the same numbers at each run, the seed coming from the box's id; `seed n`
+seeds it again). The constant pi.
 arg expression: the expression, written on the box (required)
 msg number: sets $f1 / $i1 and outputs the result
 msg list a b ...: sets $f1, $f2 ... in order and outputs the result
