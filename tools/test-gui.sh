@@ -173,8 +173,10 @@ then ok; else fail "a box dropped into a cable with Shift (got $seq)"; fi
 # 18. a help patch is a document to play with, edit and copy from: unlocked, its boxes are copied into a new patch;
 #     played with, it closes without a question; edited, Save asks where (not the shipped file, which stays as it
 #     was), and closing asks first
+# (the new window is brought to the front first: on X11 without a window manager, and slower under a sanitizer,
+# it may come up after the paste)
 run --window-png none act=help:metro act=menu:patch.edit act=menu:edit.selectall act=menu:edit.copy act=menu:file.new \
-    act=wait:0.3 act=menu:edit.paste act=canvas
+    act=wait:0.5 act=raise:last act=wait:0.5 act=menu:edit.paste act=canvas
 expect "boxes copied from a help patch" "state: canvas Untitled — edited — Moritz locked no"
 expect "all of them" "state: canvas boxes 25"
 run --window-png none act=help:function act=click:fn act=canvas act=closefront act=state   # a point added to its function

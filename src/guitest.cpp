@@ -34,6 +34,7 @@
 //   act=codesave              the front code editor's Save
 //   act=raise:code            the first code editor's window comes to the front, as a click on it does
 //   act=raise:doc             the first document's window, the same
+//   act=raise:last            the newest document's window, the same
 //   act=menuitem:<command>    print: the command's item in the menu bar, active or not
 //   act=state                 print: the documents, the front one's state, the code editors
 //   act=canvas                print: the front patch window, locked or not, its boxes, the help patch it shows
@@ -267,6 +268,7 @@ bool act(const std::string& a) {
         Fl_Window* w = nullptr;
         if (arg == "code" && !app.codeWindows().empty()) w = app.codeWindows().front();
         if (arg == "doc") w = front();
+        if (arg == "last" && !App::get().docs.empty()) w = App::get().docs.back();   // the newest document
         if (!w) return false;
         w->show();
         Fl::first_window(w);

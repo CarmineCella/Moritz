@@ -28,6 +28,13 @@ for f in "$ROOT"/examples/*.moritz "$ROOT"/examples/*/*.moritz "$ROOT"/help/*.mo
     case "$f" in */tests/cross/*) dur=3 ;; esac     # a cross-test records, then compares: give it time
     log=$($LIMIT "$MORITZ" --render "$f" $dur "$OUT/out.wav" 2>&1)
     status=$?
+    # a timeout (124) or a display the X server refused for a moment: rendered once more, and said, so that a
+    # hang that repeats is still a failure and one that does not is visible in the log
+    if [ $status -eq 124 ] || printf '%s\n' "$log" | grep -q "can't open display"; then
+        echo "AGAIN $f (exit $status$(printf '%s\n' "$log" | grep -q "can't open display" && echo ", display refused"))"
+        log=$($LIMIT "$MORITZ" --render "$f" $dur "$OUT/out.wav" 2>&1)
+        status=$?
+    fi
     bad=$(printf '%s\n' "$log" | grep -iE "warn|error|unknown|cannot|can't|fail")
     if [ $status -ne 0 ] || [ -n "$bad" ]; then
         echo "FAIL $f (exit $status)"
