@@ -45,6 +45,19 @@ inline bool storeBuffer(Patch* patch, const std::string& name, const std::vector
     return true;
 }
 
+// The processing of a patch rendered offline (render, and the sound editor's Process > A patch...), on the job's
+// thread: total frames of the patch ip (made and loaded on the GUI thread, with its clock reading frame), its adc~
+// fed from in (inCh channels interleaved), its dac~ channels into result (as many channels as result has, each
+// total frames long, made before). Returns when done or cancelled.
+void renderBlocks(Patch* ip, long& frame, long total, const std::vector<float>& in, int inCh,
+                  std::vector<std::vector<float>>& result, Job& job);
+
+// nmf's unsupervised separation (objects_offline.cpp; the sound editor's Process menu runs it too): the K components
+// of a mono sound (an FFT of n points), each resynthesised through its soft mask, so they add up to the sound; on
+// the job's thread; false if the job was cancelled
+bool nmfSeparate(const std::vector<float>& x, int K, int iters, int n, unsigned seed, Job& job,
+                 std::vector<std::vector<float>>& out);
+
 // The common shape: outlets progress and done, `stop`, a job.
 class OfflineBox : public Box {
 public:

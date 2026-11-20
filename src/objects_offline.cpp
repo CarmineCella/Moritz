@@ -176,33 +176,7 @@ private:
         auto result = std::make_shared<std::vector<std::vector<float>>>((size_t)ch, std::vector<float>((size_t)total, 0.f));
         Patch* ip = inner_.get();
         run(
-            [ip, frame, total, ch, in, inCh, result](Job& job) {
-                dsp::FlushDenormalsScope ftz;         // as the audio callback: no slow denormals
-                // the worker dispatches the patch's messages while it renders: what other
-                // threads send it (a code box's output) waits for the next block
-                struct Owner {
-                    Patch* p;
-                    explicit Owner(Patch* q) : p(q) { if (!jobsSynchronous) p->setDispatchThread(std::this_thread::get_id()); }
-                    ~Owner() { p->setDispatchThread(std::thread::id()); }
-                } owner(ip);
-                const int blk = dsp::kBlock;
-                std::vector<float> out((size_t)blk * ch), inBlock((size_t)blk * std::max(1, inCh), 0.f);
-                for (long f = 0; f < total; f += blk) {
-                    if (job.cancelled()) return;
-                    *frame = f;
-                    ip->drainForeign();
-                    int n = (int)std::min<long>(blk, total - f);
-                    ip->runDue((double)(f + n) / ip->sampleRate.load());   // timers due in the block
-                    for (int i = 0; i < n * inCh; ++i) {
-                        size_t s = (size_t)f * inCh + i;
-                        inBlock[(size_t)i] = s < in.size() ? in[s] : 0.f;
-                    }
-                    ip->process(inCh ? inBlock.data() : nullptr, inCh, out.data(), ch, n);
-                    for (int c = 0; c < ch; ++c)
-                        for (int i = 0; i < n; ++i) (*result)[(size_t)c][(size_t)(f + i)] = out[(size_t)i * ch + c];
-                    if ((f / blk) % 256 == 0) job.progress((float)f / total);
-                }
-            },
+            [ip, frame, total, in, inCh, result](Job& job) { renderBlocks(ip, *frame, total, in, inCh, *result, job); },
             [this, out, result, prints, sr] {
                 inner_.reset();
                 for (auto& s : prints->second) patch->print(s);
@@ -304,6 +278,24 @@ private:
         return V;
     }
     static void randomise(std::vector<float>& v, unsigned seed) { nmf_init(v, seed); }
+
+public:
+    // unsupervised: the K components of a mono sound, each resynthesised (they add up to the sound); false if
+    // the job was cancelled
+    static bool separate(const std::vector<float>& x, int K, int iters, int n, unsigned seed, Job& job,
+                         std::vector<std::vector<float>>& out) {
+        Stft s;
+        s.analyse(x, n, n / 4, &job, 0.f, .1f);
+        int F = s.bins, T = s.frames;
+        std::vector<float> V = spectrogram(s), W((size_t)F * K), H((size_t)K * T);
+        randomise(W, seed);
+        randomise(H, seed + 1);
+        if (!nmfFactor(V, F, T, K, iters, W, H, false, job, .1f, .9f)) return false;
+        synthesise(s, W, H, F, T, K, std::vector<std::vector<int>>(), out, job);
+        return !job.cancelled();
+    }
+
+private:
     void start(const std::string& src, const std::string& dst) {
         if (busy()) return;
         BufferBox* b = source(src);
@@ -314,16 +306,7 @@ private:
         unsigned seed = seed_;
         auto result = std::make_shared<std::vector<std::vector<float>>>();
         run(
-            [x, K, iters, n, seed, result](Job& job) {
-                Stft s;
-                s.analyse(*x, n, n / 4, &job, 0.f, .1f);
-                int F = s.bins, T = s.frames;
-                std::vector<float> V = spectrogram(s), W((size_t)F * K), H((size_t)K * T);
-                randomise(W, seed);
-                randomise(H, seed + 1);
-                if (!nmfFactor(V, F, T, K, iters, W, H, false, job, .1f, .9f)) return;
-                synthesise(s, W, H, F, T, K, std::vector<std::vector<int>>(), *result, job);
-            },
+            [x, K, iters, n, seed, result](Job& job) { separate(*x, K, iters, n, seed, job, *result); },
             [this, dst, result, sr] { storeBuffer(patch, dst, *result, sr); });
     }
     void learn(const std::string& src) {
@@ -477,6 +460,40 @@ private:
 };
 
 }  // namespace
+
+void renderBlocks(Patch* ip, long& frame, long total, const std::vector<float>& in, int inCh,
+                  std::vector<std::vector<float>>& result, Job& job) {
+    dsp::FlushDenormalsScope ftz;         // as the audio callback: no slow denormals
+    // the worker dispatches the patch's messages while it renders: what other
+    // threads send it (a code box's output) waits for the next block
+    struct Owner {
+        Patch* p;
+        explicit Owner(Patch* q) : p(q) { if (!jobsSynchronous) p->setDispatchThread(std::this_thread::get_id()); }
+        ~Owner() { p->setDispatchThread(std::thread::id()); }
+    } owner(ip);
+    const int blk = dsp::kBlock, ch = (int)result.size();
+    std::vector<float> out((size_t)blk * std::max(1, ch)), inBlock((size_t)blk * std::max(1, inCh), 0.f);
+    for (long f = 0; f < total; f += blk) {
+        if (job.cancelled()) return;
+        frame = f;
+        ip->drainForeign();
+        int n = (int)std::min<long>(blk, total - f);
+        ip->runDue((double)(f + n) / ip->sampleRate.load());   // timers due in the block
+        for (int i = 0; i < n * inCh; ++i) {
+            size_t s = (size_t)f * inCh + i;
+            inBlock[(size_t)i] = s < in.size() ? in[s] : 0.f;
+        }
+        ip->process(inCh ? inBlock.data() : nullptr, inCh, out.data(), ch, n);
+        for (int c = 0; c < ch; ++c)
+            for (int i = 0; i < n; ++i) result[(size_t)c][(size_t)(f + i)] = out[(size_t)i * ch + c];
+        if ((f / blk) % 256 == 0) job.progress((float)f / total);
+    }
+}
+
+bool nmfSeparate(const std::vector<float>& x, int K, int iters, int n, unsigned seed, Job& job,
+                 std::vector<std::vector<float>>& out) {
+    return NmfBox::separate(x, K, iters, n, seed, job, out);
+}
 
 void registerOfflineObjects(ClassTable& t) {
     t.insert(t.end(), {

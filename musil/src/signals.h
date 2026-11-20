@@ -297,11 +297,9 @@ inline vptr sig_allpass(vlist& a, Interp& i) {
 
 // --- the phase vocoder ---------------------------------------------------------------
 // (pvoc x opts): sparkle's phase vocoder (signals/vocoder.h, the engine of Moritz's sparkle~) over
-// a whole sound. Fixed synthesis hop I = window/overlap, analysis hop D = I/stretch (so the
-// synthesis overlap never thins out). Parameters may ramp: a value given as (list start end).
-// The threshold is a fraction of the magnitude a sine at the sound's peak would have.
-struct pvoc_opts { double stretch0 = 1, stretch1 = 1, pitch0 = 1, pitch1 = 1, form0 = 1, form1 = 1, thr0 = 0, thr1 = 0, xa0 = 0, xa1 = 0;
-                   int window = 2048, overlap = 8, pad = 1, env = 0, xmode = 0; std::string phase; const varr* other = nullptr; };
+// a whole sound (dsp::pvoc, which the sound editor of Moritz runs too). Parameters may ramp: a value
+// given as (list start end).
+struct pvoc_opts : dsp::PvocOptions { std::string phase; const varr* other = nullptr; };
 inline void pvoc_ramp(Interp& i, const vptr& v, double& a, double& b) {
     if (v->t == Value::LIST) { if (v->l.size() != 2) i.bad("a ramp is (list start end)"); a = i.scalar(v->l[0]); b = i.scalar(v->l[1]); }
     else a = b = i.scalar(v);
@@ -332,58 +330,10 @@ inline vptr sig_pvoc(vlist& a, Interp& i) {
     if (!o.phase.empty() && o.phase != "robot" && o.phase != "whisper") i.bad("phase is \"robot\" or \"whisper\"");
     size_t tot = x.size(); if (tot == 0) return v_arr(varr());
     if (o.other && o.other->size() == 0) i.bad("cross: the other sound is empty");
-    dsp::Vocoder voc(o.window, o.pad);
-    voc.envelope = o.env; voc.crossMode = o.xmode; voc.phaseMode = o.phase == "robot" ? 1 : o.phase == "whisper" ? 2 : 0;
-    if (voc.phaseMode == 2) voc.seed((uint32_t)i.rng());     // only whisper draws: the other random numbers stay where they were
-    size_t Wn = (size_t)o.window, I = std::max<size_t>(1, Wn / (size_t)o.overlap);
-    double D0 = (double)I / o.stretch0, D1 = (double)I / o.stretch1;
-    size_t frames = (size_t)std::ceil((double)tot / ((D0 + D1) / 2));
-    // the frames whose windows reach into the output from before its start or after its end: computed too (the
-    // signal padded with a window of zeros on both sides), so the first window does not fade the attack in and the
-    // last does not fade the end out; the output is then trimmed to the frames proper
-    size_t edge = (Wn + I - 1) / I - 1;
-    double peak = 0; for (double v : x) peak = std::max(peak, std::fabs(v));
-    std::vector<double> out(I * (frames + 2 * edge) + Wn, 0.0), now(Wn), prev(Wn), onow(Wn), oprev(Wn), frame(Wn);
-    auto fill = [&](const varr& sig, long p, bool wrap, std::vector<double>& w) {
-        long n = (long)sig.size();
-        for (size_t k = 0; k < Wn; k++) {
-            long idx = p + (long)k;
-            if (wrap) { idx %= n; if (idx < 0) idx += n; w[k] = sig[(size_t)idx]; }
-            else w[k] = idx >= 0 && idx < n ? sig[(size_t)idx] : 0.0;
-        }
-    };
-    // one frame at the read position, synthesis hop Isyn, the parameters at t (0..1 over the frames), into frame
-    auto run = [&](dsp::Vocoder& v, double read, double t, double Isyn) {
-        double D = D0 + (D1 - D0) * t, P = o.pitch0 + (o.pitch1 - o.pitch0) * t, K = o.form0 + (o.form1 - o.form0) * t;
-        double T = o.thr0 + (o.thr1 - o.thr0) * t, A = o.xa0 + (o.xa1 - o.xa0) * t;
-        long p = (long)std::floor(read), Dn = std::max(1L, std::lround(D));
-        fill(x, p, false, now); fill(x, p - Dn, false, prev);
-        if (o.xmode) { fill(*o.other, p, true, onow); fill(*o.other, p - Dn, true, oprev); }
-        v.process(now.data(), prev.data(), o.xmode ? onow.data() : (const double*)nullptr, o.xmode ? oprev.data() : (const double*)nullptr,
-                  (double)Dn, Isyn, P, K, T * peak, A, frame.data());
-        return D;
-    };
-    double read = 0;
-    for (size_t f = 0; f < frames + edge; f++) {          // from the start on, past the end by the edge frames
-        double t = frames > 1 ? std::min(1.0, (double)f / (frames - 1)) : 0;
-        read += run(voc, read, t, (double)I);
-        for (size_t k = 0; k < Wn; k++) out[(edge + f) * I + k] += frame[k];
-    }
-    if (edge > 0) {
-        // before the start: a second vocoder walks back from the first frame (synthesis hop -I), so its phases are
-        // the main one's continued back in time and the two overlap-add coherently. Same settings, same first frame
-        // (its output is the main vocoder's: dropped); a negative hop negates the frame's scale, undone here
-        dsp::Vocoder back(o.window, o.pad);
-        back.envelope = voc.envelope; back.crossMode = voc.crossMode; back.phaseMode = voc.phaseMode;
-        if (back.phaseMode == 2) back.seed((uint32_t)i.rng());
-        run(back, 0, 0, (double)I);
-        for (size_t k = 1; k <= edge; k++) {
-            run(back, -(double)k * D0, 0, -(double)I);
-            for (size_t j = 0; j < Wn; j++) out[(edge - k) * I + j] -= frame[j];
-        }
-    }
-    varr y(out.data() + edge * I, I * frames);
-    return v_arr(std::move(y));
+    o.phaseMode = o.phase == "robot" ? 1 : o.phase == "whisper" ? 2 : 0;
+    const double* other = o.other ? &(*o.other)[0] : nullptr;
+    std::vector<double> y = dsp::pvoc(&x[0], tot, o, other, o.other ? o.other->size() : 0, [&i] { return (uint32_t)i.rng(); });
+    return v_arr(varr(y.data(), y.size()));
 }
 // (deconv y h [threshold]) => x such that (conv x h) ~ y, as long as y: the spectrum of y divided by that
 //   of h, regularised (Tikhonov): Y conj(H) / (|H|^2 + threshold^2 max|H|^2), threshold 0.001 by default, so
