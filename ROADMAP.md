@@ -10,7 +10,7 @@ What is asked for and not done yet, kept up to date as work lands. The design be
       markers and regions (by hand, from onsets, beats, novelty, soundtypes units), regions table,
       To coll, the pencil (move single samples by hand), Cmd+L for loop, tool modes.
 - [x] Orchidea in Moritz: `orchestra` and `orchidea`, mimetic mode.
-- [ ] Score foundation: the score in Musil's C++, .score files as Musil data, `transport`, `score`.
+- [x] Score foundation: the score in Musil's C++, .score files as Musil data, `transport`, `score`.
 - [ ] One datasets folder for Moritz and Musil: FullSOL, TinySOL, MicroSOL by name; a Datasets window;
       TinySOL download; dbgen ("Analyse a folder…") without code.
 - [ ] The outlets of `orchestra` and `orchidea` described in the reference and tooltips.
@@ -31,6 +31,9 @@ What is asked for and not done yet, kept up to date as work lands. The design be
 - [ ] `orchidea` outputs a score (the shared C++ score) instead of a plot.
 - [ ] Examples as patches: Grisey (Partiels: an orchestral spectrum of a trombone note), Haas and
       Ligeti's Atmosphères (Musil's haas.mu and atmospheres.mu), played through the score.
+- [ ] More examples for every orchestration mode and idea (mimetic, morphological, granular, queries,
+      orchestrating a sound file over time, a score as target), and a tutorial on orchestration in
+      `tutorials/`.
 
 ## 0.13 and 0.14
 
