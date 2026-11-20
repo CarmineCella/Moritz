@@ -1481,6 +1481,12 @@
   (db-locate root file)
   => the path on disk of a sound named file (a path from a feature file) under root, found by its
   file name whatever the folders are called; "" when it is not there. (db-index-size root) => how many sounds root holds
+#db-sounds-folder
+  (db-sounds-folder dir entries)
+  where the sounds of a feature file in dir are (db-load uses it): the folder next to it
+  (or dir itself) under which one of the first 20 entries' files is found, whatever the folder is called; else the
+  first folder next to it holding any sound; else dir (a relative dir is looked for as a file to read is: here, else
+  next to the script)
 #orchidea-analyse
   (orchidea-analyse x sr type block hop ncoeff opts)
   the target's segments for a mimetic orchestration: x a vector at
@@ -1506,6 +1512,16 @@
   their sound on from the segment before ('sustain 1: a player whose pitch the target keeps is not searched again,
   for at most 'hold seconds); 'space the sounds in the search space), 'choices the connection's solution per
   segment, 'cache the fitness cache's hits and misses; 'patience (150) stops a search that stalls
+#mimetic-seating
+  (mimetic-seating instr)
+  where an instrument sits, as an azimuth in degrees (left positive): the seating Orchidea's
+  mixes use (violins left, cellos right, the winds in the middle); 0 for one it does not know
+#continuation-plan
+  (continuation-plan spans hold)
+  spans a list of (list at dur key), key a string or nil (never merged), in order of
+  onset: => a list of (list k dur), one per note kept: k the index of the span that begins it, dur its length; a span
+  that starts within 30 ms of the end of a kept span with the same key, and with which it lasts no more than hold
+  seconds, lengthens it instead (merge-continuations-within is made of it)
 #maple-gabor
   (maple-gabor sr [lo hi fmax])
   a dictionary of Gabor atoms (Gaussian-windowed cosines) for sounds at rate sr: every
@@ -1806,11 +1822,6 @@
   (db-load-first paths)
   load the first database of a list that is on disk: the examples name the set they prefer
   first (TinySOL, FullSOL) and the bundled MicroSOL last, and run with what is there
-#db-sounds-folder
-  (db-sounds-folder dir entries)
-  where the sounds of a feature file in dir are: the folder next to it (or dir itself)
-  under which the first entry's file exists, whatever the folder is called (TinySOL/, tinysol/,
-  a copy named otherwise); dir when nothing is found (a note then says the sound is missing)
 #db-merge
   (db-merge dbs)
   one database out of a list of several, when their features agree (same type and number of
@@ -2442,10 +2453,6 @@
   (note-of-entry db e)
   a note event from a database entry itself (the very sound the search chose, not the nearest
   by pitch and dynamics as note picks)
-#mimetic-seating
-  (mimetic-seating instr)
-  where an instrument sits, as an azimuth in degrees (left positive): the seating Orchidea's
-  mixes use (violins left, cellos right, the winds in the middle); 0 for one it does not know
 #orchestrate-mimetic
   (orchestrate-mimetic db orch x sr params)
   Orchidea: the target x (a vector at sr, or a target from mimetic-target)

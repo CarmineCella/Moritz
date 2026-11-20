@@ -596,20 +596,9 @@ function db-load-first (paths) {
     if (equal? (type here) "nil") { error "db-load-first: none of " paths " is on disk" }
     return (db-load here)
 }
-; (db-sounds-folder dir entries)   where the sounds of a feature file in dir are: the folder next to it (or dir itself)
-;                          under which the first entry's file exists, whatever the folder is called (TinySOL/, tinysol/,
-;                          a copy named otherwise); dir when nothing is found (a note then says the sound is missing)
-function db-sounds-folder (dir entries) {
-    if (== (length entries) 0) { return dir }
-    var probes (map (take entries (min 20 (length entries))) (function (e) (get e 'file)))
-    var holds? (function (folder) (any? probes (function (rel) (not (equal? (db-locate folder rel) "")))))
-    var subs (filter (map (ls dir) (function (n) (concat dir "/" n))) directory?)
-    var hit (find-first subs holds?)                         ; a folder next to the file holding some of the sounds, whatever its name
-    if (not (equal? (type hit) "nil")) { return hit }
-    var any-sounds (find-first subs (function (f) (> (db-index-size f) 0)))
-    if (not (equal? (type any-sounds) "nil")) { return any-sounds }
-    return dir
-}
+; (db-sounds-folder dir entries) is C++ (music.h): the folder next to the feature file (or dir itself) under which the
+;                          first entries' files are found, whatever the folder is called (TinySOL/, tinysol/, a copy
+;                          named otherwise); dir when nothing is found (a note then says the sound is missing)
 ; (db-merge dbs)           one database out of a list of several, when their features agree (same type and number of
 ;                          coefficients): the entries of all, each remembering its own sounds' folder; a note
 ;                          then draws on every set at once. (db-load (list "a.db" "b.db")) is the same.
@@ -1170,23 +1159,12 @@ function merge-continuations (f) (merge-continuations-within f 1e9)
 ; (merge-continuations-within f hold)   the same, a continued note never longer than hold seconds: a player who
 ;                          cannot hold a note that long (an oboe without a breath) starts it again instead
 function merge-continuations-within (f hold) {
-    var out (list)
-    var by-key (list)                                                       ; instrument|pitch -> the notes so far of that sound (a few), not the whole list
-    each f (function (x) {
-        var pl (last x)
-        var prev nil
-        var key (if (equal? (get pl 'kind) 'note) (concat (get pl 'instr) "|" (str (get pl 'midi)) "|" (str (opt pl 'player ""))) nil)   ; the same player, when the notes say who played them
-        if (not (equal? (type key) "nil")) {
-            var same (opt by-key key nil)
-            if (not (equal? (type same) "nil")) { set prev (find-first same (function (y) (and (< (abs (- (+ (head y) (getidx y 1)) (head x))) 0.03) (<= (- (+ (head x) (getidx x 1)) (head y)) hold)))) }
-        }
-        if (equal? (type prev) "nil") {
-            var fresh (list (head x) (getidx x 1) pl)
-            push out fresh
-            if (not (equal? (type key) "nil")) { if (has? by-key key) { push (get by-key key) fresh } { put! by-key key (list fresh) } }
-        } { setidx prev 1 (max (getidx prev 1) (- (+ (head x) (getidx x 1)) (head prev))) }   ; ends where the continuation ends (not lengthened by an overlap of a few ms)
-    })
-    return out
+    ; the key of a note: instrument|pitch|player (the same player, when the notes say who played them); the merging is
+    ; C++ (continuation-plan), which Moritz's orchidea object uses too
+    var spans (map f (function (x) { var pl (last x)
+                                     return (list (head x) (getidx x 1) (if (equal? (get pl 'kind) 'note) (concat (get pl 'instr) "|" (str (get pl 'midi)) "|" (str (opt pl 'player ""))) nil)) }))
+    return (map (continuation-plan spans hold) (function (p) { var x (getidx f (head p))
+                                                               return (list (head x) (last p) (last x)) }))
 }
 
 ; --- envelopes over time: parameters that change during a process ---------------------------------------------
@@ -2250,11 +2228,9 @@ function mimetic-print (target) {
 ;                          by pitch and dynamics as note picks)
 function note-of-entry (db e) (record (list 'kind 'note 'source (get e 'file) 'db db 'entry e 'instr (get e 'instr) 'pitch (get e 'pitch) 'midi (get e 'midi)
                                             'dyn (get e 'dyn) 'tech (get e 'tech) 'shift 0 'cents 0 'label (concat (get e 'instr) " " (get e 'pitch) " " (get e 'dyn))))
-; (mimetic-seating instr)  where an instrument sits, as an azimuth in degrees (left positive): the seating Orchidea's
-;                          mixes use (violins left, cellos right, the winds in the middle); 0 for one it does not know
-var mimetic-seats (record (list 'Vn 30 'Va -5 'Vc -30 'Cb -20 'Fl 0 'Picc 0 'Ob -10 'ClBb 10 'Cl 10 'Bn -5 'Hn 20 'TpC 10 'Tp 10 'Tbn -5 'BTb -15 'Hp 20 'Acc 20 'ASax -20))
-function mimetic-seating (instr) { var hit (find-first mimetic-seats (function (kv) (equal? (str (head kv)) (str instr))))
-                                   return (if (equal? (type hit) "nil") 0 (last hit)) }
+; (mimetic-seating instr) is C++ (music.h): where an instrument sits, as an azimuth in degrees (left positive), the
+;                          seating Orchidea's mixes use (violins left, cellos right, the winds in the middle); 0 for one
+;                          it does not know
 ; (orchestrate-mimetic db orch x sr params)   Orchidea: the target x (a vector at sr, or a target from mimetic-target)
 ;     orchestrated by the players of orch (an orchestra: a symbol is one player, "Fl|Picc" a doubling), one sound
 ;     per player per segment (or a rest), chosen by the genetic search. params is a record (Orchidea's names in

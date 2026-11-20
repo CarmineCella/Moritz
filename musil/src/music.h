@@ -59,47 +59,75 @@ inline std::string midi_to_pitch(int m) {
 }
 inline vptr mus_midi_to_pitch(vlist& a, Interp& i) { return v_str(midi_to_pitch((int)std::lround(i.scalar(a[0])))); }
 
+// a record's value by key (a symbol or a string), or nil
+inline vptr rec_get(const vptr& rec, const char* key) {
+    if (!rec || rec->t != Value::LIST) return nullptr;
+    for (auto& p : rec->l) if (p && p->t == Value::LIST && p->l.size() == 2 && p->l[0] && (p->l[0]->t == Value::SYM || p->l[0]->t == Value::STR) && p->l[0]->s == key) return p->l[1];
+    return nullptr;
+}
+
 // --- the database file ---
-// (db-read path) => (list type block hop ncoeff entries): the feature file parsed; each entry a record
-//   (file instr tech pitch dyn other midi features), the file relative to the database's root
-inline vptr mus_db_read(vlist& a, Interp& i) {
-    std::string path = i.read_path(i.str(a[0]));
-    std::ifstream f(path); if (!f) i.bad("db-read: cannot open " + i.str(a[0]));
-    std::string type; long block = 0, hop = 0, ncoeff = 0; f >> type >> block >> hop >> ncoeff;
-    if (f.fail() || ncoeff <= 0) i.bad("db-read: the first line must be: type block hop ncoeff");
+// The parsing is C++ of its own (db_parse), shared by db-read and by the programs that embed Musil's engines (Moritz's
+// orchestra object): the header, then one record per sound, its metadata read off the file name.
+struct db_header { std::string type; long block = 0, hop = 0, ncoeff = 0; };
+struct db_record { std::string file, instr, tech, pitch, dyn, other; int midi = -1; std::vector<double> features; };
+// the metadata of a sound file's name: instrument-technique-pitch-dynamics-other...: the instrument, then the technique
+// (one token or several joined by dashes: pizz-lv, art-harm), then the first token that is a pitch, the dynamics, and
+// whatever follows; an unpitched sound (N, or no pitch) gets midi -1
+inline void db_name_fields(const std::string& file, db_record& r) {
+    std::string name = file; size_t sl = name.find_last_of("/\\"); if (sl != std::string::npos) name = name.substr(sl + 1);
+    size_t dot = name.find_last_of('.'); if (dot != std::string::npos) name = name.substr(0, dot);
+    std::vector<std::string> syms; { std::stringstream ss(name); std::string t; while (std::getline(ss, t, '-')) syms.push_back(t); }
+    r.instr = syms.empty() ? "N" : syms[0]; r.tech = "N"; r.pitch = "N"; r.dyn = "N"; r.other = "N"; r.midi = -1;
+    size_t pp = std::string::npos;
+    for (size_t j = 1; j < syms.size(); j++) if (pitch_to_midi(syms[j]) >= 0) { pp = j; break; }
+    if (pp == std::string::npos) {                        // no pitch: instrument-technique-N-dynamics... in the old layout, or unpitched
+        if (syms.size() > 1) r.tech = syms[1]; if (syms.size() > 3) r.dyn = syms[3]; if (syms.size() > 2 && syms[2] != "N") r.pitch = syms[2];
+        std::string rest; for (size_t j = 4; j < syms.size(); j++) rest += (j > 4 ? "-" : "") + syms[j]; if (!rest.empty()) r.other = rest;
+    } else {
+        std::string t; for (size_t j = 1; j < pp; j++) t += (j > 1 ? "-" : "") + syms[j]; if (!t.empty()) r.tech = t;
+        r.pitch = syms[pp]; r.midi = pitch_to_midi(r.pitch); if (pp + 1 < syms.size()) r.dyn = syms[pp + 1];
+        std::string rest; for (size_t j = pp + 2; j < syms.size(); j++) rest += (j > pp + 2 ? "-" : "") + syms[j]; if (!rest.empty()) r.other = rest;
+    }
+}
+// the feature file at path read: => its header; each record is handed to `each` as it is read (a large database is
+// not held twice); `shown` is the name the messages give. Throws std::runtime_error ("db-read: ...")
+inline db_header db_parse(const std::string& path, const std::string& shown, const std::function<void(db_record&&)>& each) {
+    std::ifstream f(path); if (!f) throw std::runtime_error("db-read: cannot open " + shown);
+    db_header h; f >> h.type >> h.block >> h.hop >> h.ncoeff;
+    if (f.fail() || h.ncoeff <= 0) throw std::runtime_error("db-read: the first line must be: type block hop ncoeff");
+    if (h.ncoeff > 1000000) throw std::runtime_error("db-read: " + std::to_string(h.ncoeff) + " coefficients: not a feature file");
     std::string line; std::getline(f, line);
-    vlist entries; long lineno = 1;
+    long lineno = 1;
     while (std::getline(f, line)) {
         lineno++;
         while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back();
         if (line.empty()) continue;
         size_t semi = line.find(';'); std::string file = line.substr(0, semi);
         if (file.empty()) continue;
-        varr feats((size_t)ncoeff); size_t k = 0, p = semi == std::string::npos ? line.size() : semi + 1;
-        while (p < line.size() && k < (size_t)ncoeff) { size_t q = line.find(';', p); feats[k++] = std::atof(line.c_str() + p); p = q == std::string::npos ? line.size() : q + 1; }
-        if (k != (size_t)ncoeff) i.bad("db-read: line " + std::to_string(lineno) + " has " + std::to_string(k) + " features, expected " + std::to_string(ncoeff));
-        // the name: instrument-technique-pitch-dynamics-other...
-        std::string name = file; size_t sl = name.find_last_of("/\\"); if (sl != std::string::npos) name = name.substr(sl + 1);
-        size_t dot = name.find_last_of('.'); if (dot != std::string::npos) name = name.substr(0, dot);
-        std::vector<std::string> syms; { std::stringstream ss(name); std::string t; while (std::getline(ss, t, '-')) syms.push_back(t); }
-        // instrument, then the technique (one token or several joined by dashes: pizz-lv, art-harm), then the first token
-        // that is a pitch, the dynamics, and whatever follows; an unpitched sound (N, or no pitch) gets midi -1
-        std::string instr = syms.empty() ? "N" : syms[0], tech = "N", pitch = "N", dyn = "N", other = "N"; int midi = -1;
-        size_t pp = std::string::npos;
-        for (size_t j = 1; j < syms.size(); j++) if (pitch_to_midi(syms[j]) >= 0) { pp = j; break; }
-        if (pp == std::string::npos) {                        // no pitch: instrument-technique-N-dynamics... in the old layout, or unpitched
-            if (syms.size() > 1) tech = syms[1]; if (syms.size() > 3) dyn = syms[3]; if (syms.size() > 2 && syms[2] != "N") pitch = syms[2];
-            std::string rest; for (size_t j = 4; j < syms.size(); j++) rest += (j > 4 ? "-" : "") + syms[j]; if (!rest.empty()) other = rest;
-        } else {
-            std::string t; for (size_t j = 1; j < pp; j++) t += (j > 1 ? "-" : "") + syms[j]; if (!t.empty()) tech = t;
-            pitch = syms[pp]; midi = pitch_to_midi(pitch); if (pp + 1 < syms.size()) dyn = syms[pp + 1];
-            std::string rest; for (size_t j = pp + 2; j < syms.size(); j++) rest += (j > pp + 2 ? "-" : "") + syms[j]; if (!rest.empty()) other = rest;
-        }
-        entries.push_back(v_list({ v_list({ v_sym("file"), v_str(file) }), v_list({ v_sym("instr"), v_str(instr) }), v_list({ v_sym("tech"), v_str(tech) }),
-                                   v_list({ v_sym("pitch"), v_str(pitch) }), v_list({ v_sym("dyn"), v_str(dyn) }), v_list({ v_sym("other"), v_str(other) }),
-                                   v_list({ v_sym("midi"), v_num(midi) }), v_list({ v_sym("features"), v_arr(std::move(feats)) }) }));
+        db_record r; r.file = file; r.features.assign((size_t)h.ncoeff, 0.0);
+        size_t k = 0, p = semi == std::string::npos ? line.size() : semi + 1;
+        while (p < line.size() && k < (size_t)h.ncoeff) { size_t q = line.find(';', p); r.features[k++] = std::atof(line.c_str() + p); p = q == std::string::npos ? line.size() : q + 1; }
+        if (k != (size_t)h.ncoeff) throw std::runtime_error("db-read: line " + std::to_string(lineno) + " has " + std::to_string(k) + " features, expected " + std::to_string(h.ncoeff));
+        db_name_fields(file, r);
+        each(std::move(r));
     }
-    return v_list({ v_str(type), v_num((double)block), v_num((double)hop), v_num((double)ncoeff), v_list(std::move(entries)) });
+    return h;
+}
+// (db-read path) => (list type block hop ncoeff entries): the feature file parsed; each entry a record
+//   (file instr tech pitch dyn other midi features), the file relative to the database's root
+inline vptr mus_db_read(vlist& a, Interp& i) {
+    std::string path = i.read_path(i.str(a[0]));
+    vlist entries; db_header h;
+    try {
+        h = db_parse(path, i.str(a[0]), [&](db_record&& r) {
+            varr feats(r.features.size()); for (size_t k = 0; k < r.features.size(); k++) feats[k] = r.features[k];
+            entries.push_back(v_list({ v_list({ v_sym("file"), v_str(r.file) }), v_list({ v_sym("instr"), v_str(r.instr) }), v_list({ v_sym("tech"), v_str(r.tech) }),
+                                       v_list({ v_sym("pitch"), v_str(r.pitch) }), v_list({ v_sym("dyn"), v_str(r.dyn) }), v_list({ v_sym("other"), v_str(r.other) }),
+                                       v_list({ v_sym("midi"), v_num(r.midi) }), v_list({ v_sym("features"), v_arr(std::move(feats)) }) }));
+        });
+    } catch (std::runtime_error& e) { i.bad(e.what()); }
+    return v_list({ v_str(h.type), v_num((double)h.block), v_num((double)h.hop), v_num((double)h.ncoeff), v_list(std::move(entries)) });
 }
 
 // --- making a database: the features of every sound under a folder (Orchidea's dbgen) -----------
@@ -165,6 +193,22 @@ inline std::vector<double> db_features_of(const std::vector<double>& mono, int b
 //   features written to path in the database format (first line: type block hop ncoeff; then the file's path
 //   relative to folder and the features); the file names carry the metadata (instr-tech-pitch-dyn-other).
 //   Sounds that cannot be read are skipped with a message.
+// every regular file under a folder, depth first in the order the system lists them: a folder that cannot be read
+// (permissions, a system folder the sandbox hides) is skipped, never an exception; symbolic links to folders are not
+// followed; 64 levels and a million entries at most (a feature file put in a huge folder does not walk the disk)
+inline void db_walk(const std::filesystem::path& root, const std::function<void(const std::filesystem::path&)>& file) {
+    namespace fs = std::filesystem; size_t seen = 0;
+    std::function<void(const fs::path&, int)> walk = [&](const fs::path& d, int depth) {
+        std::error_code ec; fs::directory_iterator it(d, ec), end;
+        for (; !ec && it != end && seen < 1000000; it.increment(ec)) {
+            seen++; std::error_code e2;
+            if (it->is_symlink(e2) && it->is_directory(e2)) continue;
+            if (it->is_directory(e2)) { if (depth < 64) walk(it->path(), depth + 1); }
+            else if (it->is_regular_file(e2)) file(it->path());
+        }
+    };
+    walk(root, 0);
+}
 inline vptr mus_db_gen(vlist& a, Interp& i) {
     namespace fs = std::filesystem;
     std::string folder = i.read_path(i.str(a[0])), outpath = i.str(a[1]), type = i.str(a[2]);
@@ -174,7 +218,7 @@ inline vptr mus_db_gen(vlist& a, Interp& i) {
     if (ncoeff < 1 || ncoeff > block / 2) i.bad("ncoeff must be in 1..block/2");
     std::error_code ec; if (!fs::is_directory(folder, ec)) i.bad("db-gen: not a folder: " + i.str(a[0]));
     std::vector<fs::path> files;
-    for (auto& e : fs::recursive_directory_iterator(folder, ec)) { if (!e.is_regular_file(ec)) continue; std::string ext = e.path().extension().string(); for (auto& c : ext) c = (char)std::tolower((unsigned char)c); if (ext == ".wav" && e.path().filename().string()[0] != '.') files.push_back(e.path()); }
+    db_walk(folder, [&](const fs::path& p) { std::string ext = p.extension().string(); for (auto& c : ext) c = (char)std::tolower((unsigned char)c); if (ext == ".wav" && p.filename().string()[0] != '.') files.push_back(p); });
     std::sort(files.begin(), files.end());
     std::ofstream out(outpath); if (!out) i.bad("db-gen: cannot write " + outpath);
     out << type << " " << block << " " << hop << " " << ncoeff << "\n";
@@ -210,27 +254,205 @@ inline std::shared_ptr<const db_index> db_index_of(const std::string& root) {
     std::lock_guard<std::mutex> lock(m);
     auto it = cache.find(root); if (it != cache.end()) return it->second;
     auto idx = std::make_shared<db_index>(); std::error_code ec; namespace fs = std::filesystem;
-    if (fs::is_directory(root, ec)) for (auto& e : fs::recursive_directory_iterator(root, ec)) { if (!e.is_regular_file(ec)) continue; std::string ext = e.path().extension().string(); for (auto& c : ext) c = (char)std::tolower((unsigned char)c); if (ext == ".wav" || ext == ".aif" || ext == ".aiff") idx->emplace(db_norm_name(e.path().filename().string()), e.path().string()); }
+    if (fs::is_directory(root, ec)) db_walk(root, [&](const fs::path& p) { std::string ext = p.extension().string(); for (auto& c : ext) c = (char)std::tolower((unsigned char)c); if (ext == ".wav" || ext == ".aif" || ext == ".aiff") idx->emplace(db_norm_name(p.filename().string()), p.string()); });
     cache[root] = idx;
     return idx;
 }
 // (db-locate root file) => the path on disk of a sound named file (a path from a feature file) under root, found by its
 //   file name whatever the folders are called; "" when it is not there. (db-index-size root) => how many sounds root holds
-inline vptr mus_db_locate(vlist& a, Interp& i) {
-    std::string root = i.read_path(i.str(a[0])), rel = i.str(a[1]);
+inline std::string db_locate(const std::string& root, const std::string& rel) {
     std::filesystem::path direct = std::filesystem::path(root) / (rel.size() && (rel[0] == '/' || rel[0] == '\\') ? rel.substr(1) : rel); std::error_code ec;
-    if (std::filesystem::exists(direct, ec)) return v_str(direct.string());
-    auto idx = db_index_of(root); auto it = idx->find(db_norm_name(rel)); return v_str(it == idx->end() ? "" : it->second);
+    if (std::filesystem::exists(direct, ec)) return direct.string();
+    auto idx = db_index_of(root); auto it = idx->find(db_norm_name(rel)); return it == idx->end() ? "" : it->second;
 }
+inline vptr mus_db_locate(vlist& a, Interp& i) { return v_str(db_locate(i.read_path(i.str(a[0])), i.str(a[1]))); }
 inline vptr mus_db_index_size(vlist& a, Interp& i) { return v_num((double)db_index_of(i.read_path(i.str(a[0])))->size()); }
+// where the sounds of a feature file in dir are: the folder next to it (in the order of their names) under which one of
+// the probes (the first entries' files) is found, whatever the folder is called (TinySOL/, tinysol/, a copy named
+// otherwise); failing that, the first folder next to it that holds sounds at all; failing that, dir itself (a note
+// then says the sound is missing)
+inline std::string db_sounds_folder(const std::string& dir, const std::vector<std::string>& probes) {
+    if (probes.empty()) return dir;
+    namespace fs = std::filesystem; std::error_code ec; std::vector<std::string> names;
+    for (fs::directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec)) names.push_back(it->path().filename().string());
+    std::sort(names.begin(), names.end());
+    std::vector<std::string> subs;
+    for (auto& n : names) { std::string p = dir + "/" + n; if (fs::is_directory(p, ec)) subs.push_back(p); }
+    for (auto& s : subs) for (auto& rel : probes) if (!db_locate(s, rel).empty()) return s;
+    for (auto& s : subs) if (!db_index_of(s)->empty()) return s;
+    return dir;
+}
+// (db-sounds-folder dir entries)   where the sounds of a feature file in dir are (db-load uses it): the folder next to it
+//   (or dir itself) under which one of the first 20 entries' files is found, whatever the folder is called; else the
+//   first folder next to it holding any sound; else dir (a relative dir is looked for as a file to read is: here, else
+//   next to the script)
+inline vptr mus_db_sounds_folder(vlist& a, Interp& i) {
+    std::string dir = i.str(a[0]), here = i.read_path(dir); i.require_read(here);
+    std::vector<std::string> probes;
+    if (a[1]->t == Value::LIST) for (auto& e : a[1]->l) { if (probes.size() >= 20) break; vptr f = rec_get(e, "file"); if (f) probes.push_back(str_of(f)); }
+    if (probes.empty()) return v_str(dir);
+    std::string found = db_sounds_folder(here, probes);
+    return v_str(found == here ? dir : found);
+}
 
 // --- mimetic orchestration: Orchidea's search (music/orchidea.h) -------------------------------------------------
-// a record's value by key (a symbol or a string), or nil
-inline vptr rec_get(const vptr& rec, const char* key) {
-    if (!rec || rec->t != Value::LIST) return nullptr;
-    for (auto& p : rec->l) if (p && p->t == Value::LIST && p->l.size() == 2 && p->l[0] && (p->l[0]->t == Value::SYM || p->l[0]->t == Value::STR) && p->l[0]->s == key) return p->l[1];
-    return nullptr;
+// The analysis of the target and the driver of the search are C++ of their own (orchidea::analyse and
+// orchidea::search_segments), which orchidea-analyse and orchidea-search wrap and which programs embedding Musil's
+// engines (Moritz's orchidea object) call directly: one implementation, the same result for the same seed.
+namespace orchidea {
+// how the target is cut and read (orchidea-analyse's options)
+struct analysis_options {
+    std::string segmentation = "flux";          // "flux", "frames", "none" (or "static"), "list" (the onsets given)
+    std::vector<double> onsets;                 // for "list": seconds
+    double threshold = 2, timegate = 0.1;       // the flux's peaks above threshold of its maximum, timegate seconds apart
+    int partials_window = 32768;                // the window the partials are read with (a power of two)
+    double partials = 0.2;                      // the threshold on the partials, 0..1 (0: no pitch filter)
+    std::vector<std::string> extra_pitches;     // added to every segment's pitches
+};
+// the target x at sr (resampled to 44100 Hz, the databases' rate) cut at its onsets, each segment analysed into the
+// features of the database's type (block, hop, ncoeff, as db-gen makes them) and standardised, and into the pitches of
+// its partials with their cents. tick() runs after each segment: false stops (=> the segments so far). Throws
+// std::runtime_error for bad options or a database whose analysis parameters are absurd
+inline std::vector<segment> analyse(varr x, double sr, const std::string& type, int block, int hop, int ncoeff, const analysis_options& o,
+                                    const std::function<bool()>& tick = {}) {
+    if (!(sr > 0) || !std::isfinite(sr)) throw std::runtime_error("orchidea-analyse: the sample rate must be > 0");
+    if (block < 16 || block > (1 << 20) || (block & (block - 1))) throw std::runtime_error("orchidea-analyse: the database's block must be a power of two, 16 to 1048576");
+    if (hop < 1 || hop > block) throw std::runtime_error("orchidea-analyse: the database's hop must be in 1..block");
+    if (ncoeff < 1 || ncoeff > block) throw std::runtime_error("orchidea-analyse: the database's number of coefficients must be in 1..block");
+    if (sr != 44100.0) x = resample_sinc(x, 44100.0 / sr);
+    std::vector<double> mono(std::begin(x), std::end(x)); const double SR = 44100.0;
+    for (auto& v : mono) if (!std::isfinite(v)) v = 0;
+    if (mono.size() < (size_t)block) mono.resize((size_t)block, 0.0);
+    // the onsets
+    std::vector<double> onsets; const std::string& segmentation = o.segmentation;
+    if (segmentation == "flux") onsets = flux_onsets(mono, block, hop, SR, o.threshold, o.timegate, [](double* d, size_t n, int sg) { fft_inplace(d, n, sg); });
+    else if (segmentation == "frames") { for (size_t p = 0; p < mono.size(); p += (size_t)block) onsets.push_back((double)p / SR); }
+    else if (segmentation == "none" || segmentation == "static") onsets.clear();
+    else if (segmentation == "list") { for (double t : o.onsets) if (std::isfinite(t) && t >= 0) onsets.push_back(t); }
+    else throw std::runtime_error("orchidea-analyse: segmentation is flux, frames, none, or a list of onsets");
+    if (onsets.empty()) onsets.push_back(0);
+    std::sort(onsets.begin(), onsets.end()); if (onsets[0] > 0) onsets.insert(onsets.begin(), 0.0);
+    // the segments
+    int pwin = o.partials_window;
+    if (pwin < 64 || pwin > (1 << 20) || (pwin & (pwin - 1))) throw std::runtime_error("orchidea-analyse: partials-window must be a power of two, 64 to 1048576");
+    std::vector<segment> out;
+    for (size_t k = 0; k < onsets.size(); k++) {
+        size_t start = (size_t)std::floor(onsets[k] * SR); if (start >= mono.size()) break;
+        size_t end = k + 1 < onsets.size() ? std::min(mono.size(), (size_t)std::floor(onsets[k + 1] * SR)) : mono.size();
+        if (end <= start) continue;
+        std::vector<double> piece(mono.begin() + (long)start, mono.begin() + (long)end);
+        std::vector<double> f = db_features_of(piece, block, hop, ncoeff, type);
+        segment g; g.start = (double)start / SR; g.length = (double)(end - start) / SR;
+        g.features.assign(f.begin(), f.end()); standardise(g.features);
+        if (o.partials > 0) {
+            g.notes = partials_to_notes(piece, pwin, pwin / 4, o.partials, SR,
+                [](const std::vector<double>& y, int w, int h) { return average_spectrum(y, w, h); }, [](int m) { return midi_to_pitch(m); });
+            for (auto& e : o.extra_pitches) g.notes[e] = 0;
+        }
+        out.push_back(std::move(g));
+        if (tick && !tick()) break;
+    }
+    return out;
 }
+
+// the search's options besides Orchidea's parameters (orchidea-search's opts)
+struct search_options {
+    params p;                                             // population, epochs ... seed (its progress is not used: see search_segments)
+    std::vector<std::string> styles, dynamics, others;    // only the sounds with one of them enter the search (empty: all)
+    std::vector<int> octaves { 0 };                       // the pitch filter widened by octaves: {0, -1} admits the octave below
+    std::string connection = "closest";                   // "closest", "best" or "path"
+    bool sustain = true; double hold = 1e9;               // a player whose pitch the target keeps holds its sound on, hold seconds at most
+};
+// what the search found for a segment
+struct segment_result {
+    std::vector<std::pair<float, std::vector<int>>> solutions;   // (cost, the database index per player or -1), the best first
+    std::vector<float> curve;                                    // the population's total fitness per epoch
+    std::vector<int> players;                                    // the index in the orchestra of each of the solutions' slots
+    std::vector<std::string> missing;                            // the target's pitches no sound of the orchestra covers
+    int used = 0, held = 0; size_t space = 0;                    // players the chosen solution sounds, players holding on, sounds in the space
+};
+struct search_result {
+    std::vector<segment_result> segments; std::vector<int> choices;   // the connection's solution per segment
+    size_t cache_hits = 0, cache_misses = 0;
+    bool stopped = false;                                             // progress asked to stop: the result is not complete
+};
+// the options checked and brought into range, as orchidea-search always did (throws std::runtime_error)
+inline void check_options(search_options& o) {
+    params& p = o.p;
+    p.pop_size = std::max(2, p.pop_size); p.pop_size = (p.pop_size / 2) * 2;
+    p.max_epochs = std::max(1, p.max_epochs); p.pursuit = std::max(0, p.pursuit); p.patience = std::max(1, p.patience);
+    if (p.dovetail < 0) throw std::runtime_error("orchidea-search: dovetail must be >= 0");
+    if (!(p.mutation_rate > 0 && p.mutation_rate <= 1)) throw std::runtime_error("orchidea-search: mutation must be in (0, 1]");
+    if (!(p.xover_rate > 0 && p.xover_rate <= 1)) throw std::runtime_error("orchidea-search: crossover must be in (0, 1]");
+    if (!(p.sparsity >= 0 && p.sparsity <= 1)) throw std::runtime_error("orchidea-search: sparsity must be in 0..1");
+    if (!(p.hysteresis >= 0 && p.positive >= 0 && p.negative >= 0)) throw std::runtime_error("orchidea-search: the penalisations and the hysteresis must be >= 0");
+    if (o.connection != "closest" && o.connection != "best" && o.connection != "path") throw std::runtime_error("orchidea-search: connection is closest, best or path");
+    if (o.octaves.empty()) o.octaves.push_back(0);
+}
+// Orchidea's search over the segments of a target, the driver of orchidea-search: segment by segment the genetic
+// search, then the choice for this segment (closest to the previous choice, or the best; the path is found at the end),
+// which the next segment's search remembers (hysteresis, dovetailing); a player whose pitch the target keeps holds its
+// sound on into the next segment ('sustain): it is not searched again. progress(segment, segments, epoch, epochs) runs
+// at every epoch: false stops the search (=> a result marked stopped). Throws std::runtime_error ("segment k: ...")
+inline search_result search_segments(const std::vector<entry>& db, const std::vector<std::string>& orchestra, std::vector<segment> segments,
+                                     search_options o, const std::function<bool(size_t, size_t, int, int)>& progress = {}) {
+    check_options(o);
+    if (orchestra.empty()) throw std::runtime_error("orchidea-search: an empty orchestra");
+    if (segments.empty()) throw std::runtime_error("orchidea-search: no segments");
+    params& p = o.p; const std::string& conn = o.connection;
+    bool widen = o.octaves.size() != 1 || o.octaves[0] != 0;
+    if (widen) for (auto& g : segments) if (!g.notes.empty()) {
+        std::map<std::string, int> wider;
+        for (auto& kv : g.notes) { int m = pitch_to_midi(kv.first); for (int oc : o.octaves) { if (m < 0 && oc != 0) continue; wider[oc == 0 ? kv.first : midi_to_pitch(m + 12 * oc)] = kv.second; } }
+        g.notes = wider;
+    }
+    genetic ga(p);
+    std::vector<model> models(segments.size());
+    std::vector<int> choices; std::vector<float> prev_forecast; std::vector<double> held_since(orchestra.size(), -1.0); std::vector<int> held_count;
+    search_result r; bool stop = false;
+    for (size_t k = 0; k < segments.size(); k++) {
+        try { make_model(db, orchestra, segments[k], o.styles, o.dynamics, o.others, models[k]); }
+        catch (std::exception& e) { throw std::runtime_error(std::string("segment ") + std::to_string(k + 1) + ": " + e.what()); }
+        int holding = 0;
+        if (o.sustain && k > 0 && conn != "path") holding = hold_on(models[k], models[k - 1], models[k - 1].solutions[(size_t)choices[k - 1]], o.hold, held_since);
+        held_count.push_back(holding);
+        size_t seg = k, nsegs = segments.size();
+        ga.p.progress = [&, seg, nsegs](int epoch, int epochs) -> bool { if (progress && !progress(seg, nsegs, epoch, epochs)) { stop = true; return false; } return true; };
+        ga.search(models[k]);
+        if (stop) { r.stopped = true; return r; }
+        if (models[k].solutions.empty()) throw std::runtime_error(std::string("segment ") + std::to_string(k + 1) + ": the search found no solution");
+        int choice = conn == "closest" ? closest_choice(models[k], prev_forecast, p) : 0;
+        choices.push_back(choice);
+        const solution& chosen = models[k].solutions[(size_t)choice];
+        for (size_t j = 0; j < chosen.indices.size(); j++) {                 // when each player's present sound began (for the hold)
+            int slot = models[k].slots[j];
+            if (chosen.indices[j] == -1) held_since[(size_t)slot] = -1;
+            else if (models[k].fixed[j] < 0 || held_since[(size_t)slot] < 0) held_since[(size_t)slot] = segments[k].start;
+        }
+        ga.remember(models[k], chosen);
+        prev_forecast.assign(models[k].seg->features.size(), 0.0f); additive_forecast(chosen, models[k].database, prev_forecast); standardise(prev_forecast);
+    }
+    if (conn == "path") choices = shortest_path(models, p.movement);
+    for (size_t k = 0; k < models.size(); k++) {
+        model& m = models[k]; segment_result s;
+        for (auto& sol : m.solutions) { std::vector<int> idx; for (int j : sol.indices) idx.push_back(j == -1 ? -1 : m.database[(size_t)j]->index); s.solutions.push_back({ m.cost_of(sol), std::move(idx) }); }
+        s.curve = m.curve; s.players = m.slots; s.missing = m.missing; s.held = held_count[k]; s.space = m.database.size();
+        const solution& chosen = m.solutions[(size_t)choices[k]]; for (int j : chosen.indices) if (j != -1) s.used++;
+        r.segments.push_back(std::move(s));
+    }
+    r.choices = choices; r.cache_hits = ga.cache_hits; r.cache_misses = ga.cache_misses;
+    return r;
+}
+// where an instrument sits, as an azimuth in degrees (left positive): the seating Orchidea's mixes use (violins left,
+// cellos right, the winds in the middle); 0 for one it does not know
+inline double seat_of(const std::string& instr) {
+    static const std::pair<const char*, double> seats[] = { { "Vn", 30 }, { "Va", -5 }, { "Vc", -30 }, { "Cb", -20 }, { "Fl", 0 }, { "Picc", 0 }, { "Ob", -10 }, { "ClBb", 10 },
+        { "Cl", 10 }, { "Bn", -5 }, { "Hn", 20 }, { "TpC", 10 }, { "Tp", 10 }, { "Tbn", -5 }, { "BTb", -15 }, { "Hp", 20 }, { "Acc", 20 }, { "ASax", -20 } };
+    for (auto& s : seats) if (instr == s.first) return s.second;
+    return 0;
+}
+} // namespace orchidea
+
 // (orchidea-analyse x sr type block hop ncoeff opts)   the target's segments for a mimetic orchestration: x a vector at
 //   sr (resampled to 44100 Hz, the databases' rate), cut at its onsets, each segment analysed into the features of the
 //   database's type (block, hop, ncoeff, as db-gen makes them) and standardised, and into the pitches of its partials
@@ -244,45 +466,23 @@ inline vptr mus_orchidea_analyse(vlist& a, Interp& i) {
     int block = (int)i.scalar(a[3]), hop = (int)i.scalar(a[4]), ncoeff = (int)i.scalar(a[5]);
     vptr opts = a[6];
     auto opt_num = [&](const char* key, double dflt) { vptr v = rec_get(opts, key); return v && v->t == Value::NUM && v->num.size() == 1 ? v->num[0] : dflt; };
-    auto opt_val = [&](const char* key) { return rec_get(opts, key); };
-    if (sr != 44100.0) x = resample_sinc(x, 44100.0 / sr);
-    std::vector<double> mono(std::begin(x), std::end(x)); const double SR = 44100.0;
-    if (mono.size() < (size_t)block) mono.resize((size_t)block, 0.0);
-    // the onsets
-    std::vector<double> onsets; vptr segv = opt_val("segmentation"); std::string segmentation = "flux";
-    if (segv && (segv->t == Value::STR || segv->t == Value::SYM)) segmentation = segv->s;
-    if (segv && segv->t == Value::LIST) { for (auto& e : segv->l) onsets.push_back(i.scalar(e)); segmentation = "list"; }
-    else if (segv && segv->t == Value::NUM) { for (double t : segv->num) onsets.push_back(t); segmentation = "list"; }
-    double threshold = opt_num("threshold", 2), timegate = opt_num("timegate", 0.1);
-    if (segmentation == "flux") onsets = orchidea::flux_onsets(mono, block, hop, SR, threshold, timegate, [](double* d, size_t n, int sg) { fft_inplace(d, n, sg); });
-    else if (segmentation == "frames") { for (size_t p = 0; p < mono.size(); p += (size_t)block) onsets.push_back((double)p / SR); }
-    else if (segmentation == "none" || segmentation == "static") onsets.clear();
-    else if (segmentation != "list") i.bad("orchidea-analyse: segmentation is flux, frames, none, or a list of onsets");
-    if (onsets.empty()) onsets.push_back(0);
-    std::sort(onsets.begin(), onsets.end()); if (onsets[0] > 0) onsets.insert(onsets.begin(), 0.0);
-    // the segments
-    int pwin = (int)opt_num("partials-window", 32768); double pfilter = opt_num("partials", 0.2);
-    if (pwin < 64 || (pwin & (pwin - 1))) i.bad("orchidea-analyse: partials-window must be a power of two");
-    std::vector<std::string> extra; if (vptr ev = opt_val("extra-pitches")) { if (ev->t == Value::LIST) for (auto& e : ev->l) extra.push_back(str_of(e)); }
+    orchidea::analysis_options o;
+    vptr segv = rec_get(opts, "segmentation");
+    if (segv && (segv->t == Value::STR || segv->t == Value::SYM)) o.segmentation = segv->s;
+    if (segv && segv->t == Value::LIST) { for (auto& e : segv->l) o.onsets.push_back(i.scalar(e)); o.segmentation = "list"; }
+    else if (segv && segv->t == Value::NUM) { for (double t : segv->num) o.onsets.push_back(t); o.segmentation = "list"; }
+    o.threshold = opt_num("threshold", 2); o.timegate = opt_num("timegate", 0.1);
+    o.partials_window = (int)opt_num("partials-window", 32768); o.partials = opt_num("partials", 0.2);
+    if (vptr ev = rec_get(opts, "extra-pitches")) { if (ev->t == Value::LIST) for (auto& e : ev->l) o.extra_pitches.push_back(str_of(e)); }
+    std::vector<orchidea::segment> segs;
+    try { segs = orchidea::analyse(x, sr, type, block, hop, ncoeff, o, [&]() { i.yield_check(); return true; }); }
+    catch (std::runtime_error& e) { i.bad(e.what()); }
     vlist out;
-    for (size_t k = 0; k < onsets.size(); k++) {
-        size_t start = (size_t)std::floor(onsets[k] * SR); if (start >= mono.size()) break;
-        size_t end = k + 1 < onsets.size() ? std::min(mono.size(), (size_t)std::floor(onsets[k + 1] * SR)) : mono.size();
-        if (end <= start) continue;
-        std::vector<double> piece(mono.begin() + (long)start, mono.begin() + (long)end);
-        std::vector<double> f = db_features_of(piece, block, hop, ncoeff, type);
-        std::vector<float> feats(f.begin(), f.end()); orchidea::standardise(feats);
-        varr fv(feats.size()); for (size_t j = 0; j < feats.size(); j++) fv[j] = feats[j];
-        vlist notes;
-        if (pfilter > 0) {
-            std::map<std::string, int> ns = orchidea::partials_to_notes(piece, pwin, pwin / 4, pfilter, SR,
-                [](const std::vector<double>& y, int w, int h) { return average_spectrum(y, w, h); }, [](int m) { return midi_to_pitch(m); });
-            for (auto& e : extra) ns[e] = 0;
-            for (auto& kv : ns) notes.push_back(v_list({ v_str(kv.first), v_num(kv.second) }));
-        }
-        out.push_back(v_list({ v_list({ v_sym("at"), v_num((double)start / SR) }), v_list({ v_sym("dur"), v_num((double)(end - start) / SR) }),
+    for (auto& g : segs) {
+        varr fv(g.features.size()); for (size_t j = 0; j < g.features.size(); j++) fv[j] = g.features[j];
+        vlist notes; for (auto& kv : g.notes) notes.push_back(v_list({ v_str(kv.first), v_num(kv.second) }));
+        out.push_back(v_list({ v_list({ v_sym("at"), v_num(g.start) }), v_list({ v_sym("dur"), v_num(g.length) }),
                                v_list({ v_sym("features"), v_arr(std::move(fv)) }), v_list({ v_sym("notes"), v_list(std::move(notes)) }) }));
-        i.yield_check();
     }
     return v_list(std::move(out));
 }
@@ -314,87 +514,86 @@ inline vptr mus_orchidea_search(vlist& a, Interp& i) {
     vptr segs = a[2]; if (segs->t != Value::LIST || segs->l.empty()) i.bad("orchidea-search: no segments");
     std::vector<orchidea::segment> segments;
     for (auto& s : segs->l) { orchidea::segment g; vptr at = rec_get(s, "at"), dur = rec_get(s, "dur"), f = rec_get(s, "features"), notes = rec_get(s, "notes");
-        if (!at || !dur || !f) i.bad("orchidea-search: a segment is a record (at dur features notes)");
+        if (!at || !dur || !f || at->t != Value::NUM || dur->t != Value::NUM || f->t != Value::NUM || at->num.size() == 0 || dur->num.size() == 0) i.bad("orchidea-search: a segment is a record (at dur features notes)");
         g.start = at->num[0]; g.length = dur->num[0]; g.features.assign(std::begin(f->num), std::end(f->num));
-        if (notes && notes->t == Value::LIST) for (auto& kv : notes->l) if (kv->t == Value::LIST && kv->l.size() == 2) g.notes[str_of(kv->l[0])] = (int)std::lround(kv->l[1]->num[0]);
+        if (notes && notes->t == Value::LIST) for (auto& kv : notes->l) if (kv->t == Value::LIST && kv->l.size() == 2 && kv->l[1]->t == Value::NUM && kv->l[1]->num.size() > 0) g.notes[str_of(kv->l[0])] = (int)std::lround(kv->l[1]->num[0]);
         segments.push_back(std::move(g)); }
     vptr opts = a[3];
     auto opt_num = [&](const char* key, double dflt) { vptr v = rec_get(opts, key); return v && v->t == Value::NUM && v->num.size() == 1 ? v->num[0] : dflt; };
     auto opt_list = [&](const char* key) { std::vector<std::string> out; vptr v = rec_get(opts, key); if (v && v->t == Value::LIST) for (auto& e : v->l) out.push_back(str_of(e)); return out; };
-    orchidea::params p;
-    p.pop_size = std::max(2, (int)opt_num("population", 300)); p.pop_size = (p.pop_size / 2) * 2;
-    p.max_epochs = std::max(1, (int)opt_num("epochs", 300)); p.pursuit = std::max(0, (int)opt_num("pursuit", 0));
+    orchidea::search_options o; orchidea::params& p = o.p;
+    p.pop_size = (int)std::max(-1e9, std::min(1e9, opt_num("population", 300))); p.max_epochs = (int)std::max(-1e9, std::min(1e9, opt_num("epochs", 300)));
+    p.pursuit = (int)std::max(-1e9, std::min(1e9, opt_num("pursuit", 0)));
     p.xover_rate = opt_num("crossover", 0.8); p.mutation_rate = opt_num("mutation", 0.01); p.sparsity = opt_num("sparsity", 0.001);
     p.positive = opt_num("positive", 0.5); p.negative = opt_num("negative", 10); p.hysteresis = opt_num("hysteresis", 0); p.regularization = opt_num("regularization", 0);
-    p.max_solutions = (int)opt_num("solutions", 10); p.dovetail = opt_num("dovetail", 0); p.movement = opt_num("movement", 1);
-    p.patience = std::max(1, (int)opt_num("patience", 150));
-    bool sustain = opt_num("sustain", 1) != 0; double hold = opt_num("hold", 1e9);
-    if (p.dovetail < 0) i.bad("orchidea-search: dovetail must be >= 0");
-    // the pitch filter widened by octaves: 'octaves (list 0 -1) admits the partials' pitches and the octave below them
-    std::vector<int> octaves; if (vptr ov = rec_get(opts, "octaves")) { if (ov->t == Value::LIST) for (auto& e : ov->l) octaves.push_back((int)std::lround(i.scalar(e))); else if (ov->t == Value::NUM) for (double d : ov->num) octaves.push_back((int)std::lround(d)); }
-    if (octaves.empty()) octaves.push_back(0);
-    bool widen = octaves.size() != 1 || octaves[0] != 0;
-    if (widen) for (auto& g : segments) if (!g.notes.empty()) {
-        std::map<std::string, int> wider;
-        for (auto& kv : g.notes) { int m = pitch_to_midi(kv.first); for (int o : octaves) { if (m < 0 && o != 0) continue; wider[o == 0 ? kv.first : midi_to_pitch(m + 12 * o)] = kv.second; } }
-        g.notes = wider;
-    }
-    if (p.mutation_rate <= 0 || p.mutation_rate > 1) i.bad("orchidea-search: mutation must be in (0, 1]");
-    if (p.xover_rate <= 0 || p.xover_rate > 1) i.bad("orchidea-search: crossover must be in (0, 1]");
-    if (p.sparsity < 0 || p.sparsity > 1) i.bad("orchidea-search: sparsity must be in 0..1");
-    if (p.hysteresis < 0 || p.positive < 0 || p.negative < 0) i.bad("orchidea-search: the penalisations and the hysteresis must be >= 0");
+    p.max_solutions = (int)std::max(-1e9, std::min(1e9, opt_num("solutions", 10))); p.dovetail = opt_num("dovetail", 0); p.movement = opt_num("movement", 1);
+    p.patience = (int)std::max(-1e9, std::min(1e9, opt_num("patience", 150)));
+    o.sustain = opt_num("sustain", 1) != 0; o.hold = opt_num("hold", 1e9);
+    o.octaves.clear();
+    if (vptr ov = rec_get(opts, "octaves")) { if (ov->t == Value::LIST) for (auto& e : ov->l) o.octaves.push_back((int)std::lround(i.scalar(e))); else if (ov->t == Value::NUM) for (double d : ov->num) o.octaves.push_back((int)std::lround(d)); }
     vptr sv = rec_get(opts, "seed"); p.seed = sv && sv->t == Value::NUM && sv->num.size() > 0 ? (unsigned)seed_of(i, sv->num[0]) : (unsigned)i.rng();
-    bool quiet = opt_num("quiet", 0) != 0; std::string conn = "closest"; if (vptr cv = rec_get(opts, "connection")) conn = str_of(cv);
-    std::vector<std::string> styles = opt_list("styles"), dynamics = opt_list("dynamics"), others = opt_list("others");
-    if (conn != "closest" && conn != "best" && conn != "path") i.bad("orchidea-search: connection is closest, best or path");
-    orchidea::genetic ga(p);
-    std::vector<orchidea::model> models(segments.size());
-    std::vector<int> choices; std::vector<float> prev_forecast; std::vector<double> held_since(orchestra.size(), -1.0); std::vector<int> held_count;
-    // segment by segment: the search, then the choice for this segment (closest to the previous choice, or the best;
-    // the path is found at the end), which the next segment's search remembers (hysteresis, dovetailing); a player
-    // whose pitch the target keeps holds its sound on into the next segment ('sustain): it is not searched again
-    for (size_t k = 0; k < segments.size(); k++) {
-        try { orchidea::make_model(db, orchestra, segments[k], styles, dynamics, others, models[k]); }
-        catch (std::exception& e) { i.bad(std::string("segment ") + std::to_string(k + 1) + ": " + e.what()); }
-        int holding = 0;
-        if (sustain && k > 0 && conn != "path") holding = orchidea::hold_on(models[k], models[k - 1], models[k - 1].solutions[(size_t)choices[k - 1]], hold, held_since);
-        held_count.push_back(holding);
-        int last_shown = -1; size_t seg = k;
-        ga.p.progress = [&, seg](int epoch, int epochs) -> bool {
+    bool quiet = opt_num("quiet", 0) != 0; if (vptr cv = rec_get(opts, "connection")) o.connection = str_of(cv);
+    o.styles = opt_list("styles"); o.dynamics = opt_list("dynamics"); o.others = opt_list("others");
+    int last_shown = -1; size_t last_seg = (size_t)-1;
+    orchidea::search_result r;
+    try {
+        r = orchidea::search_segments(db, orchestra, std::move(segments), o, [&](size_t seg, size_t nsegs, int epoch, int epochs) -> bool {
             i.yield_check();                                                     // Esc in the IDE, the windows kept alive
+            if (seg != last_seg) { last_seg = seg; last_shown = -1; }
             if (!quiet && epochs >= 10 && epoch % std::max(1, epochs / 10) == 0 && epoch != last_shown) { last_shown = epoch;
-                *i.out << "orchestrate-mimetic: segment " << (seg + 1) << "/" << segments.size() << ", epoch " << epoch << "/" << epochs << "\n" << std::flush; }
-            return true; };
-        ga.search(models[k]);
-        if (models[k].solutions.empty()) i.bad(std::string("segment ") + std::to_string(k + 1) + ": the search found no solution");
-        int choice = conn == "closest" ? orchidea::closest_choice(models[k], prev_forecast, p) : 0;
-        choices.push_back(choice);
-        const orchidea::solution& chosen = models[k].solutions[(size_t)choice];
-        for (size_t j = 0; j < chosen.indices.size(); j++) {                 // when each player's present sound began (for the hold)
-            int slot = models[k].slots[j];
-            if (chosen.indices[j] == -1) held_since[(size_t)slot] = -1;
-            else if (models[k].fixed[j] < 0 || held_since[(size_t)slot] < 0) held_since[(size_t)slot] = segments[k].start;
-        }
-        ga.remember(models[k], chosen);
-        prev_forecast.assign(models[k].seg->features.size(), 0.0f); orchidea::additive_forecast(chosen, models[k].database, prev_forecast); orchidea::standardise(prev_forecast);
-    }
-    if (conn == "path") choices = orchidea::shortest_path(models, p.movement);
+                *i.out << "orchestrate-mimetic: segment " << (seg + 1) << "/" << nsegs << ", epoch " << epoch << "/" << epochs << "\n" << std::flush; }
+            return true; });
+    } catch (std::runtime_error& e) { i.bad(e.what()); }
     vlist out_segments;
-    for (size_t k = 0; k < models.size(); k++) {
-        orchidea::model& m = models[k];
+    for (auto& s : r.segments) {
         vlist sols;
-        for (auto& s : m.solutions) { vlist idx; for (int j : s.indices) idx.push_back(v_num(j == -1 ? -1 : m.database[(size_t)j]->index)); sols.push_back(v_list({ v_num(m.cost_of(s)), v_list(std::move(idx)) })); }
-        varr curve(m.curve.size()); for (size_t j = 0; j < m.curve.size(); j++) curve[j] = m.curve[j];
-        vlist slots; for (int s : m.slots) slots.push_back(v_num(s));
-        vlist missing; for (auto& q : m.missing) missing.push_back(v_str(q));
-        const orchidea::solution& chosen = m.solutions[(size_t)choices[k]]; int used = 0; for (int j : chosen.indices) if (j != -1) used++;
+        for (auto& sol : s.solutions) { vlist idx; for (int j : sol.second) idx.push_back(v_num(j)); sols.push_back(v_list({ v_num(sol.first), v_list(std::move(idx)) })); }
+        varr curve(s.curve.size()); for (size_t j = 0; j < s.curve.size(); j++) curve[j] = s.curve[j];
+        vlist slots; for (int q : s.players) slots.push_back(v_num(q));
+        vlist missing; for (auto& q : s.missing) missing.push_back(v_str(q));
         out_segments.push_back(v_list({ v_list({ v_sym("solutions"), v_list(std::move(sols)) }), v_list({ v_sym("curve"), v_arr(std::move(curve)) }), v_list({ v_sym("players"), v_list(std::move(slots)) }),
-                                        v_list({ v_sym("missing"), v_list(std::move(missing)) }), v_list({ v_sym("used"), v_num(used) }), v_list({ v_sym("held"), v_num(held_count[k]) }),
-                                        v_list({ v_sym("space"), v_num((double)m.database.size()) }) }));
+                                        v_list({ v_sym("missing"), v_list(std::move(missing)) }), v_list({ v_sym("used"), v_num(s.used) }), v_list({ v_sym("held"), v_num(s.held) }),
+                                        v_list({ v_sym("space"), v_num((double)s.space) }) }));
     }
-    vlist ch; for (int c : choices) ch.push_back(v_num(c));
+    vlist ch; for (int c : r.choices) ch.push_back(v_num(c));
     return v_list({ v_list({ v_sym("segments"), v_list(std::move(out_segments)) }), v_list({ v_sym("choices"), v_list(std::move(ch)) }),
-                    v_list({ v_sym("cache"), v_list({ v_num((double)ga.cache_hits), v_num((double)ga.cache_misses) }) }) });
+                    v_list({ v_sym("cache"), v_list({ v_num((double)r.cache_hits), v_num((double)r.cache_misses) }) }) });
+}
+// (mimetic-seating instr)  where an instrument sits, as an azimuth in degrees (left positive): the seating Orchidea's
+//   mixes use (violins left, cellos right, the winds in the middle); 0 for one it does not know
+inline vptr mus_mimetic_seating(vlist& a, Interp& i) { return v_num(orchidea::seat_of(str_of(a[0]))); }
+
+// --- continuations: a note that goes on where a note of the same sound ends becomes one longer note ----------------
+// spans in order of onset, each (at, dur, key): a span whose key is empty never merges; one whose key a span already
+// kept has and which starts within 30 ms of that span's end, and with which it would last no more than hold seconds,
+// lengthens it (to where it ends, never shorter). => the spans kept: (the index of the span that begins it, its length)
+struct span { double at = 0, dur = 0; std::string key; };
+inline std::vector<std::pair<size_t, double>> continuation_plan(const std::vector<span>& spans, double hold) {
+    std::vector<std::pair<size_t, double>> out; std::map<std::string, std::vector<size_t>> by_key;   // key -> the kept spans of that sound
+    for (size_t k = 0; k < spans.size(); k++) {
+        const span& x = spans[k]; long prev = -1;
+        if (!x.key.empty()) { auto it = by_key.find(x.key);
+            if (it != by_key.end()) for (size_t j : it->second) { double at = spans[out[j].first].at, d = out[j].second;
+                if (std::fabs(at + d - x.at) < 0.03 && x.at + x.dur - at <= hold) { prev = (long)j; break; } } }
+        if (prev < 0) { out.push_back({ k, x.dur }); if (!x.key.empty()) by_key[x.key].push_back(out.size() - 1); }
+        else { double at = spans[out[(size_t)prev].first].at; out[(size_t)prev].second = std::max(out[(size_t)prev].second, x.at + x.dur - at); }
+    }
+    return out;
+}
+// (continuation-plan spans hold)   spans a list of (list at dur key), key a string or nil (never merged), in order of
+//   onset: => a list of (list k dur), one per note kept: k the index of the span that begins it, dur its length; a span
+//   that starts within 30 ms of the end of a kept span with the same key, and with which it lasts no more than hold
+//   seconds, lengthens it instead (merge-continuations-within is made of it)
+inline vptr mus_continuation_plan(vlist& a, Interp& i) {
+    std::vector<span> spans;
+    for (auto& s : i.list(a[0])) {
+        if (s->t != Value::LIST || s->l.size() < 3) i.bad("continuation-plan: a span is (list at dur key)");
+        span x; x.at = i.scalar(s->l[0]); x.dur = i.scalar(s->l[1]);
+        if (s->l[2]->t != Value::NIL) { x.key = str_of(s->l[2]); if (x.key.empty()) x.key = " "; }
+        spans.push_back(std::move(x));
+    }
+    vlist out; for (auto& p : continuation_plan(spans, i.scalar(a[1]))) out.push_back(v_list({ v_num((double)p.first), v_num(p.second) }));
+    return v_list(std::move(out));
 }
 
 // --- Maple: matching pursuit (music/maple.h) ------------------------------------------------------------------------
@@ -711,6 +910,7 @@ inline void add_music(Interp& i) {
     i.def("pitch->midi", mus_pitch_to_midi, 1, 1); i.def("midi->pitch", mus_midi_to_pitch, 1, 1);
     i.def("db-read", mus_db_read, 1, 1); i.def("db-gen", mus_db_gen, 6, 6); add_midi(i); i.def("db-locate", mus_db_locate, 2, 2); i.def("db-index-size", mus_db_index_size, 1, 1);
     i.def("orchidea-analyse", mus_orchidea_analyse, 7, 7); i.def("orchidea-search", mus_orchidea_search, 4, 4);
+    i.def("mimetic-seating", mus_mimetic_seating, 1, 1); i.def("continuation-plan", mus_continuation_plan, 2, 2); i.def("db-sounds-folder", mus_db_sounds_folder, 2, 2);
     add_atoms_and_types(i);
 }
 

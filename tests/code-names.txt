@@ -82,6 +82,7 @@ concat
 concat-list
 concerthall
 contains?
+continuation-plan
 continue
 conv
 conv-fast
@@ -100,6 +101,7 @@ db-gen
 db-index-size
 db-locate
 db-read
+db-sounds-folder
 dc-block
 dc-block-r
 deconv
@@ -302,6 +304,7 @@ mel-spectrogram
 mfcc-gram
 midi->pitch
 midi-read
+mimetic-seating
 min
 min-by
 min-of

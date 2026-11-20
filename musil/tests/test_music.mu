@@ -577,6 +577,16 @@ var mpat (orchestrate-mimetic db morch mtx 44100 (put (put mprm 'epochs 200) 'pa
 check (< (length (head (get mpat 'curves))) 200) "patience: a stalled search stops before its epochs are up"
 check (== (length (mimetic-report msus)) 4) "mimetic-report: prints and returns the report"
 check (== (length (merge-continuations-within (list (list 0 1 (note db 'Vn "C4" 'mf 'ord)) (list 1 1 (note db 'Vn "C4" 'mf 'ord)) (list 2 1 (note db 'Vn "C4" 'mf 'ord))) 2)) 2) "merge-continuations-within: the hold splits a continuation (three seconds of C4 in two notes)"
+; continuation-plan, the C++ the merging is made of (Moritz's orchidea object calls it too)
+var cplan (continuation-plan (list (list 0 1 "a") (list 0 1 "b") (list 1.01 1 "a") (list 2.5 1 "a") (list 1 1 nil) (list 2 0.5 nil)) 10)
+check (equal? (map cplan head) (list 0 1 3 4 5)) "continuation-plan: a span within 30 ms of the end of one of its key continues it; nil never merges"
+check (near? (last (head cplan)) 2.01 1e-9) "continuation-plan: the continued note ends where its continuation ends"
+check (== (length (continuation-plan (list (list 0 1 "a") (list 1 1 "a") (list 2 1 "a")) 2)) 2) "continuation-plan: no longer than hold"
+check (== (length (continuation-plan (list) 1)) 0) "continuation-plan: no spans, no notes"
+check (near? (mimetic-seating "Cb") -20 1e-9) "mimetic-seating: a string names the instrument too"
+check (== (mimetic-seating 'Theremin) 0) "mimetic-seating: an instrument it does not know in the middle"
+check (ends-with? (db-sounds-folder "../../data/microsol" (get db 'entries)) "microsol/microsol") "db-sounds-folder: the folder of the sounds next to the feature file"
+check (equal? (db-sounds-folder "../../data/microsol" (list)) "../../data/microsol") "db-sounds-folder: no entries, the folder itself"
 
 ; --- morphological orchestration ---
 seed 6

@@ -1,5 +1,26 @@
 # Changes
 
+## 0.12
+
+### Libraries
+
+- **Orchidea's analysis and search are C++ functions of their own** (`orchidea::analyse` and
+  `orchidea::search_segments` in `music.h`), which `orchidea-analyse` and `orchidea-search` wrap: a
+  program that embeds Musil's engines (Moritz's `orchidea` object) calls them directly and finds the
+  same orchestration for the same seed. So is the reading of a feature file (`db_parse`, under
+  `db-read`). The analysis refuses a database whose block is not a power of two (or whose hop or
+  number of coefficients is absurd) and a partials window above 2^20, instead of failing later;
+  onsets given as a list that are negative are left out.
+- **`db-sounds-folder`, `mimetic-seating` and `continuation-plan` are builtins.** `db-load` and
+  `orchestrate-mimetic` call the first two as before (they were functions of `music.mu`; the
+  `mimetic-seats` table is gone); `merge-continuations-within`, and so every connection of an
+  orchestration, is made of `continuation-plan` (a span that starts within 30 ms of the end of one
+  of its key continues it, up to the hold).
+- **A folder of sounds that cannot be read whole no longer stops the program**: `db-gen`, `db-locate`
+  and `db-load` skip a subfolder they may not enter (a system folder in the temporary directory made
+  the walk throw: an error in a script, a crash in a program calling the C++ directly), follow no
+  link to a folder, and walk 64 levels and a million entries at most.
+
 ## 0.11
 
 ### Language
