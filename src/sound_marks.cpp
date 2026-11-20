@@ -5,6 +5,7 @@
 #include "sound_marks.h"
 #include "fileio.h"
 #include "moritz.h"
+#include "music/score.h"     // Musil's score, as the score object reads it
 
 #include <algorithm>
 #include <cmath>
@@ -261,6 +262,32 @@ bool writeMarksFor(const std::string& soundPath, const SoundMarks& m, double sr,
     size_t slash = soundPath.find_last_of("/\\");
     std::string name = slash == std::string::npos ? soundPath : soundPath.substr(slash + 1);
     return fileio::writeAtomic(p, marksToText(m, sr, duration, name), &err);
+}
+
+// ---------------------------------------------------------------- score
+
+std::string scoreText(const SoundMarks& m, double sr, const std::string& source, bool buffer, const std::string& name) {
+    namespace sc = musil::score;
+    if (!(sr > 0)) sr = 44100;
+    sc::Score s(name, sr);
+    s.rows.push_back({"regions", "", {}});
+    for (auto& r : m.regions) {
+        auto e = std::make_shared<sc::Event>();
+        e->kind = sc::Kind::Sound;
+        e->at = r.start / sr;
+        e->dur = (r.end - r.start) / sr;
+        e->row = "regions";
+        e->source = source;
+        e->buffer = buffer;
+        e->from = r.start / sr;
+        e->to = r.end / sr;
+        e->label = r.name;
+        if (r.type >= 0) e->extra.push_back({"type", sc::Datum::string(typeName(r.type))});
+        e->extra.push_back({"energy", sc::Datum::number(std::round(r.energy * 1e4) / 1e4)});
+        if (r.pitch > 0) e->extra.push_back({"pitch", sc::Datum::number(std::round(r.pitch * 100) / 100)});
+        s.insert(e);
+    }
+    return sc::toText(s);
 }
 
 // ---------------------------------------------------------------- coll

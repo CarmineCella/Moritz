@@ -98,9 +98,11 @@ the editor's command table and undo rule), YIN, `descriptors~` on the shared ana
 ### 0.12 (in progress, on main)
 
 - [x] Sound editor core: overview, waveform, spectrogram, zoom, selection, preview, edits with undo, save.
-- [ ] Sound editor, second part: Process menu (offline objects, a Moritz patch, a Musil script),
+- [x] Sound editor, second part: Process menu (offline objects, a Moritz patch, a Musil script),
       markers and regions (by hand, from onsets, beats, novelty, soundtypes units), regions table,
-      To coll, the pencil (move single samples by hand), Cmd+L for loop, tool modes.
+      To coll, To score, the pencil (move single samples by hand), Cmd+L for loop, tool modes.
+- [ ] Sound editor: spectral painting (draw on the spectrogram to erase or keep a part, an STFT mask);
+      a buffer~'s markers saved in its patch (now kept while the patch is open, and beside its WAV).
 - [x] Orchidea in Moritz: `orchestra` and `orchidea`, mimetic mode.
 - [x] Score foundation: the score in Musil's C++, .score files as Musil data, `transport`, `score`.
 - [x] One datasets folder for Moritz and Musil: FullSOL, TinySOL, MicroSOL by name; a Datasets window;

@@ -82,6 +82,11 @@ bool readMarksFor(const std::string& soundPath, double sr, long frames, SoundMar
 // write (or, with no marks, remove) the sidecar: a temporary file in the same folder, renamed
 bool writeMarksFor(const std::string& soundPath, const SoundMarks& m, double sr, double duration, std::string& err);
 
+// ---- To score: a .score (Musil's score, as the score object reads it) with a sound event for each region, at
+// its own time, playing that region of the sound (a file's path, or a buffer~'s name when buffer); the region's
+// name is the event's label, its type, energy and pitch its fields
+std::string scoreText(const SoundMarks& m, double sr, const std::string& source, bool buffer, const std::string& name);
+
 // ---- To coll: the regions as rows (a list of lists, Musil data), and the hook for the coll object
 struct CollRow {
     std::vector<std::string> cells;   // as written: numbers as text, strings unquoted

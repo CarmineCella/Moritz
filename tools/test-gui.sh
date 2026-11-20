@@ -286,8 +286,8 @@ run "$G/sound.moritz" --window-png none "act=soundopen:$T/s.wav" act=soundmenus 
     act=process:filter:type=lowpass,freq=500 act=processwait act=sound act=soundop:undo act=sound \
     act=processresult:new act=soundmenus act=process:pvoc:stretch=2 act=processwait act=sound
 expect "the Process menu" "state: sound process menu: pursuit: rebuild with atoms... | typematch: replace by units of... | hpss: keep... | nmf: keep components... | pvoc: stretch or transpose... | sparkle~: cross with... | filter (filterdesign)... | condec: convolve with... | A patch (inlet~ to outlet~)... | A Musil script (process x sr)... | Result: replace the selection (on) | Result: a new sound | Stop (Esc)"
-expect "To Score waits for the score object" "To Score (with the score object, 0.13) (inactive)"
-expect "the To score button too" "state: sound to score inactive"
+expect "To Score, with the score object" "To Coll... | To Score... | Show the Regions Panel"
+expect "the To score button too" "state: sound to score active"
 expect "a dialog asks for the other sound among the buffer~s" "ask: typematch: the selection rebuilt with the units of another sound: with=[buffer~ voice|"
 expect "and for its settings" "ask: pvoc: stretch or transpose the selection: stretch=1 transpose=0 formants=keep window=2048 result=replace"
 expect "a filter replaces the selection" "state: process filter: 0.200 s processed"
@@ -318,7 +318,8 @@ cp "$HERE/data/anechoic1.wav" "$T/m.wav"
 run --window-png none "act=soundopen:$T/m.wav" act=sounddrag:0.1,0.1 act=soundkey:m act=soundtool:marker \
     act=sounddrag:0.3,0.3 act=soundmark:move:1:0.2 act=soundmarks act=soundop:undo act=soundmarks act=soundtool:select \
     act=sounddrag:0.2,0.4 act=soundmark:addregion act=soundmark:rename:1:voice act=sounddrag:0,0 act=soundmark:row:1 \
-    act=soundmark:rowdouble:1 act=soundmarks "saveas=$T/m.coll" act=soundmark:coll act=soundsave act=closefront \
+    act=soundmark:rowdouble:1 act=soundmarks "saveas=$T/m.coll" act=soundmark:coll "saveas=$T/m.score" act=soundmark:score \
+    act=soundsave act=closefront \
     "act=soundopen:$T/m.wav" act=soundmarks
 # (the mouse lands on a pixel: a frame within a pixel's width of the time aimed at)
 if grep -q "state: sound markers 2 88[0-9][0-9]:marker 1 132[0-9][0-9]:marker 2" "$out"; then ok
@@ -333,6 +334,12 @@ if grep -q '(1 0.2[0-9]* 0.4[0-9]* "-" ' "$T/m.coll" && grep -q '"voice")' "$T/m
 then ok; else fail "To coll writes the regions as rows"; fi
 if grep -q '(marker 0.1[0-9]* "marker 1" hand)' "$T/m.wav.markers" && grep -q '(region 0.2[0-9]* 0.4[0-9]* "voice"' "$T/m.wav.markers"
 then ok; else fail "markers saved beside the file"; fi
+# To score: a sound event for the region, which a score object reads and plays
+printf '(patch\n  (obj sc score regs m.score 2 (pos 20 20))\n  (obj lb loadbang (pos 20 80))\n  (obj m message "info, play" (pos 20 120))\n  (obj p print (pos 20 160))\n  (obj o dac~ 1 2 (pos 200 160))\n  (connect lb 0 m 0)\n  (connect m 0 sc 0)\n  (connect sc 4 p 0)\n  (connect sc 0 o 0)\n  (connect sc 1 o 1))\n' > "$T/play.moritz"
+run --render "$T/play.moritz" 0.5
+if [ $status -eq 0 ] && grep -q '(label "voice")' "$T/m.score" && grep -q "print: info 1 1 0.4" "$out" &&
+   ! grep -q "ch1 peak 0.0000" "$out"
+then ok; else fail "To score writes a score the score object plays"; fi
 
 # 27. markers from onsets, regions from types (background jobs); the regions of an analysis replace the last one's
 run --window-png none "act=soundopen:$HERE/data/drums.wav" act=soundmark:onsets act=processwait act=soundmark:regiononsets \

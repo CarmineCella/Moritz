@@ -40,7 +40,8 @@ them from onsets, beats or novelty, and makes regions from the selection, from
 soundtypes' units (colored by type) or between onsets. The regions table lists
 them (name, start, end, type, energy, pitch): a click selects one, a
 double-click renames it; To coll... writes them as rows (Musil data, for a
-coll). Markers and regions are edits as the others (Undo takes them back).
+coll), To score... as a .score with a sound event for each region, which a
+score object reads and plays. Markers and regions are edits as the others (Undo takes them back).
 The buffer~ changes at once for every object that uses it, record~ and poke~
 writing into it are seen as they write; it is patch memory, so nothing is
 marked unsaved, its markers stay with it while the patch is open, and Save

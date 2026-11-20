@@ -10,6 +10,7 @@
 #include "sound_doc.h"
 #include "sound_marks.h"
 #include "sound_process.h"
+#include "music/score_text.h"
 
 #include <cmath>
 #include <cstdio>
@@ -501,4 +502,25 @@ TEST(sound_editor_sees_record_writes) {
     CHECK(d.followBuffer());                             // the writes: read again
     CHECK(d.sound()->data[100] != 0.f && d.message.find("record~") != std::string::npos);
     CHECK(!d.followBuffer());
+}
+
+
+TEST(regions_to_score_read_back_as_sound_events) {
+    SoundMarks m = someMarks();
+    Region r;
+    r.start = 44100;
+    r.end = 66150;
+    r.name = "second";
+    m.regions.push_back(r);
+    std::string t = scoreText(m, 44100, "voice", true, "voice regions");
+    auto s = musil::score::readText(t, "regions.score");      // as the score object reads it
+    CHECK(s && s->size() == 2 && s->name == "voice regions");
+    if (s && s->size() == 2) {
+        const auto& e = *s->events()[0];
+        CHECK(e.kind == musil::score::Kind::Sound && e.buffer && e.source == "voice" && e.label == "hit");
+        CHECK(std::fabs(e.at - 400 / 44100.0) < 1e-9 && std::fabs(e.dur - 200 / 44100.0) < 1e-9);
+        CHECK(std::fabs(e.from - e.at) < 1e-9 && std::fabs(e.to - 600 / 44100.0) < 1e-9);
+        const auto& f = *s->events()[1];
+        CHECK(f.at == 1.0 && f.dur == 0.5 && f.label == "second" && f.row == "regions");
+    }
 }

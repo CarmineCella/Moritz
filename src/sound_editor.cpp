@@ -1332,8 +1332,8 @@ void SoundEditor::buildBottom(int X, int Y, int W) {
              auto* e = static_cast<E*>(d);
              e->deleteRegion(e->selectedRegion());
          }},
-        {"To score \xe2\x96\xb8", "with the score object (0.13)", [](Fl_Widget*, void* d) {
-             static_cast<E*>(d)->setStatus("To score: with the score object (0.13)");
+        {"To score \xe2\x96\xb8", "A .score with a sound event for each region (the score object reads it)", [](Fl_Widget*, void* d) {
+             static_cast<E*>(d)->toScore();
          }},
         {"To coll...", "The regions written as rows (start end type energy pitch name), for a coll",
          [](Fl_Widget*, void* d) { static_cast<E*>(d)->toColl(); }},
@@ -1641,6 +1641,44 @@ void SoundEditor::toColl() {
     App::get().log("regions written to " + p);
 }
 
+bool SoundEditor::writeScore(const std::string& path, std::string& err) {
+    SoundDoc& d = *doc_;
+    if (!d.boundToBuffer() && d.path().empty()) {
+        err = "the sound has no file yet: save it first (the score plays the regions of its file)";
+        return false;
+    }
+    std::string name = d.boundToBuffer() ? d.bufferName() : baseName(d.path());
+    if (size_t dot = name.find_last_of('.'); dot != std::string::npos && !d.boundToBuffer()) name.resize(dot);
+    std::string source = d.boundToBuffer() ? d.bufferName() : d.path();
+    return fileio::writeAtomic(path, scoreText(d.marks(), d.sr(), source, d.boundToBuffer(), name + " regions"), &err);
+}
+
+void SoundEditor::toScore() {
+    if (!scoreAvailable()) { setStatus("To score: with the score object"); return; }
+    if (doc_->marks().regions.empty()) { setStatus("To score: no regions yet"); return; }
+    Fl_Native_File_Chooser fc;
+    fc.title("The regions as a score (a sound event each)");
+    fc.type(Fl_Native_File_Chooser::BROWSE_SAVE_FILE);
+    fc.filter("Score\t*.score");
+    fc.options(Fl_Native_File_Chooser::SAVEAS_CONFIRM | Fl_Native_File_Chooser::USE_FILTER_EXT);
+    std::string base = doc_->boundToBuffer() ? doc_->bufferName() : doc_->path().empty() ? "regions" : baseName(doc_->path());
+    if (size_t dot = base.find_last_of('.'); dot != std::string::npos && !doc_->boundToBuffer()) base.resize(dot);
+    if (!doc_->boundToBuffer() && !doc_->path().empty()) fc.directory(dirOf(doc_->path()).c_str());
+    fc.preset_file((base + "-regions.score").c_str());
+    std::string p = showSaveChooser(fc);
+    if (p.empty()) return;
+    std::string err;
+    if (!writeScore(p, err)) {
+        alertUser("Can't write %s:\n%s", baseName(p).c_str(), err.c_str());
+        return;
+    }
+    std::string msg = "To score: " + std::to_string(doc_->marks().regions.size()) + " sound events in " + baseName(p) +
+                      " (a score object reads it: score name " + baseName(p) + ")";
+    if (doc_->needsSaving()) msg += "; they play the file as saved";
+    setStatus(msg);
+    App::get().log("regions written to " + p);
+}
+
 // ---------------------------------------------------------------- the Process menu
 
 namespace {
@@ -1764,7 +1802,7 @@ void SoundEditor::buildMarksMenu() {
         {"Delete the Region", [](E* e) { e->deleteRegion(e->selectedRegion()); }, 0},
         {"Clear Regions", [](E* e) { e->clearRegions(); }, FL_MENU_DIVIDER},
         {"To Coll...", [](E* e) { e->toColl(); }, 0},
-        {"To Score (with the score object, 0.13)", [](E* e) { e->setStatus("To score: with the score object (0.13)"); }, FL_MENU_DIVIDER},
+        {"To Score...", [](E* e) { e->toScore(); }, FL_MENU_DIVIDER},
         {"Show the Regions Panel", [](E* e) {
              if (e->bottom_->visible()) e->bottom_->hide();
              else e->bottom_->show();

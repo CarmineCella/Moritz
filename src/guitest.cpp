@@ -64,7 +64,7 @@
 //                             addregion clear clearregions delete:<k> deleteregion:<k> rename:<k>:<name>
 //                             row:<k> (a click on row k of the table) rowdouble:<k> move:<k>:<s> (marker k dragged
 //                             in its lane to second s) lane:<s> (a click in the markers lane) coll (To coll; saveas=)
-//                             toscore (print: the button's state)
+//                             score (To score; saveas=) toscore (print: the button's state)
 //   act=process:<kind>[:k=v,...]   a Process menu item run with these settings (no dialog)
 //   act=processdialog:<kind>  its dialog (batch mode: what it would ask is printed)
 //   act=processpatch:<file>, act=processscript:<file>   A patch..., A Musil script...
@@ -554,6 +554,7 @@ bool act(const std::string& a) {
                 soundMouseAt(v, x, y, FL_PUSH, 0);
                 soundMouseAt(v, x, y, FL_RELEASE, 0);
             } else if (op == "coll") e->toColl();
+            else if (op == "score") e->toScore();
             else if (op == "toscore") state("sound to score %s", e->toScoreButton()->active() ? "active" : "inactive");
             else return false;
             return true;

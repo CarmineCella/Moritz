@@ -23,7 +23,8 @@
 // The markers lane and the regions lane, and the table, are the document's markers and regions (sound_marks.h):
 // each edit of them is an undo step. Regions come from a selection (Add region), from soundtypes' units (colored
 // by type) or from onsets; markers from onsets, beats or novelty (background jobs, as the objects that analyse).
-// To coll writes the regions as rows; To score waits for the score object (0.13).
+// To coll writes the regions as rows (for a coll); To score writes a .score with a sound event for each region, which
+// the score object reads (without a score object, the button waits for it).
 //
 // The waveform is drawn from the document's summary (min and max per pixel column at any zoom). The spectrogram is
 // computed by a background job from the document's snapshot when it is first shown and after each edit, and kept
@@ -216,6 +217,8 @@ public:
     int selectedRegion() const;                // the region the selection is, or -1
     int selectedMarker() const { return selMarker_; }
     void toColl();                             // the regions written as rows (a file chosen)
+    void toScore();                            // the regions written as a .score (a file chosen)
+    bool writeScore(const std::string& path, std::string& err);
     bool writeColl(const std::string& path, std::string& err);
     bool scoreAvailable() const;               // a score object exists (To score is active)
 

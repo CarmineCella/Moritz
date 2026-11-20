@@ -210,7 +210,8 @@ Moritz follows Max's conventions:
   result replaces the selection or opens as a new sound. Markers come by hand
   (M, the Marker tool) or from onsets, beats and novelty; regions from the
   selection, soundtypes' units or onsets, listed in a table (rename, click to
-  select, To coll... writes them as rows). A `buffer~` changes at once for
+  select; To coll... writes them as rows, To score... as a `.score` of sound
+  events that a `score` object plays). A `buffer~` changes at once for
   every object that uses it (the status line says which); a sound file is
   saved back as a 24-bit WAV file with its markers beside it
   (`sound.wav.markers`), and closing it asks when it has edits. Samples
