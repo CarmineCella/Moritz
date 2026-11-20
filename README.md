@@ -194,17 +194,27 @@ Moritz follows Max's conventions:
   `sfrecord~`.
 - **Sound editor**: double-click a `buffer~` (locked), or any object that
   names one, to edit its sound; File > Open Sound... does the same for a
-  sound file. It shows an overview, a waveform per channel and the
-  spectrogram (Wave, Spectrum or Both), with a time ruler; Cmd+ and Cmd-
-  (or Cmd and the wheel) zoom, the wheel or the overview scrolls. Drag to
-  select, Shift-click to extend, click to set the playhead; Space plays the
-  selection (or from the playhead) through the audio output, beside the
-  patches, and L loops it. Edit (or the right button) cuts, copies, pastes,
-  deletes, trims, silences, fades in and out, changes the gain, normalizes
-  and reverses, each edit one step of Undo. A `buffer~` changes at once for
+  sound file. It shows an overview, a regions lane and a markers lane, a
+  waveform per channel and the spectrogram (Wave, Spectrum or Both), with a
+  time ruler; Cmd+ and Cmd- (or Cmd and the wheel, or a trackpad's pinch)
+  zoom, the wheel or the overview scrolls. Drag to select, Shift-click to
+  extend, click to set the playhead; Space plays the selection (or from the
+  playhead) through the audio output, beside the patches, and Cmd+L loops
+  it. Edit (or the right button) cuts, copies, pastes, deletes, trims,
+  silences, fades in and out, changes the gain, normalizes and reverses, each
+  edit one step of Undo; the Draw tool moves single samples when zoomed in.
+  Process runs an offline object over the selection (pursuit, typematch,
+  hpss, nmf, pvoc, sparkle~'s cross-synthesis, filterdesign's filters,
+  condec), a patch with `inlet~` and `outlet~`, or a Musil script that
+  defines `(process x sr)` (examples/14-sound-editor), in the background; the
+  result replaces the selection or opens as a new sound. Markers come by hand
+  (M, the Marker tool) or from onsets, beats and novelty; regions from the
+  selection, soundtypes' units or onsets, listed in a table (rename, click to
+  select, To coll... writes them as rows). A `buffer~` changes at once for
   every object that uses it (the status line says which); a sound file is
-  saved back as a 24-bit WAV file, and closing it asks when it has edits.
-  Samples copied in one editor paste into another.
+  saved back as a 24-bit WAV file with its markers beside it
+  (`sound.wav.markers`), and closing it asks when it has edits. Samples
+  copied in one editor paste into another (resampled when the rates differ).
 - **Zoom**: Cmd+ and Cmd- (or the toolbar) zoom the patch; View > Interface
   makes the whole interface larger or smaller.
 - **Code view**: Cmd+T shows the patch as text beside the drawing. Edit
