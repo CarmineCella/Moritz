@@ -58,6 +58,10 @@ double cableDist(double px, double py, double ax, double ay, double bx, double b
     return best;
 }
 
+bool sameCable(const Connection& a, const Connection& b) {
+    return a.from == b.from && a.outlet == b.outlet && a.to == b.to && a.inlet == b.inlet;
+}
+
 // Message box text as shown, like Max: a line break after each ";", so
 // "; cf 1200; q 8" reads ";" / "cf 1200;" / "q 8". Only the display
 // changes; the box keeps its text on one line.
@@ -655,13 +659,14 @@ void Canvas::draw() {
     }
 
     // cables (a curve stays between its ends across, and bends at most 140 up or down)
+    bool endDragged = drag_ == Drag::CableEnd && moved_;
     for (auto& c : p.conns) {
+        if (endDragged && sameCable(c, dragConn_)) continue;      // drawn where its end is being taken
         int ax, ay, bx, by;
-        portPos(c.from, true, c.outlet, ax, ay);
-        portPos(c.to, false, c.inlet, bx, by);
-        if (!visible(std::min(ax, bx) - 4, std::min(ay, by) - 150, std::max(ax, bx) + kPortW + 4, std::max(ay, by) + 150))
+        cableEnds(c, ax, ay, bx, by);
+        if (!visible(std::min(ax, bx) - 8, std::min(ay, by) - 150, std::max(ax, bx) + 8, std::max(ay, by) + 150))
             continue;
-        ax += ox() + kPortW / 2; bx += ox() + kPortW / 2;
+        ax += ox(); bx += ox();
         ay += oy(); by += oy();
         bool sig = c.from->outs[c.outlet] != Port::Control;   // signal and tap links
         const auto& path = cablePath(ax, ay, bx, by);
@@ -697,6 +702,15 @@ void Canvas::draw() {
         fl_color(kSelect);
         zd::line_style(FL_SOLID | FL_CAP_ROUND | FL_JOIN_ROUND, 2);
         zd::polyline(cablePath(ox() + ax + kPortW / 2, oy() + ay, ox() + curX_, oy() + curY_));
+        zd::line_style(0);
+    } else if (endDragged && alive(dragConn_.from) && alive(dragConn_.to)) {
+        int ax, ay, bx, by;
+        cableEnds(dragConn_, ax, ay, bx, by);
+        if (dragInletEnd_) { bx = curX_; by = curY_; }
+        else { ax = curX_; ay = curY_; }
+        fl_color(kSelect);
+        zd::line_style(FL_SOLID | FL_CAP_ROUND | FL_JOIN_ROUND, 2);
+        zd::polyline(cablePath(ox() + ax, oy() + ay, ox() + bx, oy() + by));
         zd::line_style(0);
     } else if (drag_ == Drag::Rubber) {
         fl_color(kSelect);
@@ -829,11 +843,9 @@ Canvas::Hit Canvas::hitTest(int mx, int my) const {
     }
     auto& conns = patch_->conns;
     for (int k = (int)conns.size() - 1; k >= 0; --k) {
-        auto& c = conns[k];
         int ax, ay, bx, by;
-        portPos(c.from, true, c.outlet, ax, ay);
-        portPos(c.to, false, c.inlet, bx, by);
-        if (cableDist(mx, my, ax + kPortW / 2, ay, bx + kPortW / 2, by) < 4.0) {
+        cableEnds(conns[k], ax, ay, bx, by);
+        if (cableDist(mx, my, ax, ay, bx, by) < 4.0) {
             h.what = Hit::Cable;
             h.cable = k;
             return h;
@@ -851,6 +863,49 @@ int Canvas::inletAt(Box* b, int mx) const {
         if (d < bestD) { bestD = d; best = k; }
     }
     return best;
+}
+
+int Canvas::outletAt(Box* b, int mx) const {
+    int best = -1, bestD = 1 << 30;
+    for (int k = 0; k < b->numOuts(); ++k) {
+        int px, py;
+        portPos(b, true, k, px, py);
+        int d = std::abs(mx - (px + kPortW / 2));
+        if (d < bestD) { bestD = d; best = k; }
+    }
+    return best;
+}
+
+void Canvas::cableEnds(const Connection& c, int& ax, int& ay, int& bx, int& by) const {
+    portPos(c.from, true, c.outlet, ax, ay);
+    portPos(c.to, false, c.inlet, bx, by);
+    ax += kPortW / 2;
+    bx += kPortW / 2;
+}
+
+// The end of a cable dragged and dropped at (mx, my): on a box, the cable goes to its nearest inlet (or
+// comes from its nearest outlet) instead, one undo step; anywhere else it stays as it was.
+void Canvas::moveCableEnd(int mx, int my) {
+    Hit h = hitTest(mx, my);
+    if (!h.box) return;
+    Patch& p = *patch_;
+    int k = -1;
+    for (int i = 0; i < (int)p.conns.size() && k < 0; ++i)
+        if (sameCable(p.conns[i], dragConn_)) k = i;
+    if (k < 0) return;
+    Connection n = dragConn_;
+    if (dragInletEnd_) { n.to = h.box; n.inlet = inletAt(h.box, mx); }
+    else { n.from = h.box; n.outlet = outletAt(h.box, mx); }
+    if (sameCable(n, dragConn_)) return;
+    std::string err;
+    ed_->pushUndo(patch_);
+    if (p.reconnect(k, n.from, n.outlet, n.to, n.inlet, &err)) {
+        p.conns[k].selected = true;
+        ed_->markDirty(patch_);
+    } else {
+        ed_->dropUndo();
+        ed_->print("can't connect: " + err);
+    }
 }
 
 void Canvas::clearSelection() {
@@ -1250,10 +1305,21 @@ int Canvas::handle(int e) {
                         beginMove();
                     }
                     break;
-                case Hit::Cable:
+                case Hit::Cable: {
                     if (!shift) clearSelection();
-                    patch_->conns[h.cable].selected = true;
+                    Connection& c = patch_->conns[h.cable];
+                    c.selected = true;
+                    // near one of its ends: that end can be dragged to another port, as in Max
+                    int ax, ay, bx, by;
+                    cableEnds(c, ax, ay, bx, by);
+                    double dOut = std::hypot(mx - ax, my - ay), dIn = std::hypot(mx - bx, my - by);
+                    if (std::min(dOut, dIn) <= kCableEndGrab) {
+                        drag_ = Drag::CableEnd;
+                        dragConn_ = c;
+                        dragInletEnd_ = dIn <= dOut;
+                    }
                     break;
+                }
                 default:
                     if (!shift) clearSelection();
                     drag_ = Drag::Rubber;
@@ -1287,6 +1353,8 @@ int Canvas::handle(int e) {
                     }
                     ed_->markDirty(patch_);
                 }
+            } else if (drag_ == Drag::CableEnd) {
+                if (std::abs(mx - pressX_) + std::abs(my - pressY_) > 2) moved_ = true;
             } else if (drag_ == Drag::Number) {
                 if (my != pressY_) { moved_ = true; typed_.clear(); }
                 numberDrag(pressY_ - my);
@@ -1318,6 +1386,8 @@ int Canvas::handle(int e) {
                         ed_->print("can't connect: " + err);
                     }
                 }
+            } else if (drag_ == Drag::CableEnd && moved_ && alive(dragConn_.from) && alive(dragConn_.to)) {
+                moveCableEnd(mx, my);
             } else if (drag_ == Drag::Rubber) {
                 int x0 = std::min(pressX_, mx), x1 = std::max(pressX_, mx);
                 int y0 = std::min(pressY_, my), y1 = std::max(pressY_, my);

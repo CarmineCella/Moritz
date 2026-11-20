@@ -439,6 +439,9 @@ public:
     void removeBoxes(const std::vector<Box*>& bs);
     bool connect(Box* from, int outlet, Box* to, int inlet, std::string* err = nullptr);
     void removeConnections(const std::vector<int>& indices);
+    // The cable at index k given other ends (one of its ends dragged to another port): it keeps its place
+    // among the cables. When the new cable can't be made (err says why), nothing changes.
+    bool reconnect(int k, Box* from, int outlet, Box* to, int inlet, std::string* err = nullptr);
     void clear();
     Box* find(const std::string& id) const;
     std::string uniqueId(const std::string& cls) const;

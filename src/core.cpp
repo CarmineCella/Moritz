@@ -729,6 +729,28 @@ bool Patch::connect(Box* from, int o, Box* to, int i, std::string* err) {
     return true;
 }
 
+bool Patch::reconnect(int k, Box* from, int o, Box* to, int i, std::string* err) {
+    if (k < 0 || k >= (int)conns.size()) {
+        if (err) *err = "no such cable";
+        return false;
+    }
+    std::vector<Connection> next = conns;
+    next.erase(next.begin() + k);
+    if (!canConnect(next, from, o, to, i, err)) return false;
+    next.insert(next.begin() + k, Connection{from, o, to, i});
+    std::swap(conns, next);                 // a signal loop, with the cable where it goes
+    bool loop = from->outs[o] == Port::Signal && reaches(to, from);
+    if (loop) {
+        std::swap(conns, next);
+        if (err) *err = "that would create a signal feedback loop";
+        return false;
+    }
+    cablesChanged();
+    recompile();
+    structureChanged();
+    return true;
+}
+
 void Patch::removeConnections(const std::vector<int>& idx) {
     std::vector<int> s = idx;
     std::sort(s.rbegin(), s.rend());

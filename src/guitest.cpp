@@ -22,6 +22,7 @@
 //                             the last; in patch coordinates; shift: Shift held while dragging and at release
 //   act=zoom:<z>              the front patch window's zoom (1 = 100%)
 //   act=pos:<id>              print: where a box of the front patch window is
+//   act=cables                print: the cables of the front patch window ("cable <from> <outlet> <to> <inlet>")
 //   act=keys:<text>           typed into the front document's canvas (',' is Enter)
 //   act=send:<id>:<message>   a message to a box of the front document
 //   act=codeedit:<text>       text added at the end of the front code editor
@@ -205,6 +206,14 @@ bool act(const std::string& a) {
         Box* b = c && c->patch() ? c->patch()->find(arg) : nullptr;
         if (!b) return false;
         state("pos %s %s", arg, std::to_string(b->x) + " " + std::to_string(b->y));
+        return true;
+    }
+    if (verb == "cables") {
+        Canvas* c = app.activeCanvas();
+        if (!c || !c->patch()) return false;
+        for (auto& k : c->patch()->conns)
+            state("cable %s %s", k.from->id + " " + std::to_string(k.outlet), k.to->id + " " + std::to_string(k.inlet));
+        state("cables %s", std::to_string(c->patch()->conns.size()));
         return true;
     }
     if (verb == "keys") {

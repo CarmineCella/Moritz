@@ -1,0 +1,6 @@
+; cables.moritz - cables moved by an end, boxes dropped into cables (tools/test-gui.sh)
+(patch
+  (obj a + 1 (pos 100 100))
+  (obj b + 2 (pos 100 250))
+  (obj c * 3 (pos 300 250))
+  (connect a 0 b 0))

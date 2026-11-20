@@ -149,6 +149,14 @@ expect "the other box with it" "state: pos b2 300 400"
 expect "a fast drag at 150%" "state: pos b1 400 350"
 expect "the other box with it at 150%" "state: pos b2 400 500"
 
+# 16. a cable's end dragged to another box moves the cable there (its inlet end, then its outlet end), one undo
+#     step each; dropped on nothing, it stays as it was and nothing is recorded
+run "$G/cables.moritz" --window-png none act=menu:patch.edit "act=drag:108,238/200,240/306,255" act=cables \
+    act=undo act=cables "act=drag:108,134/250,200/306,260" act=cables act=undo "act=drag:108,238/500,500" act=cables act=state
+seq=$(grep "state: cable " "$out" | sed 's/state: cable //' | tr '\n' '|')
+if [ $status -eq 0 ] && [ "$seq" = "a 0 c 0|a 0 b 0|c 0 b 0|a 0 b 0|" ] && grep -q "state: undo no redo yes" "$out"; then ok
+else fail "a cable moved by its end (got $seq)"; fi
+
 rm -rf "$T"
 echo "$count interface cases, $fails failed"
 [ $fails -eq 0 ]

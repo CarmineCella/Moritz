@@ -168,6 +168,9 @@ Moritz follows Max's conventions:
   category.
 - **Connecting**: drag from an outlet (the bottom edge of a box) to an inlet
   (the top edge). Rest the mouse on a port to see what it expects or sends.
+  To move a cable, take it near one of its ends and drop that end on another
+  box: it goes to that box's nearest inlet (or comes from its nearest
+  outlet); dropped anywhere else, the cable stays as it was.
 - **Editing**: select by clicking or dragging a rectangle; Option-drag copies;
   Cmd+X, Cmd+C, Cmd+V and Cmd+D cut, copy, paste and duplicate, also between
   patches; Cmd+Z undoes.

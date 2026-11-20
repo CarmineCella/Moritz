@@ -131,6 +131,11 @@ private:
     };
     Hit hitTest(int mx, int my) const;
     int inletAt(Box* b, int mx) const;
+    int outletAt(Box* b, int mx) const;
+    // a cable's ends, where it leaves its outlet and enters its inlet
+    void cableEnds(const Connection& c, int& ax, int& ay, int& bx, int& by) const;
+    void moveCableEnd(int mx, int my);   // a cable's end dropped there (Drag::CableEnd)
+    static constexpr int kCableEndGrab = 18;   // how near an end a click on a cable takes that end
     void portPos(Box* b, bool out, int i, int& px, int& py) const;
     void layout(Box* b);           // layoutBox, through the cache
     std::string bufferOf(Box* b) const;
@@ -169,7 +174,7 @@ private:
     Box* editing_ = nullptr;
     bool editingNew_ = false;
 
-    enum class Drag { None, Move, Cable, Rubber, Number, UI } drag_ = Drag::None;
+    enum class Drag { None, Move, Cable, CableEnd, Rubber, Number, UI } drag_ = Drag::None;
     int pressX_ = 0, pressY_ = 0, curX_ = 0, curY_ = 0;
     bool moved_ = false;
     // a move: where each dragged box was when the drag began (each event places them from there)
@@ -177,6 +182,9 @@ private:
     Box* dragBox_ = nullptr;
     std::string uiBefore_;          // what an interface box saved before a mouse edit
     int dragPort_ = 0;
+    // CableEnd: the cable whose end is dragged to another port, and which end (its inlet's or its outlet's)
+    Connection dragConn_{};
+    bool dragInletEnd_ = false;
     double dragStartValue_ = 0.0, dragStep_ = 1.0;
     Box* typingBox_ = nullptr;     // number box receiving typed digits
     std::string typed_;
