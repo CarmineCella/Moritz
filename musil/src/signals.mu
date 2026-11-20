@@ -297,26 +297,16 @@ function spectral-moment (amps freqs order centroid) {
     if (== total 0) { return 0 }
     return (/ (sum (* amps (pow (- freqs centroid) order))) total)
 }
+; (spectral-moments amps freqs) is C++ (signals.h, signals/mir.h: the formulas of Moritz's descriptors~)
 ; (spectral-centroid amps freqs) amplitude-weighted mean frequency
-function spectral-centroid (amps freqs) (spectral-moment amps freqs 1 0)
+function spectral-centroid (amps freqs) (getidx (spectral-moments amps freqs) 0)
 ; (spectral-spread amps freqs) standard deviation around the centroid
-function spectral-spread (amps freqs) (sqrt (spectral-moment amps freqs 2 (spectral-centroid amps freqs)))
+function spectral-spread (amps freqs) (getidx (spectral-moments amps freqs) 1)
 ; (spectral-skewness amps freqs) asymmetry of the spectrum about its centroid
-function spectral-skewness (amps freqs) {
-    var c (spectral-centroid amps freqs)
-    var s (spectral-spread amps freqs)
-    if (== s 0) { return 0 }
-    return (/ (spectral-moment amps freqs 3 c) (pow s 3))
-}
+function spectral-skewness (amps freqs) (getidx (spectral-moments amps freqs) 2)
 ; (spectral-kurtosis amps freqs) peakedness of the spectrum about its centroid
-function spectral-kurtosis (amps freqs) {
-    var c (spectral-centroid amps freqs)
-    var s (spectral-spread amps freqs)
-    if (== s 0) { return 0 }
-    return (/ (spectral-moment amps freqs 4 c) (pow s 4))
-}
-; (spectral-flux amps previous)   rectified increase from the previous frame
-function spectral-flux (amps previous) (sum (max (- amps previous) 0))
+function spectral-kurtosis (amps freqs) (getidx (spectral-moments amps freqs) 3)
+; (spectral-flux amps previous) is C++ (signals.h, signals/mir.h)
 ; (spectral-irregularity amps)   sum of absolute differences between neighbouring bins
 function spectral-irregularity (amps) (sum (abs (diff amps)))
 ; (spectral-decrease amps)       weighted decrease relative to the first bin
@@ -326,22 +316,17 @@ function spectral-decrease (amps) {
     if (== total 0) { return 0 }
     return (/ (sum (/ (- rest (head amps)) (range 1 (length amps)))) total)
 }
-; (spectral-flatness amps)       geometric over arithmetic mean: 1 for noise, 0 for a pure tone
-function spectral-flatness (amps) {
-    var a (+ amps 1e-12)
-    return (/ (exp (mean (log a))) (mean a))
-}
+; (spectral-flatness amps) is C++ (signals.h, signals/mir.h)
 ; (spectral-rolloff amps freqs fraction)   frequency below which the fraction of the energy lies
 function spectral-rolloff (amps freqs fraction) {
     var c (cumsum (* amps amps))
     var target (* fraction (last c))
     return (getidx freqs (find (>= c target) 1))
 }
-; (hfc amps)                     high-frequency content
-function hfc (amps) (/ (sum (* amps amps (range (length amps)))) (max 1 (sum (range (length amps)))))
-; (zcr x) zero-crossing rate per sample
-function zcr (x) (/ (sum (!= (sign (drop x 1)) (sign (take x (- (length x) 1))))) (length x))
-; (acf-f0 x sr)                  fundamental by autocorrelation; 0 when no clear peak
+; (hfc amps) and (zcr x) are C++ (signals.h, signals/mir.h)
+; (acf-f0 x sr)                  fundamental by autocorrelation; 0 when no clear peak (yin is more reliable: it does
+;                                not jump an octave up when the fundamental is weak; yin, yin-track and descriptors
+;                                are C++, signals.h, signals/pitch.h)
 function acf-f0 (x sr) {
     var r (autocorr x)
     if (== (head r) 0) { return 0 }

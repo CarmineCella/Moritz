@@ -970,6 +970,53 @@
   autocorrelation (the mean removed) read at the lags of 30..300 bpm (half-bpm steps, a lag under half the curve's
   length), weighted by a log-normal prior on the tempo a listener taps, centred on centre bpm, width octaves wide
   (mir.h's tempoEstimate, as Moritz's beats); (tempo-estimate-with flux fps 120 10) is the autocorrelation's own peak
+#yin
+  (yin x sr [threshold] [fmin] [fmax])
+  => (list f0 periodicity): the fundamental of x read as one frame by YIN
+  (de Cheveigné & Kawahara 2002; signals/pitch.h, the f0 of Moritz's descriptors~): the difference function of
+  x against itself, by FFT, over windows of half its length, normalised by its cumulative mean; the first lag
+  whose value dips under threshold (0.1; lower is stricter) is the period, refined by a parabola and checked
+  against the windows around the centre (the best local estimate). f0 is 0 when no lag dips under the
+  threshold (noise, silence); periodicity is 1 minus the normalised difference at the period (1 for a perfectly
+  periodic sound, about 0 for noise and silence). f0 is searched between fmin (50 Hz) and fmax (4000 Hz), and no
+  lower than 2 sr / (length x): a 2048-sample frame at 44.1 kHz reaches 43 Hz. Unlike acf-f0, a weak or missing
+  fundamental does not make it jump an octave up
+#yin-track
+  (yin-track x sr n hop [threshold] [fmin] [fmax])
+  => (list f0s periodicities): yin of every frame of n samples (a
+  power of 2), a frame every hop samples centred on it (the first at 0, as the spectrograms): two vectors, one
+  value per frame; f0 0 where the frame is unvoiced
+#descriptors
+  (descriptors x sr n hop [threshold] [fmin] [fmax])
+  => an 11 x frames matrix, the low-level descriptors of every
+  frame of n samples (a power of 2), a frame every hop samples centred on it (the first at 0), in the order and
+  with the formulas of Moritz's descriptors~ (mir.h): rms; the spectral centroid and spread (Hz), skewness and
+  kurtosis of the magnitudes (Hann window, a full-scale sine 1); the flux (the rectified increase of the
+  magnitudes since the frame before; the first from silence); hfc (the energy weighted by bin number over the sum
+  of the bin numbers); zcr (zero crossings a second); flatness (geometric over arithmetic mean of the
+  magnitudes, 0 for silence); then yin's periodicity and f0 (0 when unvoiced)
+#spectral-moments
+  (spectral-moments amps freqs)
+  => (vec centroid spread skewness kurtosis) of magnitudes amps at the frequencies
+  freqs (as long): the amplitude-weighted mean frequency, the standard deviation around it, and the third and
+  fourth standardised moments (kurtosis 3 for a Gaussian shape); all 0 for silence, the last two 0 for a single
+  line (mir.h, as descriptors~); spectral-centroid, spectral-spread, spectral-skewness and spectral-kurtosis read it
+#spectral-flatness
+  (spectral-flatness amps)
+  geometric over arithmetic mean of the magnitudes: 1 for white noise, near 0 for a pure
+  tone, 0 for silence (mir.h, as descriptors~)
+#spectral-flux
+  (spectral-flux amps previous)
+  the rectified increase of the magnitudes from the previous frame (previous as long,
+  or a number) (mir.h, as descriptors~ and onset~)
+#hfc
+  (hfc amps)
+  high frequency content: the sum of amps^2 times the bin number over the sum of the bin numbers (mir.h,
+  as descriptors~)
+#zcr
+  (zcr x)
+  the zero-crossing rate, per sample: how many times x changes sign (0 counts as positive) over its length
+  (mir.h; descriptors~ gives it per second)
 #sine
   (sine sr freq dur)
   a sine of freq Hz lasting dur seconds
@@ -1146,30 +1193,20 @@
 #spectral-kurtosis
   (spectral-kurtosis amps freqs)
   peakedness of the spectrum about its centroid
-#spectral-flux
-  (spectral-flux amps previous)
-  rectified increase from the previous frame
 #spectral-irregularity
   (spectral-irregularity amps)
   sum of absolute differences between neighbouring bins
 #spectral-decrease
   (spectral-decrease amps)
   weighted decrease relative to the first bin
-#spectral-flatness
-  (spectral-flatness amps)
-  geometric over arithmetic mean: 1 for noise, 0 for a pure tone
 #spectral-rolloff
   (spectral-rolloff amps freqs fraction)
   frequency below which the fraction of the energy lies
-#hfc
-  (hfc amps)
-  high-frequency content
-#zcr
-  (zcr x)
-  zero-crossing rate per sample
 #acf-f0
   (acf-f0 x sr)
-  fundamental by autocorrelation; 0 when no clear peak
+  fundamental by autocorrelation; 0 when no clear peak (yin is more reliable: it does
+  not jump an octave up when the fundamental is weak; yin, yin-track and descriptors
+  are C++, signals.h, signals/pitch.h)
 #apply-filter
   (apply-filter x coeffs)
   run x through (list b a) as returned by biquad

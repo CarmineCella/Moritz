@@ -1,8 +1,10 @@
 // Copyright (c) 2026 Carmine-Emanuele Cella. SPDX-License-Identifier: BSD-2-Clause
 // mir.h — music information retrieval in C++, frame by frame and over whole sounds: spectrograms, mel bands
-// and MFCCs, chroma, spectral flux and onsets, tempo and beats, keys, self-similarity and novelty, loudness.
+// and MFCCs, chroma, the low-level descriptors (spectral moments, flatness, flux, hfc, zero crossings, and
+// YIN's f0 from pitch.h), onsets, tempo and beats, keys, self-similarity and novelty, loudness.
 // The one implementation of these analyses: Musil's builtins (chromagram, mel-spectrogram, mfcc-gram,
-// self-similarity, foote-novelty, tempogram, beat-track, key-scores, tempo-estimate-with) wrap it, Maple and
+// descriptors, spectral-moments, spectral-flatness, spectral-flux, hfc, zcr, self-similarity,
+// foote-novelty, tempogram, beat-track, key-scores, tempo-estimate-with) wrap it, Maple and
 // SoundTypes (music/maple.h, music/soundtypes.h) are built on it, and Moritz's analysis objects, offline and
 // live, use it: a script and a patch get the same numbers. The spectra are computed in double precision
 // whatever the samples are (float or double). It needs nothing but the standard library.
@@ -25,6 +27,7 @@
 
 #include "biquad.h"
 #include "fft.h"
+#include "pitch.h"
 
 namespace musil {
 namespace mir {
@@ -235,6 +238,119 @@ inline Vec fluxOf(const Mat& mag) {
     for (size_t f = 1; f < mag.size(); ++f) flux[f] = spectralFlux(mag[f], mag[f - 1]);
     return flux;
 }
+
+// ------------------------------------------------------------------ descriptors
+// The low-level descriptors of a frame: Musil's spectral-centroid, spectral-spread, spectral-skewness,
+// spectral-kurtosis, spectral-flatness, spectral-flux, hfc and zcr, its descriptors (frame by frame) and
+// Moritz's descriptors~. amp: n magnitudes; freq(k): the frequency of magnitude k.
+struct Moments {
+    double centroid = 0, spread = 0, skewness = 0, kurtosis = 0;
+};
+// the amplitude-weighted mean frequency, the standard deviation around it, and the third and fourth
+// standardised moments (skewness, kurtosis: 3 for a Gaussian shape); all 0 for silence, the last two 0
+// for a single line
+template <class Freq>
+inline Moments spectralMoments(const double* amp, size_t n, Freq freq) {
+    Moments m;
+    double sa = 0, sf = 0;
+    for (size_t k = 0; k < n; ++k) { sa += amp[k]; sf += amp[k] * freq(k); }
+    if (!(sa != 0)) return m;
+    m.centroid = sf / sa;
+    double m2 = 0, m3 = 0, m4 = 0;
+    for (size_t k = 0; k < n; ++k) {
+        double d = freq(k) - m.centroid, a = amp[k] / sa;
+        m2 += a * d * d; m3 += a * d * d * d; m4 += a * d * d * d * d;
+    }
+    m.spread = std::sqrt(std::max(0.0, m2));
+    if (m.spread > 0) {
+        m.skewness = m3 / (m.spread * m.spread * m.spread);
+        m.kurtosis = m4 / (m.spread * m.spread * m.spread * m.spread);
+    }
+    return m;
+}
+// geometric over arithmetic mean of the magnitudes: about 1 for noise, near 0 for a few lines; 0 for silence
+inline double spectralFlatness(const double* amp, size_t n) {
+    if (!n) return 0.0;
+    double s = 0, logs = 0;
+    for (size_t k = 0; k < n; ++k) { s += amp[k]; logs += std::log(std::max(0.0, amp[k]) + 1e-12); }
+    double mean = s / (double)n;
+    return mean > 1e-9 ? std::exp(logs / (double)n) / mean : 0.0;
+}
+// high frequency content: the energy weighted by bin number, over the sum of the bin numbers
+inline double highFrequencyContent(const double* amp, size_t n) {
+    double h = 0, w = 0;
+    for (size_t k = 0; k < n; ++k) { h += amp[k] * amp[k] * (double)k; w += (double)k; }
+    return w > 0 ? h / w : 0.0;
+}
+// how many times the signal changes sign (0 counts as positive)
+template <class T>
+inline long zeroCrossings(const T* x, size_t n) {
+    long c = 0;
+    for (size_t i = 1; i < n; ++i)
+        if ((x[i - 1] < 0) != (x[i] < 0)) ++c;
+    return c;
+}
+
+// The eleven descriptors of descriptors~ (and of Musil's descriptors), in this order:
+//   rms          root mean square level of the samples
+//   centroid     spectral centroid (Hz)                 spread     spectral spread (Hz)
+//   skewness     spectral skewness                      kurtosis   spectral kurtosis
+//   flux         spectral flux from the previous frame  hfc        high frequency content
+//   zcr          zero crossings per second              flatness   spectral flatness (0 tonal .. 1 noise)
+//   periodicity  YIN's 1 - aperiodicity (0..1)          f0         YIN's fundamental (Hz), 0 unvoiced
+// of a frame of n samples whose magnitudes (n/2 + 1, FrameSpectrum's) are given. It keeps the
+// magnitudes of the frame before (for the flux) and YIN's buffers (signals/pitch.h).
+enum Descriptor { kRms, kCentroid, kSpread, kSkewness, kKurtosis, kFlux, kHfc, kZcr, kFlatness, kPeriodicity, kF0, kDescriptorCount };
+inline const char* descriptorName(int k) {
+    static const char* const names[kDescriptorCount] = {"rms", "centroid", "spread", "skewness", "kurtosis", "flux",
+                                                        "hfc", "zcr", "flatness", "periodicity", "f0"};
+    return k >= 0 && k < kDescriptorCount ? names[k] : "";
+}
+class FrameDescriptors {
+public:
+    // frames of n samples at sr; YIN's threshold and the range of f0 it searches. Allocates.
+    void init(int n, double sr, double threshold = .1, double fmin = 50, double fmax = 4000) {
+        n_ = n;
+        sr_ = sr;
+        threshold_ = threshold;
+        yin_.init(n, sr, fmin, fmax);
+        prev_.assign((size_t)n / 2 + 1, 0.0);
+    }
+    bool matches(int n, double sr) const { return n == n_ && sr == sr_; }
+    void setThreshold(double t) { threshold_ = t; }
+    void setRange(double fmin, double fmax) { yin_.init(n_, sr_, fmin, fmax); }   // allocates
+    const dsp::Yin& yin() const { return yin_; }
+    // out: kDescriptorCount values; pitch false leaves periodicity and f0 at 0 (YIN is the costly part)
+    template <class T>
+    void compute(const T* x, const Vec& mag, double* out, bool pitch = true) {
+        double e = 0;
+        for (int i = 0; i < n_; ++i) e += (double)x[i] * (double)x[i];
+        out[kRms] = n_ > 0 ? std::sqrt(e / n_) : 0.0;
+        out[kZcr] = n_ > 0 ? (double)zeroCrossings(x, (size_t)n_) * sr_ / n_ : 0.0;
+        const double binHz = sr_ / n_;
+        Moments m = spectralMoments(mag.data(), mag.size(), [binHz](size_t k) { return (double)k * binHz; });
+        out[kCentroid] = m.centroid;
+        out[kSpread] = m.spread;
+        out[kSkewness] = m.skewness;
+        out[kKurtosis] = m.kurtosis;
+        out[kFlux] = spectralFlux(mag, prev_);
+        std::copy(mag.begin(), mag.begin() + (long)std::min(mag.size(), prev_.size()), prev_.begin());
+        out[kHfc] = highFrequencyContent(mag.data(), mag.size());
+        out[kFlatness] = spectralFlatness(mag.data(), mag.size());
+        out[kPeriodicity] = out[kF0] = 0.0;
+        if (pitch) {
+            dsp::PitchEstimate p = yin_.estimate(x, threshold_);
+            out[kPeriodicity] = p.periodicity;
+            out[kF0] = p.f0;
+        }
+    }
+
+private:
+    int n_ = 0;
+    double sr_ = 0, threshold_ = .1;
+    dsp::Yin yin_;
+    Vec prev_;
+};
 
 // ------------------------------------------------------------------ helpers
 inline Vec medianFilter(const Vec& v, int width) {

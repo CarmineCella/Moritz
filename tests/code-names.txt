@@ -107,6 +107,7 @@ deg->rad
 deinterleave
 delay
 denoise
+descriptors
 det
 diag
 diff
@@ -454,6 +455,7 @@ spectral-flux
 spectral-irregularity
 spectral-kurtosis
 spectral-moment
+spectral-moments
 spectral-morph
 spectral-peaks
 spectral-rolloff
@@ -512,6 +514,8 @@ whisperize
 window
 write
 write-wav
+yin
+yin-track
 zcr
 zeros
 zip

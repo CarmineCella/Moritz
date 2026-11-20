@@ -10,10 +10,11 @@
 // Only what needs an element loop is here: the FFT, the table oscillator,
 // the recursive (IIR) filter, fractional delay, windowed-sinc resampling,
 // autocorrelation, channel (de)interleaving, peak picking, gather, the in-place
-// overlap-add, and the comb and allpass delay lines. Windows, wavetables,
-// polar conversion, convolution, spectral features, filter design, comb and
-// allpass sections, STFT and overlap-add are compositions of vector
-// operations and live in signals.mu.
+// overlap-add, and the comb and allpass delay lines; and the engines Moritz's
+// objects share (signals/*.h), among them the analyses of mir.h (the low-level
+// descriptors and YIN's f0 of descriptors~ too). Windows, wavetables, polar
+// conversion, filter design, comb and allpass sections, STFT and overlap-add
+// are compositions of vector operations and live in signals.mu.
 
 #pragma once
 #include "core.h"
@@ -894,6 +895,125 @@ inline vptr sig_tempo_estimate_with(vlist& a, Interp& i) {
     return v_num(mir::tempoEstimate(mir::Vec(std::begin(f), std::end(f)), i.scalar(a[1]), i.scalar(a[2]), i.scalar(a[3])));
 }
 
+// --- pitch and low-level descriptors (signals/pitch.h, signals/mir.h: Moritz's descriptors~) ----------------
+inline const double* data_of(const varr& v) { return v.size() ? &v[0] : nullptr; }
+// a frame of n samples centred on sample c of x (zeros outside), as the spectrograms above read them
+inline void centred_frame(const varr& x, long c, size_t n, std::vector<double>& buf) {
+    long start = c - (long)n / 2;
+    for (size_t k = 0; k < n; k++) { long j = start + (long)k; buf[k] = (j >= 0 && j < (long)x.size()) ? x[(size_t)j] : 0.0; }
+}
+// YIN's options from a[from]: threshold (0.1), fmin (50 Hz), fmax (4000 Hz)
+inline void yin_options(vlist& a, size_t from, Interp& i, double sr, double& thr, double& fmin, double& fmax) {
+    thr = a.size() > from ? i.scalar(a[from]) : 0.1;
+    fmin = a.size() > from + 1 ? i.scalar(a[from + 1]) : 50.0;
+    fmax = a.size() > from + 2 ? i.scalar(a[from + 2]) : 4000.0;
+    if (!std::isfinite(sr) || sr <= 0 || sr > 1e7) i.bad("sr must be in (0, 1e7]");
+    if (!(thr > 0 && thr <= 1)) i.bad("threshold must be in (0, 1]");
+    if (!(fmin > 0) || !(fmax > fmin) || !std::isfinite(fmax)) i.bad("need 0 < fmin < fmax");
+}
+inline void yin_ready(Interp& i, const dsp::Yin& y) {
+    if (!y.ready()) i.bad("the frame is too short for fmax (it needs at least 4 sr / fmax + 8 samples)");
+}
+// (yin x sr [threshold] [fmin] [fmax]) => (list f0 periodicity): the fundamental of x read as one frame by YIN
+//   (de Cheveigné & Kawahara 2002; signals/pitch.h, the f0 of Moritz's descriptors~): the difference function of
+//   x against itself, by FFT, over windows of half its length, normalised by its cumulative mean; the first lag
+//   whose value dips under threshold (0.1; lower is stricter) is the period, refined by a parabola and checked
+//   against the windows around the centre (the best local estimate). f0 is 0 when no lag dips under the
+//   threshold (noise, silence); periodicity is 1 minus the normalised difference at the period (1 for a perfectly
+//   periodic sound, about 0 for noise and silence). f0 is searched between fmin (50 Hz) and fmax (4000 Hz), and no
+//   lower than 2 sr / (length x): a 2048-sample frame at 44.1 kHz reaches 43 Hz. Unlike acf-f0, a weak or missing
+//   fundamental does not make it jump an octave up
+inline vptr sig_yin(vlist& a, Interp& i) {
+    const varr& x = i.num(a[0]); double sr = i.scalar(a[1]), thr, fmin, fmax;
+    yin_options(a, 2, i, sr, thr, fmin, fmax);
+    if (x.size() > ((size_t)1 << 20)) i.bad("x is longer than 2^20 samples (a frame: yin-track follows a sound)");
+    dsp::Yin y; y.init((int)x.size(), sr, fmin, fmax); yin_ready(i, y);
+    auto p = y.estimate(&x[0], thr);
+    return v_list({ v_num(p.f0), v_num(p.periodicity) });
+}
+// (yin-track x sr n hop [threshold] [fmin] [fmax]) => (list f0s periodicities): yin of every frame of n samples (a
+//   power of 2), a frame every hop samples centred on it (the first at 0, as the spectrograms): two vectors, one
+//   value per frame; f0 0 where the frame is unvoiced
+inline vptr sig_yin_track(vlist& a, Interp& i) {
+    const varr& x = i.num(a[0]); double sr = i.scalar(a[1]), thr, fmin, fmax;
+    size_t n = (size_t)i.index(a[2]), hop = (size_t)i.index(a[3]);
+    check_stft(i, n, hop); yin_options(a, 4, i, sr, thr, fmin, fmax);
+    dsp::Yin y; y.init((int)n, sr, fmin, fmax); yin_ready(i, y);
+    size_t frames = (size_t)mir::frameCount((long)x.size(), (int)hop);
+    varr f0(0.0, frames), per(0.0, frames); std::vector<double> buf(n);
+    for (size_t f = 0; f < frames; f++) {
+        centred_frame(x, (long)(f * hop), n, buf);
+        auto p = y.estimate(buf.data(), thr);
+        f0[f] = p.f0; per[f] = p.periodicity;
+        if (f % 16 == 0) i.yield_check();
+    }
+    return v_list({ v_arr(std::move(f0)), v_arr(std::move(per)) });
+}
+// (descriptors x sr n hop [threshold] [fmin] [fmax]) => an 11 x frames matrix, the low-level descriptors of every
+//   frame of n samples (a power of 2), a frame every hop samples centred on it (the first at 0), in the order and
+//   with the formulas of Moritz's descriptors~ (mir.h): rms; the spectral centroid and spread (Hz), skewness and
+//   kurtosis of the magnitudes (Hann window, a full-scale sine 1); the flux (the rectified increase of the
+//   magnitudes since the frame before; the first from silence); hfc (the energy weighted by bin number over the sum
+//   of the bin numbers); zcr (zero crossings a second); flatness (geometric over arithmetic mean of the
+//   magnitudes, 0 for silence); then yin's periodicity and f0 (0 when unvoiced)
+inline vptr sig_descriptors(vlist& a, Interp& i) {
+    const varr& x = i.num(a[0]); double sr = i.scalar(a[1]), thr, fmin, fmax;
+    size_t n = (size_t)i.index(a[2]), hop = (size_t)i.index(a[3]);
+    check_stft(i, n, hop); yin_options(a, 4, i, sr, thr, fmin, fmax);
+    mir::FrameDescriptors fd; fd.init((int)n, sr, thr, fmin, fmax);
+    mir::FrameSpectrum fs; fs.init((int)n);
+    bool pitch = fd.yin().ready();
+    size_t frames = (size_t)mir::frameCount((long)x.size(), (int)hop);
+    mir::Mat rows(mir::kDescriptorCount, mir::Vec(frames, 0.0));
+    std::vector<double> buf(n); mir::Vec mag; double v[mir::kDescriptorCount];
+    for (size_t f = 0; f < frames; f++) {
+        centred_frame(x, (long)(f * hop), n, buf);
+        fs.magnitudes(buf.data(), mag);
+        fd.compute(buf.data(), mag, v, pitch);
+        for (int k = 0; k < mir::kDescriptorCount; k++) rows[(size_t)k][f] = v[k];
+        if (f % 16 == 0) i.yield_check();
+    }
+    return mat_rows(rows);
+}
+// (spectral-moments amps freqs) => (vec centroid spread skewness kurtosis) of magnitudes amps at the frequencies
+//   freqs (as long): the amplitude-weighted mean frequency, the standard deviation around it, and the third and
+//   fourth standardised moments (kurtosis 3 for a Gaussian shape); all 0 for silence, the last two 0 for a single
+//   line (mir.h, as descriptors~); spectral-centroid, spectral-spread, spectral-skewness and spectral-kurtosis read it
+inline vptr sig_spectral_moments(vlist& a, Interp& i) {
+    const varr& m = i.num(a[0]); const varr& f = i.num(a[1]);
+    if (m.size() != f.size()) i.bad("amps and freqs must have the same length");
+    auto r = mir::spectralMoments(data_of(m), m.size(), [&f](size_t k) { return f[k]; });
+    varr out(4); out[0] = r.centroid; out[1] = r.spread; out[2] = r.skewness; out[3] = r.kurtosis;
+    return v_arr(std::move(out));
+}
+// (spectral-flatness amps)   geometric over arithmetic mean of the magnitudes: 1 for white noise, near 0 for a pure
+//   tone, 0 for silence (mir.h, as descriptors~)
+inline vptr sig_spectral_flatness(vlist& a, Interp& i) {
+    const varr& m = i.num(a[0]);
+    return v_num(mir::spectralFlatness(data_of(m), m.size()));
+}
+// (spectral-flux amps previous)   the rectified increase of the magnitudes from the previous frame (previous as long,
+//   or a number) (mir.h, as descriptors~ and onset~)
+inline vptr sig_spectral_flux(vlist& a, Interp& i) {
+    const varr& m = i.num(a[0]); const varr& p = i.num(a[1]);
+    if (p.size() != m.size() && p.size() != 1) i.bad("previous must be as long as amps (or a number)");
+    mir::Vec cur(std::begin(m), std::end(m)), prev(m.size(), p.size() == 1 ? p[0] : 0.0);
+    if (p.size() == m.size()) prev.assign(std::begin(p), std::end(p));
+    return v_num(mir::spectralFlux(cur, prev));
+}
+// (hfc amps)   high frequency content: the sum of amps^2 times the bin number over the sum of the bin numbers (mir.h,
+//   as descriptors~)
+inline vptr sig_hfc(vlist& a, Interp& i) {
+    const varr& m = i.num(a[0]);
+    return v_num(mir::highFrequencyContent(data_of(m), m.size()));
+}
+// (zcr x)   the zero-crossing rate, per sample: how many times x changes sign (0 counts as positive) over its length
+//   (mir.h; descriptors~ gives it per second)
+inline vptr sig_zcr(vlist& a, Interp& i) {
+    const varr& x = i.num(a[0]);
+    return v_num(x.size() ? (double)mir::zeroCrossings(data_of(x), x.size()) / (double)x.size() : 0.0);
+}
+
 inline void add_signals(Interp& i) {
     i.def("fft", sig_fft, 1, 1); i.def("ifft", sig_ifft, 1, 1);
     i.def("osc", sig_osc, 3, 3); i.def("iir", sig_iir, 3, 3); i.def("delay", sig_delay, 2, 2);
@@ -906,6 +1026,9 @@ inline void add_signals(Interp& i) {
     i.def("chromagram", sig_chromagram, 4, 4); i.def("self-similarity", sig_self_similarity, 1, 1); i.def("foote-novelty", sig_foote_novelty, 2, 2);
     i.def("tempogram", sig_tempogram, 3, 4); i.def("beat-track", sig_beat_track, 4, 4);
     i.def("mel-spectrogram", sig_mel_spectrogram, 5, 5); i.def("key-scores", sig_key_scores, 1, 1); i.def("tempo-estimate-with", sig_tempo_estimate_with, 4, 4); i.def("mfcc-gram", sig_mfcc_gram, 6, 6);
+    i.def("yin", sig_yin, 2, 5); i.def("yin-track", sig_yin_track, 4, 7); i.def("descriptors", sig_descriptors, 4, 7);
+    i.def("spectral-moments", sig_spectral_moments, 2, 2); i.def("spectral-flatness", sig_spectral_flatness, 1, 1);
+    i.def("spectral-flux", sig_spectral_flux, 2, 2); i.def("hfc", sig_hfc, 1, 1); i.def("zcr", sig_zcr, 1, 1);
     i.def("conv", sig_conv, 2, 2); i.def("conv-fast", sig_conv, 2, 2); i.def("ambi-gains", sig_ambi_gains, 3, 3); i.def("ambi-decoder", sig_ambi_decoder, 2, 2); i.def("binaural-level", sig_binaural_level, 2, 2); i.def("ambi-rotate", sig_ambi_rotate, 2, 2); i.def("hrir", sig_hrir, 3, 3); i.def("hrir-model", sig_hrir_model, 3, 3);
     i.def("hrtf-load", sig_hrtf_load, 1, 1); i.def("hrtf-unload", sig_hrtf_unload, 0, 0); i.def("hrtf-loaded", sig_hrtf_loaded, 0, 0);
 }

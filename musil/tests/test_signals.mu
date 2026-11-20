@@ -144,11 +144,75 @@ check (near? (spectral-flatness (ones 8)) 1 1e-9) "spectral-flatness: white"
 check (< (spectral-flatness (vec 1 0 0 0)) 0.01) "spectral-flatness: tonal"
 check (== (spectral-rolloff (vec 1 1 1 1) (vec 0 1 2 3) 0.5) 1) "spectral-rolloff"
 check (near? (hfc (vec 0 0 1)) (/ 2 3) 1e-12) "hfc: sum of a^2 i over sum of i"
-check (near? (zcr s440) 0.11 1e-3) "zcr: 440 Hz at 8 kHz crosses ~0.11 per sample"
+check (near? (zcr s440) (/ 87 800) 1e-12) "zcr: 440 Hz at 8 kHz, 87 sign changes in 800 samples (the first sample, 0, counts as positive)"
 check (== (zcr (ones 10)) 0) "zcr: no crossings"
+check (== (zcr (vec 1 0 -1 0 1)) (/ 2 5)) "zcr: 0 counts as positive"
+check (== (spectral-flatness (zeros 8)) 0) "spectral-flatness: silence is 0"
+check (equal? (spectral-moments (vec 1 1) (vec 0 100)) (vec 50 50 0 1)) "spectral-moments: centroid spread skewness kurtosis"
+check (== (spectral-flux (vec 2 0 3) 1) 3) "spectral-flux: a number as the previous frame"
+check (contains? (error-of (function () (spectral-moments (vec 1 2) (vec 1)))) "same length") "spectral-moments: lengths"
 check (near? (acf-f0 sig sr) 200 1e-9) "acf-f0: 200 Hz"
 check (== (acf-f0 (noise 800) sr) 0) "acf-f0: noise is unvoiced"
 check (== (acf-f0 (zeros 100) sr) 0) "acf-f0: silence"
+
+; --- yin ---
+function cents (f want) (abs (* 1200 (log2 (/ (max f 1e-9) want))))
+each (list 100 220 440 1000 2000) (function (f) {
+    var p (yin (sine sr f 0.128) sr)
+    check (< (cents (head p) f) 0.5) (concat "yin: a sine at " (str f) " Hz, within half a cent")
+    check (> (last p) 0.99) (concat "yin: a sine at " (str f) " Hz is periodic")
+})
+; harmonics with phases of their own, amps from the fundamental up
+function harmonic-tone (f0 amps n) {
+    var t (/ (range n) sr)
+    var x (zeros n)
+    for (var k 0) (< k (length amps)) (var k (+ k 1)) {
+        var x (+ x (* (getidx amps k) (sin (+ (* tau (+ k 1) f0 t) k))))
+    }
+    return (* 0.3 x)
+}
+var weak (harmonic-tone 62.5 (vec 0.2 1 0.2 0.8 0.2 0.5) 512)
+check (near? (acf-f0 weak sr) 125 1) "acf-f0: a weak fundamental and weak odd partials make it jump an octave up"
+check (< (cents (head (yin weak sr)) 62.5) 1) "yin: the same tone keeps its octave"
+var weak2 (harmonic-tone 80 (vec 0.25 1 0.25 0.8 0.25 0.5) 320)
+check (near? (acf-f0 weak2 sr) 160 1) "acf-f0: four periods of a weak fundamental, an octave up"
+check (< (cents (head (yin weak2 sr)) 80) 1) "yin: four periods are enough"
+check (< (cents (head (yin (harmonic-tone 200 (vec 0 1 1 1 1) 1024) sr)) 200) 0.5) "yin: a missing fundamental"
+check (< (cents (head (yin (harmonic-tone 100 (vec 0 0 1 1 1 1) 1024) sr)) 100) 0.5) "yin: the fundamental and its octave missing"
+var saw (- (* 2 (- (* (range 1024) (/ 110 sr)) (floor (* (range 1024) (/ 110 sr))))) 1)
+check (< (cents (head (yin saw sr)) 110) 2) "yin: a naive sawtooth at 110 Hz"
+seed 7
+var hiss (noise 2048)
+check (equal? (head (yin hiss sr)) 0) "yin: noise is unvoiced"
+check (< (last (yin hiss sr)) 0.5) "yin: noise is not periodic"
+check (equal? (yin (zeros 1024) sr) (list 0 0)) "yin: silence"
+check (equal? (head (yin (sine sr 50 0.25) sr 0.1 100)) 0) "yin: nothing under fmin"
+var noisy (+ (sine sr 300 0.128) (* 0.3 (noise 1024)))
+check (< (cents (head (yin noisy sr)) 300) 5) "yin: a sine in noise at threshold 0.1"
+check (== (head (yin noisy sr 0.01)) 0) "yin: unvoiced at a stricter threshold"
+check (contains? (error-of (function () (yin (vec 1 2 3) sr))) "too short") "yin: a frame too short"
+check (contains? (error-of (function () (yin (zeros 1100000) sr))) "longer") "yin: a frame, not a whole sound"
+check (contains? (error-of (function () (yin s440 sr 0))) "threshold") "yin: threshold in (0, 1]"
+check (contains? (error-of (function () (yin s440 sr 0.1 500 400))) "fmin") "yin: fmin under fmax"
+var track (yin-track (vec (sine sr 200 0.3) (zeros 2400)) sr 512 256)
+check (== (length (head track)) 19) "yin-track: a frame every hop, the first at 0"
+check (< (cents (getidx (head track) 4) 200) 0.5) "yin-track: the tone"
+check (== (getidx (head track) 18) 0) "yin-track: the silence after it"
+check (== (getidx (last track) 18) 0) "yin-track: no periodicity in silence"
+
+; --- descriptors (as Moritz's descriptors~) ---
+var dm (descriptors (sine sr 500 0.5) sr 1024 512)
+check (== (length dm) 11) "descriptors: eleven rows"
+check (== (length (head dm)) 8) "descriptors: a frame every hop"
+check (near? (getidx (head dm) 3) 0.7071 1e-3) "descriptors: rms"
+check (near? (getidx (getidx dm 1) 3) 500 2) "descriptors: the centroid of a sine is its frequency"
+check (near? (getidx (getidx dm 7) 3) 1000 10) "descriptors: zcr, crossings a second"
+check (< (cents (getidx (getidx dm 10) 3) 500) 0.5) "descriptors: f0"
+check (> (getidx (getidx dm 9) 3) 0.99) "descriptors: periodicity"
+check (< (getidx (getidx dm 8) 3) 0.01) "descriptors: a sine is not flat"
+check (> (getidx (getidx dm 5) 0) (getidx (getidx dm 5) 3)) "descriptors: the flux of the first frame (from silence) is larger"
+var frame (slice (sine sr 500 0.5) 1024 1024)
+check (near? (getidx (getidx dm 10) 3) (head (yin frame sr)) 1e-9) "descriptors: f0 is yin of the frame"
 check (== (length (autocorr (ones 10))) 5) "autocorr: n/2 lags"
 check (contains? (error-of (function () (autocorr (vec 1 2)))) "too short") "autocorr: short"
 

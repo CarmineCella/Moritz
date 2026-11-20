@@ -59,6 +59,20 @@
   `tempo-estimate-with` give Moritz's numbers; keys are named as musicians spell them (E♭ major, F♯ minor).
   `tempo-estimate-with` reads only lags under half the curve's length, so a short excerpt can give
   another tempo than before.
+- **YIN** (`src/signals/pitch.h`, de Cheveigné & Kawahara 2002): `(yin x sr [threshold] [fmin]
+  [fmax])` gives the fundamental and the periodicity of a frame, `yin-track` of every frame of a
+  sound. The difference function by FFT, its cumulative mean normalisation, the absolute threshold
+  (0.1), parabolic interpolation and the best local estimate: a weak or missing fundamental no
+  longer reads an octave up (`acf-f0`, kept, does), and the period is found between samples (a
+  sine from 55 to 1500 Hz at 44.1 kHz within 0.05 cent). Moritz's `descriptors~` uses it for its f0
+  and periodicity.
+- **`descriptors`**: the eleven low-level descriptors of `descriptors~` (rms, spectral centroid,
+  spread, skewness, kurtosis, flux, hfc, zero crossings, flatness, YIN's periodicity and f0), frame
+  by frame. The formulas are C++ in `src/signals/mir.h`, shared with `descriptors~`:
+  `spectral-centroid`, `spectral-spread`, `spectral-skewness` and `spectral-kurtosis` read the new
+  `spectral-moments`; `spectral-flatness`, `spectral-flux`, `hfc` and `zcr` are builtins on it. Two
+  values change: `spectral-flatness` of silence is 0 (it was 1), and `zcr` counts 0 as positive (a
+  sine starting at 0 has one crossing fewer).
 - Bad sizes are errors: `tempo-estimate-with` with an fps that is not in (0, 1e6], an STFT size
   above 2^24; `resample` bounds its kernel for factors under 1/128; a negative `seed` is the same
   on every system.
