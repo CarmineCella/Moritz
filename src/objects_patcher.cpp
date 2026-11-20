@@ -1014,10 +1014,13 @@ public:
         const float *x = sigIn(0, n), *idx = sigIn(1, n);
         const double* idxd = sigInPrecise(1);    // straight from count~: every sample of a long buffer
         int c = std::clamp(ch_, 0, b.channels - 1);
+        bool wrote = false;
         for (int i = 0; i < n; ++i) {
             long k = idxd ? (long)idxd[i] : (long)idx[i];
-            if (k >= 0 && k < b.frames) b.data[(size_t)k * b.channels + c] = x[i];
+            if (k >= 0 && k < b.frames) { b.data[(size_t)k * b.channels + c] = x[i]; wrote = true; }
         }
+        if (wrote)                                           // an open sound editor reads the samples again
+            if (BufferBox* box = ref_.box()) box->writes.fetch_add(1, std::memory_order_relaxed);
     }
 
 private:

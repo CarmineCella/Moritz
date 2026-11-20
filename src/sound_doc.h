@@ -15,10 +15,16 @@
 // Bound to a buffer~, the document changes the buffer~ in place for every object that uses it after each edit
 // (BufferBox::replace: swapped under the patch lock, the old samples freed after it); a buffer~ is patch memory, so
 // nothing is marked unsaved. When the buffer~ is replaced from elsewhere (read, size, clear), followBuffer() shows
-// its new contents (the history, which describes the old ones, is cleared).
+// its new contents (the history, which describes the old ones, is cleared); so does a write of record~ or poke~
+// into it (seen by the count of their writes, read now and then).
+//
+// The markers and regions (sound_marks.h) are a snapshot too. An edit of them is an undo step like an edit of the
+// samples (the snapshots before and after); an edit of the samples moves them with the frames, in the same step.
+// A file's are kept beside it (<file>.markers) and saved with it; a buffer~'s are kept with the buffer~ box.
 #pragma once
 
 #include "objects.h"
+#include "sound_marks.h"
 
 #include <cstdint>
 #include <functional>
@@ -98,15 +104,16 @@ public:
     bool dirty() const { return topSerial() != savedSerial_; }   // undone back to the file: not dirty
     // closing it loses something: a file's (or a new sound's) unsaved edits; never a buffer~'s
     bool needsSaving() const { return dirty() && !bound_; }
+    void markUnsaved() { savedSerial_ = ~uint64_t(0); }      // a new sound made in the editor (a process's result)
 
     // ---- a buffer~ of the open patches (root: the patch the names live in)
     void bindBuffer(Patch* root, const std::string& name);  // its samples now, copied
     bool boundToBuffer() const { return bound_; }
     const std::string& bufferName() const { return bufName_; }
     BufferBox* buffer() const;                               // nullptr: no buffer~ of that name now
-    // the buffer~ was replaced from elsewhere (read, size, clear) or is another box now: its samples again,
-    // the history cleared; true if so
-    bool followBuffer();
+    // the buffer~ was replaced from elsewhere (read, size, clear) or is another box now, or (writes) record~ or
+    // poke~ wrote into it: its samples again, the history cleared; true if so
+    bool followBuffer(bool writes = true);
     // the boxes that name the buffer~ (play~ groove~ ...), and in how many patches
     std::vector<std::string> users(int* patches = nullptr) const;
 
@@ -128,6 +135,12 @@ public:
     bool gain(double db);
     bool normalize(double db = 0.0);    // its peak to db
     bool reverse();
+    // a process's result in place of the selection (all of the sound when nothing is selected): its channels and
+    // rate made the sound's (Musil's resample), one undo step; the result is selected
+    bool replaceSelection(const std::string& name, const SampleBuffer& result);
+    // frames (interleaved, as many channels as the sound) from frame at, in place of as many (the Draw tool's
+    // stroke): one undo step
+    bool replaceFrames(const std::string& name, long at, const std::vector<float>& frames);
     bool undo();
     bool redo();
     bool canUndo() const { return !undo_.empty(); }
@@ -137,8 +150,16 @@ public:
     size_t historyBytes() const;        // what undo and redo keep
     static size_t undoBudget;           // bytes the history may keep (the last step is kept whatever its size)
 
+    // ---- markers and regions
+    const SoundMarks& marks() const { return *marks_; }
+    const MarksPtr& marksPtr() const { return marks_; }
+    bool setMarks(const std::string& name, SoundMarks next);   // one undo step; false when nothing changed
+    uint64_t marksGeneration() const { return marksGen_; }
+    bool marksUnreadable() const { return keepSidecar_; }      // its .markers file could not be read (kept as it is)
+
     std::string message;                // what the last operation did, or why it did nothing
     std::function<void()> onChanged;    // the samples changed (an edit, undo, a reload)
+    std::function<void()> onMarks;      // the markers or regions changed (an edit of them, of the samples, undo)
 
 private:
     struct Splice {
@@ -155,6 +176,7 @@ private:
         std::vector<Splice> splices;    // applied in order (undone in reverse)
         Selection selBefore, selAfter;
         long playBefore = 0, playAfter = 0;
+        MarksPtr marksBefore, marksAfter;
         size_t bytes() const;
     };
     // the sound with frames [at, at + n) replaced by ins (insFrames frames), as a new snapshot
@@ -163,6 +185,8 @@ private:
     // an edit that changes the selection's samples in place: op on a copy of them
     bool process(const std::string& name, std::function<void(std::vector<float>&)> op);
     void commit(Step&& st, Sound next);                     // a new step done
+    void setMarksNow(MarksPtr m);                           // the marks shown: the buffer~ keeps them, listeners
+    bool writeSidecar(const std::string& soundPath, std::string& err) const;
     void changed(Sound next);                               // new samples: summary, buffer~, listeners
     void trimHistory();
     Sound sound_;
@@ -177,6 +201,10 @@ private:
     std::string bufName_;
     BufferBox* seenBox_ = nullptr;      // the buffer~ and its version we last showed or wrote
     int seenVersion_ = -1;
+    unsigned seenWrites_ = 0;           // its writes by record~ and poke~, then
+    MarksPtr marks_;
+    uint64_t marksGen_ = 0;
+    bool keepSidecar_ = false;          // the file's .markers could not be read: not overwritten with nothing
 };
 
 }  // namespace moritz

@@ -57,8 +57,10 @@ public:
     bool busy() const { return busy_; }
     // Runs code on the context's thread. file names it (errors and relative loads use it); the code's
     // first line is line firstLine of that file. done runs on the main thread. False if busy.
+    // then, if given, runs on the context's thread after the code, in the same interpreter (the sound editor
+    // calls the function a process script defines): what it throws is the result's error, as the code's.
     bool eval(const std::string& code, const std::string& file, int firstLine,
-              std::function<void(const EvalResult&)> done);
+              std::function<void(const EvalResult&)> done, std::function<void(musil::Interp&)> then = {});
     void stop();                                   // the running code stops at its next step
     std::vector<Variable> variables();             // what the code defined (as of the last run)
     std::vector<std::string> names();              // every name it knows (as of the last run)

@@ -189,6 +189,7 @@ public:
         const float* in[8];                       // at most 8 channels: nothing allocated here
         for (int k = 0; k < numIns() && k < 8; ++k) in[k] = sigIn(k, n);
         int ev = 0, ne = events();
+        bool wrote = false;
         for (int i = 0; i < n; ++i) {
             for (; ev < ne && eventOffset(ev) <= i; ++ev) {     // starts and stops at their sample
                 if (event(ev).kind == kRecord) { pos_ = 0; rec_ = true; }
@@ -203,10 +204,13 @@ public:
                     for (int k = 0; k < b->channels; ++k)
                         b->data[(size_t)pos_ * b->channels + k] = in[k % numIns()][i];
                     ++pos_;
+                    wrote = true;
                 }
             }
             sync[i] = b && b->frames > 0 ? (float)pos_ / (float)b->frames : 0.f;
         }
+        if (wrote)                                           // an open sound editor reads the samples again
+            if (BufferBox* box = ref_.box()) box->writes.fetch_add(1, std::memory_order_relaxed);
     }
 
 private:

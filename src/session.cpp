@@ -387,7 +387,7 @@ LangContext::~LangContext() {
 }
 
 bool LangContext::eval(const std::string& code, const std::string& file, int firstLine,
-                       std::function<void(const EvalResult&)> done) {
+                       std::function<void(const EvalResult&)> done, std::function<void(musil::Interp&)> then) {
     bool expected = false;
     if (!busy_.compare_exchange_strong(expected, true)) return false;
     interp_->clear_stop();
@@ -395,13 +395,14 @@ bool LangContext::eval(const std::string& code, const std::string& file, int fir
     std::string src = std::string((size_t)std::max(0, firstLine - 1), '\n') + code;
     auto self = shared_from_this();
     bool sync = jobsSynchronous;                       // moritz --render: run now, and wait
-    auto work = [self, src, file, done, sync] {
+    auto work = [self, src, file, done, sync, then] {
         if (sync) inlineMain = true;
         auto& I = *self->interp_;
         EvalResult r;
         try {
             musil::vptr v = I.run(src, file);
             if (v && v->t != musil::Value::NIL) r.value = preview(v, 400);
+            if (then) then(I);
         } catch (musil::Exit_signal&) {
         } catch (musil::Stop_signal&) {             // Stop: try in the script could not catch it
             r.ok = false;

@@ -364,6 +364,8 @@ bool decodeAudioFile(const std::string& path, SampleBuffer& out, std::string& er
 // a WAV file (16 or 24 bits) through the one writer (recorder.h): a temporary file, renamed once complete
 bool writeWavFile(const std::string& path, const SampleBuffer& b, std::string& err, int bits = 16);
 
+struct SoundMarks;          // sound_marks.h: the markers and regions the sound editor gave a buffer~
+
 // ---------------------------------------------------------------- buffer~
 // buffer~ name [file] [ms] [channels]: named sample memory shared with
 // play~, groove~ and record~. Messages: read file, write file, size ms, clear.
@@ -460,6 +462,11 @@ public:
     std::string name;
     SampleBuffer buf;        // see above
     int version = 0;         // changes with the contents (read, size, clear): conv~ reloads
+    // record~ and poke~ add one for each block they write samples in (audio thread; relaxed): an open sound
+    // editor sees them change and reads the samples again
+    std::atomic<unsigned> writes{0};
+    // the markers and regions of the sound editor (GUI thread): kept with the box while the patch is open
+    std::shared_ptr<const SoundMarks> marks;
 
 private:
     void read(const std::string& file) {

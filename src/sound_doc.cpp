@@ -5,6 +5,7 @@
 #include "sound_doc.h"
 #include "fileio.h"
 #include "mir.h"              // Musil's STFT frame (mir::FrameSpectrum)
+#include "sound_process.h"    // Musil's resample
 #include "signals/edit.h"     // Musil's gain, fades, normalisation, reversal, channel conversion
 
 #include <cstdio>
@@ -172,6 +173,42 @@ SoundDoc::SoundDoc() {
     auto s = std::make_shared<SampleBuffer>();
     s->channels = 1;
     sound_ = s;
+    marks_ = std::make_shared<const SoundMarks>();
+}
+
+void SoundDoc::setMarksNow(MarksPtr m) {
+    marks_ = std::move(m);
+    ++marksGen_;
+    if (bound_)
+        if (BufferBox* b = buffer()) b->marks = marks_;  // kept with the buffer~ while its patch is open
+    if (onMarks) onMarks();
+}
+
+bool SoundDoc::setMarks(const std::string& name, SoundMarks next) {
+    next.clamp(frames());
+    next.sort();
+    if (next == *marks_) {
+        message = name + ": nothing changed";
+        return false;
+    }
+    Step st;
+    st.name = name;
+    st.selBefore = st.selAfter = sel;
+    st.playBefore = st.playAfter = playhead;
+    st.marksBefore = marks_;
+    st.marksAfter = std::make_shared<const SoundMarks>(std::move(next));
+    st.serial = nextSerial_++;
+    redo_.clear();
+    MarksPtr after = st.marksAfter;
+    undo_.push_back(std::move(st));
+    trimHistory();
+    setMarksNow(std::move(after));
+    return true;
+}
+
+bool SoundDoc::writeSidecar(const std::string& soundPath, std::string& err) const {
+    if (marks_->empty() && keepSidecar_) return true;     // one that couldn't be read is left as it is
+    return writeMarksFor(soundPath, *marks_, sr(), seconds(frames()), err);
 }
 
 void SoundDoc::setSound(SampleBuffer&& b) {
@@ -186,6 +223,11 @@ void SoundDoc::setSound(SampleBuffer&& b) {
     playhead = std::clamp(playhead, 0L, frames());
     ++generation_;
     if (onChanged) onChanged();
+    if (!marks_->empty()) {                              // nothing past the new end
+        SoundMarks m = *marks_;
+        m.clamp(frames());
+        if (!(m == *marks_)) setMarksNow(std::make_shared<const SoundMarks>(std::move(m)));
+    }
 }
 
 bool SoundDoc::load(const std::string& path, std::string& err) {
@@ -198,7 +240,17 @@ bool SoundDoc::load(const std::string& path, std::string& err) {
     sel = {};
     playhead = 0;
     savedSerial_ = 0;
+    marks_ = std::make_shared<const SoundMarks>();
+    keepSidecar_ = false;
     setSound(std::move(b));
+    SoundMarks m;
+    std::string merr;
+    if (!readMarksFor(path_, sr(), frames(), m, merr)) {
+        keepSidecar_ = true;
+        message = "its markers can't be read (" + merr + "): the file is left as it is";
+    } else if (!m.empty()) {
+        setMarksNow(std::make_shared<const SoundMarks>(std::move(m)));
+    }
     return true;
 }
 
@@ -211,19 +263,23 @@ bool SoundDoc::save(std::string& err) {
         err = path_.empty() ? "the sound has no file yet" : "only WAV files are written: save it as a WAV file";
         return false;
     }
+    if (!writeSidecar(path_, err)) return false;         // the markers first: a failure leaves the sound as it was
     if (!writeWavFile(path_, *sound_, err, 24)) return false;
     savedSerial_ = topSerial();
     return true;
 }
 
 bool SoundDoc::saveTo(const std::string& path, std::string& err) {
+    if (!writeSidecar(path, err)) return false;
     if (!writeWavFile(path, *sound_, err, 24)) return false;
     path_ = fileio::absolute(path);
+    keepSidecar_ = false;
     savedSerial_ = topSerial();
     return true;
 }
 
 bool SoundDoc::exportTo(const std::string& path, std::string& err) const {
+    if (!marks_->empty() && !writeMarksFor(path, *marks_, sr(), seconds(frames()), err)) return false;
     return writeWavFile(path, *sound_, err, 24);
 }
 
@@ -237,20 +293,29 @@ void SoundDoc::bindBuffer(Patch* root, const std::string& name) {
     playhead = 0;
     seenBox_ = nullptr;
     seenVersion_ = -1;
+    keepSidecar_ = false;
+    BufferBox* b = buffer();
+    marks_ = b && b->marks ? b->marks : std::make_shared<const SoundMarks>();
     followBuffer();
     message.clear();
 }
 
 BufferBox* SoundDoc::buffer() const { return bound_ && root_ ? findBuffer(root_, bufName_) : nullptr; }
 
-bool SoundDoc::followBuffer() {
+bool SoundDoc::followBuffer(bool writes) {
     BufferBox* b = buffer();
-    if (!b || (b == seenBox_ && b->version == seenVersion_)) return false;
+    if (!b) return false;
+    unsigned w = b->writes.load(std::memory_order_relaxed);
+    bool replaced = b != seenBox_ || b->version != seenVersion_;
+    if (!replaced && (!writes || w == seenWrites_)) return false;
     bool first = !seenBox_;
     seenBox_ = b;
     seenVersion_ = b->version;
+    seenWrites_ = w;
     setSound(b->copy());
-    if (!first) message = "buffer~ " + bufName_ + " was changed elsewhere: shown as it is now (undo starts again)";
+    if (!first)
+        message = "buffer~ " + bufName_ + (replaced ? " was changed elsewhere" : " was written by record~ or poke~") +
+                  ": shown as it is now (undo starts again)";
     return true;
 }
 
@@ -322,6 +387,7 @@ void SoundDoc::changed(Sound next) {
             b->replace(std::move(copy));
             seenBox_ = b;
             seenVersion_ = b->version;
+            seenWrites_ = b->writes.load(std::memory_order_relaxed);
         }
     if (onChanged) onChanged();
 }
@@ -340,9 +406,17 @@ void SoundDoc::commit(Step&& st, Sound next) {
     sel = st.selAfter;
     playhead = st.playAfter;
     st.serial = nextSerial_++;
+    st.marksBefore = st.marksAfter = marks_;
+    if (!marks_->empty()) {                              // the markers move with the frames
+        SoundMarks m = *marks_;
+        for (auto& sp : st.splices) m.shift(sp.at, sp.removedFrames, sp.insertedFrames);
+        if (!(m == *marks_)) st.marksAfter = std::make_shared<const SoundMarks>(std::move(m));
+    }
+    MarksPtr after = st.marksAfter;
     undo_.push_back(std::move(st));
     trimHistory();
     changed(std::move(next));
+    if (after != marks_) setMarksNow(std::move(after));
 }
 
 bool SoundDoc::copy() {
@@ -395,12 +469,17 @@ bool SoundDoc::paste() {
         return false;
     }
     std::shared_ptr<const std::vector<float>> ins;
-    if (clip->channels == channels()) {
+    const bool other = clip->sr > 0 && sr() > 0 && std::lround(clip->sr) != std::lround(sr());
+    if (clip->channels == channels() && !other) {
         ins = std::shared_ptr<const std::vector<float>>(clip, &clip->data);   // shared with the clipboard
     } else {
-        ins = std::make_shared<const std::vector<float>>(
-            edit::convert_channels(clip->data.data(), (size_t)clip->frames, clip->channels, channels()));
+        std::vector<float> v = clip->channels == channels()
+                                   ? clip->data
+                                   : edit::convert_channels(clip->data.data(), (size_t)clip->frames, clip->channels, channels());
+        if (other) v = resampleFrames(v, channels(), sr() / clip->sr);      // Musil's resample: it keeps its pitch
+        ins = std::make_shared<const std::vector<float>>(std::move(v));
     }
+    const long insFrames = (long)(ins->size() / (size_t)channels());
     const size_t ch = (size_t)channels();
     Step st;
     st.name = "Paste";
@@ -409,20 +488,20 @@ bool SoundDoc::paste() {
     sp.removedFrames = sel.length();
     sp.removed.assign(sound_->data.begin() + (long)((size_t)sp.at * ch),
                       sound_->data.begin() + (long)((size_t)(sp.at + sp.removedFrames) * ch));
-    sp.insertedFrames = clip->frames;
+    sp.insertedFrames = insFrames;
     sp.inserted = ins;
     st.selBefore = sel;
     st.playBefore = playhead;
-    st.selAfter = {sp.at, sp.at + clip->frames};
+    st.selAfter = {sp.at, sp.at + insFrames};
     st.playAfter = sp.at;
     Sound next = spliced(sound_, sp.at, sp.removedFrames, ins->data(), sp.insertedFrames);
     message = "pasted " + secs(clip->sr > 0 ? clip->frames / clip->sr : 0.0);
     if (clip->channels != channels())
         message += " (" + std::to_string(clip->channels) + " channel" + (clip->channels == 1 ? "" : "s") + " made " +
                    std::to_string(channels()) + ")";
-    if (std::lround(clip->sr) != std::lround(sr()))
-        message += "; it was at " + std::to_string(std::lround(clip->sr)) + " Hz and plays at " +
-                   std::to_string(std::lround(sr())) + " Hz (not resampled)";
+    if (other)
+        message += " (resampled from " + std::to_string(std::lround(clip->sr)) + " to " + std::to_string(std::lround(sr())) +
+                   " Hz)";
     st.splices.push_back(std::move(sp));
     commit(std::move(st), std::move(next));
     return true;
@@ -540,6 +619,61 @@ bool SoundDoc::reverse() {
     return process("Reverse", [ch](std::vector<float>& x) { edit::reverse(x.data(), x.size() / (size_t)ch, ch); });
 }
 
+bool SoundDoc::replaceSelection(const std::string& name, const SampleBuffer& r) {
+    if (bound_ && followBuffer()) return false;          // the buffer~ is not what was processed
+    Selection s = sel.empty() ? Selection{0, frames()} : sel;
+    const int rc = std::max(1, r.channels), ch = channels();
+    std::vector<float> v = r.data;
+    v.resize((v.size() / (size_t)rc) * (size_t)rc);
+    if (rc != ch) v = edit::convert_channels(v.data(), v.size() / (size_t)rc, rc, ch);
+    bool other = r.sr > 0 && sr() > 0 && std::lround(r.sr) != std::lround(sr());
+    if (other) v = resampleFrames(v, ch, sr() / r.sr);
+    for (auto& x : v)
+        if (!std::isfinite(x)) x = 0.f;
+    const size_t chs = (size_t)ch;
+    Step st;
+    st.name = name;
+    Splice sp;
+    sp.at = s.start;
+    sp.removedFrames = s.length();
+    sp.removed.assign(sound_->data.begin() + (long)((size_t)s.start * chs), sound_->data.begin() + (long)((size_t)s.end * chs));
+    sp.insertedFrames = (long)(v.size() / chs);
+    sp.inserted = std::make_shared<const std::vector<float>>(std::move(v));
+    st.selBefore = sel;
+    st.playBefore = playhead;
+    st.selAfter = {s.start, s.start + sp.insertedFrames};
+    st.playAfter = s.start;
+    Sound next = spliced(sound_, sp.at, sp.removedFrames, sp.inserted->data(), sp.insertedFrames);
+    message = name + ": " + secs(seconds(s.length())) + " became " + secs(seconds(sp.insertedFrames));
+    st.splices.push_back(std::move(sp));
+    commit(std::move(st), std::move(next));
+    return true;
+}
+
+bool SoundDoc::replaceFrames(const std::string& name, long at, const std::vector<float>& f) {
+    if (bound_ && followBuffer()) return false;
+    const size_t ch = (size_t)channels();
+    long n = (long)(f.size() / ch);
+    if (n <= 0 || at < 0 || at + n > frames()) {
+        message = name + ": outside the sound";
+        return false;
+    }
+    Step st;
+    st.name = name;
+    Splice sp;
+    sp.at = at;
+    sp.removedFrames = sp.insertedFrames = n;
+    sp.removed.assign(sound_->data.begin() + (long)((size_t)at * ch), sound_->data.begin() + (long)((size_t)(at + n) * ch));
+    sp.inserted = std::make_shared<const std::vector<float>>(f.begin(), f.begin() + (long)((size_t)n * ch));
+    st.selBefore = st.selAfter = sel;
+    st.playBefore = st.playAfter = playhead;
+    Sound next = spliced(sound_, at, n, sp.inserted->data(), n);
+    st.splices.push_back(std::move(sp));
+    message = name + ": " + std::to_string(n) + " sample" + (n == 1 ? "" : "s");
+    commit(std::move(st), std::move(next));
+    return true;
+}
+
 bool SoundDoc::undo() {
     if (undo_.empty()) {
         message = "nothing to undo";
@@ -554,8 +688,11 @@ bool SoundDoc::undo() {
     sel = st.selBefore;
     playhead = st.playBefore;
     message = "undid " + st.name;
+    MarksPtr m = st.marksBefore;
+    bool samples = !st.splices.empty();
     redo_.push_back(std::move(st));
-    changed(std::move(cur));
+    if (samples) changed(std::move(cur));
+    if (m && m != marks_) setMarksNow(std::move(m));
     return true;
 }
 
@@ -582,8 +719,11 @@ bool SoundDoc::redo() {
     sel = st.selAfter;
     playhead = st.playAfter;
     message = "redid " + st.name;
+    MarksPtr m = st.marksAfter;
+    bool samples = !st.splices.empty();
     undo_.push_back(std::move(st));
-    changed(std::move(cur));
+    if (samples) changed(std::move(cur));
+    if (m && m != marks_) setMarksNow(std::move(m));
     return true;
 }
 
