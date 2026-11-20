@@ -2,6 +2,36 @@
 
 ## 0.12
 
+### The score
+
+- **A score is one C++ structure** (`src/music/score.h`), independent of the interpreter and of
+  Moritz, which plays the same structure: notes (a MIDI pitch, fractional for microtones, and cents;
+  dynamics, technique, a row), sounds (a region of a file or of a named buffer), patches, messages
+  and other scores placed inside it (by file or embedded; a placement stretches, transposes, scales
+  the gain and turns the direction). Rows, a tempo and a meter, ids that are never reused, a time
+  index for range queries. A score cannot contain itself, directly or through others: it is refused
+  when it would.
+- **Musil uses it as a value**: `(type s)` is `"opaque:score"`, an event of it `"opaque:event"`, and
+  both answer as records (`get`, `opt`, `has?`, `put!`, `keys`, the new `pairs`), so music.mu's
+  functions keep their names and give the same results. What only Musil can hold (a note's
+  database, a synth's function, a buffer's vector) stays with the event; what is plain data is kept
+  in the structure. `(get s 'events)` makes a new list each time: `event` and `score-add!` add.
+- **.score files are Musil data**: `score-write` writes the score as a list of lists, `score-read`
+  reads it with Musil's reader and runs nothing (nesting, sizes, numbers and forms are checked: a
+  file from elsewhere is an error, never a crash). Times are written in seconds, exactly:
+  read, written and read again, a score is the same. `score->data`, `data->score`, `score->text`,
+  `text->score`; `score->coll` and `coll->score` (one event a row, for the flat parts).
+- New: `score-make`, `score?`, `score-add!`, `score-take-id!`, `score-find`, `score-remove-id!`,
+  `score-query`, `score-copy`, `score-placed`, `score-pan-gains`, `score-bbt`, `score-bbt->sec`,
+  `score-bind!` (sounds from a database for the notes of a score read from a file). `score-duration`
+  and `score-flatten` are C++ now.
+- **Placements compose**: a score event's `stretch`, `transpose` and azimuth are applied when the
+  score renders and plays (the azimuth of a score placed with `event-at` used to be ignored: its
+  events are turned by it now). A sound event may name a region (`from`, `to`). Messages and
+  patches (for Moritz) make no sound in Musil.
+- `put` (a copy of a record), `keys` and `values` work on anything that answers as a record.
+- `same?` is true of two handles of the same C++ object (a score).
+
 ### Libraries
 
 - **Orchidea's analysis and search are C++ functions of their own** (`orchidea::analyse` and

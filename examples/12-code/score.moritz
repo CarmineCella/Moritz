@@ -1,0 +1,66 @@
+; score.moritz - a code box writes a score in Musil and sends it to a score object, which plays it on the
+; transport: its notes on a small synth, a click at every bar. The score is Musil's value, the same C++
+; structure Moritz plays; double-click the code box to change the line, then press generate again.
+(patch
+  (obj title comment "score: a phrase made in Musil, played by Moritz on its transport" (pos 20 12))
+  (obj lb loadbang (pos 20 45))
+  (obj gen message bang (pos 90 45))
+  (obj cg comment "generate" (pos 135 46))
+  (obj c code (pos 20 80)
+    (script
+      "; a phrase on a mode: sixteenths and eighths, each pitch drawn near the last one"
+      "load \"music.mu\""
+      "seed 7"
+      "var s (score \"phrase\" 44100)"
+      "var mode (list 60 62 63 65 67 68 70 72 74 75)"
+      "var t 0"
+      "var k 4"
+      "while (< t 3.75) {"
+      "    var d (if (< (rand) 0.6) 0.125 0.25)"
+      "    set k (max 0 (min (- (length mode) 1) (+ k (- (floor (* 5 (rand))) 2))))"
+      "    event s t (* 0.9 d) (record (list 'kind 'note 'instr \"Cl\" 'midi (getidx mode k) 'dyn (if (< (rand) 0.3) \"f\" \"mp\") 'tech \"ord\"))"
+      "    set t (+ t d)"
+      "}"
+      "out 1 s"))
+  (obj sc score phrase (pos 20 120))
+  (obj tr transport 120 4 4 (pos 300 120))
+  (obj play message play (pos 300 80))
+  (obj stop message stop (pos 345 80))
+  (obj loop message "loop 1 3" (pos 390 80))
+  (obj cl comment "two bars, again and again" (pos 460 81))
+  (obj tl t l l (pos 20 160))
+  (obj up unpack 0 0 0 (pos 100 190))
+  (obj mt mtof (pos 100 220))
+  (obj osc tri~ (pos 100 250))
+  (obj env message "0.12 3, 0 $3" (pos 20 220))
+  (obj ln line~ (pos 20 250))
+  (obj vca *~ (pos 100 285))
+  (obj sel select 1 (pos 380 160))
+  (obj clk click~ (pos 380 190))
+  (obj ck *~ 0.3 (pos 380 220))
+  (obj out dac~ (pos 100 330))
+  (obj tip comment "notes: pitch velocity duration-ms row dynamics technique; the transport's beat 1 clicks" (pos 180 331))
+  (connect lb 0 gen 0)
+  (connect gen 0 c 0)
+  (connect c 0 sc 0)
+  (connect lb 0 loop 0)
+  (connect play 0 tr 0)
+  (connect stop 0 tr 0)
+  (connect loop 0 tr 0)
+  (connect sc 2 tl 0)
+  (connect tl 1 up 0)
+  (connect up 0 mt 0)
+  (connect mt 0 osc 0)
+  (connect tl 0 env 0)
+  (connect env 0 ln 0)
+  (connect osc 0 vca 0)
+  (connect ln 0 vca 1)
+  (connect vca 0 out 0)
+  (connect vca 0 out 1)
+  (connect sc 0 out 0)
+  (connect sc 1 out 1)
+  (connect tr 1 sel 0)
+  (connect sel 0 clk 0)
+  (connect clk 0 ck 0)
+  (connect ck 0 out 0)
+  (connect ck 0 out 1))

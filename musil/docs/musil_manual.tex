@@ -856,6 +856,19 @@ fragment to transpose it (\musil{fragment-map}), \musil{reverse} a rhythm,
 \musil{fragment->score} to make a section that another score holds as one event.
 \texttt{algorithmic\_comp.mu} and \texttt{score\_in\_score.mu} go through all of it.
 
+\paragraph{The score as data.} A score is a value of its own (\musil{(type s)} is
+\musil{"opaque:score"}): the C++ structure that Moritz plays too. It and its events answer as
+records (\musil{get}, \musil{put!}, \musil{keys}), and a score is written to a \texttt{.score} file as
+Musil data, which \musil{score-read} reads back without running anything. Times are seconds, written
+exactly: a score read, written and read again is the same score.
+
+\begin{lstlisting}
+score-write s "/tmp/first.score"          ; (score "first" (sr 44100) (bpm 60) ... (note 0 1 Vn 60 mf ord (id 1)) ...)
+var back (score-read "/tmp/first.score")  ; notes from a file have no sound yet:
+score-bind! back db                       ; ... a database gives them one
+print (score->coll back)                  ; one event a row: (note 0 1 Vn 60 mf ord 1) ...
+\end{lstlisting}
+
 \paragraph{A convention.} Pitches are written as strings (\musil{"A3"}, \musil{"D\#5"}); symbols
 (\musil{'A3}, \musil{'D\#5}) work too, but one spelling is better than two. Symbols name things: instruments, dynamics, techniques, keys and parameters
 (\musil{'Vn}, \musil{'mf}, \musil{'ord}, \musil{'freq}). Numbers are for computed pitches
@@ -1400,8 +1413,9 @@ waits for it to be idle or in \musil{sleep}.
 % ─────────────────────────────────────────────────────────────────────────────
 \subsection{music}
 
-The score: things placed in time. A score is a record (name, sample rate, events, layout);
-an event has an onset, a duration, a kind, a source, a gain and a position (azimuth and
+The score: things placed in time. A score is a value that answers as a record (name, sample rate,
+events, tempo, meter, layout), the C++ structure of \texttt{src/music/score.h}, written to
+\texttt{.score} files as Musil data; an event has an onset, a duration, a kind, a source, a gain and a position (azimuth and
 elevation, for the spatial layouts). What an event holds is decided by what is placed:
 
 \begin{lstlisting}

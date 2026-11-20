@@ -198,6 +198,10 @@
 #put!
   (put! rec key value)
   set a key in place (replacing an existing pair, or adding one); returns the record
+#pairs
+  (pairs rec)
+  the (key value) pairs of a record: a record itself, or what a value that answers as one (a score, an
+  event) holds now, as a new record
 #split
   (split s sep)
   the pieces of s between occurrences of sep; (split s "") the characters
@@ -1619,6 +1623,92 @@
   (midi-read path)
   => a record: ppq, seconds, tracks (names), and notes (records: track channel pitch velocity at dur),
   times in seconds after the file's tempo map
+#score-make
+  (score-make name sr)
+  a new score, empty (music.mu's score adds the layout and the reverb)
+#score?
+  (score? x)
+  is x a score?
+#score-add!
+  (score-add! s e)
+  an event (a record, or an event to copy) added at the end of the score; its id kept when it
+  has one not yet used, else a new one; a score that would contain itself, directly or through
+  the scores inside it, is refused. => the event in the score
+#score-take-id!
+  (score-take-id! s)
+  a fresh event id of the score: never used again, even after events are removed
+#score-duration
+  (score-duration s)
+  when its last event ends (0 when empty)
+#score-find
+  (score-find s id)
+  the event of an id, or nil
+#score-remove-id!
+  (score-remove-id! s id)
+  the event of an id taken out of the score; => it (nil when there was none)
+#score-query
+  (score-query s t0 t1)
+  the events sounding between t0 and t1 seconds (starting before t1, ending after t0), by onset
+#score-copy
+  (score-copy s)
+  a copy of the score: its events copied (the same ids), the scores placed in it shared
+#score-flatten
+  (score-flatten s depth)
+  the score's events with those of the scores inside brought to the top: copies at absolute times,
+  stretched, transposed, their gains multiplied and their azimuths turned by their placements, cut
+  to their score's event (the events of s itself are given as they are); depth is how deep s is
+  (0 at the top: deeper than 16 is an error)
+#score-placed
+  (score-placed s stretch transpose az el)
+  a copy of s as a placement makes it sound: times and durations stretched,
+  notes transposed (their sounds shifted), directions turned
+#score-read
+  (score-read path)
+  a .score file: the score it holds (read as data, nothing run); the scores it places by file
+  are read too, each once (placed three times, it is one score with three placements)
+#score-write
+  (score-write s path)
+  the score as a .score file (Musil data); what only Musil can hold (a database, a function, a
+  vector) is left out (an event made of it entirely: said), a chord is written as its notes, a
+  score placed from a file is written by its name; => the path
+#score->text
+  (score->text s)
+  what score-write writes, as a string
+#text->score
+  (text->score text)
+  a score from the text of a .score file
+#score->data
+  (score->data s)
+  the score as Musil data, the list of lists a .score file holds: (score "name" (sr 44100) ...)
+#data->score
+  (data->score form)
+  a score from its form as data (nothing is evaluated)
+#score->coll
+  (score->coll s)
+  the score's flat parts, one event a row, as lists: (note at dur row pitch dyn tech gain),
+  (sound at dur path from to gain), (buffer at dur name from to gain), (patch at dur name args...),
+  (msg at name values...); the scores placed in it are not rows (flatten first)
+#coll->score
+  (coll->score name sr rows)
+  a score made of rows as score->coll gives them (pitches may be names: G5)
+#score-pan-gains
+  (score-pan-gains az n)
+  the gains of a mono sound at an azimuth on n channels, as a score places it: 1 channel all of
+  it, 2 equal power between left and right (pan-azimuth), more a ring of n speakers (pan-n on
+  speaker-ring n)
+#score-bbt
+  (score-bbt s seconds)
+  a time as (list bar beat tick) at the score's tempo and meter (from 1; 480 ticks a beat)
+#score-bbt->sec
+  (score-bbt->sec s bar beat tick)
+  a position in bars, beats (from 1) and ticks as seconds at the score's tempo and meter
+#event
+  (event s 0 3.5 "bells.wav")
+  a sound file (read when rendered, cached)
+  (event s 2 3.6 buffer)                         a buffer: a vector, or a list of channel vectors
+  (event s 4 1 (note db 'Vn 'C5 'mf 'ord))       a sound from a database (nearest pitch, shifted)
+  (event s 5 2 (instrument pluck (list (list 'freq 440))))   a synth: a function and its parameters
+  (event s 6 1 (call my-function (list 1 2)))    any function: called when rendered, its result the sound
 #render
   (render s "out.wav" "stereo")
   writes the mix;  layouts: "mono" "stereo" "binaural" "ambi N", a list of
@@ -1633,7 +1723,7 @@
   calls); WASD and + - 0 navigate in time, hovering shows an event and the time
 #score
   (score name sr)
-  a new, empty score at a sample rate
+  a new, empty score at a sample rate (60 bpm, 4/4, laid out in stereo, heard in the hall)
 #score-tempo! score-bpm
   (score-tempo! s bpm)  (score-bpm s)
   the score's tempo, for times written in beats (60 by default: a beat is a second)
@@ -1644,16 +1734,16 @@
   (score-reverb! s dry wet)
   how much of the score is heard dry and through the hall when it is played (0.7 and 0.3
   by default; (score-reverb! s 1 0) plays it dry)
-#score-events score-sr score-duration
-  (score-events s)  (score-sr s)  (score-duration s)
-  its events (in the order they were added), rate, end time
+#score-events score-sr
+  (score-events s)  (score-sr s)
+  its events (in the order they were added), its rate; (score-duration s) is when it ends
 #event-end
   (event-end e)
   when the event ends
 #event
   (event s at dur what)
   add an event; what is a path, a buffer, a note, an instrument, a call, or a function;
-  => the event record (its at and dur can be changed later with put!)
+  => the event (its at and dur can be changed later with put!)
 #event-at
   (event-at s at dur what az el)
   the same, placed at an azimuth and an elevation (degrees, 0 in front, left positive)
@@ -1700,6 +1790,9 @@
   (render-event e sr)
   the sound of an event at the score's rate: a list of channels, cut to its duration
   with a fade at the end when the sound is longer, gain applied
+#sound-region
+  (sound-region chans sr from to)
+  the part of a sound's channels from one time to another, in seconds (to < 0: to the end)
 #fit-duration
   (fit-duration x dur sr)
   x cut to dur seconds with a fade-out over the last 20 ms (or a quarter of dur), if longer
@@ -1715,6 +1808,10 @@
   (score-render s layout)
   the whole score as channels at its rate; a score placed as an event is rendered into the
   same layout (its own positions kept), cut to the event's duration with a fade
+#placement-of
+  (placement-of e)
+  the score a score event places, as it sounds there: stretched, transposed and turned by
+  the event (score-placed); the score itself when the event leaves it as it is
 #render-buffer
   (render-buffer s layout)
   the score as channels, in the concert hall as the roll plays it (score-reverb!: the dry
@@ -1745,10 +1842,6 @@
 #azimuth->pan
   (azimuth->pan az)
   an azimuth in degrees (0 in front, left positive) as the engine's pan, -1 (left) to 1 (right)
-#score-flatten
-  (score-flatten s depth)
-  the score's events with those of the scores inside brought to the top: copies at absolute
-  times, the gains multiplied, cut to their score's event; => a list
 #score-hall-mix
   (score-hall-mix s sr)
   the score rendered in stereo and put in the hall, at a rate; kept in the score (its
@@ -1891,6 +1984,11 @@
   the nearest available pitch of that instrument (same dynamics and technique when they
   exist), shifted by resampling to the pitch asked for. Only entries whose sound is on
   disk are candidates.
+#score-bind!
+  (score-bind! s db)
+  the notes of a score that have no sound yet (read from a .score file, made by Moritz) given
+  one from a database, as note chooses it (dynamics mf and technique ord when they have none);
+  the scores placed inside too; => how many notes were given a sound
 #note-cents!
   (note-cents! n cents)
   a note's tuning away from its pitch, in cents (shown in the roll; used by the orchestrators
@@ -2896,7 +2994,8 @@
   to every receive name (as a send box, or a ; message)
 #out
   (out k values...)
-  out of outlet k of the code box (from 1); a list is sent as one message
+  out of outlet k of the code box (from 1); a list is sent as one message, a score (score-make,
+  score-read...) as score <token>, which a score object takes
 #buffer
   (buffer name)
   the channels of a buffer~ as vectors; (buffer-rate name) its sample rate

@@ -124,3 +124,61 @@ Outputs go right to left: velocity, then pitch.
 msg number: passes the pitch, with the stored velocity, when it is above 0
 msg list pitch velocity: sets the velocity, then the same
 see: notein makenote select kslider
+
+@ transport
+syntax: transport [bpm] [num den]
+The patch's clock: where its scores are and whether they play. There is one
+for the whole patch (its subpatches and the help patches open beside it): every
+transport object shows and drives the same clock, and every score object plays
+on it. Times in a score are seconds; bars and beats are counted at the tempo,
+in beats a minute (a beat is 1/den of a bar), and the meter.
+
+A change takes effect on the sample a message sent now lands on, as every timed
+message in Moritz: a score's sounds start on their sample, and its notes leave
+it at the time whose sample is theirs. The bar, the beat and the position in ms
+come out at every beat while it plays and at every change.
+arg bpm: the tempo, beats a minute (120)
+arg num den: the meter, also written 3/4 (4 4)
+msg play: starts from where it is (also start, or a number not 0)
+msg stop: stops where it is (also 0)
+msg locate bar [beat [tick]]: goes to a bar (from 1; 480 ticks a beat)
+msg seek ms: goes to a time in milliseconds
+msg rewind: goes to the start
+msg loop bar1 bar2: plays from bar1 up to bar2 again and again, once it is before bar2; loop 0 (or off) ends the loop
+msg tempo bpm: the tempo bars and beats are counted at
+msg meter num den: the meter
+msg bang: the position now
+see: score metro
+
+@ score
+syntax: score name [file.score] [channels]
+A score that plays itself on the patch's transport: notes, sounds, messages
+and other scores placed in time. It is Musil's score (the same C++ structure),
+read from a .score file, written by Musil's score-write or by a code box that
+sends one with (out 1 s); a .score file is Musil data, read without running
+anything. Without a file the score is kept in the patch.
+
+Its sounds (regions of a file or of a buffer~, by name) come out of its signal
+outlets, each on its sample, placed at its azimuth (one channel: all of it; two:
+equal power, as Musil's pan-azimuth; more: a ring of speakers); the scores
+inside it are played at their place, stretched, transposed and turned. Its notes
+come out as lists, pitch (MIDI, with the cents) velocity (from the dynamics)
+duration in ms, row, dynamics and technique (- for none); its messages as the
+name and the values. Edits while it plays (add, clear, a new score) take effect
+at once: what plays is made again off the audio thread.
+arg name: the score's name
+arg file.score: a file next to the patch to read the score from (none: kept in the patch)
+arg channels: the signal outlets, 1 to 16 (2)
+msg read [file]: reads a .score file (its own again without a name)
+msg write [file]: writes it as a .score file, in the patch's folder or in ~/Documents/Moritz
+msg clear: no events
+msg add note at dur row pitch [dyn [tech]]: a note (at and dur in seconds; the pitch a MIDI number or a name, G5)
+msg add sound at dur file: a sound file's region
+msg add msg at name values: a message
+msg play: starts the transport (every score of the patch plays)
+msg stop: stops the transport
+msg locate bar [beat]: moves the transport
+msg seek ms: moves the transport to a time
+msg info: rows, events and seconds out of the info outlet
+msg score token: the score a code box sent
+see: transport code buffer~

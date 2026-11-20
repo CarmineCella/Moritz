@@ -19,7 +19,7 @@ ROOT = Path(__file__).resolve().parent.parent
 M = "musil/src/"
 LIBS = [[M + "core.h"], [M + "std.h", M + "std.mu"], [M + "system.h", M + "system.mu"],
         [M + "scientific.h", M + "scientific.mu"], [M + "signals.h", M + "signals.mu"],
-        [M + "music.h", M + "music/midi.h", M + "music.mu"], [M + "live.mu"], ["src/musil_host.h", "src/session.cpp"]]
+        [M + "music.h", M + "music/midi.h", M + "music/score_musil.h", M + "music.mu"], [M + "live.mu"], ["src/musil_host.h", "src/session.cpp"]]
 FORM = re.compile(r"^\(([^\s()]+)[^)]*\)")
 REG = re.compile(r'(?:[iI]\.def\(|\ba\(|\{)\s*"([^"]+)"')
 DEF = re.compile(r"^function\s+([^\s()]+)", re.M)

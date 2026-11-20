@@ -3007,6 +3007,87 @@ Sends a bang when the patch opens: use it to set starting values. A bang in its 
 
 See also: `metro` `message` `send` `delay`
 
+### `transport`
+
+`transport [bpm] [num den]`
+
+The patch's clock: where its scores are and whether they play. There is one for the whole patch (its subpatches and the help patches open beside it): every transport object shows and drives the same clock, and every score object plays on it. Times in a score are seconds; bars and beats are counted at the tempo, in beats a minute (a beat is 1/den of a bar), and the meter.
+
+A change takes effect on the sample a message sent now lands on, as every timed message in Moritz: a score's sounds start on their sample, and its notes leave it at the time whose sample is theirs. The bar, the beat and the position in ms come out at every beat while it plays and at every change.
+
+| Argument | |
+| --- | --- |
+| `bpm` | the tempo, beats a minute (120) |
+| `num den` | the meter, also written 3/4 (4 4) |
+
+| Message | |
+| --- | --- |
+| `play` | starts from where it is (also start, or a number not 0) |
+| `stop` | stops where it is (also 0) |
+| `locate bar [beat [tick]]` | goes to a bar (from 1; 480 ticks a beat) |
+| `seek ms` | goes to a time in milliseconds |
+| `rewind` | goes to the start |
+| `loop bar1 bar2` | plays from bar1 up to bar2 again and again, once it is before bar2; loop 0 (or off) ends the loop |
+| `tempo bpm` | the tempo bars and beats are counted at |
+| `meter num den` | the meter |
+| `bang` | the position now |
+
+| Inlet | |
+| --- | --- |
+| 1 | play, stop, locate bar [beat], seek ms, loop bar1 bar2, tempo bpm, meter n d, bang |
+
+| Outlet | |
+| --- | --- |
+| 1 | bar (from 1) |
+| 2 | beat (from 1) |
+| 3 | position in ms |
+| 4 | 1 when it starts, 0 when it stops |
+
+See also: `score` `metro`
+
+### `score`
+
+`score name [file.score] [channels]`
+
+A score that plays itself on the patch's transport: notes, sounds, messages and other scores placed in time. It is Musil's score (the same C++ structure), read from a .score file, written by Musil's score-write or by a code box that sends one with (out 1 s); a .score file is Musil data, read without running anything. Without a file the score is kept in the patch.
+
+Its sounds (regions of a file or of a buffer~, by name) come out of its signal outlets, each on its sample, placed at its azimuth (one channel: all of it; two: equal power, as Musil's pan-azimuth; more: a ring of speakers); the scores inside it are played at their place, stretched, transposed and turned. Its notes come out as lists, pitch (MIDI, with the cents) velocity (from the dynamics) duration in ms, row, dynamics and technique (- for none); its messages as the name and the values. Edits while it plays (add, clear, a new score) take effect at once: what plays is made again off the audio thread.
+
+| Argument | |
+| --- | --- |
+| `name` | the score's name |
+| `file.score` | a file next to the patch to read the score from (none: kept in the patch) |
+| `channels` | the signal outlets, 1 to 16 (2) |
+
+| Message | |
+| --- | --- |
+| `read [file]` | reads a .score file (its own again without a name) |
+| `write [file]` | writes it as a .score file, in the patch's folder or in ~/Documents/Moritz |
+| `clear` | no events |
+| `add note at dur row pitch [dyn [tech]]` | a note (at and dur in seconds; the pitch a MIDI number or a name, G5) |
+| `add sound at dur file` | a sound file's region |
+| `add msg at name values` | a message |
+| `play` | starts the transport (every score of the patch plays) |
+| `stop` | stops the transport |
+| `locate bar [beat]` | moves the transport |
+| `seek ms` | moves the transport to a time |
+| `info` | rows, events and seconds out of the info outlet |
+| `score token` | the score a code box sent |
+
+| Inlet | |
+| --- | --- |
+| 1 | read/write file.score, clear, add note\|sound\|msg ..., play, stop, locate bar, info |
+
+| Outlet | |
+| --- | --- |
+| 1 | its sounds, channel 1 of 2 |
+| 2 | its sounds, channel 2 of 2 |
+| 3 | notes: pitch velocity duration-ms row dynamics technique |
+| 4 | messages: name values... (patch events: patch name duration-ms args...) |
+| 5 | info: end when it plays past its last event; info rows events seconds |
+
+See also: `transport` `code` `buffer~`
+
 ## Control Math
 
 ### `+` `-` `*` `/` `%`
