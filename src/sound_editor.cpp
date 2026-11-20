@@ -854,6 +854,7 @@ void SoundEditor::updateSpectrogram() {
     auto ok = std::make_shared<bool>(false);
     job_.start([s, out, ok](Job& j) { *ok = computeSpectrogram(*s, *out, [&j](double) { return !j.cancelled(); }); },
                [this, out, ok, gen] {
+                   job_.cancel();                // only joins its thread: it is done
                    if (!*ok) return;
                    spec_ = out;
                    specGen_ = gen;

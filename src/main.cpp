@@ -376,6 +376,7 @@ int main(int argc, char** argv) {
                     for (int t = 0; t < 5; ++t) Fl::wait(0.05);
                     r |= writePng(moritz::settingsWindow(), argv[j] + 9);
                 }
+            app.closeAllSounds();                // sound editors: their background work waited for
             std::fflush(nullptr);
             if (acts) std::_Exit(r == 0 && failed == 0 ? 0 : 1);   // code boxes may still be running
             return r == 0 && failed == 0 ? 0 : 1;
@@ -391,6 +392,7 @@ int main(int argc, char** argv) {
 #endif
         Fl::wait(1e20);
     }
+    app.closeAllSounds();                // their background work stopped and waited for
     app.audio.stop();
     return 0;
 }

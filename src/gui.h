@@ -389,6 +389,7 @@ public:
     void openSoundDialog();                                  // File > Open Sound...
     SoundWindow* editBuffer(Patch* root, const std::string& name);   // the buffer~ of that name
     void closeSound(SoundWindow* w);                         // already confirmed
+    void closeAllSounds();                                   // at once, nothing asked (the tests' exit)
     SoundWindow* frontSound();                               // the sound window in front, if one is
     const std::vector<SoundWindow*>& soundWindows() const { return soundWindows_; }
     const std::vector<CodeWindow*>& codeWindows() const { return codeWindows_; }

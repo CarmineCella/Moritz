@@ -174,6 +174,16 @@ void App::closeSound(SoundWindow* w) {
     refreshMenus();
 }
 
+void App::closeAllSounds() {
+    auto all = std::move(soundWindows_);
+    soundWindows_.clear();
+    for (auto* w : all) {
+        w->editor()->stop();
+        w->hide();
+        delete w;                        // its background work is stopped and waited for
+    }
+}
+
 SoundWindow* App::frontSound() { return dynamic_cast<SoundWindow*>(Fl::first_window()); }
 
 // the buffer~ a box names, in the sound editor (double-click, or its menu)
