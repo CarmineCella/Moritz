@@ -11,6 +11,7 @@
 #include <FL/fl_draw.H>
 
 #include <algorithm>
+#include <climits>
 #include <cmath>
 #include <map>
 
@@ -181,6 +182,7 @@ void Canvas::detach() {
     patch_ = nullptr;
     editing_ = dragBox_ = typingBox_ = tipBox_ = nullptr;
     drag_ = Drag::None;
+    moveFrom_.clear();
     sugg_.clear();
     layouts_.clear();
 }
@@ -880,6 +882,7 @@ void Canvas::reset() {
     typingBox_ = nullptr;
     typed_.clear();
     drag_ = Drag::None;
+    moveFrom_.clear();
     redraw();
 }
 
@@ -1042,6 +1045,14 @@ void Canvas::deleteSelection() {
     dragBox_ = typingBox_ = nullptr;
     ed_->markDirty(patch_);
     redraw();
+}
+
+// Each move places the boxes at where they were when the drag began plus the whole way the mouse went
+// since: nothing adds up from one event to the next (a box stopped at the patch's edge while the mouse
+// went on), so the box stays under the mouse however fast and far it moves.
+void Canvas::beginMove() {
+    moveFrom_.clear();
+    for (Box* b : selectedBoxes()) moveFrom_[b] = {b->x, b->y};
 }
 
 void Canvas::numberDrag(int dy) {
@@ -1229,11 +1240,15 @@ int Canvas::handle(int e) {
                         duplicateSelection(0, 0);
                         drag_ = Drag::Move;
                         moved_ = true;                      // undo already recorded
+                        beginMove();
                         break;
                     }
                     if (shift) h.box->selected = !h.box->selected;
                     else if (!h.box->selected) { clearSelection(); h.box->selected = true; }
-                    if (h.box->selected) drag_ = Drag::Move;
+                    if (h.box->selected) {
+                        drag_ = Drag::Move;
+                        beginMove();
+                    }
                     break;
                 case Hit::Cable:
                     if (!shift) clearSelection();
@@ -1249,16 +1264,29 @@ int Canvas::handle(int e) {
 
         case FL_DRAG: {
             int mx = patchX(Fl::event_x()), my = patchY(Fl::event_y());
-            int dx = mx - curX_, dy = my - curY_;
             curX_ = mouseX_ = mx;
             curY_ = mouseY_ = my;
-            if (drag_ == Drag::Move && (dx || dy)) {
-                if (!moved_) { ed_->pushUndo(patch_); moved_ = true; }
-                for (Box* b : selectedBoxes()) {
-                    b->x = std::max(0, b->x + dx);
-                    b->y = std::max(0, b->y + dy);
+            if (drag_ == Drag::Move) {
+                // the whole way from the press (beginMove), the group kept at x, y >= 0 as one
+                std::vector<std::pair<Box*, std::pair<int, int>>> moving;
+                int minX = INT_MAX, minY = INT_MAX;
+                for (auto& b : patch_->boxes)
+                    if (auto it = moveFrom_.find(b.get()); it != moveFrom_.end() && b->selected) {
+                        moving.push_back({b.get(), it->second});
+                        minX = std::min(minX, it->second.first);
+                        minY = std::min(minY, it->second.second);
+                    }
+                int dx = std::max(mx - pressX_, std::min(0, -minX)), dy = std::max(my - pressY_, std::min(0, -minY));
+                bool changes = false;
+                for (auto& [b, from] : moving) changes = changes || b->x != from.first + dx || b->y != from.second + dy;
+                if (changes) {
+                    if (!moved_) { ed_->pushUndo(patch_); moved_ = true; }
+                    for (auto& [b, from] : moving) {
+                        b->x = from.first + dx;
+                        b->y = from.second + dy;
+                    }
+                    ed_->markDirty(patch_);
                 }
-                ed_->markDirty(patch_);
             } else if (drag_ == Drag::Number) {
                 if (my != pressY_) { moved_ = true; typed_.clear(); }
                 numberDrag(pressY_ - my);
@@ -1300,6 +1328,7 @@ int Canvas::handle(int e) {
             if (drag_ == Drag::Move && moved_ && patch_->owner)
                 patch_->rebuild();                  // inlets/outlets are ordered by position
             drag_ = Drag::None;
+            moveFrom_.clear();
             if (moved_) typingBox_ = nullptr;
             dragBox_ = nullptr;
             redraw();

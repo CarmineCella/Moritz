@@ -139,6 +139,7 @@ private:
     void clearSelection();
     std::vector<Box*> selectedBoxes() const;
     void numberDrag(int dy);
+    void beginMove();              // the selected boxes are about to be dragged: where each one starts
     static void editCb(Fl_Widget* w, void* data);
     static void flashTimer(void* data);
     void damageBox(Box* b);        // redraw only that box's area
@@ -171,6 +172,8 @@ private:
     enum class Drag { None, Move, Cable, Rubber, Number, UI } drag_ = Drag::None;
     int pressX_ = 0, pressY_ = 0, curX_ = 0, curY_ = 0;
     bool moved_ = false;
+    // a move: where each dragged box was when the drag began (each event places them from there)
+    std::unordered_map<const Box*, std::pair<int, int>> moveFrom_;
     Box* dragBox_ = nullptr;
     std::string uiBefore_;          // what an interface box saved before a mouse edit
     int dragPort_ = 0;

@@ -17,6 +17,11 @@
 //   act=text:<file>           the code view of the front document: its text replaced by the file's, applied
 //   act=type:<file>           the same, as if typed: applied when typing pauses (wait for it)
 //   act=click:<id>            a click on a box of the front document (left part)
+//   act=drag:<x>,<y>/<x>,<y>/...[:shift]   on the front patch window's canvas: pressed at the first point,
+//                             dragged through the others (one event each, however far apart), released at
+//                             the last; in patch coordinates; shift: Shift held while dragging and at release
+//   act=zoom:<z>              the front patch window's zoom (1 = 100%)
+//   act=pos:<id>              print: where a box of the front patch window is
 //   act=keys:<text>           typed into the front document's canvas (',' is Enter)
 //   act=send:<id>:<message>   a message to a box of the front document
 //   act=codeedit:<text>       text added at the end of the front code editor
@@ -60,10 +65,10 @@ void waitFor(double seconds) {
     while (std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count() < seconds) Fl::wait(0.01);
 }
 
-void mouse(Canvas* c, int ex, int ey, int event, int clicks) {
+void mouse(Canvas* c, int ex, int ey, int event, int clicks, int keys = 0) {
     Fl::e_x = Fl::e_x_root = ex;
     Fl::e_y = Fl::e_y_root = ey;
-    Fl::e_state = 0;
+    Fl::e_state = keys | (event == FL_RELEASE ? 0 : FL_BUTTON1);
     Fl::e_clicks = clicks;
     Fl::e_is_click = 1;
     Fl::e_keysym = FL_Button + FL_LEFT_MOUSE;
@@ -166,6 +171,40 @@ bool act(const std::string& a) {
         int clicks = verb == "dblclick" ? 1 : 0;
         mouse(c, ex, ey, FL_PUSH, clicks);
         mouse(c, ex, ey, FL_RELEASE, clicks);
+        return true;
+    }
+    if (verb == "drag") {
+        Canvas* c = app.activeCanvas();
+        if (!c || !c->patch()) return false;
+        std::string path = arg.substr(0, arg.find(':'));
+        int keys = arg.find(":shift") != std::string::npos ? FL_SHIFT : 0;
+        std::vector<std::pair<int, int>> pts;
+        for (size_t k = 0; k < path.size();) {
+            size_t end = path.find('/', k);
+            std::string p = path.substr(k, end == std::string::npos ? std::string::npos : end - k);
+            size_t comma = p.find(',');
+            if (comma == std::string::npos) return false;
+            pts.push_back({std::atoi(p.c_str()), std::atoi(p.c_str() + comma + 1)});
+            k = end == std::string::npos ? path.size() : end + 1;
+        }
+        if (pts.size() < 2) return false;
+        auto at = [&](size_t k, int event, int state) { mouse(c, c->screenX(pts[k].first), c->screenY(pts[k].second), event, 0, state); };
+        at(0, FL_PUSH, 0);
+        for (size_t k = 1; k < pts.size(); ++k) at(k, FL_DRAG, keys);
+        at(pts.size() - 1, FL_RELEASE, keys);
+        return true;
+    }
+    if (verb == "zoom") {
+        Canvas* c = app.activeCanvas();
+        if (!c) return false;
+        c->setZoom(std::atof(arg.c_str()));
+        return true;
+    }
+    if (verb == "pos") {
+        Canvas* c = app.activeCanvas();
+        Box* b = c && c->patch() ? c->patch()->find(arg) : nullptr;
+        if (!b) return false;
+        state("pos %s %s", arg, std::to_string(b->x) + " " + std::to_string(b->y));
         return true;
     }
     if (verb == "keys") {

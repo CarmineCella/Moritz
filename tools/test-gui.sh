@@ -138,6 +138,17 @@ flashpatch '      (obj c comment "changed" (pos 120 20))
 run "$T/flash.moritz" --window-png none act=opensub:sub act=wait:0.3 "act=type:$T/flash-edited.txt" act=wait:1.5 act=state
 expect "a subpatcher's window closed by the code view" "state: boxes 1501"
 
+# 15. boxes dragged fast, out past the patch's top-left corner and back, end where the mouse took them (they
+#     drifted: each event moved them by its own step, and a box stopped at the edge lost the steps beyond it),
+#     and keep their places relative to each other; at 100% and at 150%
+run "$G/drag.moritz" --window-png none act=menu:patch.edit act=menu:edit.selectall \
+    "act=drag:206,160/2,2/-300,-200/100,80/500,400/-50,300/306,260" act=pos:b1 act=pos:b2 act=zoom:1.5 \
+    "act=drag:306,260/0,0/-400,-10/52,30/406,360" act=pos:b1 act=pos:b2
+expect "a fast drag at 100%" "state: pos b1 300 250"
+expect "the other box with it" "state: pos b2 300 400"
+expect "a fast drag at 150%" "state: pos b1 400 350"
+expect "the other box with it at 150%" "state: pos b2 400 500"
+
 rm -rf "$T"
 echo "$count interface cases, $fails failed"
 [ $fails -eq 0 ]

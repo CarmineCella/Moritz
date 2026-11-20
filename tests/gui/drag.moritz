@@ -1,0 +1,4 @@
+; drag.moritz - boxes moved with the mouse (tools/test-gui.sh)
+(patch
+  (obj b1 + 1 (pos 200 150))
+  (obj b2 + 2 (pos 200 300)))
