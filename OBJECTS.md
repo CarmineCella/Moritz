@@ -753,7 +753,7 @@ See also: `send~` `receive` `adc~`
 
 `tapin~ [max]`
 
-Writes its input into a delay line, read by the tapout~ connected to its outlet. The memory is sized for 96 kHz, so at lower rates delays a little beyond `max` still work. Since the link does not order the two, tapout~ -> ... -> tapin~ feedback is allowed.
+Writes its input into a delay line, read by the tapout~ connected to its outlet. The memory holds `max` ms at the rate it runs at (sized again when the rate changes); a longer delay is clipped to it. Since the link does not order the two, tapout~ -> ... -> tapin~ feedback is allowed.
 
 | Argument | |
 | --- | --- |
@@ -797,7 +797,7 @@ See also: `tapin~` `comb~` `allpass~`
 
 `comb~ [max] [delay] [a] [b] [c]`
 
-Comb filter: `y = a x + b x[n-D] + c y[n-D]`, where D is the delay. The delay and the three gains are signals or floats; the memory is sized for 96 kHz, as with tapin~.
+Comb filter: `y = a x + b x[n-D] + c y[n-D]`, where D is the delay. The delay and the three gains are signals or floats; the memory holds `max` ms at the rate it runs at, as with tapin~.
 
 | Argument | |
 | --- | --- |
@@ -1358,7 +1358,7 @@ See also: `framedelta~` `frameaccum~` `cartopol~` `pvlock~`
 
 `sparkle~ [buffer] [channels] [window] [overlap]`
 
-The phase vocoder of the author's sparkle, with phase locking and formant (spectral envelope) preservation: the engine of Musil's pvoc. With a buffer~ name it plays the buffer: the left inlet is the speed. Without one it transforms the signal in its left inlet. A frame is computed while the next hop plays (on a thread of its own), so the sound comes one hop late, and one window and one hop late when transforming the input. Pitch and formant ratios (inlets 2 and 3, 0.05 to 8) are read once per frame. Cross-synthesis mixes in a second sound: a buffer~ (read at the same position, or on its own when the first sound is live), or else the signal in inlet 5; inlet 4 is the amount (0.5).
+The phase vocoder of the author's sparkle, with phase locking and formant (spectral envelope) preservation: the engine of Musil's pvoc. With a buffer~ name it plays the buffer: the left inlet is the speed. Without one it transforms the signal in its left inlet. A frame is computed while the next hop plays (on a thread of its own), so the sound comes one hop late, and one window and one hop late when transforming the input. Pitch and formant ratios (inlets 2 and 3, 0.05 to 8) are read once per frame. Cross-synthesis mixes in a second sound: a buffer~ (read at the same position, or on its own when the first sound is live), or else the signal in inlet 5; inlet 4 is the amount (1).
 
 | Argument | |
 | --- | --- |
