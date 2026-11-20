@@ -10,6 +10,7 @@
 // the plumbing: buffer~s in and out, the notes as messages, the sum of the chosen samples.
 
 #include "musil_host.h"
+#include "datasets.h"
 #include "fileio.h"
 #include "offline.h"
 
@@ -103,9 +104,13 @@ int pitchOf(const Atom& a) {
 }
 
 // ---------------------------------------------------------------- orchestra
-// orchestra name [database.db]: a database of instrumental samples (a feature file in the *SOL layout, as Musil's
-// db-load reads it) and the players who play it, shared by name with orchidea.
-//   read file.db                 loads a database (a background job); the sounds are found next to it
+// orchestra name [database]: a database of instrumental samples (a feature file in the *SOL layout, as Musil's
+// db-load reads it) and the players who play it, shared by name with orchidea. The database is a file or a dataset's
+// name (fullsol, tinysol, microsol: datasets.h, the same names as Musil's (dataset name)).
+//   read file.db | read name     loads a database (a background job); the sounds are found next to it
+//   analyse folder [type block hop ncoeff]   Orchidea's dbgen: every WAV under the folder analysed (Musil's
+//                                db_generate; spectrum 2048 256 1024 by default) into <folder>.spectrum.db next to it
+//                                (never over an existing file), which is then read
 //   players Vn 2 Va Vc Fl|Picc   the players: an instrument a player, a number after one repeats it; no
 //                                instrument: Orchidea's default orchestra, of what the database has
 //   add instrument [n]           more players; remove instrument: every player of it
@@ -152,6 +157,8 @@ public:
             waiting_.clear();
         } else if (h.is("read") && m.size() > 1) {
             read(m[1].str());
+        } else if (h.is("analyse") || h.is("analyze")) {
+            analyse(m);
         } else if (h.is("players")) {
             explicit_.clear();
             addPlayers(m, 1);
@@ -215,33 +222,76 @@ private:
         if (m.empty()) m.push_back(Atom("bang"));
         return m;
     }
+    // a file, or a dataset's name (no folder in it, no .db at its end, not a file next to the patch): found as Musil's
+    // (dataset name) finds it, on the job's thread
     void read(const std::string& file) {
         if (busy()) return;
         std::string full = patch->resolvePath(file);
+        std::error_code ec;
+        bool byName = musil::datasets::is_name(file) && !std::filesystem::is_regular_file(full, ec);
+        musil::datasets::Place place = datasetsPlace();
         auto out = std::make_shared<std::shared_ptr<OrchDb>>();
         auto err = std::make_shared<std::string>();
         run(
-            [full, out, err](Job& job) {
-                try { *out = readDatabase(full, job, *err); }
+            [full, byName, file, place, out, err](Job& job) {
+                try { *out = readDatabase(byName ? musil::datasets::resolve(place, file) : full, job, *err); }
                 catch (const std::exception& e) { *out = nullptr; *err = e.what(); }
             },
-            [this, out, err, file] {
-                if (!*out) {
-                    patch->print("orchestra " + name + ": " + (err->empty() ? "no database in " + file : *err));
-                    waiting_.clear();
-                    return;
-                }
-                db_ = *out;
-                size_t missing = 0;
-                for (char c : db_->present) missing += c ? 0 : 1;
-                if (missing == db_->present.size() && missing > 0)
-                    patch->print("orchestra " + name + ": none of the " + std::to_string(missing) + " sounds of " + file + " is on disk (looked in " + db_->root + ")");
-                outletFloat(2, (float)db_->entries.size());
-                outlet(3, playerList());
-                auto w = std::move(waiting_);
-                waiting_.clear();
-                for (auto& fn : w) fn();
-            });
+            [this, out, err, file] { loaded(*out, *err, file); });
+    }
+    // analyse folder [type block hop ncoeff]: the feature file made next to the folder (a background job), then read
+    void analyse(const Message& m) {
+        if (busy()) return;
+        if (m.size() < 2) { patch->print("orchestra " + name + ": analyse folder [type block hop ncoeff]"); return; }
+        std::string folder = patch->resolvePath(m[1].str());
+        musil::db_gen_params p;
+        if (m.size() > 2) p.type = m[2].str();
+        if (m.size() > 3) p.block = m[3].isFloat() ? clampInt(m[3].f, -1, 1 << 21) : -1;
+        if (m.size() > 4) p.hop = m[4].isFloat() ? clampInt(m[4].f, -1, 1 << 21) : -1;
+        if (m.size() > 5) p.ncoeff = m[5].isFloat() ? clampInt(m[5].f, -1, 1 << 21) : -1;
+        else if (p.type == "mfcc") p.ncoeff = 13;
+        else if (p.type == "moments") p.ncoeff = 4;
+        try { musil::db_gen_check(p); } catch (const std::exception& e) { patch->print("orchestra " + name + ": analyse: " + e.what()); return; }
+        std::error_code ec;
+        if (!std::filesystem::is_directory(folder, ec)) { patch->print("orchestra " + name + ": analyse: not a folder: " + m[1].str()); return; }
+        std::filesystem::path f = std::filesystem::path(folder).lexically_normal();
+        if (f.filename().empty()) f = f.parent_path();
+        std::string db = analysisPath(f.string(), f.filename().string());
+        if (std::filesystem::exists(db, ec)) {
+            patch->print("orchestra " + name + ": " + db + " is already there: read it, or delete it to analyse the folder again");
+            return;
+        }
+        auto out = std::make_shared<std::shared_ptr<OrchDb>>();
+        auto err = std::make_shared<std::string>();
+        run(
+            [folder, db, p, out, err](Job& job) {
+                try {
+                    size_t n = musil::db_generate(folder, db, p, [&job](size_t k, size_t total) {
+                        job.progress(total ? .5f * (float)k / (float)total : 0.f);
+                        return !job.cancelled();
+                    });
+                    if (n == 0) { std::error_code e; std::filesystem::remove(db, e); *err = "no WAV file under " + folder; return; }
+                    *out = readDatabase(db, job, *err);
+                } catch (const std::exception& e) { *out = nullptr; *err = e.what(); }
+            },
+            [this, out, err, db] { loaded(*out, *err, db); });
+    }
+    void loaded(std::shared_ptr<OrchDb> got, const std::string& error, const std::string& file) {
+        if (!got) {
+            patch->print("orchestra " + name + ": " + (error.empty() ? "no database in " + file : error));
+            waiting_.clear();
+            return;
+        }
+        db_ = got;
+        size_t missing = 0;
+        for (char c : db_->present) missing += c ? 0 : 1;
+        if (missing == db_->present.size() && missing > 0)
+            patch->print("orchestra " + name + ": none of the " + std::to_string(missing) + " sounds of " + file + " is on disk (looked in " + db_->root + ")");
+        outletFloat(2, (float)db_->entries.size());
+        outlet(3, playerList());
+        auto w = std::move(waiting_);
+        waiting_.clear();
+        for (auto& fn : w) fn();
     }
     void info() {
         if (!db_) { patch->print("orchestra " + name + ": no database (read one)"); return; }

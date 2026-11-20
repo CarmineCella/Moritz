@@ -133,6 +133,17 @@ const std::map<std::string, PortDocs>& docs() {
         {"nmf", {{"run source dest (unsupervised); learn example, separate mix dest, forget (supervised); "
                   "components k, iterations n, size n, seed n, stop"},
                  {"progress, 0 to 1", "bang: done (dest has one part, or one source, per channel)"}}},
+        {"orchestra", {{"read file.db or a dataset's name (fullsol, tinysol, microsol); analyse folder [type block hop ncoeff]; "
+                        "players Vn 2 Va ...; add, remove, range, techniques, dynamics, info, stop"},
+                       {"progress of reading (or analysing), 0 to 1", "bang: the database is read",
+                        "the number of sounds in the database",
+                        "the players, a list of instruments (Fl|Picc: one player who doubles); bang: none"}}},
+        {"orchidea", {{"run target [out]: buffer~ names; population, epochs, seed, segmentation, partials... ; "
+                       "choose segment n, notes, show, report, write file, roll buffer, stop"},
+                      {"progress of the search, 0 to 1", "bang: done (the notes are out)",
+                       "a note a message: number, instrument, pitch, dynamics, technique, onset (ms), duration (ms), "
+                       "the sound's path, cents off the target's partial, player",
+                       "the distance: the mean cost of the chosen solutions (lower is nearer the target)"}}},
         {"specenv~", {{"amplitudes (inside pfft~: one frame); iterations n", "order (cepstral coefficients: the resolution)"},
                       {"spectral envelope", "fine structure: the amplitudes divided by the envelope"}}},
         {"filterdesign", {{"frequency (Hz), or a type: lowpass highpass bandpass notch peak lowshelf highshelf allpass; bang",

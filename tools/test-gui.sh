@@ -262,6 +262,23 @@ run "$G/sound.moritz" --window-png none act=dblclick:snd act=raise:doc act=close
 expect "the buffer~ gone" "state: sound buffer~ voice (not in any open patch now) — Moritz"
 expect "edits go on" "state: sound frames 27731 channels 1"
 
+# the Datasets window (Extras > Datasets...): MicroSOL listed as what comes with Moritz; a feature file registered by
+# name (written in the scratch home's ~/.musil/datasets.mu, read again by the next run); a folder of sounds analysed
+# into a feature file next to it, on the job's thread, and registered by name
+run --window-png none act=menu:extras.datasets act=datasets
+expect "the Datasets window lists MicroSOL" "state: dataset microsol bundled present"
+expect "the default datasets folder" "state: datasets folder $HOME/Documents/Moritz/datasets"
+run --window-png none "act=datasetsregister:fullsol:$HERE/data/microsol/microsol.spectrum.db"
+run --window-png none act=datasets
+expect "a file registered by name" "state: dataset fullsol registered present"
+mkdir -p "$T/sounds" && cp -R "$HERE/data/microsol/microsol" "$T/sounds/Mine"
+run --window-png none "act=datasetsanalyse:minesol:$T/sounds/Mine" act=datasets
+expect "a folder analysed" "/sounds/minesol.spectrum.db"
+expect "the analysis registered" "state: dataset minesol registered present"
+run --window-png none act=datasetsforget:fullsol "act=datasetsfolder:$T/sounds" act=datasets
+if [ $status -eq 0 ] && ! grep -q "dataset fullsol" "$out" && grep -q "state: datasets folder .*/sounds" "$out"; then ok
+else fail "a registration forgotten, the datasets folder chosen"; fi
+
 rm -rf "$T"
 echo "$count interface cases, $fails failed"
 [ $fails -eq 0 ]

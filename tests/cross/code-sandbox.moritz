@@ -1,5 +1,6 @@
 ; code-sandbox.moritz - what a code box may do (Musil's sandboxed profile, tools/test-patches.sh): it reads
-; anywhere and writes in its patch's folder; writing elsewhere, running programs and waiting are refused.
+; anywhere and writes in its patch's folder; writing elsewhere, running programs and waiting are refused, and so are
+; downloading a dataset and registering one in the user's configuration; a dataset is found by name.
 ; The second box is marked @trusted: with nobody to ask (--render), it stays sandboxed.
 (patch
   (obj lb loadbang (pos 20 20))
@@ -12,6 +13,10 @@
       "var r (try (length (read \"code-sandbox.moritz\")) catch e e)"
       "var here (try (write \"sandbox-probe.tmp\" \"x\") catch e e)"
       "var gone (try (remove \"sandbox-probe.tmp\") catch e e)"
+      "var fetch (try (dataset-fetch \"tinysol\") catch e e)"
+      "var reg (try (dataset-register! \"x\" (dataset \"microsol\")) catch e e)"
+      "var named (try (dataset \"microsol\") catch e e)"
+      "if (and (refused fetch) (contains? fetch \"network\") (refused reg) (ends-with? named \"microsol.spectrum.db\")) { print \"PASS: a code box finds a dataset by name, downloads and registers none\" } { print \"FAIL: datasets in the sandbox\" fetch reg named }"
       "var ok (and (refused w) (refused x) (refused s) (not (refused r)) (not (refused here)) (not (refused gone)))"
       "if ok { print \"PASS: a code box writes only where it may, and runs no programs\" } { print \"FAIL: the sandbox\" w x s r here gone }"))
   (obj t code @trusted (pos 220 60)

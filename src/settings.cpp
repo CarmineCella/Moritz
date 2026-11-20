@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Carmine-Emanuele Cella. SPDX-License-Identifier: BSD-2-Clause
 // settings.cpp — the user's settings and their dialog (see settings.h)
 #include "settings.h"
+#include "datasets.h"
 #include "gui.h"
 #include "theme.h"
 
@@ -118,6 +119,7 @@ struct Dialog {
     Fl_Input_Choice *patchFont = nullptr, *codeFont = nullptr;
     Fl_Spinner *patchSize = nullptr, *codeSize = nullptr;
     Fl_Check_Button* curved = nullptr;
+    Fl_Box* datasets = nullptr;
 
     void show() {                                 // the controls from the settings
         const Settings& s = settings();
@@ -126,6 +128,7 @@ struct Dialog {
         patchSize->value(s.patchSize);
         codeSize->value(s.codeSize);
         curved->value(s.curvedCables ? 1 : 0);
+        datasets->copy_label(datasetsFolderText().c_str());
     }
     void changed() {                              // the settings from the controls, applied at once
         Settings& s = settings();
@@ -182,7 +185,7 @@ Fl_Double_Window* settingsWindow() { return dialog().win; }
 void showSettings() {
     Dialog& d = dialog();
     if (!d.win) {
-        const int W = 440, H = 262;
+        const int W = 440, H = 344;
         d.win = new Fl_Double_Window(W, H, "Settings");
         d.win->color(kPopup);
         heading(16, 12, "Patches");
@@ -203,6 +206,26 @@ void showSettings() {
         t2->labelcolor(kDim);
         d.codeFont = fontChoice(60, 162, 230, true);
         d.codeSize = sizeSpinner(350, 162);
+        heading(16, 200, "Datasets");
+        auto* t3 = new Fl_Box(16, 220, W - 32, 18, "the folder Moritz and Musil find sample databases in, and download into");
+        t3->align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE);
+        t3->labelsize(11);
+        t3->labelcolor(kDim);
+        d.datasets = new Fl_Box(16, 240, W - 32, 22);
+        d.datasets->align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE | FL_ALIGN_CLIP);
+        d.datasets->labelsize(12);
+        d.datasets->labelcolor(kText);
+        auto* choose = new Fl_Button(16, 266, 100, 24, "Choose...");
+        choose->labelsize(12);
+        choose->callback([](Fl_Widget*, void*) { chooseDatasetsFolder(false); dialog().show(); });
+        auto* deflt = new Fl_Button(122, 266, 80, 24, "Default");
+        deflt->labelsize(12);
+        deflt->tooltip("~/Documents/Moritz/datasets");
+        deflt->callback([](Fl_Widget*, void*) { chooseDatasetsFolder(true); dialog().show(); });
+        auto* open = new Fl_Button(W - 126, 266, 110, 24, "Datasets...");
+        open->labelsize(12);
+        open->tooltip("The datasets known, where they are; register FullSOL, download TinySOL, analyse a folder");
+        open->callback([](Fl_Widget*, void*) { showDatasets(); });
         auto* defaults = new Fl_Button(16, H - 42, 120, 26, "Defaults");
         defaults->callback([](Fl_Widget*, void*) {
             settings() = defaultSettings();

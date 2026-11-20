@@ -51,9 +51,12 @@
 //   act=soundsave             its File > Save (saveas=<path> answers a Save As)
 //   act=soundspec             waits for its spectrogram (at most 20 s), then prints how many frames it has
 //   act=soundpng:<file>       the front sound window drawn into a PNG file
+//   act=datasets...           the Datasets window (datasets_ui.cpp: datasets, datasetsfolder, datasetsregister,
+//                             datasetsforget, datasetsanalyse)
 
 #include "gui.h"
 #include "codewindow.h"
+#include "datasets.h"
 #include "fileio.h"
 #include "objects.h"
 #include "sound_editor.h"
@@ -434,6 +437,7 @@ bool act(const std::string& a) {
         for (auto& b : d->patch.boxes) state("box %s %s", b->id, b->label());
         return true;
     }
+    if (verb.rfind("datasets", 0) == 0) return datasetsTestAction(verb, arg);   // datasets_ui.cpp
     return false;
 }
 

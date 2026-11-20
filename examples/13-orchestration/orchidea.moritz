@@ -8,8 +8,9 @@
 ; The same seed gives the same orchestration, here and in Musil
 ; (orchestrate-mimetic). MicroSOL, which comes with Moritz, has four
 ; instruments around C4-G4: no pitch filter (partials 0) with it. With a
-; real database (read ~/TinySOL/TinySOL.spectrum.db), set partials 0.2: the
-; target's partials then choose the pitches.
+; real database (read tinysol, after Extras > Datasets... > Download TinySOL,
+; or read fullsol once registered there), set partials 0.2: the target's
+; partials then choose the pitches.
 (patch
   (obj title comment "Orchidea: a bell, a gong, a voice imitated by an orchestra" (pos 20 12))
   (obj sub comment "Choose a target; the search runs in the background (the progress below). Listen to the target, then to the orchestra; another seed, another orchestration." (pos 20 34))
@@ -19,7 +20,7 @@
   (obj b4 buffer~ ormix (pos 470 65))
   (obj b5 buffer~ orroll (pos 570 65))
   (obj c1 comment "1. The orchestra: MicroSOL's oboes, horns, violins and cellos, two players each (the default orchestra, of what the database has)." (pos 20 100))
-  (obj band orchestra orband microsol/microsol.spectrum.db (pos 20 122))
+  (obj band orchestra orband microsol (pos 20 122))
   (obj inf message info (pos 290 122))
   (obj c2 comment "2. The target: click one (the bell is orchestrated when the patch opens)" (pos 20 160))
   (obj lb loadbang (pos 480 160))

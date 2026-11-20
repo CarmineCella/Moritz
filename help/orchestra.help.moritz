@@ -1,10 +1,11 @@
 ; orchestra.help.moritz - help for orchestra
 (patch
   (obj title comment "orchestra: a database of instrumental samples and its players, for orchidea" (pos 20 12))
-  (obj sub comment "The database is a feature file of the *SOL layout (TinySOL, OrchideaSOL, FullSOL; MicroSOL comes with Moritz: four instruments around C4-G4)." (pos 20 34))
+  (obj sub comment "The database is a feature file of the *SOL layout (TinySOL, OrchideaSOL, FullSOL; MicroSOL comes with Moritz: four instruments around C4-G4), or its name." (pos 20 34))
   (obj sub2 comment "It is read as a background job; then the number of sounds and the players come out. Right-click the box for Info." (pos 20 52))
-  (obj rd message "read microsol/microsol.spectrum.db" (pos 20 85))
-  (obj rd2 comment "or your own: read ~/TinySOL/TinySOL.spectrum.db" (pos 270 86))
+  (obj rd message "read microsol" (pos 20 85))
+  (obj rd2 comment "or read tinysol, read fullsol (Extras > Datasets... downloads or registers them), read path/to/X.spectrum.db" (pos 130 86))
+  (obj an comment "analyse folder: a feature file made of a folder of sounds named as in the *SOL databases (Orchidea's dbgen), then read" (pos 20 102))
   (obj c1 comment "the players: an instrument a player, a number after one makes it that many; no instrument: Orchidea's default, of what the database has" (pos 20 120))
   (obj p1 message "players Vn 2 Vc 2" (pos 20 142))
   (obj p2 message "players Ob Hn Vn Vc" (pos 160 142))
@@ -19,7 +20,7 @@
   (obj r5 message "dynamics mf ff" (pos 430 199))
   (obj r6 message dynamics (pos 550 199))
   (obj inf message info (pos 640 199))
-  (obj or orchestra hpband microsol/microsol.spectrum.db (pos 20 240))
+  (obj or orchestra hpband microsol (pos 20 240))
   (obj prog flonum (pos 20 275))
   (obj ns number (pos 160 275))
   (obj cns comment "sounds" (pos 215 276))

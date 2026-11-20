@@ -6,7 +6,7 @@
   (obj tg buffer~ ohbell archeos-bell.wav (pos 20 85))
   (obj mx buffer~ ohmix (pos 200 85))
   (obj rl buffer~ ohroll (pos 320 85))
-  (obj or orchestra ohband microsol/microsol.spectrum.db (pos 440 85))
+  (obj or orchestra ohband microsol (pos 440 85))
   (obj lb loadbang (pos 20 120))
   (obj run message "partials 0, run ohbell ohmix" (pos 20 150))
   (obj cpart comment "MicroSOL has no sound at the bell's pitches: no pitch filter (partials 0). With TinySOL, leave it on." (pos 230 151))

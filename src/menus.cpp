@@ -10,6 +10,7 @@
 #include "ui_util.h"
 #include "settings.h"
 #include "codewindow.h"
+#include "datasets.h"
 #include "sound_editor.h"
 
 #include <FL/filename.H>
@@ -177,6 +178,7 @@ const std::vector<Command>& table() {
          [] { app().toggleRecording(); }, nullptr, nullptr},
         {"extras.monitor", "Extras/Binaural Monitor...", 0, 0, [] { app().showMonitor(); }, nullptr, nullptr},
         {"extras.tester", "Extras/Channel Tester...", 0, 0, [] { app().showTester(); }, nullptr, nullptr},
+        {"extras.datasets", "Extras/Datasets...", 0, 0, [] { showDatasets(); }, nullptr, nullptr},
         // ---- Help
         {"help.browser", "Help/Browser...", FL_COMMAND + FL_SHIFT + 'b', FL_MENU_DIVIDER, [] { app().showBrowser(); },
          nullptr, nullptr},

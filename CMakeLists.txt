@@ -260,6 +260,10 @@ foreach(d musil data library examples help)
   endif()
 endforeach()
 add_test(NAME moritz-engine COMMAND moritz-engine-tests WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+# in a home of their own: the datasets' configuration they write (~/.musil/datasets.mu) is never the user's
+file(MAKE_DIRECTORY ${MORITZ_ENGINE_TEST_DIR}/home)
+set_tests_properties(moritz-engine PROPERTIES ENVIRONMENT
+  "HOME=${MORITZ_ENGINE_TEST_DIR}/home;USERPROFILE=${MORITZ_ENGINE_TEST_DIR}/home;XDG_CONFIG_HOME=${MORITZ_ENGINE_TEST_DIR}/home/.config")
 
 # ---------------------------------------------------------------- install
 if(APPLE)
