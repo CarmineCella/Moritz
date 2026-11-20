@@ -30,6 +30,7 @@
 #include "signals/biquad.h"
 #include "signals/envelope.h"
 #include "signals/denormal.h"
+#include "signals/edit.h"
 #include <map>
 #include <memory>
 #include <mutex>
@@ -1014,6 +1015,27 @@ inline vptr sig_zcr(vlist& a, Interp& i) {
     return v_num(x.size() ? (double)mir::zeroCrossings(data_of(x), x.size()) / (double)x.size() : 0.0);
 }
 
+// (fade-in x n) (fade-out x n)   linear fades over the first (last) n samples (signals/edit.h: sample k of a fade in
+//   times k / n, a fade out the same backwards; Moritz's sound editor fades with it)
+inline vptr sig_fade(vlist& a, Interp& i, bool in) {
+    varr x = i.num(a[0]);
+    double n = i.scalar(a[1]);
+    if (!(n >= 0)) i.bad("n must be >= 0");
+    if (x.size()) {
+        if (in) dsp::edit::fade_in(&x[0], x.size(), 1, (size_t)std::min(n, (double)x.size()));
+        else dsp::edit::fade_out(&x[0], x.size(), 1, (size_t)std::min(n, (double)x.size()));
+    }
+    return v_arr(std::move(x));
+}
+inline vptr sig_fade_in(vlist& a, Interp& i) { return sig_fade(a, i, true); }
+inline vptr sig_fade_out(vlist& a, Interp& i) { return sig_fade(a, i, false); }
+// (normalize-peak x)   x scaled so its peak is 1; silence stays silent (signals/edit.h, as the sound editor's Normalize)
+inline vptr sig_normalize_peak(vlist& a, Interp& i) {
+    varr x = i.num(a[0]);
+    if (x.size()) dsp::edit::normalize_peak(&x[0], x.size(), 1);
+    return v_arr(std::move(x));
+}
+
 inline void add_signals(Interp& i) {
     i.def("fft", sig_fft, 1, 1); i.def("ifft", sig_ifft, 1, 1);
     i.def("osc", sig_osc, 3, 3); i.def("iir", sig_iir, 3, 3); i.def("delay", sig_delay, 2, 2);
@@ -1030,6 +1052,7 @@ inline void add_signals(Interp& i) {
     i.def("spectral-moments", sig_spectral_moments, 2, 2); i.def("spectral-flatness", sig_spectral_flatness, 1, 1);
     i.def("spectral-flux", sig_spectral_flux, 2, 2); i.def("hfc", sig_hfc, 1, 1); i.def("zcr", sig_zcr, 1, 1);
     i.def("conv", sig_conv, 2, 2); i.def("conv-fast", sig_conv, 2, 2); i.def("ambi-gains", sig_ambi_gains, 3, 3); i.def("ambi-decoder", sig_ambi_decoder, 2, 2); i.def("binaural-level", sig_binaural_level, 2, 2); i.def("ambi-rotate", sig_ambi_rotate, 2, 2); i.def("hrir", sig_hrir, 3, 3); i.def("hrir-model", sig_hrir_model, 3, 3);
+    i.def("fade-in", sig_fade_in, 2, 2); i.def("fade-out", sig_fade_out, 2, 2); i.def("normalize-peak", sig_normalize_peak, 1, 1);
     i.def("hrtf-load", sig_hrtf_load, 1, 1); i.def("hrtf-unload", sig_hrtf_unload, 0, 0); i.def("hrtf-loaded", sig_hrtf_loaded, 0, 0);
 }
 

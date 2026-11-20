@@ -52,17 +52,11 @@ function pan (x pos) {
     var p (max -1 (min 1 pos))
     return (list (* x (sqrt (* 0.5 (- 1 p)))) (* x (sqrt (* 0.5 (+ 1 p)))))
 }
-; (fade-in x n) (fade-out x n)   linear fades over n samples
-function fade-in (x n) (* x (vec (/ (range n) n) (ones (- (length x) n))))
-function fade-out (x n) (reverse (fade-in (reverse x) n))
+; (fade-in x n) (fade-out x n)   linear fades over n samples: C++ (signals.h, signals/edit.h)
 ; (rms x)                  root mean square
 function rms (x) (sqrt (mean (* x x)))
-; (normalize-peak x)       scale so the peak is 1; (normalize-rms x target) so the rms is target
-function normalize-peak (x) {
-    var p (max (abs x))
-    if (== p 0) { return x }
-    return (/ x p)
-}
+; (normalize-peak x)       scale so the peak is 1 (C++: signals.h, signals/edit.h); (normalize-rms x target) so
+;                          the rms is target
 ; (normalize-rms x target) scale so the rms is target
 function normalize-rms (x target) {
     var r (rms x)
