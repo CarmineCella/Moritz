@@ -170,7 +170,11 @@ Moritz follows Max's conventions:
   (the top edge). Rest the mouse on a port to see what it expects or sends.
   To move a cable, take it near one of its ends and drop that end on another
   box: it goes to that box's nearest inlet (or comes from its nearest
-  outlet); dropped anywhere else, the cable stays as it was.
+  outlet); dropped anywhere else, the cable stays as it was. Hold Shift while
+  you drag a box over a cable and the cable lights up: drop the box there and
+  it goes into the cable (A → B becomes A → box → B, through its left inlet and
+  left outlet), when it has both and they suit the cable (a signal can't go
+  into a control inlet).
 - **Editing**: select by clicking or dragging a rectangle; Option-drag copies;
   Cmd+X, Cmd+C, Cmd+V and Cmd+D cut, copy, paste and duplicate, also between
   patches; Cmd+Z undoes.

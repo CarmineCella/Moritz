@@ -58,6 +58,23 @@ double cableDist(double px, double py, double ax, double ay, double bx, double b
     return best;
 }
 
+// the segment (ax, ay)-(bx, by) passes through the rectangle x0..x1, y0..y1 (Liang-Barsky)
+bool segCrossesRect(double ax, double ay, double bx, double by, double x0, double y0, double x1, double y1) {
+    double t0 = 0, t1 = 1, dx = bx - ax, dy = by - ay;
+    const double p[4] = {-dx, dx, -dy, dy}, q[4] = {ax - x0, x1 - ax, ay - y0, y1 - ay};
+    for (int k = 0; k < 4; ++k) {
+        if (p[k] == 0) {
+            if (q[k] < 0) return false;
+            continue;
+        }
+        double t = q[k] / p[k];
+        if (p[k] < 0) t0 = std::max(t0, t);
+        else t1 = std::min(t1, t);
+        if (t0 > t1) return false;
+    }
+    return true;
+}
+
 bool sameCable(const Connection& a, const Connection& b) {
     return a.from == b.from && a.outlet == b.outlet && a.to == b.to && a.inlet == b.inlet;
 }
@@ -187,6 +204,7 @@ void Canvas::detach() {
     editing_ = dragBox_ = typingBox_ = tipBox_ = nullptr;
     drag_ = Drag::None;
     moveFrom_.clear();
+    spliceCable_ = -1;
     sugg_.clear();
     layouts_.clear();
 }
@@ -660,7 +678,9 @@ void Canvas::draw() {
 
     // cables (a curve stays between its ends across, and bends at most 140 up or down)
     bool endDragged = drag_ == Drag::CableEnd && moved_;
-    for (auto& c : p.conns) {
+    int lit = drag_ == Drag::Move ? spliceCable_ : -1;           // where a box dropped with Shift goes
+    for (int k = 0; k < (int)p.conns.size(); ++k) {
+        const Connection& c = p.conns[k];
         if (endDragged && sameCable(c, dragConn_)) continue;      // drawn where its end is being taken
         int ax, ay, bx, by;
         cableEnds(c, ax, ay, bx, by);
@@ -670,7 +690,11 @@ void Canvas::draw() {
         ay += oy(); by += oy();
         bool sig = c.from->outs[c.outlet] != Port::Control;   // signal and tap links
         const auto& path = cablePath(ax, ay, bx, by);
-        if (sig) {
+        if (k == lit) {
+            fl_color(kAccent);
+            zd::line_style(FL_SOLID | FL_CAP_ROUND | FL_JOIN_ROUND, 4);
+            zd::polyline(path);
+        } else if (sig) {
             fl_color(c.selected ? kSelect : kSignal);
             zd::line_style(FL_SOLID | FL_CAP_ROUND | FL_JOIN_ROUND, 3);
             zd::polyline(path);
@@ -908,6 +932,33 @@ void Canvas::moveCableEnd(int mx, int my) {
     }
 }
 
+int Canvas::cableUnder(Box* b) const {
+    if (!b || b->numIns() < 1 || b->numOuts() < 1) return -1;
+    const auto& conns = patch_->conns;
+    double cx = b->x + b->w / 2.0, cy = b->y + b->h / 2.0, bestD = 1e30;
+    int best = -1;
+    for (int k = 0; k < (int)conns.size(); ++k) {
+        const Connection& c = conns[k];
+        if (c.from == b || c.to == b) continue;
+        int ax, ay, bx, by;
+        cableEnds(c, ax, ay, bx, by);
+        const auto& pts = cablePath(ax, ay, bx, by);
+        bool crosses = false;
+        for (size_t i = 1; i < pts.size() && !crosses; ++i)
+            crosses = segCrossesRect(pts[i - 1].first, pts[i - 1].second, pts[i].first, pts[i].second, b->x, b->y,
+                                     b->x + b->w, b->y + b->h);
+        if (!crosses) continue;
+        // only a cable the box can take: A -> its left inlet, its left outlet -> B
+        std::vector<Connection> rest = conns;
+        rest.erase(rest.begin() + k);
+        if (!canConnect(rest, c.from, c.outlet, b, 0, nullptr) || !canConnect(rest, b, 0, c.to, c.inlet, nullptr))
+            continue;
+        double d = cableDist(cx, cy, ax, ay, bx, by);
+        if (d < bestD) { bestD = d; best = k; }
+    }
+    return best;
+}
+
 void Canvas::clearSelection() {
     if (!patch_) return;
     for (auto& b : patch_->boxes) b->selected = false;
@@ -938,6 +989,7 @@ void Canvas::reset() {
     typed_.clear();
     drag_ = Drag::None;
     moveFrom_.clear();
+    spliceCable_ = -1;
     redraw();
 }
 
@@ -1353,6 +1405,8 @@ int Canvas::handle(int e) {
                     }
                     ed_->markDirty(patch_);
                 }
+                // one box with Shift held: the cable it would go into, lit
+                spliceCable_ = moving.size() == 1 && Fl::event_state(FL_SHIFT) ? cableUnder(moving[0].first) : -1;
             } else if (drag_ == Drag::CableEnd) {
                 if (std::abs(mx - pressX_) + std::abs(my - pressY_) > 2) moved_ = true;
             } else if (drag_ == Drag::Number) {
@@ -1395,8 +1449,19 @@ int Canvas::handle(int e) {
                     if (b->x < x1 && b->x + b->w > x0 && b->y < y1 && b->y + b->h > y0)
                         b->selected = true;
             }
+            if (drag_ == Drag::Move && moved_ && Fl::event_state(FL_SHIFT)) {
+                // dropped on a cable with Shift held: the box goes into it (the move's undo step holds both)
+                auto sel = selectedBoxes();
+                int k = sel.size() == 1 && moveFrom_.count(sel[0]) ? cableUnder(sel[0]) : -1;
+                std::string err;
+                if (k >= 0) {
+                    if (patch_->insertIntoCable(k, sel[0], &err)) ed_->markDirty(patch_);
+                    else ed_->print("can't put the box into the cable: " + err);
+                }
+            }
             if (drag_ == Drag::Move && moved_ && patch_->owner)
                 patch_->rebuild();                  // inlets/outlets are ordered by position
+            spliceCable_ = -1;
             drag_ = Drag::None;
             moveFrom_.clear();
             if (moved_) typingBox_ = nullptr;

@@ -121,6 +121,8 @@ public:
     int screenY(int py) const { return y() + (int)std::lround((py - sy_) * zoom_); }
     // the box a pointer the canvas kept still names (nullptr when it was deleted or replaced)
     Box* alive(Box* b) const;
+    // a box dragged with Shift held: the index of the cable it would go into, drawn lit (-1: none)
+    int litCable() const { return drag_ == Drag::Move ? spliceCable_ : -1; }
 
 private:
     struct Hit {
@@ -135,6 +137,8 @@ private:
     // a cable's ends, where it leaves its outlet and enters its inlet
     void cableEnds(const Connection& c, int& ax, int& ay, int& bx, int& by) const;
     void moveCableEnd(int mx, int my);   // a cable's end dropped there (Drag::CableEnd)
+    // the cable box b would go into if dropped with Shift held: one that crosses it and can take it (-1: none)
+    int cableUnder(Box* b) const;
     static constexpr int kCableEndGrab = 18;   // how near an end a click on a cable takes that end
     void portPos(Box* b, bool out, int i, int& px, int& py) const;
     void layout(Box* b);           // layoutBox, through the cache
@@ -185,6 +189,7 @@ private:
     // CableEnd: the cable whose end is dragged to another port, and which end (its inlet's or its outlet's)
     Connection dragConn_{};
     bool dragInletEnd_ = false;
+    int spliceCable_ = -1;          // Move with Shift held: the cable the box goes into on release (drawn lit)
     double dragStartValue_ = 0.0, dragStep_ = 1.0;
     Box* typingBox_ = nullptr;     // number box receiving typed digits
     std::string typed_;

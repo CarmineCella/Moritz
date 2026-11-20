@@ -20,6 +20,9 @@
 //   act=drag:<x>,<y>/<x>,<y>/...[:shift]   on the front patch window's canvas: pressed at the first point,
 //                             dragged through the others (one event each, however far apart), released at
 //                             the last; in patch coordinates; shift: Shift held while dragging and at release
+//   act=drag:...:hold         the same, not released yet
+//   act=release:<x>,<y>[:shift]   the button released there
+//   act=lit                   print: the cable a box dragged with Shift would go into ("lit none": none)
 //   act=zoom:<z>              the front patch window's zoom (1 = 100%)
 //   act=pos:<id>              print: where a box of the front patch window is
 //   act=cables                print: the cables of the front patch window ("cable <from> <outlet> <to> <inlet>")
@@ -192,7 +195,24 @@ bool act(const std::string& a) {
         auto at = [&](size_t k, int event, int state) { mouse(c, c->screenX(pts[k].first), c->screenY(pts[k].second), event, 0, state); };
         at(0, FL_PUSH, 0);
         for (size_t k = 1; k < pts.size(); ++k) at(k, FL_DRAG, keys);
-        at(pts.size() - 1, FL_RELEASE, keys);
+        if (arg.find(":hold") == std::string::npos) at(pts.size() - 1, FL_RELEASE, keys);
+        return true;
+    }
+    if (verb == "release") {
+        Canvas* c = app.activeCanvas();
+        size_t comma = arg.find(',');
+        if (!c || comma == std::string::npos) return false;
+        int x = std::atoi(arg.c_str()), y = std::atoi(arg.c_str() + comma + 1);
+        mouse(c, c->screenX(x), c->screenY(y), FL_RELEASE, 0, arg.find(":shift") != std::string::npos ? FL_SHIFT : 0);
+        return true;
+    }
+    if (verb == "lit") {
+        Canvas* c = app.activeCanvas();
+        if (!c || !c->patch()) return false;
+        int k = c->litCable();
+        if (k < 0 || k >= (int)c->patch()->conns.size()) { state("lit none"); return true; }
+        auto& x = c->patch()->conns[k];
+        state("lit %s %s", x.from->id + " " + std::to_string(x.outlet), x.to->id + " " + std::to_string(x.inlet));
         return true;
     }
     if (verb == "zoom") {

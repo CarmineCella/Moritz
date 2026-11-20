@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Carmine-Emanuele Cella. SPDX-License-Identifier: BSD-2-Clause
 // editing_tests.cpp — edits the patch editor makes with the mouse, without a window: a cable's end moved
-// to another port
+// to another port, a box dropped into a cable
 
 #include "rig.h"
 
@@ -42,4 +42,33 @@ TEST(reconnect_moves_a_cable_and_keeps_its_place) {
     CHECK(!p.reconnect(9, r.box("osc"), 0, r.box("d"), 0, &err));
     CHECK(cables(p) == before);
     r.run(256);                                                         // the plan runs
+}
+
+// A box dropped into a cable: A -> B becomes A -> box -> B, where the cable was; nothing changes when the
+// box can't take it
+TEST(insert_into_cable_splices_a_box_or_changes_nothing) {
+    Rig r("(patch (obj osc cycle~ 440) (obj d dac~ 1) (obj g *~ 0.5) (obj f +~ 1) (obj n + 1) (obj m metro 100)"
+          " (obj b print) (obj q print) (connect osc 0 d 0) (connect m 0 b 0) (connect g 0 f 0))");
+    Patch& p = r.p;
+    std::string err;
+    CHECK(p.insertIntoCable(0, r.box("g"), &err));                          // a signal box into a signal cable
+    CHECK(cables(p) == "osc 0 g 0|g 0 d 0|m 0 b 0|g 0 f 0|");
+    std::string before = cables(p);
+    CHECK(!p.insertIntoCable(2, r.box("f"), &err));                         // a signal outlet into print's inlet
+    CHECK(err.find("control inlet") != std::string::npos);
+    CHECK(cables(p) == before);
+    CHECK(!p.insertIntoCable(0, r.box("n"), &err));                         // the signal into a control inlet
+    CHECK(cables(p) == before);
+    CHECK(!p.insertIntoCable(2, r.box("q"), &err));                         // print has no outlet
+    CHECK(err.find("an inlet and an outlet") != std::string::npos);
+    CHECK(cables(p) == before);
+    CHECK(p.insertIntoCable(2, r.box("n"), &err));                          // a control box into a control cable
+    CHECK(cables(p) == "osc 0 g 0|g 0 d 0|m 0 n 0|n 0 b 0|g 0 f 0|");
+    before = cables(p);
+    CHECK(!p.insertIntoCable(0, r.box("f"), &err));                         // osc -> f -> g while g -> f: a loop
+    CHECK(err.find("loop") != std::string::npos);
+    CHECK(cables(p) == before);
+    CHECK(!p.insertIntoCable(1, r.box("g"), &err));                         // g is at an end of g -> d
+    CHECK(cables(p) == before);
+    r.run(256);
 }

@@ -442,6 +442,10 @@ public:
     // The cable at index k given other ends (one of its ends dragged to another port): it keeps its place
     // among the cables. When the new cable can't be made (err says why), nothing changes.
     bool reconnect(int k, Box* from, int outlet, Box* to, int inlet, std::string* err = nullptr);
+    // Box b put into the cable at index k (dropped on it): A -> B becomes A -> b's left inlet and b's left
+    // outlet -> B. When b can't take it (no inlet or outlet, a signal into a control inlet, a signal
+    // loop...: err says why), nothing changes.
+    bool insertIntoCable(int k, Box* b, std::string* err = nullptr);
     void clear();
     Box* find(const std::string& id) const;
     std::string uniqueId(const std::string& cls) const;

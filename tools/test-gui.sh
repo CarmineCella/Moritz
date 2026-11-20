@@ -153,9 +153,18 @@ expect "the other box with it at 150%" "state: pos b2 400 500"
 #     step each; dropped on nothing, it stays as it was and nothing is recorded
 run "$G/cables.moritz" --window-png none act=menu:patch.edit "act=drag:108,238/200,240/306,255" act=cables \
     act=undo act=cables "act=drag:108,134/250,200/306,260" act=cables act=undo "act=drag:108,238/500,500" act=cables act=state
-seq=$(grep "state: cable " "$out" | sed 's/state: cable //' | tr '\n' '|')
+seq=$(grep "state: cable " "$out" | grep -v " s 0 d 0" | sed 's/state: cable //' | tr '\n' '|')
 if [ $status -eq 0 ] && [ "$seq" = "a 0 c 0|a 0 b 0|c 0 b 0|a 0 b 0|" ] && grep -q "state: undo no redo yes" "$out"; then ok
 else fail "a cable moved by its end (got $seq)"; fi
+
+# 17. a box dragged with Shift held onto a cable lights the cable, and dropped there goes into it: a -> b becomes
+#     a -> c -> b, one undo step with the move; not into a signal cable it can't take, and not without Shift
+run "$G/cables.moritz" --window-png none act=menu:patch.edit "act=drag:306,255/200,200/90,175:shift:hold" act=lit \
+    act=release:90,175:shift act=cables act=undo act=pos:c "act=drag:306,255/490,175:shift:hold" act=lit \
+    act=release:490,175:shift act=undo "act=drag:306,255/90,175" act=cables
+seq=$(grep "state: cable \|state: lit\|state: pos" "$out" | sed 's/state: //' | tr '\n' '|')
+if [ $status -eq 0 ] && [ "$seq" = "lit a 0 b 0|cable a 0 c 0|cable c 0 b 0|cable s 0 d 0|pos c 300 250|lit none|cable a 0 b 0|cable s 0 d 0|" ]
+then ok; else fail "a box dropped into a cable with Shift (got $seq)"; fi
 
 rm -rf "$T"
 echo "$count interface cases, $fails failed"

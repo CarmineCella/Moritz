@@ -751,6 +751,34 @@ bool Patch::reconnect(int k, Box* from, int o, Box* to, int i, std::string* err)
     return true;
 }
 
+bool Patch::insertIntoCable(int k, Box* b, std::string* err) {
+    auto fail = [&](const char* what) {
+        if (err) *err = what;
+        return false;
+    };
+    if (k < 0 || k >= (int)conns.size()) return fail("no such cable");
+    Connection c = conns[k];
+    if (!b || b->numIns() < 1 || b->numOuts() < 1) return fail("the box needs an inlet and an outlet");
+    if (c.from == b || c.to == b) return fail("the box is already at an end of the cable");
+    std::vector<Connection> next = conns;
+    next.erase(next.begin() + k);
+    if (!canConnect(next, c.from, c.outlet, b, 0, err)) return false;
+    next.insert(next.begin() + k, Connection{c.from, c.outlet, b, 0});
+    if (!canConnect(next, b, 0, c.to, c.inlet, err)) return false;
+    next.insert(next.begin() + k + 1, Connection{b, 0, c.to, c.inlet});
+    std::swap(conns, next);                 // a loop through the box (the rest had none)
+    bool loop = (c.from->outs[c.outlet] == Port::Signal && reaches(b, c.from)) ||
+                (b->outs[0] == Port::Signal && reaches(c.to, b));
+    if (loop) {
+        std::swap(conns, next);
+        return fail("that would create a signal feedback loop");
+    }
+    cablesChanged();
+    recompile();
+    structureChanged();
+    return true;
+}
+
 void Patch::removeConnections(const std::vector<int>& idx) {
     std::vector<int> s = idx;
     std::sort(s.rbegin(), s.rend());

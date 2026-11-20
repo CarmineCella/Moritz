@@ -3,4 +3,7 @@
   (obj a + 1 (pos 100 100))
   (obj b + 2 (pos 100 250))
   (obj c * 3 (pos 300 250))
-  (connect a 0 b 0))
+  (obj s sig~ 1 (pos 500 100))
+  (obj d *~ 1 (pos 500 250))
+  (connect a 0 b 0)
+  (connect s 0 d 0))
