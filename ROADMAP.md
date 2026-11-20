@@ -1,9 +1,101 @@
 # Roadmap
 
-What is asked for and not done yet, kept up to date as work lands. The design behind it is in
-[mockups/README.md](mockups/README.md) (decisions and plan).
+What Moritz is meant to become, the decisions behind it, the versions that lead to 1.0, and what is
+asked for and not done yet. This is the one place for the plan: it is kept current as work lands.
+How to work on the code is in [CLAUDE.md](CLAUDE.md); technical notes (testing, departures from
+the ported tools, corrections to Musil, sources) are in [NOTES.md](NOTES.md); the design sketches of
+the editors are in [mockups/](mockups/README.md); what changed in each release is in the GitHub
+releases and, for Musil, in [musil/CHANGES.md](musil/CHANGES.md).
 
-## 0.12 (in progress, on main)
+## Vision
+
+Moritz is a Max-like environment for sound and music computing by Carmine-Emanuele Cella. It brings
+together his research (sparkle, condec/pconv, Maple, SoundTypes, Orchidea, the scores and
+computer-assisted composition of Musil, WEFT) in a single, free, open-source system (BSD 2-Clause)
+for macOS, Linux and Windows.
+
+It is first a **teaching tool** (CNSM Paris): orchestration and AI for music are taught with it side
+by side. Every object is short, readable C++ written from first principles, so students can open the
+box and see how a phase vocoder, k-means or attention works. The tools are introduced little by
+little through tutorials, not split into packages. A book bringing the pieces together, with Moritz
+as the front end, follows.
+
+Musil is its language, and also a program of its own: a small scripting language for sound and music
+computing, shipped with Moritz and alone.
+
+## Decisions
+
+### Moritz and Musil
+
+- **One implementation of each algorithm, in Musil** (`musil/src/signals`, `music`, `scientific`):
+  its C++ engines are headers that need neither the interpreter nor Moritz, and Moritz's objects call
+  them directly. Nothing in `musil/` includes Moritz.
+- **Shared language and engines, separate host services.** What shows, plays or finds data is a
+  service of the host behind the same functions: a script calls `show`, `play`, `figure` or the live
+  functions the same way everywhere; Musil alone answers with its own windows and audio, Moritz with
+  its windows and its engine, so a script runs in both, and Moritz has one audio engine and one way
+  of drawing (the `plot` object and Musil's `show` share one renderer, in Musil). Musil alone keeps
+  its live audio and its read-only roll; until Musil's live functions play through Moritz's engine,
+  Moritz says why they are missing.
+- **Musil is the offline language in Moritz**: it generates, transforms and renders; Moritz's audio
+  thread runs only Moritz's C++. Musil is still the language of patches as data: patches and scores
+  are C++ structures shown to it as values (mockups 10 to 14).
+- **Datasets** live in one folder both look in: TinySOL downloaded from GitHub's release assets,
+  MicroSOL bundled as a fallback, FullSOL wherever the user says it is; `db-gen` builds a database
+  from any folder of sounds.
+
+### Time and scores
+
+- **The recursive score is the time model.** A score holds notes (played by an instrument: SOL
+  samples or a patch), sounds (regions of a file or a buffer~), patches (that run while their clip
+  plays, with automated parameters), messages and other scores, at any depth; a score cannot contain
+  itself. The timeline and the roll are views of a score; the sound editor is the view of sounds, the
+  leaves; patches and scores contain each other (mockup 1).
+- **The score is one C++ structure, defined in Musil's C++** (`musil/src/music/score.h`). Musil uses
+  it as a value; Moritz adds editing with undo, sample-accurate playback and the views. Orchestrations
+  and generators produce it.
+- **A .score file is Musil data**: the score as a list of lists, read without running code (safe for
+  files from elsewhere), written back after every edit; times in seconds. A score converts to and from
+  a coll for its flat parts.
+- **`score` is an active object** (mockup 2): edited inside its box, driven by messages, played on the
+  transport, its events sent from its outlets; double-click opens it as timeline or roll.
+- **Each editor is written once, as a panel** (mockup 8), first in its own window, later in an
+  arranger window or a patch's dock.
+
+### Objects and teaching
+
+- The author's tools become Moritz objects and Musil functions (Maple with FFT matching; SoundTypes
+  for types, matching and generation; Orchidea; WEFT's networks), with **Max's arithmetic** and
+  **import from Max**; export to Max later.
+- **Teaching objects stay** beside the high-level ones (`nebula~` and the granulator, `sparkle~` and
+  `pvoc`, the spectral building blocks).
+- **A version is complete** when it has objects with help patches, examples, a tutorial chapter,
+  reference entries, tests, and a release whose CI passes on all three systems.
+
+## Versions
+
+Done: 0.5 foundations (Windows, CI, code view, Max import); 0.6-0.7 signal processing (sparkle~
+cross-synthesis, NMF, filter design, nebula~, ambisonics and binaural); 0.8 analysis and MIR; 0.9
+atoms and types (Maple, SoundTypes); 0.10 Musil in Moritz (the code box, one data folder); 0.10c
+safety; 0.11 the engine and editor rebuilt (timed events, one plan published to the audio thread,
+the editor's command table and undo rule), YIN, `descriptors~` on the shared analyses.
+
+| Version | Content |
+| --- | --- |
+| 0.12 | Sound editor; Orchidea in Moritz; the score foundation (score, transport); datasets; Musil in Moritz |
+| 0.13 | Timeline (mockup 4), designed for a multitrack mode; patch clips and track instruments and effects |
+| 0.14 | Roll and the active score box (mockups 5, 2); Generate and Transform; coll |
+| then | Orchestration: queries, morphological and granular modes, the pieces as patches |
+| then | Multitrack mode, as in Reaper |
+| then | Neural networks (WEFT): `mlp`, classifier, `autoencoder`/`vae` with a playable latent space, images as data (MNIST) |
+| then | Research: VAE on matching pursuit; a 2-D corpus map; a transformer on atom sequences; `concat~` |
+| then | Integration: export to Max, a documentation site, complete tutorials |
+| 1.0-rc | Stabilisation: fixes, performance, testing on real Windows machines; feature freeze |
+| 1.0 | Pilot: classes at CNSM, evaluation, a system paper (ICMC, SMC or NIME) |
+
+## Open
+
+### 0.12 (in progress, on main)
 
 - [x] Sound editor core: overview, waveform, spectrogram, zoom, selection, preview, edits with undo, save.
 - [ ] Sound editor, second part: Process menu (offline objects, a Moritz patch, a Musil script),
@@ -18,7 +110,16 @@ What is asked for and not done yet, kept up to date as work lands. The design be
 - [ ] Musil's plots as a host service in Moritz (`show`, `save-png`), one renderer with `plot`.
 - [ ] Musil's examples run in Moritz's tests too (those that can).
 
-## Orchestration
+### 0.13 and 0.14
+
+- [ ] Timeline (mockup 4): tracks with a mixer strip in the model, sound, score, patch and message
+      clips, automation lanes, inspector, render; the score document with undo shared by every view.
+- [ ] Patch clips that run while they play; track instruments and effects.
+- [ ] Roll and the active `score` object (mockups 5 and 2): editing in the box and in its window,
+      piano roll, list, the score as text in sync; Transform; Generate (Musil, offline); `coll`.
+- [ ] A tempo map (today a score has one tempo); stretched sound clips played stretched.
+
+### Orchestration
 
 - [ ] **Sample selection by query**: one small language to choose a subset of a database's samples,
       written once in Musil's C++ and used by `orchestra` and by Musil (`db-select`). Fields from the
@@ -28,29 +129,29 @@ What is asked for and not done yet, kept up to date as work lands. The design be
       not; per instrument or for the whole orchestra. Shows how many samples remain before a run.
 - [ ] Orchidea's morphological and granular modes, and the adaptive segmentation, in C++ (today
       about 800 lines of music.mu), producing a score.
-- [ ] `orchidea` outputs a score (the shared C++ score) instead of a plot.
+- [ ] `orchidea` outputs a score instead of a plot.
+- [ ] Playability checks.
 - [ ] Examples as patches: Grisey (Partiels: an orchestral spectrum of a trombone note), Haas and
       Ligeti's Atmosphères (Musil's haas.mu and atmospheres.mu), played through the score.
 - [ ] More examples for every orchestration mode and idea (mimetic, morphological, granular, queries,
-      orchestrating a sound file over time, a score as target), and a tutorial on orchestration in
-      `tutorials/`.
+      a sound file orchestrated over time, a score as target), and a tutorial on orchestration.
 
-## 0.13 and 0.14
+### Later
 
-- [ ] Timeline (mockup 4), designed for a multitrack mode.
-- [ ] Roll and the active `score` object (mockups 5 and 2); Generate and Transform panel; `coll`.
-
-## Later
-
-- [ ] Multitrack mode, as in Reaper: recording into tracks, disk streaming, mixer, non-destructive
-      clip edits, tracks on several cores; VST/AU last, if ever.
+- [ ] Multitrack mode, as in Reaper: recording into tracks (arming, several inputs, punch-in,
+      latency compensation), long files streamed from disk, a mixer (faders, pan, mute and solo,
+      sends and buses, meters), non-destructive clip edits (fades, crossfades, gain, stretch), tracks
+      on several cores. Plug-ins (CLAP, VST3, AU) last, if ever: patches already are the effects.
 - [ ] Musil's live functions played through Moritz's engine.
 - [ ] Patches made from Musil: a `patch` library (make boxes and cables, open the patch, change the
-      patch in front through the same path as the code view, with undo), as in mockup 13.
+      patch in front through the code view's path, with undo), as in mockup 13.
 - [ ] A local language model that edits patches from text prompts (see below).
-- [ ] Notation, MusicXML import, spectral painting, the patch dock.
+- [ ] MIDI and MusicXML export of scores, MusicXML import, notation; spectral painting in the sound
+      editor; the patch dock (layout C).
+- [ ] Larger Maple dictionaries as downloads; a live oracle (`oracle~`, OMax-style); a graph view of
+      the types; a separate cepstrum object.
 
-## Ideas to think through
+### Ideas to think through
 
 - **A local language model for patches.** A patch is text (the code view), and changes to it already
   go through one path that keeps what did not change and can be undone (`Patch::applyText`). A prompt

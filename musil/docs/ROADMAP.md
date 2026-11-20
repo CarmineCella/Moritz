@@ -1,5 +1,12 @@
 # Musil — project notes and roadmap
 
+> Since 0.10 Musil lives in Moritz's repository (`musil/`), built by its CMake and released with it. The
+> plan and the design decisions, Musil's included, are in [ROADMAP.md](../../ROADMAP.md) at the root;
+> what changed in each version is in [CHANGES.md](../CHANGES.md). The notes below come from Musil's own
+> repository (0.9.1): the IDE, its build scripts and the layout they describe are gone (Musil alone is the
+> command line, with its live audio, plots and roll), and the score is now one C++ structure
+> (`src/music/score.h`) that Moritz edits and plays; the rest still holds.
+
 Musil is a small scripting language for sound and music computing: Scheme underneath, Tcl on the
 surface. Numbers are vectors, functions are values, code is data. C++17, one core header, libraries as
 pairs of a C++ header and a Musil file, an FLTK IDE, a command-line interpreter. Version in
@@ -96,13 +103,13 @@ cmake --build build --target uninstall
    gain, azimuth/elevation); events hold files, buffers, notes, synths (`instrument`) and calls;
    `render` to any layout (mono, stereo, binaural, ambi N, a ring, N channels), `play` through live,
    `display` as a roll drawn like music (staves, note heads, duration lines; a cursor following
-   play-score). Editing in the window was tried and dropped: the score lives in the code; a
+   play-score). Editing in the window was tried and dropped here: the editable roll is Moritz's (see the note at the top); a
    notation font and a real editor come after the music tools (Orchidea, the granulator).
 2. **Dataset** (done for SOL-like layouts): `db-load` reads the feature file (metadata from the file
    names, features in C++); sounds are opened on demand and cached; `note` resolves to the nearest
    available sound and shifts it. `db-gen` makes a feature file from a folder (Orchidea's dbgen,
    reproduced exactly); queries: db-query with lists, db-grep, db-find, db-between, db-nearest.
-   The repository bundles MicroSOL (examples/data/microsol, the *SOL layout: X.spectrum.db next to X/);
+   The repository bundles MicroSOL (data/microsol at the root, the *SOL layout: X.spectrum.db next to X/);
    the full TinySOL is a release asset that fetch_tinysol.sh puts in datasets/ (git-ignored).
 3. **Roll and export**: the roll is done (a `roll` layer in `plot`, drawn like music, a player of the
    code's score); MIDI and MusicXML export remain.

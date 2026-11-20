@@ -1,7 +1,8 @@
 # Moritz and Musil: rules for every change
 
 Moritz (`src/`) is a Max-like patching environment; Musil (`musil/`) is its language, independent of
-Moritz and shipped on its own too. One CMake build makes both (`cmake -B build && cmake --build build`,
+Moritz and shipped on its own too. The plan and the design decisions are in `ROADMAP.md`; technical notes
+in `NOTES.md`. One CMake build makes both (`cmake -B build && cmake --build build`,
 or `make`); `ctest --test-dir build` runs every test. These rules come from a full review of the code
 (0.10b); a change that breaks one of them is not done.
 
@@ -44,9 +45,16 @@ or `make`); `ctest --test-dir build` runs every test. These rules come from a fu
 - A bug fix comes with a test that fails without it. Threaded paths (code boxes running asynchronously, Stop,
   deleting a running box) are tested, not only `--render`.
 - Run `ctest --test-dir build` before saying a change works; the sanitizer builds (`-DMORITZ_SANITIZE=address`
-  or `thread`) must stay clean.
+  or `thread`) must stay clean. Run them once at the end of each feature, and always after touching the audio
+  engine or threads, not for each small fix (under TSan, `MUSIL_SKIP_TESTS=test_robust`).
+- Tests and manual runs use a scratch `HOME`, `XDG_CONFIG_HOME` and `APPDATA`, never the user's preferences or
+  `~/.musil`.
 
 ## Commits and releases
+- Work happens on `main`, on macOS, validated by hand; work in parallel goes on short branches merged into
+  `main` when ready. CI runs only for a release tag (`v*`) or when asked (`gh workflow run build.yml`), never to
+  try a fix. A release: CI passes on all three systems, then the tag, then release notes written by hand.
+- `ROADMAP.md` is kept current: a new request goes into it when it comes, an item is ticked when it lands.
 - No `Co-Authored-By` or other assistant attribution in commits or pull requests; no plan "weeks" or "steps"
   in messages or release notes.
 - `docs/` holds the shipped PDFs (committed); `tmp_work/` is scratch, never committed.
