@@ -35,7 +35,7 @@
   (obj tvl comment "the voice: 31 segments, cut at its onsets, each searched (sustain 0: no pitch filter, so nothing is held)" (pos 20 275))
   (obj tam message "; orch population 500, epochs 500, sparsity 0.01, partials 0, solutions 5, sustain 1, hold 4000, dovetail 0.75, connection path, segmentation flux, threshold 0.1, timegate 100, run oramin ormix; tplay set oramin" (pos 20 339))
   (obj taml comment "the piano phrase (A_minor.wav), dynamic: Musil's settings of dynamic_orchidea.mu, cut at every onset (some 180 segments)" (pos 20 321))
-  (obj tamc comment "connection path: the solutions with the least melodic movement; dovetail 0.75: the chord before's pitches favoured (pivot notes); sustain 1, hold 4000: a kept pitch held, 4 s at most." (pos 20 367))
+  (obj tamc comment "connection path: the solutions with the least melodic movement; dovetail 0.75: the chord before's pitches favoured (pivot notes); sustain 1, hold 4000: a kept pitch held, 4 s at most (with connection closest or best; path skips sustain)." (pos 20 367))
   (obj tamc2 comment "Also try hysteresis 0.5 (each segment leaning in timbre toward the ones before). With FullSOL set partials 0.3; a minute or more of search is normal." (pos 20 385))
   (obj cs comment "seed" (pos 20 427))
   (obj sd number (pos 60 427))
