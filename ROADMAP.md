@@ -54,9 +54,12 @@ computing, shipped with Moritz and alone.
 - **The score is one C++ structure, defined in Musil's C++** (`musil/src/music/score.h`). Musil uses
   it as a value; Moritz adds editing with undo, sample-accurate playback and the views. Orchestrations
   and generators produce it.
-- **A .score file is Musil data**: the score as a list of lists, read without running code (safe for
-  files from elsewhere), written back after every edit; times in seconds. A score converts to and from
-  a coll for its flat parts.
+- **A score lives inside its patch by default; a .score file when it lives on its own** (a piece opened
+  alone, a score shared by patches or placed in other scores, a score written or read by Musil). A .score
+  file is Musil data: the score as a list of lists, read without running code (safe for files from
+  elsewhere), written back whole after every edit; times in seconds. Each extension says one thing:
+  `.mu` a program, `.moritz` a patch, `.score` a score (no data-only `.mu`). A score converts to and
+  from a coll for its flat parts.
 - **`score` is an active object** (mockup 2): edited inside its box, driven by messages, played on the
   transport, its events sent from its outlets; double-click opens it as timeline or roll.
 - **Each editor is written once, as a panel** (mockup 8), first in its own window, later in an
