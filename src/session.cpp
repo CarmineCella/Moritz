@@ -182,8 +182,9 @@ void toMessage(const musil::vptr& v, Message& m) {
 }
 
 // the context of an interpreter, for the functions that reach Moritz
-std::mutex& contextsMutex() { static std::mutex m; return m; }
-std::map<musil::Interp*, LangContext*>& contexts() { static std::map<musil::Interp*, LangContext*> m; return m; }
+// (made once and never destroyed, as the help's index: a script's thread may still use them while the program exits)
+std::mutex& contextsMutex() { static std::mutex& m = *new std::mutex; return m; }
+std::map<musil::Interp*, LangContext*>& contexts() { static auto& m = *new std::map<musil::Interp*, LangContext*>; return m; }
 LangContext* contextOf(musil::Interp& I) {
     std::lock_guard<std::mutex> g(contextsMutex());
     auto it = contexts().find(&I);
@@ -570,8 +571,10 @@ struct HelpIndex {
     std::map<std::string, size_t> byName;
     std::vector<std::string> names;
 };
+// Made once and never destroyed: a script's thread that Stop left running may still look a name up while the program
+// exits, and an index destroyed at exit would be read freed (ThreadSanitizer, process_script_stopped_from_another_thread)
 const HelpIndex& helpIndex() {
-    static HelpIndex h = [] {
+    static const HelpIndex& h = *new HelpIndex([] {
         HelpIndex x;
         std::ifstream f(musilHelpFile());
         std::string line;
@@ -597,7 +600,7 @@ const HelpIndex& helpIndex() {
                 if (!x.byName.count(n)) { x.byName[n] = k; x.names.push_back(n); }
         std::sort(x.names.begin(), x.names.end());
         return x;
-    }();
+    }());
     return h;
 }
 }  // namespace
