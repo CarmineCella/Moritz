@@ -2,6 +2,7 @@
 // app.cpp — the application: documents, help, code and text windows, the audio switch
 
 #include "gui.h"
+#include "roll.h"
 #include "ui_util.h"
 #include "settings.h"
 #include "codewindow.h"
@@ -56,6 +57,18 @@ void App::init() {
     Fl::keyboard_screen_scaling(0);      // Cmd +/- zoom the patch (View menu), not the whole interface
     openCodeSource = [this](CodeSource* s) { openCodeFor(s); };
     codeSourceGone = [this](CodeSource* s) { codeSourceClosed(s); };
+    rollHost().pushUndo = [this](Patch* p) { pushUndoFor(p); };       // the roll's edits (roll_edit.h)
+    rollHost().markEdited = [this](Patch* p) { markEdited(p); };
+    rollHost().locate = [this](Patch* p, const std::string& id) -> std::function<Box*()> {
+        DocumentWindow* d = docOf(p);                                    // nullptr while its document closes
+        if (!d) return nullptr;
+        std::string where = d->doc.where(p);
+        return [this, d, where, id]() -> Box* {
+            if (std::find(docs.begin(), docs.end(), d) == docs.end()) return nullptr;
+            Patch* q = d->doc.resolve(where);
+            return q ? q->find(id) : nullptr;
+        };
+    };
     // a code box marked @trusted: the user decides, once per folder of patches (kept in the preferences,
     // one folder per line); an unsaved patch is trusted for this session only
     askTrust = [](const std::string& folder, const std::string& box) {
@@ -322,6 +335,7 @@ void App::closeFront() {
         if (tw->confirmDiscard()) closeTimeline(tw);
         return;
     }
+    if (auto rw = dynamic_cast<RollWindow*>(w)) { rw->do_callback(); return; }
     if (auto d = dynamic_cast<DocumentWindow*>(w)) {
         if (d->confirmDiscard()) closeDocument(d);
     }

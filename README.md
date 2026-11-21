@@ -219,6 +219,20 @@ Moritz follows Max's conventions:
   saved back as a 24-bit WAV file with its markers beside it
   (`sound.wav.markers`), and closing it asks when it has edits. Samples
   copied in one editor paste into another (resampled when the rates differ).
+- **Roll**: a `score` box draws its score as a roll, a staff a row with
+  proportional time (rows in orchestral order, clefs, microtones with their
+  cents, scores placed inside as faint blocks with their placement), and is
+  edited in place when the patch is locked: click a note (Shift adds, a
+  rectangle selects), drag it in time and pitch, drag its end, Alt-drag
+  copies, Delete, the arrows nudge, Q quantizes; each edit is an undo step of
+  the patch, and in edit mode its corner sizes it. Double-click it for the
+  roll's window: staves, a piano roll or a list of the events, Select / Draw
+  / Erase on a grid, a lane of dynamics, the Transform panel (transpose,
+  invert, retrograde, augment, diminish, quantize, humanize, thin, density:
+  the same functions as Musil's `score-transpose!` and the others), the score
+  as Musil data below, edited and kept in sync, and a breadcrumb: a
+  double-click enters a score placed inside, Esc goes up. `orchidea` sends its
+  solution to a `score` box, which plays each note's sample.
 - **Timeline**: double-click a `score` box (locked; or its menu's Open as
   Timeline) to see its score as tracks, as in a DAW; File > Open Score...
   opens a .score file the same way and File > New Score starts one. The

@@ -1,0 +1,11 @@
+; a score box kept in the patch, for the roll's interface cases (tools/test-gui.sh)
+(patch
+  (obj s score piece 1 (pos 20 40)
+    (script
+      "(score \"piece\""
+      "  (sr 44100) (bpm 60) (meter 4 4) (next-id 4)"
+      "  (row Fl treble)"
+      "  (note 0 0.5 Fl 60 mf (id 1))"
+      "  (note 0.5 0.5 Fl 64 mf (id 2))"
+      "  (note 1 0.5 Fl 67 f (id 3)))"))
+  (obj tr transport 60 4 4 (pos 420 40)))

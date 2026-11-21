@@ -7,6 +7,7 @@
 // bar, which is rebuilt as a whole by update(), only when one of them really changed.
 
 #include "gui.h"
+#include "roll.h"
 #include "ui_util.h"
 #include "settings.h"
 #include "codewindow.h"
@@ -76,10 +77,15 @@ DocumentWindow* doc() { return app().targetDoc(); }
 bool haveDoc() { return doc() != nullptr; }
 SoundEditor* sound() { return app().frontSound() ? app().frontSound()->editor() : nullptr; }
 TimelinePanel* timeline() { return frontTimeline() ? frontTimeline()->panel() : nullptr; }
-bool textOrDoc() { return sound() || timeline() || frontTextEditor() || haveDoc(); }
-bool canvasOrText() { return sound() || timeline() || frontTextEditor() || app().activeCanvas(); }
+// the roll in front (roll.h), when its text is not what the keys go to
+RollPanel* roll() {
+    RollWindow* r = frontRoll();
+    return r && !frontTextEditor() ? r->panel() : nullptr;
+}
+bool textOrDoc() { return sound() || timeline() || frontTextEditor() || roll() || haveDoc(); }
+bool canvasOrText() { return sound() || timeline() || frontTextEditor() || roll() || app().activeCanvas(); }
 bool editableCanvas() {
-    return sound() || timeline() || frontTextEditor() || (app().activeCanvas() && !app().activeCanvas()->readOnly());
+    return sound() || timeline() || frontTextEditor() || roll() || (app().activeCanvas() && !app().activeCanvas()->readOnly());
 }
 
 // a timeline in front: on its clips; a sound window: on its sound; a text: on its text; else on the canvas
@@ -88,6 +94,12 @@ void editText(int (*kf)(int, Fl_Text_Editor*), void (Canvas::*onCanvas)(), void 
     if (auto* t = timeline()) { if (onTimeline) (t->*onTimeline)(); return; }
     if (auto* s = sound()) { (s->*onSound)(); return; }
     if (auto* ed = frontTextEditor()) { kf(0, ed); return; }
+    if (auto* r = roll()) {                       // the roll: Select All and Delete on its notes
+        if (onCanvas == &Canvas::selectAll) r->core().selectAll();
+        else if (onCanvas == &Canvas::deleteSelection) r->core().removeSelection();
+        r->changed();
+        return;
+    }
     if (auto* c = app().activeCanvas()) (c->*onCanvas)();
 }
 
@@ -109,6 +121,7 @@ const std::vector<Command>& table() {
              if (auto* t = frontTimeline()) { t->save(); return; }
              if (auto* s = app().frontSound()) { s->save(); return; }
              if (auto* c = app().frontCode()) { c->save(); return; }
+             if (auto* r = frontRoll(); r && r->panel()->target()->dirty()) { r->panel()->save(); return; }
              if (auto* d = doc()) d->saveFront();
          },
          [] { return frontTimeline() || app().frontSound() || app().frontCode() != nullptr || haveDoc(); }, nullptr},
@@ -134,6 +147,7 @@ const std::vector<Command>& table() {
              if (auto* t = timeline()) { t->undo(); return; }
              if (auto* s = sound()) { s->undo(); return; }
              if (auto* ed = frontTextEditor()) { Fl_Text_Editor::kf_undo(0, ed); return; }
+             if (auto* r = roll()) { r->undo(); return; }
              if (auto* d = doc()) d->undo();
          },
          textOrDoc, nullptr},
@@ -142,6 +156,7 @@ const std::vector<Command>& table() {
              if (auto* t = timeline()) { t->redo(); return; }
              if (auto* s = sound()) { s->redo(); return; }
              if (auto* ed = frontTextEditor()) { Fl_Text_Editor::kf_redo(0, ed); return; }
+             if (auto* r = roll()) { r->redo(); return; }
              if (auto* d = doc()) d->redo();
          },
          textOrDoc, nullptr},

@@ -23,6 +23,7 @@
 #include "maximport.h"
 #include "fileio.h"
 #include "timeline.h"
+#include "roll.h"
 
 #include <FL/Fl_Image_Surface.H>
 #include <FL/Fl_PNG_Image.H>
@@ -379,6 +380,7 @@ int main(int argc, char** argv) {
                 }
             app.closeAllSounds();                // sound editors: their background work waited for
             moritz::closeAllTimelines();         // timelines: their renders and waveforms waited for
+            moritz::closeAllRolls();
             std::fflush(nullptr);
             if (acts) std::_Exit(r == 0 && failed == 0 ? 0 : 1);   // code boxes may still be running
             return r == 0 && failed == 0 ? 0 : 1;
@@ -396,6 +398,7 @@ int main(int argc, char** argv) {
     }
     app.closeAllSounds();                // their background work stopped and waited for
     moritz::closeAllTimelines();
+    moritz::closeAllRolls();
     app.audio.stop();
     return 0;
 }

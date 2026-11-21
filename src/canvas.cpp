@@ -324,6 +324,10 @@ void Canvas::drawBox(Box* b) {
         zd::push_clip(X, Y, W, H);
         b->drawUI(X, Y);
         zd::pop_clip();
+        if (!locked_ && b->uiResizable()) {               // the corner it is resized by
+            fl_color(kDim);
+            for (int k = 0; k < 3; ++k) zd::line(X + W - 2 - 3 * k, Y + H - 7, X + W - 2, Y + H - 7 - 3 * k);
+        }
     }
 
     // border
@@ -847,6 +851,11 @@ void Canvas::zoomBy(int steps) {
     }
 }
 
+bool Canvas::inResizeGrip(Box* b, int mx, int my) const {
+    // above the outlets' strip, at the right edge
+    return mx >= b->x + b->w - 9 && mx <= b->x + b->w + 2 && my >= b->y + b->h - 17 && my < b->y + b->h - 5;
+}
+
 Canvas::Hit Canvas::hitTest(int mx, int my) const {
     Hit h;
     auto& boxes = patch_->boxes;
@@ -1301,6 +1310,7 @@ int Canvas::handle(int e) {
                     // the patch edited)
                     drag_ = Drag::UI;
                     dragBox_ = h.box;
+                    typingBox_ = h.box;                             // its keys next (uiKey)
                     uiBefore_ = messageToString(h.box->saveArgs());
                     h.box->uiMouse(FL_PUSH, mx - h.box->x, my - h.box->y);
                 } else if (h.box && h.box->cls == "loadbang" && Fl::event_clicks()) {
@@ -1352,6 +1362,15 @@ int Canvas::handle(int e) {
                     newBoxAt("", mx, my - kBoxH / 2);
                     return 1;
                 }
+            }
+            if (h.box && h.box->uiResizable() && inResizeGrip(h.box, mx, my)) {   // its corner: its size
+                if (!shift) { clearSelection(); h.box->selected = true; }
+                drag_ = Drag::Resize;
+                dragBox_ = h.box;
+                resizeW0_ = h.box->w;
+                resizeH0_ = h.box->h;
+                redraw();
+                return 1;
             }
             switch (h.what) {
                 case Hit::Outlet:
@@ -1432,6 +1451,14 @@ int Canvas::handle(int e) {
                 numberDrag(pressY_ - my);
             } else if (drag_ == Drag::UI && (dragBox_ = alive(dragBox_))) {
                 dragBox_->uiMouse(FL_DRAG, mx - dragBox_->x, my - dragBox_->y);
+            } else if (drag_ == Drag::Resize && (dragBox_ = alive(dragBox_))) {
+                int nw = std::max(40, resizeW0_ + mx - pressX_), nh = std::max(kBoxH, resizeH0_ + my - pressY_);
+                if (nw != dragBox_->w || nh != dragBox_->h) {
+                    if (!moved_) { ed_->pushUndo(patch_); moved_ = true; }
+                    dragBox_->uiResize(nw, nh);
+                    layout(dragBox_);
+                    ed_->markDirty(patch_);
+                }
             }
             redraw();
             return 1;
@@ -1497,6 +1524,11 @@ int Canvas::handle(int e) {
             char ch = (txt && txt[0] && !txt[1]) ? txt[0] : 0;
 
             if (locked_) {
+                if (Box* ub = alive(typingBox_); ub && ub->kind == BoxKind::UI) {   // an interface box clicked last
+                    if (!ub->uiKey(key)) return 0;
+                    redraw();
+                    return 1;
+                }
                 auto nb = dynamic_cast<NumberBox*>(alive(typingBox_));
                 if (!nb) { typingBox_ = nullptr; typed_.clear(); return 0; }
                 if ((ch >= '0' && ch <= '9') || ch == '.' || ch == '-') {

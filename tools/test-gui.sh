@@ -429,6 +429,30 @@ if [ $status -ne 0 ] || ! grep -q "(note 0.5 0.25 Fl 74 mf (id 2))" "$T/sub/gest
 else ok; fi
 run --window-png none "act=tlfile:$T/sub/piece.score" act=tldbl:4 act=state
 expect "a patch clip opens its patch" "state: front $T/sub/timeline.moritz"
+# 24. the roll of a score box: a note dragged half a second later and a step up (one undo step of the roll, the patch
+#     edited, the text view following), the roll's Undo; then Undo in the patch replaces the box, and the roll follows
+#     the box that took its place
+run "$G/score.moritz" --window-png none act=roll:s "act=rolldrag:1:0.5,1" act=rollstate act=state act=rollundo act=rollstate \
+    "act=rolldrag:2:0.5,0" act=undo act=wait:0.3 act=rollstate "act=rolldrag:3:-0.25,0" act=rollstate
+expect "a note dragged in the roll" "state: roll note 1 0.5 0.5 62"
+expect "the text view follows" "state: roll text (note 0.5 0.5 Fl 62 mf (id 1))"
+expect "a roll edit is an edit of the patch" "state: front $G/score.moritz edited yes"
+expect "the roll's undo" "state: roll text (note 0 0.5 Fl 60 mf (id 1))"
+if [ $status -eq 0 ] && [ "$(grep -c "state: roll note 2 0.5 0.5 64" "$out")" -ge 3 ] && grep -q "state: roll note 3 0.75 0.5 67" "$out" &&
+   ! grep -q "box is gone" "$out"; then ok; else fail "the roll follows the box an undo in the patch put back"; fi
+
+# 25. the text view: a valid text is applied (a note more), one that does not read is not (its error said, the score
+#     as it was)
+run "$G/score.moritz" --window-png none act=roll:s "act=rolltext:$G/score-text.txt" act=rollstate "act=rolltext:$G/score-bad.txt" act=rollstate
+expect "a text applied" "state: roll note 4 2 1 72"
+expect "a text that does not read" "state: roll text error"
+expect "says why" "bars.beats.ticks"
+if [ "$(grep -c "state: roll note 4 2 1 72" "$out")" = 2 ]; then ok; else fail "a bad text leaves the score as it was"; fi
+
+# 26. the score box edited in place (locked): a click is not an edit; a note dragged is (one undo step of the patch)
+run "$G/score.moritz" --window-png none act=draw act=click:s act=state "act=boxdrag:s:2:40,0" act=state act=roll:s act=rollstate
+if [ $status -eq 0 ] && grep -q "state: front $G/score.moritz edited no" "$out" && grep -q "state: front $G/score.moritz edited yes" "$out" &&
+   grep -q "state: roll note 2 1 0.5 64" "$out"; then ok; else fail "the score box edited in place"; fi
 
 rm -rf "$T"
 echo "$count interface cases, $fails failed"

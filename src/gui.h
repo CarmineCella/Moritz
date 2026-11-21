@@ -188,7 +188,9 @@ private:
     Box* editing_ = nullptr;
     bool editingNew_ = false;
 
-    enum class Drag { None, Move, Cable, CableEnd, Rubber, Number, UI } drag_ = Drag::None;
+    enum class Drag { None, Move, Cable, CableEnd, Rubber, Number, UI, Resize } drag_ = Drag::None;
+    int resizeW0_ = 0, resizeH0_ = 0;   // Resize: the box's size when the drag began
+    bool inResizeGrip(Box* b, int mx, int my) const;   // the corner an interface box is resized by
     int pressX_ = 0, pressY_ = 0, curX_ = 0, curY_ = 0;
     bool moved_ = false;
     // a move: where each dragged box was when the drag began (each event places them from there)
@@ -201,7 +203,7 @@ private:
     bool dragInletEnd_ = false;
     int spliceCable_ = -1;          // Move with Shift held: the cable the box goes into on release (drawn lit)
     double dragStartValue_ = 0.0, dragStep_ = 1.0;
-    Box* typingBox_ = nullptr;     // number box receiving typed digits
+    Box* typingBox_ = nullptr;     // number box receiving typed digits (or an interface box its keys, uiKey)
     std::string typed_;
     int mouseX_ = 60, mouseY_ = 60;
 

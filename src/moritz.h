@@ -238,6 +238,11 @@ public:
     virtual void uiSize(int& w, int& h) const {}
     virtual void drawUI(int X, int Y) {}
     virtual void uiMouse(int event, int mx, int my) {}   // FL_PUSH/DRAG/RELEASE, box coords
+    // a key typed (locked) after a click on the box (FLTK's key, Fl::event_state for the modifiers): true if used
+    virtual bool uiKey(int key) { return false; }
+    // its size dragged by its corner in edit mode (the canvas: one undo step); uiSize gives it back
+    virtual bool uiResizable() const { return false; }
+    virtual void uiResize(int w, int h) {}
     // right-click: extra items of this box's menu, and what each does
     virtual std::vector<std::string> menuItems() { return {}; }
     virtual void menuAction(int item) {}

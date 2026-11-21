@@ -151,7 +151,7 @@ msg bang: the position now
 see: score metro
 
 @ score
-syntax: score name [file.score] [channels]
+syntax: score name [file.score] [channels] [@size w h]
 A score that plays itself on the patch's transport: notes, sounds, messages
 and other scores placed in time. It is Musil's score (the same C++ structure),
 read from a .score file, written by Musil's score-write or by a code box that
@@ -165,7 +165,28 @@ inside it are played at their place, stretched, transposed and turned. Its notes
 come out as lists, pitch (MIDI, with the cents) velocity (from the dynamics)
 duration in ms, row, dynamics and technique (- for none); its messages as the
 name and the values. Edits while it plays (add, clear, a new score) take effect
-at once: what plays is made again off the audio thread.
+at once: what plays is made again off the audio thread. A note that carries a
+sound of its own (data sound "path", and sound-pitch, the sample's pitch: what
+orchidea sends) also plays its sample, faster or slower by its pitch against the
+sample's.
+
+The box draws its score as a roll: a staff a row (in orchestral order, a clef
+from its pitches), proportional time, a note a head and a line, its cents when it
+is a microtone; scores placed inside as faint blocks with their placement; sounds,
+patches and messages on lines of their own; the transport's position. When the
+patch is locked it is edited in place: click a note (Shift adds, a rectangle
+selects), drag it (later or earlier on the grid, higher or lower on the staff),
+drag its end to resize it, Alt-drag copies, Delete takes the selection out, the
+arrows nudge it (Shift: a bar, an octave), Q quantizes it. Each edit is an undo
+step of the patch (playing with the box is not). In edit mode the corner at its
+bottom right sizes it. A double-click opens the roll's window: staves, a piano
+roll or a list of the events (each cell edited), a lane of dynamics, the score as
+Musil data (edited and kept in sync: nothing applied while it does not read),
+Select / Draw / Erase, snap, quantize, the Transform panel (transpose, invert,
+retrograde, augment, diminish, quantize, humanize, thin, density: Musil's
+score-transpose! and the others, the same functions), and the breadcrumb: a
+double-click on a score placed enters it (all its placements follow its edits),
+Esc goes up.
 
 Its rows are tracks. A track's mixer strip (gain, pan as an azimuth, mute and
 solo, kept on the row in the score) applies to the sounds, notes and patches on
@@ -174,7 +195,7 @@ soloed only the soloed ones sound. A sound's fade-in and fade-out are played. A
 message is also sent to the receive objects of its name, so an automation lane
 drives a patch's receive; messages are sent whatever the strip says.
 
-Double-click it (or its menu's Open as Timeline) to edit it as a timeline: tracks
+Its menu's Open as Timeline edits it as a timeline: tracks
 with their clips (sound regions drawn as waveforms, notes, scores placed inside,
 patch clips) and automation lanes, an inspector, the transport, snap to beats and
 bars, cut, copy, paste and undo, and Render to a WAV file. Every edit plays at
@@ -184,16 +205,29 @@ inside another opens in its own timeline, with a breadcrumb to where it is.
 arg name: the score's name
 arg file.score: a file next to the patch to read the score from (none: kept in the patch)
 arg channels: the signal outlets, 1 to 16 (2)
+arg @size w h: the box's size (360 by 150)
 msg read [file]: reads a .score file (its own again without a name)
 msg write [file]: writes it as a .score file, in the patch's folder or in ~/Documents/Moritz
 msg clear: no events
 msg add note at dur row pitch [dyn [tech]]: a note (at and dur in seconds; the pitch a MIDI number or a name, G5)
+msg add at row pitch [dyn [tech]]: a note a beat long (the kind and the duration may be left out)
 msg add sound at dur file: a sound file's region
 msg add msg at name values: a message
+msg select all | none | id... | row name | time t0 t1: the events the transformations change (none: all of them); the same selection as the roll in the box
+msg transpose n: the notes (and the scores placed) n semitones higher
+msg invert [pitch]: the notes mirrored around a pitch (none: the middle of their pitches)
+msg retrograde: backwards within their span
+msg augment k: onsets and durations k times longer, from the first onset (diminish k: k times shorter)
+msg shift seconds: later (earlier when negative; never before 0)
+msg quantize [grid [strength]]: onsets and ends toward the grid in seconds (the roll's snap, 1/16), by strength (1: onto it)
+msg humanize [ms [dB [seed]]]: onsets moved at random by up to ms (20), gains by up to dB (1.5)
+msg thin keep [seed]: each event kept with probability keep
+msg density v...: each event kept with the probability the curve v... has at its onset
+msg open: the roll's window
 msg play: starts the transport (every score of the patch plays)
 msg stop: stops the transport
 msg locate bar [beat]: moves the transport
 msg seek ms: moves the transport to a time
 msg info: rows, events and seconds out of the info outlet
-msg score token: the score a code box sent
-see: transport code buffer~ receive
+msg score token: the score a code box (or orchidea) sent
+see: transport code buffer~ receive orchidea

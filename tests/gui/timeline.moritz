@@ -10,6 +10,6 @@
       "  (sound 2 1 \"../../data/drums.wav\" (id 2) (row drums) (from 0.5))"
       "  (sound 1 2 \"../../data/anechoic1.wav\" (id 3) (row voice))"
       "  (msg 0.5 density 0.25 (id 4) (row voice)))"))
-  (obj o dac~ (pos 20 80))
+  (obj o dac~ (pos 20 200))
   (connect s 0 o 0)
   (connect s 1 o 1))

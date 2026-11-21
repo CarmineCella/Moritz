@@ -8,12 +8,14 @@
 // of the position: a locate, a loop or a replaced score needs no state), so a sound starts on its sample; a note
 // leaves its outlet at the logical time whose stamp is its sample, so a signal object it reaches starts there too.
 
+#include "roll.h"
 #include "transport.h"
 #include "zoom.h"
 
 #include "music/score.h"
 #include "music/score_text.h"
 
+#include <FL/Fl.H>
 #include <FL/fl_draw.H>
 
 #include <algorithm>
@@ -175,6 +177,7 @@ struct ScorePlan {
         int64_t start = 0, len = 0;      // positions, samples
         double from = 0, to = -1;        // seconds in the source
         float gain = 1.f;
+        double speed = 1;                // a note's sound: faster or slower by its pitch against the sample's
         int file = -1, buf = -1;         // a decoded file, or a buffer~ by name
         int gains = 0;                   // where its channel gains start in `gains`
         int64_t fadeIn = 0, fadeOut = 0; // its fades (the clip's fade-in and fade-out), samples
@@ -187,26 +190,40 @@ struct ScorePlan {
     std::vector<std::unique_ptr<BufferRef>> bufs;
 };
 
-// score name [file.score] [channels]: a score (rows, notes, sounds, messages, scores inside it) that plays on the
-// patch's transport. Without a file it is kept in the patch. Outlets: one signal for each channel (2 by default:
-// its sounds, placed at their azimuths), then notes (pitch velocity duration-ms row dynamics technique; - for none),
-// then messages (name values...; a patch event as patch name duration-ms args...), then info (end when it plays past
-// its last event; the summary for info). A message is also sent to the receive objects of its name (automation lanes
-// drive a patch's receives). The rows are tracks: their mixer strips (gain, az, mute, solo: score.h's Mixer) apply to
-// the sounds, notes and patches on them; a sound's fade-in and fade-out are played.
+// score name [file.score] [channels] [@size w h]: a score (rows, notes, sounds, messages, scores inside it) that plays
+// on the patch's transport. Without a file it is kept in the patch. The box draws its score as a roll (roll.h), edited
+// in place when the patch is locked (select, drag to move, drag an end to resize, Alt-drag copies, Delete, the arrows
+// nudge); a double-click opens the roll's window; in edit mode its corner sizes it. Outlets: one signal for each
+// channel (2 by default: its sounds, and the notes that carry a sound of their own, placed at their azimuths), then
+// notes (pitch velocity duration-ms row dynamics technique; - for none), then messages (name values...; a patch event
+// as patch name duration-ms args...), then info (end when it plays past its last event; the summary for info). A
+// message is also sent to the receive objects of its name (automation lanes drive a patch's receives). The rows are
+// tracks: their mixer strips (gain, az, mute, solo: score.h's Mixer) apply to the sounds, notes and patches on them; a
+// sound's fade-in and fade-out are played.
 //   read [file], write [file]   a .score file (Musil data, read without running anything); write: in the patch's
 //                               folder or ~/Documents/Moritz
 //   clear                       no events
-//   add note at dur row pitch [dyn [tech]] | add sound at dur file [from [to]] | add msg at name values...
+//   add [note] at dur row pitch [dyn [tech]] | add [note] at row pitch [dyn [tech]] (a beat long)
+//   add sound at dur file [from [to]] | add msg at name values...
+//   select all | none | id... | row name | time t0 t1      what the transformations below change (none: all of it)
+//   transpose n, invert [pitch], retrograde, augment k, diminish k, shift seconds, quantize [grid-seconds [strength]],
+//   humanize [ms [dB [seed]]], thin keep [seed], density v... [seed]   (music/score_transform.h, as Musil's)
 //   play, stop, locate bar [beat], seek ms   the transport's (the same for every score of the patch)
 //   info                        rows events seconds, out of the info outlet
-//   score <token>               a score a code box sent ((out k s) with s a Musil score)
-class ScoreBox : public Box {
+//   score <token>               a score a code box (or orchidea) sent ((out k s) with s a Musil score)
+//   open                        the roll's window
+class ScoreBox : public Box, public ScoreSource {
 public:
     explicit ScoreBox(const Message& a) {
         kind = BoxKind::UI;
-        for (auto& x : a) {
-            if (x.isFloat()) nOut_ = std::clamp((int)x.f, 1, 16);
+        for (size_t k = 0; k < a.size(); ++k) {
+            const Atom& x = a[k];
+            if (x.is("@size")) {
+                w_ = std::clamp((int)argf(a, k + 1, (float)kDefaultW), 120, 4000);
+                h_ = std::clamp((int)argf(a, k + 2, (float)kDefaultH), 50, 3000);
+                k += 2;
+            }
+            else if (x.isFloat()) nOut_ = std::clamp((int)x.f, 1, 16);
             else if (endsWith(x.s, ".score")) file_ = x.s;
             else if (name_.empty()) name_ = x.s;
         }
@@ -215,13 +232,18 @@ public:
         setPorts({P::Control}, outs);
         score_ = std::make_shared<sc::Score>(name_.empty() ? std::string("score") : name_, 44100);
     }
-    ~ScoreBox() override { if (t_) t_->unlisten(this); }
+    ~ScoreBox() override {
+        if (t_) t_->unlisten(this);
+        inline_.reset();                         // its own target first: the windows' follow the box that comes next
+        scoreSourceClosed(this, patch, id);
+    }
 
     Message saveArgs() const override {
         Message m;
         if (!name_.empty()) m.push_back(Atom(name_));
         if (!file_.empty()) m.push_back(Atom(file_));
         if (nOut_ != 2) m.push_back(Atom((float)nOut_));
+        if (w_ != kDefaultW || h_ != kDefaultH) { m.push_back(Atom("@size")); m.push_back(Atom((float)w_)); m.push_back(Atom((float)h_)); }
         return m;
     }
     // kept in the patch when it has no file of its own
@@ -231,6 +253,7 @@ public:
             auto s = sc::readText(text, here());
             if (!name_.empty()) s->name = name_;
             score_ = s;
+            ++gen_;
         } catch (const std::exception& e) { if (patch) patch->print(std::string("score: ") + e.what()); }
     }
     void attached() override {
@@ -250,8 +273,12 @@ public:
         const Atom& h = m[0];
         if (h.is("read")) readFile(m.size() > 1 ? m[1].str() : file_);
         else if (h.is("write")) writeFile(m.size() > 1 ? m[1].str() : file_);
-        else if (h.is("clear")) { score_->clear(); edited(); }
+        else if (h.is("clear")) { auto s = score_->clone(); s->clear(); replace(s); }
         else if (h.is("add")) add(m);
+        else if (h.is("select")) select(m);
+        else if (h.is("transpose") || h.is("invert") || h.is("retrograde") || h.is("augment") || h.is("diminish") ||
+                 h.is("shift") || h.is("quantize") || h.is("humanize") || h.is("thin") || h.is("density")) transformBy(m);
+        else if (h.is("open")) openRoll(this);
         else if (h.is("play") || h.is("start")) { if (t_) t_->play(patch); }
         else if (h.is("stop")) { if (t_) t_->stop(patch); }
         else if (h.is("locate") && t_) t_->locate(patch, t_->secondsOf(argf(m, 1, 1.f), argf(m, 2, 1.f), argf(m, 3, 0.f)));
@@ -266,30 +293,90 @@ public:
     }
     void dsp(int n) override;
 
-    // the interface: name and summary
+    // ---- the interface: a header (name and summary) and the score as a roll, edited in place when locked
     void uiSize(int& w, int& h) const override {      // measured without the fonts: made where there is no display too
-        w = std::max(170, (int)label().size() * (kFontSize * 3 / 5 + 1) + 16);
-        h = kBoxH + 14;
+        w = w_;
+        h = h_;
+    }
+    bool uiResizable() const override { return true; }
+    void uiResize(int w, int h) override {
+        w_ = std::clamp(w, 120, 4000);
+        h_ = std::clamp(h, 50, 3000);
     }
     void drawUI(int X, int Y) override {
         zd::font(kFont, kFontSize);
         fl_color(kText);
-        zd::draw(label().c_str(), X + 8, Y + kBoxH / 2 + zd::height() / 2 - zd::descent());
+        int head = kBoxH;
+        std::string title = "score" + (name_.empty() ? std::string() : " " + name_) + (file_.empty() ? std::string() : " " + file_);
+        zd::draw(title.c_str(), X + 8, Y + head / 2 + zd::height() / 2 - zd::descent());
         zd::font(kFont, std::max(8, kFontSize - 3));
         fl_color(kDim);
         std::string s = std::to_string(rows_) + " rows · " + std::to_string(score_->size()) + " events · " + fmtTime(score_->duration());
-        zd::draw(s.c_str(), X + 8, Y + kBoxH + 8);
+        int sw = (int)zd::width(s.c_str());
+        zd::font(kFont, kFontSize);
+        int tw = (int)zd::width(title.c_str());
+        zd::font(kFont, std::max(8, kFontSize - 3));
+        zd::draw(s.c_str(), X + std::max(8 + tw + 12, w_ - sw - 8), Y + head / 2 + 4);
+        RollCore& c = roll();
+        c.setSize(w_ - 2, h_ - head - 6);
+        if (t_) {
+            int lap;
+            double pos;
+            t_->where(patch, lap, pos);
+            c.playhead = t_->playing() || pos > 0 ? t_->seconds(pos) : NAN;
+        }
+        c.draw(X + 1, Y + head);
+    }
+    void uiMouse(int event, int mx, int my) override {
+        RollCore& c = roll();
+        if (event == FL_PUSH && my < kBoxH) {              // the header: a double-click opens the window
+            if (Fl::event_clicks()) { Fl::event_clicks(0); openRoll(this); }
+            return;
+        }
+        if (c.mouse(event, mx - 1, my - kBoxH, Fl::event_state(), event == FL_PUSH ? Fl::event_clicks() : 0) && event == FL_PUSH &&
+            Fl::event_clicks())
+            Fl::event_clicks(0);
+    }
+    bool uiKey(int key) override { return roll().key(key, Fl::event_state()); }
+    std::vector<std::string> menuItems() override { return {"Open Roll...", "Read...", "Write..."}; }
+    void menuAction(int k) override {
+        if (k == 0) { openRoll(this); return; }
+        std::string f = chooseFile(k == 2, k == 1 ? "Read a score" : "Write the score", "Score\t*.score", file_.empty() ? name_ + ".score" : file_);
+        if (!f.empty()) message(0, {Atom(k == 1 ? "read" : "write"), Atom(f)});
     }
 
     // the score from elsewhere (GUI thread): what plays changes at once, the transport going on
     void replace(std::shared_ptr<sc::Score> s) {
-        if (!name_.empty()) s->name = name_;
+        if (!name_.empty() && s->name != name_) s->name = name_;
         score_ = std::move(s);
         edited();
     }
     // what an editor binds to (score_doc.h): the score now, and whether it is kept in the patch (no file of its own)
     std::shared_ptr<sc::Score> current() const { return score_; }
     bool keptInPatch() const { return file_.empty(); }
+    // ---- what the roll's editors ask (ScoreSource, roll_edit.h)
+    std::shared_ptr<const sc::Score> scoreNow() const override { return score_; }
+    uint64_t scoreGeneration() const override { return gen_; }
+    void setScore(std::shared_ptr<sc::Score> s) override { if (s) replace(std::move(s)); }
+    std::string scoreFile() const override { return file_.empty() || !patch ? std::string() : patch->resolvePath(file_); }
+    bool saveScoreFile(std::string& err) override { return writeFile(file_, &err); }
+    std::string scoreTitle() const override { return "score" + (name_.empty() ? std::string() : " " + name_); }
+    Patch* scorePatch() const override { return patch; }
+    bool scoreInPatch() const override { return patch && inPatch(); }
+    RollCore* inlineRoll() override { return &roll(); }
+    // the roll inside the box (made when first drawn, clicked or asked for its selection)
+    RollCore& roll() {
+        if (!inline_) {
+            inline_ = std::make_unique<RollCore>(makeRollTarget(this, false));
+            inline_->compact = true;
+            inline_->onChange = [this] { if (patch) patch->redraw(); };
+            inline_->onEnter = [this](uint64_t sub) {
+                RollWindow* w = openRoll(this);
+                if (w && sub) { w->panel()->core().enter(sub); w->panel()->changed(); }
+            };
+        }
+        return *inline_;
+    }
 
 private:
     struct Ctl {
@@ -298,9 +385,13 @@ private:
         Message msg;
         bool send = false;                       // a message: to the receives of its name too
     };
+    static constexpr int kDefaultW = 360, kDefaultH = 150;
     int nOut_ = 2;
+    int w_ = kDefaultW, h_ = kDefaultH;
     std::string name_, file_;
-    std::shared_ptr<sc::Score> score_;
+    std::shared_ptr<sc::Score> score_;           // never changed in place: a new one for every change (the views keep theirs)
+    uint64_t gen_ = 1;
+    std::unique_ptr<RollCore> inline_;
     std::shared_ptr<Transport> t_;
     Published<ScorePlan> plan_;
     std::vector<Ctl> ctl_;                       // notes and messages by onset (GUI)
@@ -342,8 +433,9 @@ private:
             edited();
         } catch (const std::exception& e) { patch->print(std::string("score: ") + e.what()); }
     }
-    void writeFile(const std::string& f) {
-        if (f.empty()) { patch->print("score: write where? (write file.score)"); return; }
+    bool writeFile(const std::string& f, std::string* errOut = nullptr) {
+        auto fail = [&](const std::string& e) { if (errOut) *errOut = e; else patch->print("score: " + e); return false; };
+        if (f.empty()) return fail("write where? (write file.score)");
         std::string path = patch->resolvePath(f);
         // a patch from elsewhere does not write anywhere: its folder, or ~/Documents/Moritz
         std::vector<std::string> roots;
@@ -351,17 +443,24 @@ private:
         while (q && q->dir.empty() && q->parent) q = q->parent;
         if (q && !q->dir.empty()) roots.push_back(q->dir);
         if (std::string home = homeDir(); !home.empty()) roots.push_back(home + "/Documents/Moritz");
-        if (!musil::path_under(musil::resolved_path(path), roots)) {
-            patch->print("score: not written: " + path + " is outside the patch's folder and ~/Documents/Moritz");
-            return;
-        }
+        if (!musil::path_under(musil::resolved_path(path), roots))
+            return fail("not written: " + path + " is outside the patch's folder and ~/Documents/Moritz");
         try {
-            sc::writeFile(*score_, path);
-            score_->path = path;
-        } catch (const std::exception& e) { patch->print(std::string("score: ") + e.what()); }
+            auto s = score_->clone();                // the one shown and played is not changed in place
+            sc::writeFile(*s, path);
+            s->path = path;
+            score_ = s;
+            ++gen_;
+        } catch (const std::exception& e) { return fail(e.what()); }
+        return true;
     }
-    // add note at dur row pitch [dyn [tech]] ... : the words read as the score file's (note ...) form
-    void add(const Message& m) {
+    // add [note] at dur row pitch [dyn [tech]] | add [note] at row pitch ... : the words read as the score file's (note
+    // ...) form (a note without its duration is a beat long)
+    void add(const Message& m0) {
+        Message m = m0;
+        if (m.size() > 1 && m[1].isFloat()) m.insert(m.begin() + 1, Atom("note"));            // the kind left out: a note
+        if (m.size() > 4 && m[1].is("note") && m[2].isFloat() && !m[3].isFloat())              // no duration: a beat
+            m.insert(m.begin() + 3, Atom((float)(60.0 / std::max(1.0, score_->bpm))));
         if (m.size() < 3 || !m[1].isSymbol()) { patch->print("score: add note|sound|msg at ..."); return; }
         std::string form = "(score \"x\" (";
         for (size_t k = 1; k < m.size(); ++k) {
@@ -372,17 +471,106 @@ private:
         form += "))";
         try {
             auto one = sc::readText(form, here());
+            auto s = score_->clone();
             for (auto& e : one->events()) {
                 auto c = std::make_shared<sc::Event>(*e);
                 c->id = 0;
-                score_->insert(c);
+                s->insert(c);
             }
-            edited();
+            replace(s);
         } catch (const std::exception& e) { patch->print(std::string("score: ") + e.what()); }
     }
+    // select all | none | id... | row name | time t0 t1
+    void select(const Message& m) {
+        RollCore& c = roll();
+        c.path.clear();
+        c.selection.clear();
+        std::string how = m.size() > 1 && m[1].isSymbol() ? m[1].s : "";
+        if (how == "all") c.selectAll();
+        else if (how == "row" && m.size() > 2) { for (auto& e : score_->events()) if (e->row == m[2].str()) c.selection.insert(e->id); }
+        else if (how == "time" && m.size() > 2) {
+            double t0 = argf(m, 2, 0.f), t1 = argf(m, 3, 1e9f);
+            score_->query(t0, t1, [&](const sc::Event& e) { c.selection.insert(e.id); });
+        } else if (how.empty()) {
+            for (size_t k = 1; k < m.size(); ++k) if (m[k].isFloat() && m[k].f >= 1 && score_->find((uint64_t)m[k].f)) c.selection.insert((uint64_t)m[k].f);
+        } else if (how != "none") { patch->print("score: select all, none, ids, row name or time t0 t1"); return; }
+        if (patch) patch->redraw();
+    }
+    // a transformation of the selection (all of it when nothing is selected), as Musil's (music/score_transform.h)
+    void transformBy(const Message& m) {
+        ScoreTransform t;
+        const Atom& h = m[0];
+        auto num = [&](size_t k, double def) { float v = argf(m, k, (float)def); return std::isfinite(v) ? (double)v : def; };
+        t.seed = (uint32_t)num(h.is("humanize") ? 3 : 2, 1);
+        if (h.is("transpose")) { t.kind = ScoreTransform::Transpose; t.a = num(1, 0); }
+        else if (h.is("invert")) {
+            t.kind = ScoreTransform::Invert;
+            t.a = m.size() > 1 ? (m[1].isFloat() ? m[1].f : sc::pitchOfName(m[1].str())) : NAN;
+            if (m.size() > 1 && t.a < 0) { patch->print("score: invert around what? (a pitch: 60 or C4)"); return; }
+        }
+        else if (h.is("retrograde")) t.kind = ScoreTransform::Retrograde;
+        else if (h.is("augment") || h.is("diminish")) {
+            t.kind = ScoreTransform::Augment;
+            double k = num(1, 2);
+            if (!(k > 0)) { patch->print("score: " + h.s + " by a factor > 0"); return; }
+            t.a = h.is("augment") ? k : 1 / k;
+        }
+        else if (h.is("shift")) { t.kind = ScoreTransform::Shift; t.a = num(1, 0); }
+        else if (h.is("quantize")) { t.kind = ScoreTransform::Quantize; t.a = num(1, roll().snapSeconds() > 0 ? roll().snapSeconds() : 0.25); t.b = num(2, 1); }
+        else if (h.is("humanize")) { t.kind = ScoreTransform::Humanize; t.a = num(1, 20) / 1000; t.b = num(2, 1.5); }
+        else if (h.is("thin")) { t.kind = ScoreTransform::Thin; t.a = num(1, 0.5); }
+        else if (h.is("density")) {
+            t.kind = ScoreTransform::Density;
+            for (size_t k = 1; k < m.size(); ++k) if (m[k].isFloat()) t.curve.push_back(std::clamp((double)m[k].f, 0.0, 1.0));
+            t.seed = 1;
+        }
+        RollCore& c = roll();
+        auto s = score_->clone();
+        try {
+            if (!applyTransform(*s, c.path.empty() ? c.selectedIds() : Ids{}, t)) return;
+        } catch (const std::exception& e) { patch->print(std::string("score: ") + e.what()); return; }
+        for (auto it = c.selection.begin(); it != c.selection.end();) it = s->find(*it) ? std::next(it) : c.selection.erase(it);
+        replace(s);
+    }
     void edited() {
+        ++gen_;
         rebuild();
         if (patch) patch->redraw();
+    }
+
+    // a voice playing a region of a sound file (decoded once, kept while an event reads it)
+    void addVoice(ScorePlan& plan, std::map<std::string, int>& files, int64_t start, int64_t len, double from, double to, float gain,
+                  double speed, double az, int64_t fadeIn, int64_t fadeOut, const std::string& path) {
+        if (len <= 0) return;
+        auto it = files.find(path);
+        if (it == files.end()) {
+            auto d = decoded_.find(path);
+            if (d == decoded_.end()) {
+                auto b = std::make_shared<SampleBuffer>();
+                std::string err;
+                if (!decodeAudioFile(path, *b, err)) { patch->print("score: " + err); b.reset(); }
+                d = decoded_.emplace(path, b).first;
+            }
+            if (!d->second) return;
+            it = files.emplace(path, (int)plan.files.size()).first;
+            plan.files.push_back(d->second);
+        }
+        ScorePlan::Voice v;
+        v.start = start;
+        v.len = len;
+        v.from = from;
+        v.to = to;
+        v.gain = gain;
+        v.speed = std::isfinite(speed) && speed > 0 ? speed : 1;
+        v.fadeIn = fadeIn;
+        v.fadeOut = fadeOut;
+        v.file = it->second;
+        v.gains = (int)plan.gains.size();
+        double g[16];
+        sc::panGains(az, nOut_, g);
+        for (int c = 0; c < nOut_; ++c) plan.gains.push_back((float)g[c]);
+        plan.maxLen = std::max(plan.maxLen, v.len);
+        plan.voices.push_back(v);
     }
 
     // ---- the plan: made on the GUI thread, published; the control events kept here
@@ -424,21 +612,9 @@ private:
                     }
                     v.buf = it->second;
                 } else {
-                    std::string path = sourcePath(e.source, p.origin);
-                    auto it = files.find(path);
-                    if (it == files.end()) {
-                        auto d = decoded_.find(path);
-                        if (d == decoded_.end()) {
-                            auto b = std::make_shared<SampleBuffer>();
-                            std::string err;
-                            if (!decodeAudioFile(path, *b, err)) { patch->print("score: " + err); b.reset(); }
-                            d = decoded_.emplace(path, b).first;
-                        }
-                        if (!d->second) continue;
-                        it = files.emplace(path, (int)plan->files.size()).first;
-                        plan->files.push_back(d->second);
-                    }
-                    v.file = it->second;
+                    addVoice(*plan, files, v.start, v.len, v.from, v.to, v.gain, 1.0, e.az + strip.az, v.fadeIn, v.fadeOut,
+                             sourcePath(e.source, p.origin));
+                    continue;
                 }
                 v.gains = (int)plan->gains.size();
                 double g[16];
@@ -448,6 +624,15 @@ private:
                 plan->voices.push_back(v);
             } else if (e.kind == sc::Kind::Note) {
                 if (e.variant == "chord") continue;
+                // a note with a sound of its own (orchidea's: its sample) plays it, faster or slower by its pitch against
+                // the sample's (sound-pitch; without it, by its cents)
+                if (const sc::Datum* snd = sc::field(e.extra, "sound"); snd && (snd->kind == sc::Datum::Str || snd->kind == sc::Datum::Sym) && !snd->s.empty()) {
+                    const sc::Datum* sp = sc::field(e.extra, "sound-pitch");
+                    double base = sp && sp->kind == sc::Datum::Num ? sp->num : e.pitch;
+                    addVoice(*plan, files, at(e.at), at(e.dur), 0, -1, (float)(e.gain * strip.gain), std::pow(2.0, (e.sounding() - base) / 12.0),
+                             e.az + strip.az, 0, 0,
+                             sourcePath(snd->s, p.origin));
+                }
                 int vel = (int)std::lround(sc::velocityOf(e.dyn) * e.gain * strip.gain);
                 Message msg{Atom((float)e.sounding()), Atom((float)std::clamp(vel, 1, 127)), Atom((float)(e.dur * 1000.0)),
                             Atom(e.row.empty() ? std::string("-") : e.row), Atom(e.dyn.empty() ? std::string("-") : e.dyn),
@@ -563,7 +748,7 @@ void ScoreBox::dsp(int n) {
             if (v.start + v.len <= pos) continue;
             const SampleBuffer* src = v.file >= 0 ? plan->files[(size_t)v.file].get() : plan->bufs[(size_t)v.buf]->get();
             if (!src || src->frames <= 0) continue;
-            double rate = src->sr / sr;                          // source frames a sample
+            double rate = src->sr / sr * v.speed;                // source frames a sample
             double first = std::floor(v.from * src->sr);
             double last = v.to >= 0 ? std::min((double)src->frames, std::floor(v.to * src->sr)) : (double)src->frames;
             double avail = (last - first) / rate;                // samples of the source after its start

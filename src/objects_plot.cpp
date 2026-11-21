@@ -659,6 +659,8 @@ public:
         if (win_) { win_->hide(); Fl::delete_widget(win_); }
     }
     void uiSize(int& w, int& h) const override { w = w_; h = h_; }
+    bool uiResizable() const override { return true; }
+    void uiResize(int w, int h) override { w_ = std::clamp(w, 60, 3000); h_ = std::clamp(h, 40, 3000); }
     Message saveArgs() const override {
         Message m;
         if (!argName_.empty()) m.push_back(Atom(argName_));

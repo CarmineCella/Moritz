@@ -73,12 +73,22 @@
 //   act=processstop           Process > Stop
 //   act=soundmenus            print: the items of the Process and Markers menus
 //   act=tl...:..., act=timeline   the timeline (timeline_window.cpp lists them)
+//   act=roll:<id>             the roll's window of a score box of the front document (as a double-click opens it)
+//   act=rolldrag:<event>:<seconds>,<steps>[:alt]   in the newest roll window, an event dragged by its head that far
+//                             in time and that many steps up its staff (alt: Alt held, a copy)
+//   act=rollundo, act=rollredo   the roll's Undo and Redo
+//   act=rollview:roll|piano|list   the roll's view; act=rollpng:<file>: its window drawn into a PNG file
+//   act=rolltext:<file>       the roll's text view given the file's text and applied (an error is printed)
+//   act=rollstate             print: the roll's title, its notes (id at dur pitch) and the lines of its text with a note
+//   act=boxdrag:<box>:<event>:<dx>,<dy>   on the canvas, an event of a score box's own roll dragged by its head that
+//                             many pixels (the patch locked: the box edited in place)
 
 #include "gui.h"
 #include "codewindow.h"
 #include "datasets.h"
 #include "fileio.h"
 #include "objects.h"
+#include "roll.h"
 #include "sound_editor.h"
 #include "sound_process.h"
 #include "timeline.h"
@@ -388,6 +398,113 @@ bool act(const std::string& a) {
         DocumentWindow* d = front();
         BufferBox* b = d ? findBuffer(&d->patch, arg) : nullptr;
         state("buffer %s frames %s", arg, b ? std::to_string(b->buf.frames) : std::string("none"));
+        return true;
+    }
+    if (verb == "roll") {
+        DocumentWindow* d = front();
+        auto* src = d ? dynamic_cast<ScoreSource*>(d->patch.find(arg)) : nullptr;
+        return src && openRoll(src);
+    }
+    if (verb.rfind("roll", 0) == 0) {
+        RollWindow* w = RollWindow::all().empty() ? nullptr : RollWindow::all().back();
+        if (!w) return false;
+        RollPanel* panel = w->panel();
+        if (verb == "rollpng") {
+            Fl_Image_Surface surf(w->w(), w->h());
+            Fl_Surface_Device::push_current(&surf);
+            surf.draw(w);
+            Fl_Surface_Device::pop_current();
+            Fl_RGB_Image* img = surf.image();
+            int r = fl_write_png(arg.c_str(), img);
+            delete img;
+            return r == 0;
+        }
+        if (verb == "rollview") {           // act=rollview:roll|piano|list
+            panel->setView(arg == "piano" ? RollPanel::View::Piano : arg == "list" ? RollPanel::View::List : RollPanel::View::Roll);
+            return true;
+        }
+        if (verb == "rollundo") { panel->undo(); return true; }
+        if (verb == "rollredo") { panel->redo(); return true; }
+        if (verb == "rolltext") {
+            std::string src;
+            if (!fileio::read(arg, src)) return false;
+            panel->setText(src);
+            if (!panel->applyText()) state("roll text error %s", panel->textError());
+            return true;
+        }
+        if (verb == "rollstate") {
+            RollEditTarget* t = panel->target();
+            state("roll %s", w->label() ? w->label() : "");
+            auto sc = t ? t->score() : nullptr;
+            if (sc)
+                for (auto* e : sc->byTime())
+                    if (e->kind == musil::score::Kind::Note)
+                        state("roll note %s %s", std::to_string(e->id), musil::score::numText(e->at) + " " + musil::score::numText(e->dur) + " " +
+                                                                         musil::score::numText(e->pitch));
+            std::string text = panel->text();
+            for (size_t k = 0; k < text.size();) {
+                size_t end = text.find('\n', k);
+                std::string line = text.substr(k, end == std::string::npos ? std::string::npos : end - k);
+                size_t at = line.find("(note");
+                if (at != std::string::npos) state("roll text %s", line.substr(at));
+                k = end == std::string::npos ? text.size() : end + 1;
+            }
+            return true;
+        }
+        if (verb == "rolldrag") {
+            uint64_t id = std::strtoull(arg.c_str(), nullptr, 10);
+            size_t c1 = arg.find(':');
+            if (c1 == std::string::npos) return false;
+            double dt = std::atof(arg.c_str() + c1 + 1);
+            size_t comma = arg.find(',', c1);
+            double steps = comma == std::string::npos ? 0 : std::atof(arg.c_str() + comma + 1);
+            int keys = arg.find(":alt") != std::string::npos ? FL_ALT : 0;
+            RollWidget* rw = panel->rollWidget();
+            RollCore& c = rw->core();
+            double x, y, ww, h;
+            if (!c.eventBox(id, x, y, ww, h)) return false;
+            int row = c.hit(x + h / 2, y + h / 2).row;
+            double sp = row >= 0 && row < (int)c.rows().size() ? c.rows()[(size_t)row].sp : 0;
+            int ex = rw->x() + (int)std::lround(x + h / 2), ey = rw->y() + (int)std::lround(y + h / 2);
+            int ex2 = ex + (int)std::lround(dt * c.pps), ey2 = ey - (int)std::lround(steps * sp / 2);
+            auto send = [&](int event, int px, int py) {
+                Fl::e_x = Fl::e_x_root = px;
+                Fl::e_y = Fl::e_y_root = py;
+                Fl::e_state = keys | (event == FL_RELEASE ? 0 : FL_BUTTON1);
+                Fl::e_clicks = 0;
+                Fl::e_keysym = FL_Button + FL_LEFT_MOUSE;
+                Fl::e_number = event;
+                rw->handle(event);
+            };
+            send(FL_PUSH, ex, ey);
+            send(FL_DRAG, (ex + ex2) / 2, (ey + ey2) / 2);
+            send(FL_DRAG, ex2, ey2);
+            send(FL_RELEASE, ex2, ey2);
+            panel->changed();
+            return true;
+        }
+        return false;
+    }
+    if (verb == "boxdrag") {
+        DocumentWindow* d = front();
+        size_t c1 = arg.find(':'), c2 = c1 == std::string::npos ? c1 : arg.find(':', c1 + 1);
+        if (!d || c2 == std::string::npos) return false;
+        Box* b = d->patch.find(arg.substr(0, c1));
+        auto* src = dynamic_cast<ScoreSource*>(b);
+        RollCore* core = src ? src->inlineRoll() : nullptr;
+        if (!core) return false;
+        uint64_t id = std::strtoull(arg.c_str() + c1 + 1, nullptr, 10);
+        int dx = std::atoi(arg.c_str() + c2 + 1);
+        size_t comma = arg.find(',', c2);
+        int dy = comma == std::string::npos ? 0 : std::atoi(arg.c_str() + comma + 1);
+        double x, y, w, h;
+        if (!core->eventBox(id, x, y, w, h)) return false;
+        Canvas* c = d->canvas;
+        int px = b->x + 1 + (int)std::lround(x + h / 2), py = b->y + kBoxH + (int)std::lround(y + h / 2);
+        mouse(c, c->screenX(px), c->screenY(py), FL_PUSH, 0);
+        mouse(c, c->screenX(px + dx / 2), c->screenY(py + dy / 2), FL_DRAG, 0);
+        mouse(c, c->screenX(px + dx), c->screenY(py + dy), FL_DRAG, 0);
+        mouse(c, c->screenX(px + dx), c->screenY(py + dy), FL_RELEASE, 0);
         return true;
     }
     if (verb == "soundopen") return app.openSound(arg) != nullptr;

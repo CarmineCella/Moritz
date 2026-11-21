@@ -1,0 +1,4 @@
+(score "piece"
+  (sr 44100) (bpm 60) (meter 4 4) (next-id 5)
+  (note 0 0.5 Fl 60 mf (id 1))
+  (note 1.1.30 0.5 Fl 64 mf (id 2)))
