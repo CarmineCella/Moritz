@@ -123,6 +123,11 @@ the editor's command table and undo rule), YIN, `descriptors~` on the shared ana
       (waveform, move, trim, split, gain, fades), notes, sub-score instances (placement, Make Unique, their own
       timeline with a breadcrumb), patch clips shown, automation lanes sent to receives, the inspector, the
       clipboard, snap, files dropped from the Finder, Open/New Score, render to a stereo WAV.
+- [ ] Timeline, opening what a track holds: an automation lane (or a track header with lanes) opens the
+      patch that receives it with its receives highlighted; a sound clip opens the sound editor with the
+      clip's region selected; a click on a track's name opens what it plays or drives.
+- [ ] Timeline, track heights: each track and lane resized on its own by dragging its lower edge (kept
+      with the score), collapsed to one line and expanded, all at once with Alt.
 - [ ] Timeline, next: patch clips that run while they play (loaded at their start, stopped at their end,
       their receives following the lanes) and track patches (instrument and insert effects, in a drawer as
       mockup 4); automation that ramps between points; a placed score split or trimmed at its start; clip
