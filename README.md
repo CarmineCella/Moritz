@@ -279,13 +279,65 @@ Moritz follows Max's conventions:
   sound editor with the clip's region selected), notes, scores placed inside
   (an instance of the same score at each place: start, length, stretch,
   transpose, gain; Make Unique copies one; double-click opens it in its own
-  window, with a breadcrumb) and patch clips (double-click opens the patch;
-  they run in a later version). A track's automation lanes hold its
-  messages: click to add a point, drag to move it; each point is sent at its
-  time to the receive of its name. Drop sound files from the Finder, or use
-  Add; cut, copy, paste, duplicate and undo every edit; snap to beats or
-  bars; a ruler drag sets the loop. Render... writes the score to a stereo
-  WAV file, faster than real time.
+  window, with a breadcrumb) and patch clips (a patch that runs while its
+  clip plays: loaded with the score, its loadbang at the clip's start,
+  stopped at its end; double-click opens it). A track's automation lanes
+  hold its messages: click to add a point, drag to move it; each point is
+  sent at its time to the receive of its name (a lane named `strip.gain`,
+  `strip.pan`, `strip.mute` or `strip.send.<bus>` drives the track's own
+  strip instead, ramping between its points). A sound clip's fades and gain
+  are dragged on the clip (the handles under its head). Drop sound files
+  from the Finder, or use Add; cut, copy, paste, duplicate and undo every
+  edit; snap to beats or bars; a ruler drag sets the loop. Render writes the
+  score to a WAV file, faster than real time: stereo, with a stem for each
+  track, or in four or eight channels.
+- **Multitrack** (as in Reaper): File > New Session (or Open Session...)
+  opens a score as a session, in an arranger window: a browser of files on
+  the left (drag a sound into a track; a double-click adds it at the
+  playhead), the timeline in the middle with its inspector, and a drawer at
+  the bottom showing the selected clip's editor (the sound editor on its
+  region, the roll for notes or a placed score, a patch clip's patch), the
+  current track's patch, or the **mixer**. A session is a `.score` file:
+  everything below is kept on its rows, so saved with it.
+  - **Tracks and the mixer**: each track's header has mute, solo, arm (R)
+    and input monitoring (I), its input (a click: the device's inputs, mono
+    or stereo pairs), a volume, a pan and a meter. The mixer has a strip for
+    each track, each bus (Add > Bus) and the master: mute, solo, arm, the
+    output (the master or a bus), sends to buses (post-fader), the insert,
+    the pan and the fader beside a peak and RMS meter. A fader or a pan is
+    heard as it moves (its value reaches the audio thread through an atomic,
+    no new plan is made) and is one undo step when it is released.
+  - **Track patches**: a track's insert is a patch from `inlet~ 1 2` to
+    `outlet~ 1 2` that its audio goes through; its instrument is a patch
+    whose first inlet takes each note of the track as `note pitch velocity
+    ms` (put `poly~` inside for chords) and whose `outlet~`s go into the
+    track. Both are loaded beside the score, run while it plays, and edited
+    live in the drawer (Track: Choose..., New makes one next to the session,
+    Save writes it); the master and buses have inserts too.
+  - **Recording**: arm tracks, choose their inputs, press Record (right-
+    click it for a count-in, punch in and out at the loop's range, and a
+    latency offset): each armed track's input is written to a WAV file in
+    the session's `<name>_media/` folder (the audio thread pushes it into a
+    lock-free ring, a writer thread drains it to the disk), and when the
+    transport stops each take becomes a clip on its track, moved earlier by
+    the device's input and output latency (as the device reports it, plus
+    the session's offset) so that it lines up with what played. I hears the
+    input through the track while it is armed.
+  - **Clips**: overlapping clips on a track crossfade (equal power), written
+    as their fades when they are moved; fades have shapes (linear, equal
+    power, slow, fast) and clips a gain, all dragged on the clip. Files
+    longer than 30 seconds are read from disk while they play (a reader
+    thread keeps a few seconds ahead of the playhead; the clip's start and
+    the loop's start are always there), their overviews computed in the
+    background and cached next to them (`file.wav.peaks`).
+  - **Several cores**: the tracks that take nothing from other tracks run in
+    parallel on a small pool of workers inside the audio callback (no lock,
+    no allocation), their sums made in order, so the output is the same, bit
+    for bit, as on one thread; a session of fewer than four tracks stays on
+    one. Sixteen tracks with an insert of forty filters each take 8.8% of
+    real time on one thread and 1.6% on eight (an Apple M3 Max).
+  - The example `examples/19-multitrack` is a session with stems, buses, an
+    instrument, a patch clip and strip lanes, and a patch playing it.
 - **One score, several views**: the box's own roll and its window's views
   show one document: an edit in one is in the others at once, with one undo
   history and one selection. A score kept in a patch is saved with the

@@ -283,8 +283,11 @@ struct BlockCtx;
 // notes (pitch velocity duration-ms row dynamics technique; - for none), then messages (name values...; a patch event
 // as patch name duration-ms args...), then info (end when it plays past its last event; the summary for info). A
 // message is also sent to the receive objects of its name (automation lanes drive a patch's receives). The rows are
-// tracks: their mixer strips (gain, az, mute, solo: score.h's Mixer) apply to the sounds, notes and patches on them; a
-// sound's fade-in and fade-out are played.
+// tracks, and the score plays as a multitrack session (multitrack.h): each track a channel through its mixer strip (gain,
+// az as a pan, mute, solo: values the mixer changes through atomics, no new plan), its insert patch, into a bus or the
+// master, with sends to buses; a track's instrument patch plays its notes (they leave the notes outlet otherwise), a
+// patch clip runs while it plays; lanes named strip.gain, strip.pan, strip.mute, strip.send.<bus> drive the strip; long
+// files are read from disk; a sound's fades (with their shapes) are played; armed tracks record (the arranger's Record).
 //   read [file], write [file]   a .score file (Musil data, read without running anything); write: in the patch's
 //                               folder or ~/Documents/Moritz
 //   clear                       no events
@@ -1920,7 +1923,7 @@ void registerScoreObjects(ClassTable& t) {
     t.insert(t.end(), {
         {"transport", "Timing", "the patch's clock: play, stop, locate bar, loop bar1 bar2, tempo; bars, beats and ms out: [bpm] [num den]",
          with<TransportBox>()},
-        {"score", "Timing", "a score that plays on the transport: notes, messages and sounds out; read/write .score: name [file.score] [channels] [@view timeline]",
+        {"score", "Timing", "a score that plays on the transport, its tracks mixed as a session (strips, buses, inserts, instruments): notes, messages and sounds out; read/write .score: name [file.score] [channels] [@view timeline]",
          with<ScoreBox>()},
     });
 }

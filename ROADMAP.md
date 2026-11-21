@@ -88,7 +88,7 @@ the editor's command table and undo rule), YIN, `descriptors~` on the shared ana
 | --- | --- |
 | 0.12 | Sound editor; Orchidea in Moritz; the score (score, transport); the timeline and the roll in one score window; datasets; Musil in Moritz; examples and tutorials |
 | then | Orchestration: queries, the morphological and granular modes, Musil's assisted composition and the pieces (Grisey, Haas, Atmosphères) as patches |
-| 0.13 | Multitrack mode, as in Reaper (layout B of mockup 8, with a mixer panel); patch clips and track instruments and effects |
+| 0.13 | Multitrack mode, as in Reaper (layout B of mockup 8, with a mixer panel); patch clips and track instruments and effects (first version done: below) |
 | then | Neural networks (WEFT): `mlp`, classifier, `autoencoder`/`vae` with a playable latent space, images as data (MNIST). WEFT is finished first in its own project, then ported |
 | then | Research: VAE on matching pursuit; a 2-D corpus map; a transformer on atom sequences; `concat~` |
 | then | Integration: export to Max, a documentation site, complete tutorials |
@@ -144,14 +144,17 @@ the editor's command table and undo rule), YIN, `descriptors~` on the shared ana
 - [x] Audition in the roll (as in Musil's roll): a click on a note sounds it, in the box and in the window (its own
       sample at its pitch through the preview voice, or the note out of the notes outlet with its note-off; a tone
       when nothing is connected), Shift-click never, the Audition button turns it off.
-- [ ] The score's window, next: a keyboard shortcut for each view; the panels in an arranger window or a patch's
-      dock (layouts B and C of mockup 8); the loop range set in the roll too (today in the timeline's ruler).
-- [ ] Timeline, next: patch clips that run while they play (loaded at their start, stopped at their end,
-      their receives following the lanes) and track patches (instrument and insert effects, in a drawer as
-      mockup 4); automation that ramps between points; a placed score split or trimmed at its start; clip
-      fades and gain dragged on the clip; rubber-band selection; track headers dragged to reorder; markers
-      and sections; render in N channels, binaural and stems; the render of a score bound to a patch running
-      the patch too; long files read from disk; Musil's score-render honouring the tracks' strips and fades.
+- [ ] The score's window, next: a keyboard shortcut for each view; the panels in a patch's dock (layout C of mockup 8;
+      layout B, the arranger window, is done: below); the loop range set in the roll too (today in the timeline's ruler).
+- [x] Timeline, the multitrack's part: patch clips that run while they play (loaded with the score, loadbang at their
+      start, stopped at their end, to the sample; their receives following the lanes) and track patches (inserts and
+      instruments, in the arranger's drawer as mockup 4); clip fades (with shapes) and gain dragged on the clip;
+      crossfades written into overlapping clips; render in N channels and stems; long files read from disk; lanes of
+      the tracks' strips that ramp between their points (strip.gain, strip.pan, strip.mute, `strip.send.<bus>`).
+- [ ] Timeline, next: automation that ramps between points for any lane (the strip lanes do); a placed score split or
+      trimmed at its start; rubber-band selection; track headers dragged to reorder; markers and sections; render
+      binaural; the render of a score bound to a patch running the patch too; Musil's score-render honouring the
+      tracks' strips, sends, inserts and fades (a session played by Musil as by Moritz).
 - [x] The roll (mockup 5), first version: staves per row with proportional time, clefs (G, F and C drawn as
       shapes, in the box too), microtones, dynamics,
       scores placed inside drawn faint with their placement, the playhead, zoom and scroll, snap; select, move,
@@ -244,6 +247,9 @@ Many more examples, each small and about one idea, in the folder of its topic:
       rhythms (walks, arpeggios, polyrhythms, an ostinato), a Markov chain, random music, a random collage, a
       chorale written by hand, scores in scores, notation (quantized for a part, MusicXML), temperament.
 - [x] **Pieces** (examples/18-pieces): Partiels, Atmosphères, in vain, Modulations (in the orchestration section).
+- [x] **Multitrack** (examples/19-multitrack): a session (stems on tracks, an echo bus with its insert patch and the
+      sends to it, an instrument playing a track's notes, a patch clip, a strip lane), and a patch playing it.
+- [ ] **Multitrack, next**: a recording session to try with a microphone; a tutorial chapter on the arranger.
 - [ ] **Assisted composition, next**: the Generate panel's algorithms as examples once it exists; Musil's
       live examples once Musil's live functions play through Moritz's engine.
 - [ ] **Sound editor**: markers and regions into a coll, once `coll` exists.
@@ -283,13 +289,37 @@ feature it describes:
       the roll, generating and transforming, Musil and scores.
 - [ ] **Multitrack**: recording, the mixer, arranging and rendering (with the multitrack mode).
 
+### Multitrack (0.13)
+
+- [x] Multitrack mode, first version, as in Reaper: a session is a .score file opened in the arranger window (layout B
+      of mockup 8: File > New Session, Open Session...): a browser of files, the timeline with session track headers
+      (arm, input, monitoring, volume, pan, a meter), the inspector, and a drawer with the selected clip's editor, the
+      current track's patch (insert or instrument, edited live) or the mixer. Everything is on the score's rows and
+      data (multitrack.h), so saved with it.
+- [x] Recording into tracks: arming, each track's input (mono or a stereo pair), monitoring, a count-in, punch in and
+      out at the loop's range; the takes written through lock-free rings and a writer thread into the session's
+      `<name>_media/` folder, added as clips when the transport stops, moved by the device's reported latency (plus the
+      session's offset) so that they line up to the sample (engine test with a simulated device).
+- [x] Long files streamed from disk: a reader thread fills chunks ahead of the playhead, the clip's and the loop's start
+      pinned, a locate told beforehand; overviews computed in the background and cached next to the media.
+- [x] The mixer: strips for tracks, buses and the master (fader in dB, pan, mute, solo, peak and RMS meters, sends,
+      the output, inserts); the values through atomics (no plan for a fader moved), one undo step at the release;
+      strip lanes drive them.
+- [x] Track inserts, instruments and patch clips as patches, loaded off the audio thread and swapped into the plan.
+- [x] Tracks on several cores: a fixed pool of workers inside the audio callback, lock-free (an atomic ticket, a
+      semaphore for the sleeping ones), no allocation, sums in order (bit for bit as one thread); one thread under
+      four tracks. Sixteen tracks with forty filters each: 8.8% of real time on one thread, 1.6% on eight (M3 Max).
+- [x] Non-destructive clip edits: fades with shapes, crossfades, clip gain, all dragged on the clip.
+- [x] Render: stereo, stems (a file a track), four or eight channels, offline.
+- [ ] Multitrack, next: time-stretch of a clip (offline, Musil's pvoc into a cached render); the latency measured by a
+      loopback ping (today the device's report plus an offset); MIDI recorded into tracks as notes; takes stacked
+      as lanes for comping; a track frozen to a file; the CPU of each track shown; a bus fed by another bus's sends
+      (buses into buses work, sends only from tracks are drawn); the drawer's height dragged; a sound previewed on a
+      click in the browser; the guide (docs/: Multitrack).
+- [ ] Plug-ins (CLAP, VST3, AU) last, if ever: patches already are the effects.
+
 ### Later
 
-- [ ] Multitrack mode, as in Reaper: recording into tracks (arming, several inputs, punch-in,
-      latency compensation), long files streamed from disk, a mixer (faders, pan, mute and solo,
-      sends and buses, meters), non-destructive clip edits (fades, crossfades, gain, stretch), tracks
-      on several cores. Plug-ins (CLAP, VST3, AU) last, if ever: patches already are the effects. The
-      timeline's tracks already keep their strip on the score's row: inputs, arming and buses go there too.
 - [ ] Musil's live functions played through Moritz's engine.
 - [ ] Patches made from Musil: a `patch` library (make boxes and cables, open the patch, change the
       patch in front through the code view's path, with undo), as in mockup 13.

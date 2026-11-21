@@ -222,16 +222,35 @@ tone); a sound event plays its region. The roll's Audition button turns it off
 (for every roll); the transport is never started, and with the audio off the
 status line says so.
 
-Its rows are tracks. A track's mixer strip (gain, pan as an azimuth, mute and
-solo, kept on the row in the score) applies to the sounds, notes and patches on
-it, and to the scores placed on it: a muted track is silent, and when a track is
-soloed only the soloed ones sound. A sound's fade-in and fade-out are played. A
-message is also sent to the receive objects of its name, so an automation lane
-drives a patch's receive; messages are sent whatever the strip says.
+Its rows are tracks, and it plays them as a multitrack session (as in a DAW):
+each track is a channel that goes through its mixer strip (gain, pan as an
+azimuth, a constant-power balance on two outlets, mute and solo, kept on the row
+in the score), through its insert patch (inlet~ 1 2 to outlet~ 1 2), into the
+master or a bus (a row marked bus, with its own strip and insert), with sends to
+buses after its fader; the master has a strip and an insert too. A muted track
+is silent, and when a track is soloed only the soloed ones (and the buses) sound.
+The strips' values reach the audio thread through atomics: a fader moved, a pan,
+mute or solo, from the mixer or the score, makes no new plan. A track's
+instrument patch plays its notes (each into its first inlet as note pitch
+velocity ms; they leave the notes outlet otherwise); a patch clip (a .moritz
+file) is loaded with the score and runs while it plays, its loadbang at its
+start, its timers stopped at its end, to the sample. Lanes named strip.gain
+(dB), strip.pan (degrees), strip.mute and strip.send.<bus> (dB) drive the
+track's strip, ramping between their points on the audio thread. A sound's
+fade-in and fade-out are played in their shapes (fade-in-shape, fade-out-shape:
+linear, equal, slow, fast). Sound files longer than 30 seconds are read from
+disk while they play. The tracks fed by no other run on several cores when
+there are four or more (the output the same as on one thread). A message is
+also sent to the receive objects of its name, so an automation lane drives a
+patch's receive; messages are sent whatever the strip says. The arranger window
+(File > New Session, Open Session...) shows a score so, with its mixer, its
+tracks' patches in a drawer and Record: see examples/19-multitrack.
 
 The Timeline view: tracks with their clips (sound regions drawn as waveforms,
 notes, scores placed inside, patch clips) and automation lanes, an inspector,
-snap to beats and bars, cut, copy, paste and undo, Render to a WAV file. Each
+snap to beats and bars, cut, copy, paste and undo, Render to a WAV file (stereo,
+with a stem for each track, or in four or eight channels); a sound clip's fades
+and gain dragged on it (the handles under its head). Each
 track and lane is as high as its lower edge is dragged (a double-click there folds
 it to one line and back; Alt: every one), kept in the score. A click on a track's
 name opens what it plays (a sound clip's sound in the sound editor with the
