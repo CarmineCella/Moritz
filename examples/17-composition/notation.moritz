@@ -1,0 +1,139 @@
+; notation.moritz - from free time to notation, after Musil's notation.mu: a score's times are
+; seconds, a part is written in beats and bars, so the notation quantizes: at the score's tempo (96)
+; every beat of every part takes the division (binary, triplet, quintuplet, sextuplet) that moves
+; its notes least, a small cost keeping the simpler one when it is nearly as good. Three kinds of
+; material, three problems for the quantizer: a line written in beats (it comes back exactly, the
+; quarter tone as an accidental), a chord orchestrated by Orchidea from the bell (the players at
+; once: chords and voices), a granular cloud (free timing: tuplets). The upper score is the music as
+; composed, the lower the same with its times moved to the divisions the notation chose
+; (score-quantize!): play both and hear what the notation keeps.
+; Try: 1. play: the upper score; then on the grid (0 1) and play again: the lower one; 2.
+; double-click either: the roll, the onsets on or off the grid of the beats; 3. musicxml: the parts
+; written to ~/Documents/Moritz/notation.musicxml for Dorico, Sibelius, Finale or MuseScore, the
+; Console reporting per part the notes, voices and divisions used and how far onsets moved; 4.
+; another seed: the cloud and the orchestration drawn again.
+(patch
+  (obj title comment "from free time to notation: what quantizing for a part keeps and moves" (pos 20 12))
+  (obj sub comment "play the score as composed (above) and on the notation's grid (below); musicxml writes the parts" (pos 20 34))
+  (obj dmic message microsol (pos 20 62))
+  (obj dful message fullsol (pos 100 62))
+  (obj cds comment "the samples: MicroSOL (comes with Moritz: Ob Hn Vn Vc, C4-G4) or FullSOL (registered in Extras > Datasets...); then compose again" (pos 170 63))
+  (obj n1 message 1 (pos 150 97))
+  (obj n2 message 2 (pos 185 97))
+  (obj n3 message 3 (pos 220 97))
+  (obj lb loadbang (pos 265 97))
+  (obj cseed comment "a seed" (pos 345 98))
+  (obj mx message musicxml (pos 420 97))
+  (obj cmx comment "writes ~/Documents/Moritz/notation.musicxml" (pos 500 98))
+  (obj bell buffer~ ntbell archeos-bell.wav (pos 690 132))
+  (obj c code 2 2 (pos 20 132)
+    (script
+      "; from free time to notation, after Musil's notation.mu: a score's times are seconds; a part is written in beats, so"
+      "; MusicXML quantizes: at the tempo every beat takes the division (binary, triplet, quintuplet, sextuplet) that moves"
+      "; its notes least. Three kinds of material: a line written in beats (exact), a chord from Orchidea (the players at"
+      "; once), a granular cloud (free timing). The score as it is goes out of the first outlet, the same with its times on"
+      "; the grid out of the second. in1 a seed (runs), or musicxml (writes the score composed last to"
+      "; ~/Documents/Moritz/notation.musicxml), in2 the dataset"
+      "load \"music.mu\""
+      "var write? (and (equal? in1 \"musicxml\") (defined? 'grid))"
+      "if (not write?) {"
+      "    var name (if (equal? in2 nil) \"microsol\" in2)     ; MicroSOL comes with Moritz: Ob Hn Vn Vc, C4-G4 (a sketch)"
+      "    var db (db-load name)                             ; fullsol: FullSOL where you registered it (Extras > Datasets...)"
+      "    seed (if (or (equal? in1 nil) (equal? in1 \"musicxml\")) 1 in1)"
+      "    var sr 44100"
+      "    var here (db-instruments-available db)"
+      "    var orch (orchestra (filter (list 'Ob 'Hn 'Vn 'Vn 'Vc) (function (i) (contains? here (str i)))))"
+      "    var s (score \"notation\" sr)"
+      "    score-tempo! s 96                                            ; a quarter is 0.625 s"
+      "    score-meter! s 4 4"
+      "    var b (/ 60 96)"
+      "    ; 1. a line written in beats: quarters, eighths, a triplet, a quarter tone (50 cents), a chord, three notes ff"
+      "    add! s 0 (notes db 'Vn 'mf 'ord (list \"C4\" \"D4\" \"E4\" \"F4\" \"G4\" \"E4\") (list b (* b 0.5) (* b 0.5) (/ b 3) (/ b 3) (/ b 3)))"
+      "    add! s (* 3 b) (list (list 0 (* 3 b) (note-cents! (note db 'Vn \"F4\" 'p 'ord) 50)))"
+      "    event s (* 4 b) (* 2 b) (chord db 'Vc 'mf 'ord (list \"C3\" \"G3\"))"
+      "    add! s (* 6 b) (notes db 'Vc 'ff 'ord (list \"C3\" \"C3\" \"C3\") (list (* b 0.25) (* b 0.25) (* b 0.5)))"
+      "    ; 2. a chord orchestrated by Orchidea: the bell (the buffer~ ntbell), the players at once"
+      "    var bell (head (buffer \"ntbell\"))"
+      "    var mimetic (orchestrate-mimetic db orch bell (buffer-rate \"ntbell\") (record (list 'population 60 'epochs 40 'sparsity 0.01 'threshold 2 'partials 0 'solutions 3)))"
+      "    connect! s (* 8 b) mimetic (get mimetic 'choices)"
+      "    ; 3. a granular cloud: free timing"
+      "    var cloud (orchestrate-granular db orch (* 8 b) (record (list 'density (list 3 6) 'duration (list 0.15 1) 'register (list 4 4) 'dynamics 0.4)))"
+      "    connect! s (* 16 b) cloud (list 0)"
+      "    var grid (score-copy s)"
+      "    score-quantize! grid (record (list))                         ; the times moved to the divisions the notation chose"
+      "    print (length (score-events s)) \"events; the second score: their times on the notation's grid\""
+      "}"
+      "if write? {"
+      "    var dir (concat (getenv \"HOME\") \"/Documents/Moritz\")"
+      "    if (not (exists? dir)) { mkdir dir }"
+      "    var path (concat dir \"/notation.musicxml\")"
+      "    notation-report (score-musicxml s path (record (list)))      ; per part: notes, voices, the divisions used, how far onsets moved"
+      "    print \"wrote\" path \": open it in Dorico, Sibelius, Finale or MuseScore\""
+      "}"
+      "out 1 s"
+      "out 2 grid"))
+  (obj cuc comment "the score in Musil: a line, orchestrate-mimetic, orchestrate-granular; a copy quantized (score-quantize!)" (pos 110 133))
+  (obj cfree comment "as composed: seconds" (pos 20 172))
+  (obj sc score free 2 @size 640 170 (pos 20 192))
+  (obj cgrid comment "on the notation's grid" (pos 20 372))
+  (obj sq score grid 2 @size 640 170 (pos 20 392))
+  (obj tr transport 96 4 4 (pos 690 192))
+  (obj sp message play (pos 690 227))
+  (obj ss message stop (pos 735 227))
+  (obj sp2 message play (pos 690 427))
+  (obj ss2 message stop (pos 735 427))
+  (obj chear comment "both follow the one transport; hear one:" (pos 690 272))
+  (obj hA message "1 0" (pos 690 297))
+  (obj chA comment "as composed" (pos 730 298))
+  (obj hB message "0 1" (pos 690 322))
+  (obj chB comment "on the grid" (pos 730 323))
+  (obj un unpack 0 0 (pos 690 352))
+  (obj sumA +~ (pos 20 577))
+  (obj gA *~ 1 (pos 20 604))
+  (obj sumB +~ (pos 120 577))
+  (obj gB *~ 0 (pos 120 604))
+  (obj sum +~ (pos 20 642))
+  (obj chall comment "the two channels summed, the volume ramped, then a hall (reverb~)" (pos 70 643))
+  (obj half *~ 0.4 (pos 20 672))
+  (obj lbv loadbang (pos 140 687))
+  (obj vol message "0.8 300" (pos 140 717))
+  (obj mute message "0 300" (pos 210 717))
+  (obj cvol comment "volume up, down" (pos 270 718))
+  (obj ramp line~ (pos 140 747))
+  (obj vca *~ (pos 20 782))
+  (obj rv reverb~ 0.25 2.5 (pos 20 812))
+  (obj dac dac~ (pos 20 847))
+  (connect dmic 0 c 1)
+  (connect dful 0 c 1)
+  (connect n1 0 c 0)
+  (connect n2 0 c 0)
+  (connect n3 0 c 0)
+  (connect lb 0 n1 0)
+  (connect mx 0 c 0)
+  (connect c 0 sc 0)
+  (connect c 1 sq 0)
+  (connect sp 0 sc 0)
+  (connect ss 0 sc 0)
+  (connect sp2 0 sq 0)
+  (connect ss2 0 sq 0)
+  (connect sc 0 sumA 0)
+  (connect sc 1 sumA 1)
+  (connect sq 0 sumB 0)
+  (connect sq 1 sumB 1)
+  (connect sumA 0 gA 0)
+  (connect sumB 0 gB 0)
+  (connect hA 0 un 0)
+  (connect hB 0 un 0)
+  (connect un 0 gA 1)
+  (connect un 1 gB 1)
+  (connect sum 0 half 0)
+  (connect half 0 vca 0)
+  (connect lbv 0 vol 0)
+  (connect vol 0 ramp 0)
+  (connect mute 0 ramp 0)
+  (connect ramp 0 vca 1)
+  (connect vca 0 rv 0)
+  (connect rv 0 dac 0)
+  (connect rv 1 dac 1)
+  (connect gA 0 sum 0)
+  (connect gB 0 sum 0))

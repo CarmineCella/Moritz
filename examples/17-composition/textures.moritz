@@ -1,0 +1,78 @@
+; textures.moritz - textures that move, from Musil's algorithmic_comp.mu: six chords interpolated
+; from one tetrachord to another (chordinterp-sets) give the winds' texture the harmony it runs
+; through, each voice repeating the pitches at its own speed (texture-on-chords, placed at the
+; right); under it the strings wander around the pitches of the last chord, within three semitones,
+; each at its own speed (texture-on-pivots, at the left). One texture moves through harmonies, the
+; other stays in one and moves inside it.
+; Try: 1. play; 2. another seed: the strings' wandering drawn again (the winds' path is the same);
+; 3. double-click the score box: the roll, the winds on the oboe's and the horn's staves, the
+; strings on the violin's and the cello's; 4. double-click the code box: change from or target, the
+; speeds (list 1 1.2), Cmd-S, then a seed again.
+(patch
+  (obj title comment "textures that move: a texture through six chords, another wandering around one" (pos 20 12))
+  (obj sub comment "a seed writes the score again; play; the Console names the six chords" (pos 20 34))
+  (obj dmic message microsol (pos 20 62))
+  (obj dful message fullsol (pos 100 62))
+  (obj cds comment "the samples: MicroSOL (comes with Moritz: Ob Hn Vn Vc, C4-G4) or FullSOL (registered in Extras > Datasets...); then compose again" (pos 170 63))
+  (obj t1 message 1 (pos 150 97))
+  (obj t2 message 2 (pos 185 97))
+  (obj t3 message 3 (pos 220 97))
+  (obj lb loadbang (pos 265 97))
+  (obj cctl comment "a seed: other draws" (pos 355 98))
+  (obj c code 2 1 (pos 20 132)
+    (script
+      "; textures that move, from Musil's algorithmic_comp.mu: the winds' texture runs through six chords interpolated"
+      "; from one tetrachord to another, the strings' texture wanders around the last chord, each voice at its own speed."
+      "; in1 a seed (other draws), in2 the dataset"
+      "load \"music.mu\""
+      "var name (if (equal? in2 nil) \"microsol\" in2)     ; MicroSOL comes with Moritz: Ob Hn Vn Vc, C4-G4 (a sketch)"
+      "var db (db-load name)                             ; fullsol: FullSOL where you registered it (Extras > Datasets...)"
+      "seed (if (equal? in1 nil) 1 in1)"
+      "var from (list \"E4\" \"F4\" \"G#4\" \"D4\")"
+      "var target (list \"C#4\" \"G4\" \"A#4\" \"D#5\")"
+      "; six chords from one to the other (as pitch lists): the harmony the winds' texture moves through"
+      "var path (map (chordinterp-sets db 'Ob 'p 'ord from target (tuplet 6 6)) (function (x) (map (get (last x) 'notes) (function (n) (get n 'midi)))))"
+      "var s (score \"textures\" 44100)"
+      "score-tempo! s 108"
+      "add-beats! s 0 (fragment-place (texture-on-chords db (list 'Ob 'Hn) 'p 'ord path (rhythm (list 0.25 0.25 0.5)) (list 1 1.2)) 20 0)"
+      "add-beats! s 0 (fragment-place (texture-on-pivots db (list 'Vn 'Vc) 'pp 'ord target 3 (rhythm (list 0.5 0.25 0.25)) (list 1 1.33 1.66)) -20 0)"
+      "print \"the winds through\" (join (map path (function (c) (join (map c midi->pitch) \"-\"))) \", \")"
+      "print \"the strings around\" (join target \" \")"
+      "out 1 s"))
+  (obj cuc comment "the score in Musil: chordinterp-sets, texture-on-chords, texture-on-pivots" (pos 110 133))
+  (obj sc score textures 2 @size 640 220 (pos 20 172))
+  (obj tr transport 108 4 4 (pos 690 172))
+  (obj sp message play (pos 690 207))
+  (obj ss message stop (pos 735 207))
+  (obj cpl comment "play / stop" (pos 785 208))
+  (obj sum +~ (pos 20 417))
+  (obj chall comment "the two channels summed, the volume ramped, then a hall (reverb~)" (pos 70 418))
+  (obj half *~ 0.5 (pos 20 447))
+  (obj lbv loadbang (pos 140 462))
+  (obj vol message "0.8 300" (pos 140 492))
+  (obj mute message "0 300" (pos 210 492))
+  (obj cvol comment "volume up, down" (pos 270 493))
+  (obj ramp line~ (pos 140 522))
+  (obj vca *~ (pos 20 557))
+  (obj rv reverb~ 0.25 2.5 (pos 20 587))
+  (obj dac dac~ (pos 20 622))
+  (connect dmic 0 c 1)
+  (connect dful 0 c 1)
+  (connect t1 0 c 0)
+  (connect t2 0 c 0)
+  (connect t3 0 c 0)
+  (connect lb 0 t1 0)
+  (connect c 0 sc 0)
+  (connect sp 0 sc 0)
+  (connect ss 0 sc 0)
+  (connect sc 0 sum 0)
+  (connect sc 1 sum 1)
+  (connect sum 0 half 0)
+  (connect half 0 vca 0)
+  (connect lbv 0 vol 0)
+  (connect vol 0 ramp 0)
+  (connect mute 0 ramp 0)
+  (connect ramp 0 vca 1)
+  (connect vca 0 rv 0)
+  (connect rv 0 dac 0)
+  (connect rv 1 dac 1))

@@ -1,0 +1,92 @@
+; row-forms.moritz - a twelve-tone row and its four forms, after Musil's algorithmic_comp.mu: the
+; prime (on the oboe), the inversion around its first note (the violin), the retrograde with its
+; rhythm backwards (the horn) and the retrograde inversion a tritone up (the cello), one after
+; another, then the four at once. A code box writes the score in Musil (notes, invert, retrograde,
+; transpose-pitches: pitches are data) and sends it to the score box, which draws a staff a form and
+; plays each note's sample. MicroSOL, which comes with Moritz, has four instruments around C4-G4:
+; the other pitches are its samples resampled (a sketch); with FullSOL (registered in Extras >
+; Datasets..., then the fullsol message) every pitch is recorded.
+; Try: 1. play; 2. a seed: another row (the twelve tones shuffled), 0 the row of the example; 3.
+; double-click the score box: the roll, the four forms on their staves; select the prime, transpose
+; it there or with the Transform panel; 4. double-click the code box: change the row or the rhythm,
+; Cmd-S, then a seed again.
+(patch
+  (obj title comment "a twelve-tone row: prime, inversion, retrograde, retrograde inversion" (pos 20 12))
+  (obj sub comment "a seed writes another row; play; each form on a staff of its own, then the four together" (pos 20 34))
+  (obj dmic message microsol (pos 20 62))
+  (obj dful message fullsol (pos 100 62))
+  (obj cds comment "the samples: MicroSOL (comes with Moritz: Ob Hn Vn Vc, C4-G4) or FullSOL (registered in Extras > Datasets...); then compose again" (pos 170 63))
+  (obj s0 message 0 (pos 150 97))
+  (obj s1 message 1 (pos 185 97))
+  (obj s2 message 2 (pos 220 97))
+  (obj s3 message 3 (pos 255 97))
+  (obj lb loadbang (pos 300 97))
+  (obj cctl comment "a row: 0 the example's, a seed another" (pos 390 98))
+  (obj c code 2 1 (pos 20 132)
+    (script
+      "; a twelve-tone row and its four forms, after Musil's algorithmic_comp.mu: in1 a seed (0: the row of"
+      "; the example; another number: the twelve tones shuffled), in2 the dataset (microsol until another is sent)"
+      "load \"music.mu\""
+      "var name (if (equal? in2 nil) \"microsol\" in2)     ; MicroSOL comes with Moritz: Ob Hn Vn Vc, C4-G4 (a sketch, the other pitches resampled)"
+      "var db (db-load name)                             ; fullsol: FullSOL where you registered it (Extras > Datasets...)"
+      "var k (if (equal? in1 nil) 0 in1)"
+      "seed (max 1 k)"
+      "var row (list \"E4\" \"F4\" \"G#4\" \"D4\" \"C#4\" \"A4\" \"A#4\" \"G4\" \"B4\" \"C4\" \"D#4\" \"F#4\")"
+      "if (> k 0) { set row (map (shuffle (vec->list (range 60 72))) midi->pitch) }"
+      "var r1 (rhythm (list 1 0.5 0.5 1 0.75 0.25 1 0.5 0.5 1 -0.5 1.5))   ; in beats; a negative one is a rest"
+      "var s (score \"rowforms\" 44100)"
+      "score-tempo! s 108"
+      "; each form on a staff of its own: prime on the oboe, inversion on the violin, retrograde on the horn,"
+      "; retrograde inversion (a tritone up) on the cello, one after another and then all four at once"
+      "var forms (list (list 'Ob row r1)"
+      "                (list 'Vn (invert row (head row)) r1)"
+      "                (list 'Hn (retrograde row) (retrograde r1))"
+      "                (list 'Vc (transpose-pitches (invert (retrograde row) (head row)) 6) r1))"
+      "each (range 4) (function (j) {"
+      "    var f (getidx forms j)"
+      "    add-beats! s (* j 10) (notes db (head f) 'mf 'ord (getidx f 1) (last f))"
+      "    add-beats! s 42 (notes db (head f) 'p 'ord (getidx f 1) (last f))"
+      "})"
+      "print \"the row:\" (join row \" \")"
+      "print \"inversion:\" (join (map (invert row (head row)) midi->pitch) \" \")"
+      "print \"retrograde:\" (join (retrograde row) \" \")"
+      "print \"retrograde inversion, a tritone up:\" (join (map (transpose-pitches (invert (retrograde row) (head row)) 6) midi->pitch) \" \")"
+      "out 1 s"))
+  (obj cuc comment "the score in Musil: the row and its forms, the forms on four staves" (pos 110 133))
+  (obj sc score rowforms 2 @size 640 220 (pos 20 172))
+  (obj tr transport 108 4 4 (pos 690 172))
+  (obj sp message play (pos 690 207))
+  (obj ss message stop (pos 735 207))
+  (obj cpl comment "play / stop" (pos 785 208))
+  (obj sum +~ (pos 20 417))
+  (obj chall comment "the two channels summed, the volume ramped, then a hall (reverb~)" (pos 70 418))
+  (obj half *~ 0.5 (pos 20 447))
+  (obj lbv loadbang (pos 140 462))
+  (obj vol message "0.8 300" (pos 140 492))
+  (obj mute message "0 300" (pos 210 492))
+  (obj cvol comment "volume up, down" (pos 270 493))
+  (obj ramp line~ (pos 140 522))
+  (obj vca *~ (pos 20 557))
+  (obj rv reverb~ 0.25 2.5 (pos 20 587))
+  (obj dac dac~ (pos 20 622))
+  (connect dmic 0 c 1)
+  (connect dful 0 c 1)
+  (connect s0 0 c 0)
+  (connect s1 0 c 0)
+  (connect s2 0 c 0)
+  (connect s3 0 c 0)
+  (connect lb 0 s0 0)
+  (connect c 0 sc 0)
+  (connect sp 0 sc 0)
+  (connect ss 0 sc 0)
+  (connect sc 0 sum 0)
+  (connect sc 1 sum 1)
+  (connect sum 0 half 0)
+  (connect half 0 vca 0)
+  (connect lbv 0 vol 0)
+  (connect vol 0 ramp 0)
+  (connect mute 0 ramp 0)
+  (connect ramp 0 vca 1)
+  (connect vca 0 rv 0)
+  (connect rv 0 dac 0)
+  (connect rv 1 dac 1))

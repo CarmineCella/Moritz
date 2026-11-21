@@ -1,0 +1,109 @@
+; random-music.moritz - random music, from Musil's random_music.mu: notes drawn at random from the
+; database, from every instrument, dynamics and technique it has (nil in random-notes: all of them;
+; give lists to choose), each pitch uniform in its instrument's range, each note somewhere between
+; left and right and its gain by its dynamics. The generator is one function returning events (at
+; dur note): change its distributions, or write another the same way, and the rest follows.
+; Try: 1. play; 2. another seed: another draw; 3. notes a second and seconds (set first, then a
+; seed): 4 and 10 is a dense flurry, 0.3 and 60 a sparse one; 4. with FullSOL (fullsol, then a
+; seed): its instruments, dynamics and techniques, every pitch recorded; 5. double-click the code
+; box: (list 'Vn 'Vc) for the instruments, (list 'pp) for the dynamics, Cmd-S, then a seed.
+(patch
+  (obj title comment "random music: notes drawn from a database, every instrument, dynamics and technique" (pos 20 12))
+  (obj sub comment "a seed draws another score; notes a second and seconds are kept for the next seed; play" (pos 20 34))
+  (obj dmic message microsol (pos 20 62))
+  (obj dful message fullsol (pos 100 62))
+  (obj cds comment "the samples: MicroSOL (comes with Moritz: Ob Hn Vn Vc, C4-G4) or FullSOL (registered in Extras > Datasets...); then compose again" (pos 170 63))
+  (obj n1 message 7 (pos 150 97))
+  (obj n2 message 8 (pos 185 97))
+  (obj n3 message 9 (pos 220 97))
+  (obj lb loadbang (pos 265 97))
+  (obj cctl comment "a seed: another draw" (pos 355 98))
+  (obj cden comment "notes a second" (pos 150 133))
+  (obj den flonum (pos 250 132))
+  (obj csec comment "seconds" (pos 330 133))
+  (obj sec number (pos 390 132))
+  (obj cnum comment "kept until the next seed" (pos 450 133))
+  (obj lbn loadbang (pos 610 132))
+  (obj dn0 message 1.5 (pos 690 132))
+  (obj sn0 message 30 (pos 730 132))
+  (obj c code 4 1 (pos 20 167)
+    (script
+      "; random music, from Musil's random_music.mu: notes drawn at random from a database, every instrument, dynamics and"
+      "; technique it has (nil: all of them), each pitch uniform in its instrument's range, each note somewhere between left"
+      "; and right, its gain by its dynamics. in1 a seed (runs), in2 the dataset, in3 notes a second, in4 seconds"
+      "load \"music.mu\""
+      "var name (if (equal? in2 nil) \"microsol\" in2)     ; MicroSOL comes with Moritz: Ob Hn Vn Vc, C4-G4 (a sketch)"
+      "var db (db-load name)                             ; fullsol: FullSOL where you registered it (Extras > Datasets...)"
+      "seed (if (equal? in1 nil) 7 in1)"
+      "var density (if (equal? in3 nil) 1.5 in3)"
+      "var secs (if (equal? in4 nil) 30 in4)"
+      "; (random-notes db secs density instruments dyns techs durs): events for a score; nil for the instruments, the"
+      "; dynamics or the techniques means everything the database has; durs (list shortest longest)"
+      "function random-notes (db secs density instruments dyns techs durs) {"
+      "    var out (list)"
+      "    var instrs (if (equal? instruments nil) (db-instruments-available db) instruments)"
+      "    each (range (floor (* secs density))) (function (k) {"
+      "        var instr (getidx instrs (floor (* (rand) (length instrs))))"
+      "        var range (db-range db instr)"
+      "        var midi (+ (head range) (floor (* (rand) (+ 1 (- (last range) (head range))))))"
+      "        var sounds (db-query db instr nil nil nil)"
+      "        var dyn-choices (if (equal? dyns nil) (unique (map sounds (function (e) (get e 'dyn)))) dyns)"
+      "        var tech-choices (if (equal? techs nil) (unique (map sounds (function (e) (get e 'tech)))) techs)"
+      "        var dyn (getidx dyn-choices (floor (* (rand) (length dyn-choices))))"
+      "        var tech (getidx tech-choices (floor (* (rand) (length tech-choices))))"
+      "        var dur (+ (head durs) (* (rand) (- (last durs) (head durs))))"
+      "        push out (list (* (rand) secs) dur (note db instr (midi->pitch midi) dyn tech))"
+      "    })"
+      "    return (sort-by out head)"
+      "}"
+      "var s (score \"random\" 44100)"
+      "each (random-notes db secs density nil nil nil (list 0.3 5)) (function (n) {"
+      "    var e (event s (head n) (getidx n 1) (last n))"
+      "    event-place! e (- (* 120 (rand)) 60) 0                   ; somewhere between left and right"
+      "    event-gain! e (if (equal? (get e 'dyn) \"pp\") 0.5 (if (equal? (get e 'dyn) \"mf\") 0.8 1))"
+      "})"
+      "print (length (score-events s)) \"notes in\" secs \"s, of\" (join (db-instruments-available db) \" \") \"; dynamics\" (join (db-dynamics db) \" \") \"; techniques\" (join (db-techniques db) \" \")"
+      "out 1 s"))
+  (obj cuc comment "the score in Musil: random-notes, a function returning events" (pos 110 168))
+  (obj sc score random 2 @size 640 220 (pos 20 207))
+  (obj tr transport 60 4 4 (pos 690 207))
+  (obj sp message play (pos 690 242))
+  (obj ss message stop (pos 735 242))
+  (obj cpl comment "play / stop" (pos 785 243))
+  (obj sum +~ (pos 20 452))
+  (obj chall comment "the two channels summed, the volume ramped, then a hall (reverb~)" (pos 70 453))
+  (obj half *~ 0.35 (pos 20 482))
+  (obj lbv loadbang (pos 140 497))
+  (obj vol message "0.8 300" (pos 140 527))
+  (obj mute message "0 300" (pos 210 527))
+  (obj cvol comment "volume up, down" (pos 270 528))
+  (obj ramp line~ (pos 140 557))
+  (obj vca *~ (pos 20 592))
+  (obj rv reverb~ 0.25 2.5 (pos 20 622))
+  (obj dac dac~ (pos 20 657))
+  (connect dmic 0 c 1)
+  (connect dful 0 c 1)
+  (connect n1 0 c 0)
+  (connect n2 0 c 0)
+  (connect n3 0 c 0)
+  (connect lbn 0 dn0 0)
+  (connect lbn 0 sn0 0)
+  (connect dn0 0 den 0)
+  (connect sn0 0 sec 0)
+  (connect den 0 c 2)
+  (connect sec 0 c 3)
+  (connect lb 0 n1 0)
+  (connect c 0 sc 0)
+  (connect sp 0 sc 0)
+  (connect ss 0 sc 0)
+  (connect sc 0 sum 0)
+  (connect sc 1 sum 1)
+  (connect sum 0 half 0)
+  (connect half 0 vca 0)
+  (connect lbv 0 vol 0)
+  (connect vol 0 ramp 0)
+  (connect mute 0 ramp 0)
+  (connect ramp 0 vca 1)
+  (connect vca 0 rv 0)
+  (connect rv 0 dac 0)
+  (connect rv 1 dac 1))

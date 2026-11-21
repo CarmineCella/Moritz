@@ -1,0 +1,118 @@
+; random-collage.moritz - a random collage, after Musil's random_collage.mu: everything a score of
+; Moritz holds, drawn at random. Regions of four recordings (the buffer~ boxes at the right: a gong,
+; a bell, a prepared piano, a voice), placed at random times and places around the listener (an
+; event of kind buffer names a buffer~); three processed versions the script writes into buffer~
+; boxes of their own (the gong stretched by a phase vocoder, the bell reversed, the piano darkened
+; by a lowpass) and a noise sweep placed four times; notes of the database. In Musil the processing
+; can be a call made when the score renders, a synth an instrument; in Moritz what sounds is a
+; buffer~, a file, a sample, a patch: the script writes the buffer~s, the score names them.
+; Try: 1. play; 2. another seed: another collage, the processed sounds made again; 3. double-click
+; the score box: Timeline at the window's top: a lane a recording, a clip a region, its azimuth in
+; the inspector; double-click a buffer~ box to see what the script wrote; 4. double-click the code
+; box: another process (highpass, pvoc-stretch 4), more notes, Cmd-S, then a seed.
+(patch
+  (obj title comment "a random collage: regions of recordings, processed sounds, notes, placed around the listener" (pos 20 12))
+  (obj sub comment "a seed draws another collage (and makes the processed sounds again); play" (pos 20 34))
+  (obj dmic message microsol (pos 20 62))
+  (obj dful message fullsol (pos 100 62))
+  (obj cds comment "the samples: MicroSOL (comes with Moritz: Ob Hn Vn Vc, C4-G4) or FullSOL (registered in Extras > Datasets...); then compose again" (pos 170 63))
+  (obj k1 message 11 (pos 150 97))
+  (obj k2 message 12 (pos 190 97))
+  (obj k3 message 13 (pos 230 97))
+  (obj lb loadbang (pos 280 97))
+  (obj cctl comment "a seed: another collage" (pos 370 98))
+  (obj c code 2 1 (pos 20 132)
+    (script
+      "; a random collage, after Musil's random_collage.mu: everything a score of Moritz holds, drawn at random: regions of"
+      "; the recordings in the buffer~ boxes, processed versions of them (stretched, reversed, darkened) and noise sweeps"
+      "; that the script writes into buffer~ boxes of their own, notes from the database, each placed somewhere around"
+      "; the listener. in1 a seed (another collage), in2 the dataset"
+      "load \"music.mu\""
+      "var name (if (equal? in2 nil) \"microsol\" in2)     ; MicroSOL comes with Moritz: Ob Hn Vn Vc, C4-G4 (a sketch)"
+      "var db (db-load name)                             ; fullsol: FullSOL where you registered it (Extras > Datasets...)"
+      "seed (if (equal? in1 nil) 11 in1)"
+      "var sr 44100"
+      "var secs 24"
+      "function at-random (lo hi) (+ lo (* (rand) (- hi lo)))"
+      "function pick (L) (getidx L (floor (* (rand) (length L))))"
+      "function mono (name) (to-rate (list (head (buffer name))) (buffer-rate name) sr)   ; a buffer~'s first channel at sr"
+      "; --- the processed sounds, written into the buffer~ boxes colstretch, colreverse, coldark and colsweep -----------"
+      "var gong (head (mono \"colgong\"))"
+      "var bell (head (mono \"colbell\"))"
+      "var cage (head (mono \"colcage\"))"
+      "set-buffer! \"colstretch\" (* 0.7 (pvoc-stretch (take gong (* 3 sr)) 2.5)) sr       ; the gong two and a half times slower, same pitch"
+      "set-buffer! \"colreverse\" (reverse (take bell (* 4 sr))) sr                         ; the bell backwards"
+      "set-buffer! \"coldark\" (lowpass (take cage (* 4 sr)) sr 600 0.7) sr                 ; the prepared piano through a lowpass"
+      "var n (* 2 sr)"
+      "set-buffer! \"colsweep\" (* 0.3 (highpass (noise n) sr 3000 0.7) (bpf 0 (list (list sr 1) (list sr 0)))) sr   ; a noise swelling and fading"
+      "; --- the score: regions of the buffer~s, by name (a sound event of kind buffer) -------------------------------"
+      "var s (score \"collage\" sr)"
+      "function region (name at dur from az gain) {"
+      "    var e (score-add! s (record (list 'kind 'buffer 'source name 'at at 'dur dur 'from from 'az az 'gain gain)))"
+      "    return e"
+      "}"
+      "var plain (list (list \"colgong\" 4) (list \"colbell\" 4) (list \"colcage\" 6) (list \"colvox\" 6))   ; a buffer~ and how far a region may start in it"
+      "each (range 6) (function (k) {"
+      "    var b (pick plain)"
+      "    region (head b) (at-random 0 (- secs 5)) (at-random 1.5 4) (at-random 0 (last b)) (at-random -150 150) (at-random 0.4 0.8)"
+      "})"
+      "each (list \"colstretch\" \"colreverse\" \"coldark\") (function (b) (region b (at-random 0 (- secs 6)) (at-random 3 5) 0 (at-random -120 120) 0.6))"
+      "each (range 4) (function (k) (region \"colsweep\" (at-random 2 (- secs 2)) 2 0 (at-random -180 180) 0.5))"
+      "; --- notes: a handful from whichever instruments have sounds on disk ------------------------------------------"
+      "var here (db-instruments-available db)"
+      "each (range 10) (function (k) {"
+      "    var instr (pick here)"
+      "    var range (db-range db instr)"
+      "    var midi (+ (head range) (floor (* (rand) (+ 1 (- (last range) (head range))))))"
+      "    var e (event-at s (at-random 0 (- secs 3)) (at-random 0.5 2.5) (note db instr (midi->pitch midi) (pick (list 'pp 'mf 'ff)) 'ord) (at-random -90 90) 0)"
+      "    event-gain! e 0.5"
+      "})"
+      "print (length (score-events s)) \"events in\" secs \"s: regions of four recordings, three processed sounds, four sweeps, ten notes\""
+      "out 1 s"))
+  (obj cuc comment "the score in Musil: regions of buffer~s by name, pvoc-stretch, reverse, lowpass, notes" (pos 110 133))
+  (obj sc score collage 2 @size 560 220 (pos 20 172))
+  (obj tr transport 60 4 4 (pos 610 172))
+  (obj sp message play (pos 610 207))
+  (obj ss message stop (pos 655 207))
+  (obj cpl comment "play / stop" (pos 705 208))
+  (obj cbuf comment "the recordings, read by the script and placed by name" (pos 610 262))
+  (obj bcolgong buffer~ colgong gong_c_sharp.wav (pos 610 284))
+  (obj bcolbell buffer~ colbell archeos-bell.wav (pos 610 312))
+  (obj bcolcage buffer~ colcage cage.wav (pos 610 340))
+  (obj bcolvox buffer~ colvox Vox.wav (pos 610 368))
+  (obj cpro comment "what the script makes of them" (pos 610 402))
+  (obj bcolstretch buffer~ colstretch (pos 610 424))
+  (obj bcolreverse buffer~ colreverse (pos 740 424))
+  (obj bcoldark buffer~ coldark (pos 610 452))
+  (obj bcolsweep buffer~ colsweep (pos 740 452))
+  (obj sum +~ (pos 20 417))
+  (obj chall comment "the two channels summed, the volume ramped, then a hall (reverb~)" (pos 70 418))
+  (obj half *~ 0.6 (pos 20 447))
+  (obj lbv loadbang (pos 140 462))
+  (obj vol message "0.8 300" (pos 140 492))
+  (obj mute message "0 300" (pos 210 492))
+  (obj cvol comment "volume up, down" (pos 270 493))
+  (obj ramp line~ (pos 140 522))
+  (obj vca *~ (pos 20 557))
+  (obj rv reverb~ 0.25 2.5 (pos 20 587))
+  (obj dac dac~ (pos 20 622))
+  (connect dmic 0 c 1)
+  (connect dful 0 c 1)
+  (connect k1 0 c 0)
+  (connect k2 0 c 0)
+  (connect k3 0 c 0)
+  (connect lb 0 k1 0)
+  (connect c 0 sc 0)
+  (connect sp 0 sc 0)
+  (connect ss 0 sc 0)
+  (connect sc 0 sum 0)
+  (connect sc 1 sum 1)
+  (connect sum 0 half 0)
+  (connect half 0 vca 0)
+  (connect lbv 0 vol 0)
+  (connect vol 0 ramp 0)
+  (connect mute 0 ramp 0)
+  (connect ramp 0 vca 1)
+  (connect vca 0 rv 0)
+  (connect rv 0 dac 0)
+  (connect rv 1 dac 1))

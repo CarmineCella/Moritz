@@ -146,7 +146,13 @@ Moritz opens on the **browser**, the place to start:
   programming with Musil.
 - **Examples**, by category (the folders of `examples/`): first steps,
   synthesis, generative music, filters and effects, samples, spectral
-  processing, space, atoms and types, analysis and MIR, learning, MIDI, code.
+  processing, space, atoms and types, analysis and MIR, learning, MIDI, code,
+  orchestration, the sound editor, scores, the timeline, assisted composition
+  (rows, chords and voicings, micropolyphony, spectral pivots, textures,
+  rhythms, a Markov chain, random music and collage, a chorale by hand, scores
+  in scores, notation, temperament: each a code box writing the score in Musil
+  for a score box) and pieces (Grisey's Partiels and Modulations, Ligeti's
+  Atmosphères, Haas's in vain, simulated with the orchestral granulator).
   Each one says what it shows at the top. Musil's own examples are in
   `musil/examples`.
 - **Objects**: every object with its reference (arguments, messages, inlets,

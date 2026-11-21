@@ -1,0 +1,87 @@
+; rhythms.moritz - rhythms and lines, from Musil's algorithmic_comp.mu: three random walks, each
+; note within three semitones of the one before (walk); a chord arpeggiated up, down and up a whole
+; tone higher each time (arpeggio); a polyrhythm, a notes against b in every two beats on the oboe
+; and the horn (polyrhythm of two tuplets); under it a cello ostinato from a pattern
+; (rhythm-from-pattern "x..x.x..": x an attack, a dot a continuation), then the same augmented,
+; twice as slow (fragment-scale).
+; Try: 1. play; 2. another polyrhythm: 4 3, 5 4, 7 4 (the oboe's notes, then the horn's, in every
+; two beats); 3. double-click the score box, Roll: the two lines of the polyrhythm one above the
+; other, their onsets meeting at every second beat; 4. double-click the code box: another pattern,
+; another step for the walks, Cmd-S, then a polyrhythm again.
+(patch
+  (obj title comment "rhythms: walks, arpeggios, a polyrhythm, an ostinato from a pattern and its augmentation" (pos 20 12))
+  (obj sub comment "a polyrhythm writes the score again; play" (pos 20 34))
+  (obj dmic message microsol (pos 20 62))
+  (obj dful message fullsol (pos 100 62))
+  (obj cds comment "the samples: MicroSOL (comes with Moritz: Ob Hn Vn Vc, C4-G4) or FullSOL (registered in Extras > Datasets...); then compose again" (pos 170 63))
+  (obj r1 message "3 2" (pos 150 97))
+  (obj r2 message "4 3" (pos 195 97))
+  (obj r3 message "5 4" (pos 240 97))
+  (obj r4 message "7 4" (pos 285 97))
+  (obj lb loadbang (pos 340 97))
+  (obj cctl comment "a against b" (pos 430 98))
+  (obj c code 2 1 (pos 20 132)
+    (script
+      "; rhythms and lines, from Musil's algorithmic_comp.mu: walks, arpeggios up and down, a polyrhythm, an ostinato from a"
+      "; pattern and its augmentation. in1 the polyrhythm (3 2: three against two), in2 the dataset"
+      "load \"music.mu\""
+      "var name (if (equal? in2 nil) \"microsol\" in2)     ; MicroSOL comes with Moritz: Ob Hn Vn Vc, C4-G4 (a sketch)"
+      "var db (db-load name)                             ; fullsol: FullSOL where you registered it (Extras > Datasets...)"
+      "var pr-of (if (equal? in1 nil) (list 3 2) (vec->list in1))"
+      "seed 6"
+      "var s (score \"rhythms\" 44100)"
+      "score-tempo! s 108                                  ; the times below in beats (add-beats!)"
+      "; 1. three random walks, a step of at most three semitones (0-6 beats)"
+      "add-beats! s 0 (walk db (list 'Ob 'Hn 'Vc) 'mf 'ord (list \"A4\" \"D#4\" \"G3\") 3 (rhythm (list 0.5 0.5 0.5 1 0.5 0.5 1)))"
+      "; 2. a chord arpeggiated up, down, up, a whole tone higher each time (6-12)"
+      "each (list 0 2 4) (function (k) (add-beats! s (+ 6 k) (arpeggio db 'Vn 'p 'ord (transpose-pitches (list \"C4\" \"F#4\" \"A#4\" \"E5\") k) 0.12 (if (== k 2) 'down 'up) 1)))"
+      "; 3. a polyrhythm: a against b in every two beats, four times (12-20)"
+      "var a (head pr-of)"
+      "var b (last pr-of)"
+      "var pr (polyrhythm (tuplet a 2) (tuplet b 2))"
+      "add-beats! s 12 (fragment-repeat (notes db 'Ob 'mf 'ord (take (list \"F5\" \"E5\" \"F#5\" \"D5\" \"G5\" \"C#5\" \"A5\") a) (head pr)) 4)"
+      "add-beats! s 12 (fragment-repeat (notes db 'Hn 'mf 'ord (take (list \"C#3\" \"G3\" \"D3\" \"A2\" \"E3\" \"B2\" \"F3\") b) (last pr)) 4)"
+      "; 4. an ostinato from a pattern (x an attack, . a continuation), then the same augmented (12-32)"
+      "var ost (notes db 'Vc 'pp 'ord (list \"B3\" \"F3\") (rhythm-from-pattern \"x..x.x..\" 0.25))"
+      "add-beats! s 12 (fragment-repeat ost 4)"
+      "add-beats! s 20 (fragment-scale (fragment-repeat ost 3) 2)"
+      "print a \"against\" b \": the oboe\" (join (map (head pr) (function (d) (fixed d 2))) \" \") \"beats, the horn\" (join (map (last pr) (function (d) (fixed d 2))) \" \")"
+      "out 1 s"))
+  (obj cuc comment "the score in Musil: walk, arpeggio, polyrhythm, rhythm-from-pattern" (pos 110 133))
+  (obj sc score rhythms 2 @size 640 220 (pos 20 172))
+  (obj tr transport 108 4 4 (pos 690 172))
+  (obj sp message play (pos 690 207))
+  (obj ss message stop (pos 735 207))
+  (obj cpl comment "play / stop" (pos 785 208))
+  (obj sum +~ (pos 20 417))
+  (obj chall comment "the two channels summed, the volume ramped, then a hall (reverb~)" (pos 70 418))
+  (obj half *~ 0.5 (pos 20 447))
+  (obj lbv loadbang (pos 140 462))
+  (obj vol message "0.8 300" (pos 140 492))
+  (obj mute message "0 300" (pos 210 492))
+  (obj cvol comment "volume up, down" (pos 270 493))
+  (obj ramp line~ (pos 140 522))
+  (obj vca *~ (pos 20 557))
+  (obj rv reverb~ 0.25 2.5 (pos 20 587))
+  (obj dac dac~ (pos 20 622))
+  (connect dmic 0 c 1)
+  (connect dful 0 c 1)
+  (connect r1 0 c 0)
+  (connect r2 0 c 0)
+  (connect r3 0 c 0)
+  (connect r4 0 c 0)
+  (connect lb 0 r1 0)
+  (connect c 0 sc 0)
+  (connect sp 0 sc 0)
+  (connect ss 0 sc 0)
+  (connect sc 0 sum 0)
+  (connect sc 1 sum 1)
+  (connect sum 0 half 0)
+  (connect half 0 vca 0)
+  (connect lbv 0 vol 0)
+  (connect vol 0 ramp 0)
+  (connect mute 0 ramp 0)
+  (connect ramp 0 vca 1)
+  (connect vca 0 rv 0)
+  (connect rv 0 dac 0)
+  (connect rv 1 dac 1))

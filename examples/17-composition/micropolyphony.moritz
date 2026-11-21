@@ -1,0 +1,77 @@
+; micropolyphony.moritz - micropolyphony after Ligeti (the Kammerkonzert, Lontano), from Musil's
+; algorithmic_comp.mu: one chromatic line within a major third, played by four instruments at speeds
+; close together (texture-staggered), entering one after another, pianissimo, kept going for
+; fourteen seconds and thinned towards its end (fragment-density). Where the speeds are close the
+; lines are heard as a canon; further apart they blur into a moving cluster, which is what Ligeti
+; wanted heard: a texture, not lines.
+; Try: 1. play; 2. 0.02: the four lines nearly together, a canon whose voices drift slowly apart;
+; 0.07, a web; 0.2, a cloud; 3. double-click the score box: the roll, the four staves; Piano roll at
+; the window's top shows the cluster as one band; 4. double-click the code box: change the line
+; (cluster) or the rhythm (fast), Cmd-S, then a spacing again.
+(patch
+  (obj title comment "micropolyphony: one line, four speeds close together, a canon blurred into a texture" (pos 20 12))
+  (obj sub comment "how far apart the speeds are writes the score again; play; double-click the score for the roll" (pos 20 34))
+  (obj dmic message microsol (pos 20 62))
+  (obj dful message fullsol (pos 100 62))
+  (obj cds comment "the samples: MicroSOL (comes with Moritz: Ob Hn Vn Vc, C4-G4) or FullSOL (registered in Extras > Datasets...); then compose again" (pos 170 63))
+  (obj a1 message 0.02 (pos 150 97))
+  (obj a2 message 0.07 (pos 195 97))
+  (obj a3 message 0.2 (pos 240 97))
+  (obj lb loadbang (pos 295 97))
+  (obj cctl comment "how far apart the four speeds are" (pos 385 98))
+  (obj c code 2 1 (pos 20 132)
+    (script
+      "; micropolyphony after Ligeti (Kammerkonzert), from Musil's algorithmic_comp.mu: one chromatic line played by"
+      "; four instruments at speeds close together, entering one after another, pp, thinned towards its end."
+      "; in1 how far apart the speeds are (0.07: the second line 7% slower than the first, the third 14%...), in2 the dataset"
+      "load \"music.mu\""
+      "var name (if (equal? in2 nil) \"microsol\" in2)     ; MicroSOL comes with Moritz: Ob Hn Vn Vc, C4-G4 (a sketch)"
+      "var db (db-load name)                             ; fullsol: FullSOL where you registered it (Extras > Datasets...)"
+      "var apart (if (equal? in1 nil) 0.07 in1)"
+      "seed 3"
+      "var cluster (list \"F4\" \"F#4\" \"E4\" \"G4\" \"D#4\" \"G#4\" \"E4\" \"F#4\" \"F4\" \"D4\")   ; a line within a major third"
+      "var fast (beats 108 (rhythm (list 0.25 0.25 0.25 0.5 0.25 0.25 0.75 0.25)))"
+      "var scales (map (vec->list (range 4)) (function (k) (+ 1 (* k apart))))"
+      "var web (fragment-until (texture-staggered db (list 'Ob 'Hn 'Vn 'Vc) 'pp 'ord cluster fast scales (list 0 0.4 0.8 1.2)) 14)"
+      "var thin (fragment-density (fragment-articulate web 0.9) (list 1 1 1 1 0.9 0.7 0.5 0.3))   ; thinning out at its end"
+      "var s (score \"web\" 44100)"
+      "add! s 0 (fragment-gain thin 0.6 1)"
+      "print \"four lines, speeds\" (join (map scales (function (x) (fixed x 2))) \" \") \":\" (length thin) \"notes in\" (fixed (fragment-duration thin) 1) \"s\""
+      "out 1 s"))
+  (obj cuc comment "the score in Musil: texture-staggered, fragment-density" (pos 110 133))
+  (obj sc score web 2 @size 640 220 (pos 20 172))
+  (obj tr transport 108 4 4 (pos 690 172))
+  (obj sp message play (pos 690 207))
+  (obj ss message stop (pos 735 207))
+  (obj cpl comment "play / stop" (pos 785 208))
+  (obj sum +~ (pos 20 417))
+  (obj chall comment "the two channels summed, the volume ramped, then a hall (reverb~)" (pos 70 418))
+  (obj half *~ 0.5 (pos 20 447))
+  (obj lbv loadbang (pos 140 462))
+  (obj vol message "0.8 300" (pos 140 492))
+  (obj mute message "0 300" (pos 210 492))
+  (obj cvol comment "volume up, down" (pos 270 493))
+  (obj ramp line~ (pos 140 522))
+  (obj vca *~ (pos 20 557))
+  (obj rv reverb~ 0.25 2.5 (pos 20 587))
+  (obj dac dac~ (pos 20 622))
+  (connect dmic 0 c 1)
+  (connect dful 0 c 1)
+  (connect a1 0 c 0)
+  (connect a2 0 c 0)
+  (connect a3 0 c 0)
+  (connect lb 0 a2 0)
+  (connect c 0 sc 0)
+  (connect sp 0 sc 0)
+  (connect ss 0 sc 0)
+  (connect sc 0 sum 0)
+  (connect sc 1 sum 1)
+  (connect sum 0 half 0)
+  (connect half 0 vca 0)
+  (connect lbv 0 vol 0)
+  (connect vol 0 ramp 0)
+  (connect mute 0 ramp 0)
+  (connect ramp 0 vca 1)
+  (connect vca 0 rv 0)
+  (connect rv 0 dac 0)
+  (connect rv 1 dac 1))

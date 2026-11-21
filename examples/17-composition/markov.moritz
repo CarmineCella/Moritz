@@ -1,0 +1,102 @@
+; markov.moritz - a Markov chain: the soprano of a Bach chorale ("O Haupt voll Blut und Wunden", BWV
+; 244/54, its first phrase twice) learnt as transitions (markov-learn: for each pitch, the pitches
+; that followed it, a repeated one weighing more), and its durations the same way; then three
+; melodies walked through the tables, each next pitch drawn among those that followed the last. The
+; original on the oboe, the three on the violin: they keep the chorale's steps and its notes, never
+; its phrase. The Console prints the table. orchidea's granular mode has a method markov too
+; (granular-methods.moritz in examples/13-orchestration): a line learnt, an orchestra walking it.
+; Try: 1. play: the chorale's line, then three melodies of the chain; 2. another seed: three other
+; melodies; 3. double-click the code box: another line to learn (soprano, lengths), or learn from
+; two lines (markov-learn takes a list of them), Cmd-S, then a seed again.
+(patch
+  (obj title comment "a Markov chain learnt from a chorale's melody, walked to make new ones" (pos 20 12))
+  (obj sub comment "a seed walks three other melodies; play: the original on the oboe, then the chain on the violin" (pos 20 34))
+  (obj dmic message microsol (pos 20 62))
+  (obj dful message fullsol (pos 100 62))
+  (obj cds comment "the samples: MicroSOL (comes with Moritz: Ob Hn Vn Vc, C4-G4) or FullSOL (registered in Extras > Datasets...); then compose again" (pos 170 63))
+  (obj m1 message 1 (pos 150 97))
+  (obj m2 message 2 (pos 185 97))
+  (obj m3 message 3 (pos 220 97))
+  (obj m4 message 4 (pos 255 97))
+  (obj lb loadbang (pos 300 97))
+  (obj cctl comment "a seed: other melodies" (pos 390 98))
+  (obj c code 2 1 (pos 20 132)
+    (script
+      "; a Markov chain: the soprano of the chorale \"O Haupt voll Blut und Wunden\" (as Bach harmonised it, BWV 244/54, the"
+      "; first phrase twice) learnt as transitions, pitch to pitch (markov-learn: which pitches followed each, how often),"
+      "; then new melodies walked through the table, each next pitch drawn among those that followed the last one; the"
+      "; durations learnt and drawn the same way. in1 a seed (another melody), in2 the dataset"
+      "load \"music.mu\""
+      "var name (if (equal? in2 nil) \"microsol\" in2)     ; MicroSOL comes with Moritz: Ob Hn Vn Vc, C4-G4 (a sketch)"
+      "var db (db-load name)                             ; fullsol: FullSOL where you registered it (Extras > Datasets...)"
+      "seed (if (equal? in1 nil) 1 in1)"
+      "var q 0.6                                          ; a quarter, in seconds"
+      "var soprano (map (list \"A4\" \"D5\" \"C5\" \"A#4\" \"A4\" \"A4\" \"A4\" \"D5\" \"C5\" \"A#4\" \"A4\" \"A4\" \"G4\" \"A4\" \"A#4\" \"A4\" \"G4\" \"F4\" \"E4\" \"D4\") pitch->number)"
+      "var lengths (list 1 1 1 1 1 2 1 1 1 1 1 2 1 1 1 1 1 1 1 2)                   ; in quarters"
+      "var pitch-table (markov-learn (list soprano))                                 ; a record: a pitch -> the pitches after it"
+      "var dur-table (markov-learn (list lengths))"
+      "print \"learnt: after each pitch, the pitches that followed it\""
+      "each (keys pitch-table) (function (p) (print \"  \" (midi->pitch p) \"->\" (join (map (get pitch-table p) midi->pitch) \" \")))"
+      "; a walk through a table: the next value drawn among those that followed the last (repeats weigh more); a value"
+      "; never followed (the end of the line) starts again from the first"
+      "function walk-table (table first n) {"
+      "    var out (list first)"
+      "    var here first"
+      "    each (range (- n 1)) (function (k) {"
+      "        var next (opt table here nil)"
+      "        set here (if (equal? next nil) first (getidx next (floor (* (rand) (length next)))))"
+      "        push out here"
+      "    })"
+      "    return out"
+      "}"
+      "var s (score \"markov\" 44100)"
+      "score-tempo! s 100"
+      "; the original on the oboe, then three melodies of the chain on the violin, each sixteen notes"
+      "add! s 0 (notes db 'Ob 'mf 'ord soprano (map lengths (function (d) (* d q))))"
+      "var t (+ 1 (* q (sum lengths)))"
+      "each (range 3) (function (k) {"
+      "    var ps (walk-table pitch-table (head soprano) 16)"
+      "    var ds (map (walk-table dur-table 1 16) (function (d) (* d q)))"
+      "    add! s t (notes db 'Vn (if (== k 1) 'p 'mf) 'ord ps ds)"
+      "    print \"melody\" (+ k 1) \":\" (join (map ps midi->pitch) \" \")"
+      "    set t (+ t (sum ds) (* 2 q))"
+      "})"
+      "out 1 s"))
+  (obj cuc comment "the score in Musil: markov-learn, a walk through its table" (pos 110 133))
+  (obj sc score markov 2 @size 640 220 (pos 20 172))
+  (obj tr transport 100 4 4 (pos 690 172))
+  (obj sp message play (pos 690 207))
+  (obj ss message stop (pos 735 207))
+  (obj cpl comment "play / stop" (pos 785 208))
+  (obj sum +~ (pos 20 417))
+  (obj chall comment "the two channels summed, the volume ramped, then a hall (reverb~)" (pos 70 418))
+  (obj half *~ 0.5 (pos 20 447))
+  (obj lbv loadbang (pos 140 462))
+  (obj vol message "0.8 300" (pos 140 492))
+  (obj mute message "0 300" (pos 210 492))
+  (obj cvol comment "volume up, down" (pos 270 493))
+  (obj ramp line~ (pos 140 522))
+  (obj vca *~ (pos 20 557))
+  (obj rv reverb~ 0.25 2.5 (pos 20 587))
+  (obj dac dac~ (pos 20 622))
+  (connect dmic 0 c 1)
+  (connect dful 0 c 1)
+  (connect m1 0 c 0)
+  (connect m2 0 c 0)
+  (connect m3 0 c 0)
+  (connect m4 0 c 0)
+  (connect lb 0 m1 0)
+  (connect c 0 sc 0)
+  (connect sp 0 sc 0)
+  (connect ss 0 sc 0)
+  (connect sc 0 sum 0)
+  (connect sc 1 sum 1)
+  (connect sum 0 half 0)
+  (connect half 0 vca 0)
+  (connect lbv 0 vol 0)
+  (connect vol 0 ramp 0)
+  (connect mute 0 ramp 0)
+  (connect ramp 0 vca 1)
+  (connect vca 0 rv 0)
+  (connect rv 0 dac 0)
+  (connect rv 1 dac 1))

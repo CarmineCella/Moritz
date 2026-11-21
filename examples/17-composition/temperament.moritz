@@ -1,0 +1,101 @@
+; temperament.moritz - tempered and just, after Musil's music_theory.mu: a scale from C4 in equal
+; temperament (each semitone a ratio of 2 to the 1/12), then the same scale in just intonation (each
+; degree a ratio of small numbers: 9/8, 5/4, 4/3, 3/2, 5/3, 15/8), each note its tempered pitch and
+; the cents to the just one (the roll shows them: the just major third 14 cents lower, the sixth 16,
+; the seventh 12); then a major triad held, tempered on the horn, just on the cello: the tempered
+; third beats, the just one is still. The Console prints each degree's frequencies and cents.
+; Try: 1. play; 2. another mode: minor (its just minor third 16 cents higher), dorian, pentatonic,
+; wholetone (whose just tritone and seventh are far from the tempered ones); 3. double-click the
+; score box: the cents by each note; select one and Alt+Up or Alt+Down to tune it by ear; 4.
+; double-click the code box: other ratios (the seventh as 7/4, Haas's and Grisey's), Cmd-S, then a
+; mode.
+(patch
+  (obj title comment "tempered and just: a scale and a triad in equal temperament and in just intonation" (pos 20 12))
+  (obj sub comment "a mode writes the score again; play; the roll shows each just note's cents" (pos 20 34))
+  (obj dmic message microsol (pos 20 62))
+  (obj dful message fullsol (pos 100 62))
+  (obj cds comment "the samples: MicroSOL (comes with Moritz: Ob Hn Vn Vc, C4-G4) or FullSOL (registered in Extras > Datasets...); then compose again" (pos 170 63))
+  (obj o1 message "mode major" (pos 150 97))
+  (obj o2 message "mode minor" (pos 240 97))
+  (obj o3 message "mode dorian" (pos 330 97))
+  (obj o4 message "mode pentatonic" (pos 425 97))
+  (obj o5 message "mode wholetone" (pos 545 97))
+  (obj lb loadbang (pos 670 97))
+  (obj c code 2 1 (pos 20 132)
+    (script
+      "; tempered and just, after Musil's music_theory.mu: a scale from a root in equal temperament (each semitone 2^(1/12)),"
+      "; then the same scale in just intonation (each degree a ratio of small numbers: 9/8, 5/4, 4/3, 3/2...), the cents"
+      "; between them set on the notes (the roll shows them); then a major triad tempered and just, held, so the beating of"
+      "; the tempered third is heard against the still just one. in1 the mode (major, minor, dorian, pentatonic,"
+      "; wholetone), in2 the dataset"
+      "load \"music.mu\""
+      "var name (if (equal? in2 nil) \"microsol\" in2)     ; MicroSOL comes with Moritz: Ob Hn Vn Vc, C4-G4 (a sketch)"
+      "var db (db-load name)                             ; fullsol: FullSOL where you registered it (Extras > Datasets...)"
+      "var mode (if (equal? in1 nil) \"major\" (str (if (equal? (type in1) \"list\") (last in1) in1)))"
+      "var root 60                                       ; C4"
+      "function midi-to-hz (n) (* 440 (pow 2 (/ (- n 69) 12)))"
+      "function cents-of (ratio) (* 1200 (log2 ratio))"
+      "var modes (record (list 'major (list 0 2 4 5 7 9 11 12) 'minor (list 0 2 3 5 7 8 10 12) 'dorian (list 0 2 3 5 7 9 10 12)"
+      "                        'pentatonic (list 0 2 4 7 9 12) 'wholetone (list 0 2 4 6 8 10 12)))"
+      "; the just ratio of each tempered step (5-limit; the tritone 45/32, the minor seventh 9/5... as Zarlino's)"
+      "var just (list 1 (/ 16 15) (/ 9 8) (/ 6 5) (/ 5 4) (/ 4 3) (/ 45 32) (/ 3 2) (/ 8 5) (/ 5 3) (/ 9 5) (/ 15 8) 2)"
+      "var steps (opt modes (sym mode) (get modes 'major))"
+      "var q 0.5"
+      "var s (score \"temperament\" 44100)"
+      "; 1. the scale tempered, up (the violin)"
+      "each (range (length steps)) (function (k) (event s (* k q) (* 0.9 q) (note db 'Vn (+ root (getidx steps k)) 'mf 'ord)))"
+      "; 2. the same scale just, up: each note its tempered pitch and the cents to the just ratio (the violin)"
+      "var t0 (* q (+ 1 (length steps)))"
+      "each (range (length steps)) (function (k) {"
+      "    var st (getidx steps k)"
+      "    var c (- (cents-of (getidx just st)) (* 100 st))"
+      "    event s (+ t0 (* k q)) (* 0.9 q) (note-cents! (note db 'Vn (+ root st) 'mf 'ord) (round c))"
+      "})"
+      "; 3. a major triad held: tempered (the horn), then just (the cello: E 14 cents low, G 2 high)"
+      "var t1 (+ t0 (* q (+ 1 (length steps))))"
+      "function just-cents-of (st) (round (- (cents-of (getidx just st)) (* 100 st)))"
+      "each (list 0 4 7) (function (st) (event s t1 3 (note db 'Hn (+ root st) 'p 'ord)))"
+      "each (list 0 4 7) (function (st) (event s (+ t1 3.5) 3 (note-cents! (note db 'Vc (+ root st) 'p 'ord) (just-cents-of st))))"
+      "print \"mode\" mode \":\""
+      "each steps (function (st) (print \"  \" (midi->pitch (+ root st)) \"tempered\" (fixed (midi-to-hz (+ root st)) 2) \"Hz, just\" (fixed (* (midi-to-hz root) (getidx just st)) 2) \"Hz:\" (fixed (- (cents-of (getidx just st)) (* 100 st)) 1) \"cents\"))"
+      "print \"fifth: just\" (fixed (/ 3 2) 4) \"tempered\" (fixed (pow 2 (/ 7 12)) 4) \"; major third: just\" (fixed (/ 5 4) 4) \"tempered\" (fixed (pow 2 (/ 4 12)) 4)"
+      "out 1 s"))
+  (obj cuc comment "the score in Musil: tempered pitches, just ratios as cents on the notes (note-cents!)" (pos 110 133))
+  (obj sc score temperament 2 @size 640 220 (pos 20 172))
+  (obj tr transport 120 4 4 (pos 690 172))
+  (obj sp message play (pos 690 207))
+  (obj ss message stop (pos 735 207))
+  (obj cpl comment "play / stop" (pos 785 208))
+  (obj sum +~ (pos 20 417))
+  (obj chall comment "the two channels summed, the volume ramped, then a hall (reverb~)" (pos 70 418))
+  (obj half *~ 0.3 (pos 20 447))
+  (obj lbv loadbang (pos 140 462))
+  (obj vol message "0.8 300" (pos 140 492))
+  (obj mute message "0 300" (pos 210 492))
+  (obj cvol comment "volume up, down" (pos 270 493))
+  (obj ramp line~ (pos 140 522))
+  (obj vca *~ (pos 20 557))
+  (obj rv reverb~ 0.25 2.5 (pos 20 587))
+  (obj dac dac~ (pos 20 622))
+  (connect dmic 0 c 1)
+  (connect dful 0 c 1)
+  (connect o1 0 c 0)
+  (connect o2 0 c 0)
+  (connect o3 0 c 0)
+  (connect o4 0 c 0)
+  (connect o5 0 c 0)
+  (connect lb 0 o1 0)
+  (connect c 0 sc 0)
+  (connect sp 0 sc 0)
+  (connect ss 0 sc 0)
+  (connect sc 0 sum 0)
+  (connect sc 1 sum 1)
+  (connect sum 0 half 0)
+  (connect half 0 vca 0)
+  (connect lbv 0 vol 0)
+  (connect vol 0 ramp 0)
+  (connect mute 0 ramp 0)
+  (connect ramp 0 vca 1)
+  (connect vca 0 rv 0)
+  (connect rv 0 dac 0)
+  (connect rv 1 dac 1))

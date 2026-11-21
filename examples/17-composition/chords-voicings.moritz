@@ -1,0 +1,103 @@
+; chords-voicings.moritz - chords from a row, voiced and interpolated, after Musil's
+; algorithmic_comp.mu and chords.mu: the row cut into three tetrachords, each voiced close (as
+; given), open (every other voice an octave up), drop2 (the second from the top an octave down) or
+; spread (each voice an octave above the one before) on the horn; then the first chord moved to the
+; last in eight steps as pitch sets, each voice to its nearest pitch (the violin), and the last to
+; the second with an easing, slow then fast (the cello). The Console says what set theory says of
+; each chord: its normal form and interval vector (chords.mu's functions, in the script).
+; Try: 1. play; 2. another voicing: the chords change, the interpolations stay; 3. double-click the
+; score box: the roll; the chords' notes on the horn's staff, the steps of the interpolations; 4.
+; double-click the code box: another row (its first twelve notes make the chords), or
+; chord-voicing's (list 'invert 1), then Cmd-S and a voicing again.
+(patch
+  (obj title comment "chords: voiced close, open, drop2 or spread; interpolated as sets and with an easing" (pos 20 12))
+  (obj sub comment "a voicing writes the score again; play; the Console says each chord's normal form and interval vector" (pos 20 34))
+  (obj dmic message microsol (pos 20 62))
+  (obj dful message fullsol (pos 100 62))
+  (obj cds comment "the samples: MicroSOL (comes with Moritz: Ob Hn Vn Vc, C4-G4) or FullSOL (registered in Extras > Datasets...); then compose again" (pos 170 63))
+  (obj v1 message "voicing close" (pos 150 97))
+  (obj v2 message "voicing open" (pos 245 97))
+  (obj v3 message "voicing drop2" (pos 340 97))
+  (obj v4 message "voicing spread" (pos 440 97))
+  (obj lb loadbang (pos 555 97))
+  (obj cctl comment "how the chords are voiced" (pos 645 98))
+  (obj c code 2 1 (pos 20 132)
+    (script
+      "; chords from a row, voiced and interpolated, after Musil's algorithmic_comp.mu and chords.mu: in1 the voicing"
+      "; (close, open, drop2, spread), in2 the dataset (microsol until another is sent)"
+      "load \"music.mu\""
+      "var name (if (equal? in2 nil) \"microsol\" in2)     ; MicroSOL comes with Moritz: Ob Hn Vn Vc, C4-G4 (a sketch)"
+      "var db (db-load name)                             ; fullsol: FullSOL where you registered it (Extras > Datasets...)"
+      "var voicing (if (equal? in1 nil) 'open (sym (if (equal? (type in1) \"list\") (last in1) in1)))   ; \"voicing open\": the last word"
+      "var row (list \"E4\" \"F4\" \"G#4\" \"D4\" \"C#4\" \"A4\" \"A#4\" \"G4\" \"B4\" \"C4\" \"D#4\" \"F#4\")"
+      "var tetra (list (take row 4) (take (drop row 4) 4) (drop row 8))          ; three tetrachords: the row in three"
+      "var s (score \"chords\" 44100)"
+      "score-tempo! s 72"
+      "; 1. the three tetrachords, each voiced the chosen way, four beats each (the horn)"
+      "var voiced (map tetra (function (c) (chord-voicing c voicing)))"
+      "add-beats! s 0 (chords db 'Hn 'p 'ord voiced (rhythm (list 4 4 4)))"
+      "; 2. the first interpolated into the last as pitch sets, in eight steps: each voice to the nearest pitch (the violin)"
+      "add-beats! s 12 (chordinterp-sets db 'Vn 'p 'ord (getidx tetra 0) (getidx tetra 2) (tuplet 8 12))"
+      "; 3. the last into the second with an easing: slow, then fast (the cello)"
+      "add-beats! s 24 (chordinterp-ease db 'Vc 'p 'ord (getidx tetra 2) (getidx tetra 1) (tuplet 8 12) 2.5)"
+      ""
+      "; what set theory says of each chord (chords.mu): its pitch classes, its normal form and interval vector"
+      "function pcs (c) (sort-list (unique (map c (function (p) (mod (pitch->number p) 12)))))"
+      "function normal-form (s) {"
+      "    var n (length s)"
+      "    var rots (map (vec->list (range n)) (function (k) (map (concat-list (drop s k) (take s k)) (function (x) (mod (+ 12 (- x (getidx s k))) 12)))))"
+      "    return (min-by rots last)"
+      "}"
+      "function interval-vector (s) {"
+      "    var iv (list 0 0 0 0 0 0)"
+      "    each (range (length s)) (function (a) {"
+      "        each (range (+ a 1) (length s)) (function (b) {"
+      "            var d (mod (abs (- (getidx s a) (getidx s b))) 12)"
+      "            var ic (min d (- 12 d))"
+      "            set iv (map (vec->list (range 6)) (function (j) (+ (getidx iv j) (if (== j (- ic 1)) 1 0))))"
+      "        })"
+      "    })"
+      "    return iv"
+      "}"
+      "print \"voicing:\" voicing"
+      "each tetra (function (c) (print (join (map c str) \" \") \"-> voiced\" (join (map (chord-voicing c voicing) midi->pitch) \" \")"
+      "                                \"| normal form\" (normal-form (pcs c)) \"| interval vector\" (interval-vector (pcs c))))"
+      "out 1 s"))
+  (obj cuc comment "the score in Musil: chords, chordinterp-sets, chordinterp-ease" (pos 110 133))
+  (obj sc score chords 2 @size 640 220 (pos 20 172))
+  (obj tr transport 72 4 4 (pos 690 172))
+  (obj sp message play (pos 690 207))
+  (obj ss message stop (pos 735 207))
+  (obj cpl comment "play / stop" (pos 785 208))
+  (obj sum +~ (pos 20 417))
+  (obj chall comment "the two channels summed, the volume ramped, then a hall (reverb~)" (pos 70 418))
+  (obj half *~ 0.3 (pos 20 447))
+  (obj lbv loadbang (pos 140 462))
+  (obj vol message "0.8 300" (pos 140 492))
+  (obj mute message "0 300" (pos 210 492))
+  (obj cvol comment "volume up, down" (pos 270 493))
+  (obj ramp line~ (pos 140 522))
+  (obj vca *~ (pos 20 557))
+  (obj rv reverb~ 0.25 2.5 (pos 20 587))
+  (obj dac dac~ (pos 20 622))
+  (connect dmic 0 c 1)
+  (connect dful 0 c 1)
+  (connect v1 0 c 0)
+  (connect v2 0 c 0)
+  (connect v3 0 c 0)
+  (connect v4 0 c 0)
+  (connect lb 0 v2 0)
+  (connect c 0 sc 0)
+  (connect sp 0 sc 0)
+  (connect ss 0 sc 0)
+  (connect sc 0 sum 0)
+  (connect sc 1 sum 1)
+  (connect sum 0 half 0)
+  (connect half 0 vca 0)
+  (connect lbv 0 vol 0)
+  (connect vol 0 ramp 0)
+  (connect mute 0 ramp 0)
+  (connect ramp 0 vca 1)
+  (connect vca 0 rv 0)
+  (connect rv 0 dac 0)
+  (connect rv 1 dac 1))

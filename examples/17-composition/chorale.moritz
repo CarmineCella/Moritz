@@ -1,0 +1,122 @@
+; chorale.moritz - a score written by hand, event by event, after Musil's simple_score.mu: the first
+; phrase of the chorale "O Haupt voll Blut und Wunden" as Bach harmonised it (BWV 244/54, in D
+; minor), soprano on the violin, alto on the oboe, tenor on the horn, bass on the cello, one note a
+; voice and a beat; then the cadence again as a chord event (one instrument, several pitches: in
+; Moritz its notes), and the other kinds of event: a sound file (the gong), a buffer~ the script
+; writes (a D4 sine) placed by name, two notes with no sample (row pluck), which leave the score's
+; notes outlet for the small synth at the right.
+; Try: 1. play; 2. another tempo: the score written again at 72 or 132 quarters a minute; 3.
+; double-click the score box: the four voices on their staves, the gong and the sine on lines of
+; their own; Timeline: every kind of event as a clip; 4. double-click the code box: harmonise
+; another phrase (voices beat duration soprano alto tenor bass), Cmd-S, then a tempo.
+(patch
+  (obj title comment "a chorale written by hand, then every other kind of event a score holds" (pos 20 12))
+  (obj sub comment "a tempo writes the score again; play; the notes of row pluck go to the synth at the right" (pos 20 34))
+  (obj dmic message microsol (pos 20 62))
+  (obj dful message fullsol (pos 100 62))
+  (obj cds comment "the samples: MicroSOL (comes with Moritz: Ob Hn Vn Vc, C4-G4) or FullSOL (registered in Extras > Datasets...); then compose again" (pos 170 63))
+  (obj q1 message 72 (pos 150 97))
+  (obj q2 message 100 (pos 190 97))
+  (obj q3 message 132 (pos 235 97))
+  (obj lb loadbang (pos 290 97))
+  (obj cctl comment "quarters a minute" (pos 380 98))
+  (obj c code 2 1 (pos 20 132)
+    (script
+      "; a score written by hand, event by event, after Musil's simple_score.mu: the first phrase of the chorale \"O Haupt"
+      "; voll Blut und Wunden\" as Bach harmonised it (BWV 244/54, D minor), the four voices on violin, oboe, horn and cello;"
+      "; then a chord event, a sound file, a buffer~ the script writes, and a note for the patch's synth. in1 the tempo"
+      "; (quarters a minute), in2 the dataset"
+      "load \"music.mu\""
+      "var name (if (equal? in2 nil) \"microsol\" in2)     ; MicroSOL comes with Moritz: Ob Hn Vn Vc, C4-G4 (a sketch)"
+      "var db (db-load name)                             ; fullsol: FullSOL where you registered it (Extras > Datasets...)"
+      "var bpm (if (equal? in1 nil) 100 in1)"
+      "var q (/ 60 bpm)                                  ; a quarter, in seconds"
+      "var s (score \"chorale\" 44100)"
+      "score-tempo! s bpm"
+      "; one event per voice and beat, each voice an instrument of the database (MicroSOL has only C4-G4 of each: most"
+      "; notes are its samples resampled; FullSOL plays every pitch from its own recording)"
+      "function voices (beat dur sop alt ten bas) {"
+      "    event-at s (* beat q) (* dur q) (note db 'Vn sop 'mf 'ord) 30 0"
+      "    event-at s (* beat q) (* dur q) (note db 'Ob alt 'mf 'ord) 10 0"
+      "    event-at s (* beat q) (* dur q) (note db 'Hn ten 'mf 'ord) -10 0"
+      "    event-at s (* beat q) (* dur q) (note db 'Vc bas 'mf 'ord) -30 0"
+      "}"
+      "voices 0 1 \"A4\" \"F4\" \"D4\" \"D3\"                   ; upbeat: D minor"
+      "voices 1 1 \"D5\" \"F4\" \"A3\" \"D3\"                   ; bar 1"
+      "voices 2 1 \"C5\" \"F4\" \"A3\" \"F3\""
+      "voices 3 1 \"A#4\" \"G4\" \"G3\" \"G3\""
+      "voices 4 1 \"A4\" \"F4\" \"C4\" \"F3\""
+      "voices 5 2 \"A4\" \"E4\" \"C4\" \"A2\"                   ; bar 2: the cadence on A"
+      "voices 7 1 \"A4\" \"E4\" \"C4\" \"A3\"                   ; the upbeat of the next phrase"
+      "voices 8 1 \"D5\" \"F4\" \"A3\" \"D3\""
+      "voices 9 1 \"C5\" \"F4\" \"A3\" \"F3\""
+      "voices 10 1 \"A#4\" \"G4\" \"G3\" \"G3\""
+      "voices 11 1 \"A4\" \"F4\" \"C4\" \"F3\""
+      "voices 12 2 \"A4\" \"E4\" \"C4\" \"A2\""
+      "; the cadence once more as a chord: one instrument, several pitches, one event (in Moritz its notes)"
+      "event-at s (* 14 q) (* 2 q) (chord db 'Vn 'p 'ord (list \"A4\" \"E4\" \"C4\")) 0 0"
+      "; --- the other kinds of event, after the chorale ---------------------------------------------------------------"
+      "var end (* 16.5 q)"
+      "event-at s end 2.5 \"../../data/gong_c_sharp.wav\" 0 20                    ; a sound file (named from the patch's folder)"
+      "set-buffer! \"chsine\" (* 0.3 (fade-out (sine 44100 293.66 1.5) 4000)) 44100  ; a D4 sine written into the buffer~ chsine..."
+      "score-add! s (record (list 'kind 'buffer 'source \"chsine\" 'at (+ end 1) 'dur 1.5))   ; ... and placed by its name"
+      "score-add! s (record (list 'kind 'note 'instr \"pluck\" 'midi 50 'dyn \"f\" 'at (+ end 2.5) 'dur 1))   ; a note with no sample: out of the notes outlet"
+      "score-add! s (record (list 'kind 'note 'instr \"pluck\" 'midi 57 'dyn \"mf\" 'at (+ end 3.2) 'dur 1.5))"
+      "print (length (score-events s)) \"events: the chorale, a chord, a sound file, a buffer~, two notes for the synth\""
+      "out 1 s"))
+  (obj cuc comment "the score in Musil: note by note (voices), a chord, a file, a buffer~ by name, notes for a synth" (pos 110 133))
+  (obj sc score chorale 2 @size 560 240 (pos 20 172))
+  (obj tr transport 100 4 4 (pos 610 172))
+  (obj sp message play (pos 610 207))
+  (obj ss message stop (pos 655 207))
+  (obj cpl comment "play / stop" (pos 705 208))
+  (obj bsine buffer~ chsine (pos 610 267))
+  (obj csine comment "the script writes a D4 sine here" (pos 710 268))
+  (obj csyn comment "the notes with no sample (row pluck) out of the notes outlet: a small synth" (pos 610 302))
+  (obj tl t l l (pos 610 327))
+  (obj up unpack 0 0 0 (pos 720 357))
+  (obj mt mtof (pos 720 387))
+  (obj osc tri~ (pos 720 417))
+  (obj env message "0.15 5, 0 $3" (pos 610 387))
+  (obj ln line~ (pos 610 417))
+  (obj sv *~ (pos 720 452))
+  (obj sum +~ (pos 20 437))
+  (obj chall comment "the two channels summed, the volume ramped, then a hall (reverb~)" (pos 70 438))
+  (obj half *~ 0.3 (pos 20 467))
+  (obj lbv loadbang (pos 140 482))
+  (obj vol message "0.8 300" (pos 140 512))
+  (obj mute message "0 300" (pos 210 512))
+  (obj cvol comment "volume up, down" (pos 270 513))
+  (obj ramp line~ (pos 140 542))
+  (obj vca *~ (pos 20 577))
+  (obj rv reverb~ 0.25 2.5 (pos 20 607))
+  (obj dac dac~ (pos 20 642))
+  (connect dmic 0 c 1)
+  (connect dful 0 c 1)
+  (connect q1 0 c 0)
+  (connect q2 0 c 0)
+  (connect q3 0 c 0)
+  (connect lb 0 q2 0)
+  (connect c 0 sc 0)
+  (connect sp 0 sc 0)
+  (connect ss 0 sc 0)
+  (connect sc 2 tl 0)
+  (connect tl 1 up 0)
+  (connect up 0 mt 0)
+  (connect mt 0 osc 0)
+  (connect tl 0 env 0)
+  (connect env 0 ln 0)
+  (connect osc 0 sv 0)
+  (connect ln 0 sv 1)
+  (connect sv 0 sum 0)
+  (connect sc 0 sum 0)
+  (connect sc 1 sum 1)
+  (connect sum 0 half 0)
+  (connect half 0 vca 0)
+  (connect lbv 0 vol 0)
+  (connect vol 0 ramp 0)
+  (connect mute 0 ramp 0)
+  (connect ramp 0 vca 1)
+  (connect vca 0 rv 0)
+  (connect rv 0 dac 0)
+  (connect rv 1 dac 1))
