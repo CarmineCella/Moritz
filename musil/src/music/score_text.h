@@ -10,6 +10,7 @@
 #pragma once
 #include "../core.h"
 #include "score.h"
+#include <filesystem>
 #include <fstream>
 #include <map>
 #include <sstream>
@@ -67,6 +68,73 @@ inline std::string resolveSource(const std::string& src, const std::string& scor
     if (!scoreDir.empty()) if (std::string f = in(scoreDir); !f.empty()) return f;
     for (auto& d : dirs) if (std::string f = in(d); !f.empty()) return f;
     return "";
+}
+
+// A file's path as a score in folder dir names it: relative to dir when it is in it, below it, or at most two folders
+// up (the score and its sounds move together), else absolute; links resolved, so /var and /private/var agree. The one
+// rule of every host that writes a score (Moritz's score object and its editors, Musil's score-write)
+inline std::string pathFor(const std::string& file, const std::string& dir) {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    auto real = [&](const std::string& p) {
+        fs::path a = fs::absolute(fs::path(p), ec);
+        fs::path c = fs::weakly_canonical(a, ec);
+        return (ec ? a : c).lexically_normal();
+    };
+    fs::path f = real(file), d = real(dir.empty() ? std::string(".") : dir);
+    fs::path rel = f.lexically_relative(d);
+    if (rel.empty() || f.root_name() != d.root_name()) return f.generic_string();
+    int up = 0;
+    for (const auto& part : rel) {
+        if (part == "..") ++up;
+        else break;
+    }
+    if (up > 2) return f.generic_string();
+    return rel.generic_string();
+}
+
+// A score's references (scores placed by reference, sound files, patch files, a note's own sample) named again for a
+// file in folder toDir, where they were named from folder fromDir: each relative one that is a file there becomes
+// pathFor of it from toDir (one found only on a host's search path is left as it is). The scores placed inside by
+// value are theirs too, at every depth (those placed by reference keep their own, relative to their own files). In
+// place; copySubs: the scores placed by value are copies first (s is a clone whose placed scores the original shares),
+// else they are changed in place too (the score itself moves to the other folder: saved there)
+inline void rebasePaths(Score& s, const std::string& fromDir, const std::string& toDir, bool copySubs = true, int depth = 0) {
+    if (fromDir.empty() || depth > 64) return;
+    namespace fs = std::filesystem;
+    if (fs::path(fromDir).lexically_normal() == fs::path(toDir).lexically_normal()) return;
+    auto again = [&](std::string& p) {
+        if (p.empty() || absolutePath(p)) return;
+        std::string f = normalPath(fromDir + "/" + p);
+        std::error_code ec;
+        if (fs::is_regular_file(f, ec)) p = pathFor(f, toDir);
+    };
+    for (auto& e : s.events()) {
+        switch (e->kind) {
+        case Kind::Sound:
+            if (!e->buffer) again(e->source);
+            break;
+        case Kind::Patch:
+            again(e->source);
+            break;
+        case Kind::Score:
+            if (!e->ref.empty()) again(e->ref);
+            else if (e->sub && copySubs) {
+                auto c = e->sub->clone();
+                rebasePaths(*c, fromDir, toDir, true, depth + 1);
+                e->sub = c;
+            } else if (e->sub) {
+                rebasePaths(*e->sub, fromDir, toDir, false, depth + 1);
+            }
+            break;
+        case Kind::Note:
+            for (auto& kv : e->extra)
+                if (kv.first == "sound" && (kv.second.kind == Datum::Str || kv.second.kind == Datum::Sym)) again(kv.second.s);
+            break;
+        default:
+            break;
+        }
+    }
 }
 
 namespace detail {
@@ -311,9 +379,18 @@ inline std::shared_ptr<Score> fromData(const vptr& form, const std::string& dir 
     return r.scoreForm(form);
 }
 
-// a score written to a file: a temporary file next to it, checked, then renamed over it
-inline void writeFile(const Score& s, const std::string& path) {
-    std::string text = toText(s);
+// a score written to a file: a temporary file next to it, checked, then renamed over it. Its references are relative
+// to fromDir (by default the folder of the file it was read from, s.path; "": none to change): written to a file in
+// another folder, they are named from there (rebasePaths), so the file reads back with its scores and sounds
+inline void writeFile(const Score& s, const std::string& path, const std::string& fromDir) {
+    std::string text;
+    if (!fromDir.empty() && folderOf(normalPath(path)) != normalPath(fromDir)) {
+        auto c = s.clone();
+        rebasePaths(*c, fromDir, folderOf(normalPath(path)));
+        text = toText(*c);
+    } else {
+        text = toText(s);
+    }
     std::string tmp = path + ".tmp";
     {
         std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
@@ -328,6 +405,7 @@ inline void writeFile(const Score& s, const std::string& path) {
     std::filesystem::rename(tmp, path, ec);
     if (ec) { std::remove(tmp.c_str()); throw Error("score: cannot write " + path + ": " + ec.message()); }
 }
+inline void writeFile(const Score& s, const std::string& path) { writeFile(s, path, s.path.empty() ? std::string() : folderOf(s.path)); }
 
 }  // namespace score
 }  // namespace musil

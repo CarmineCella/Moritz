@@ -630,6 +630,14 @@ printf '(patch\n  (obj s score v (pos 20 20)\n    (script "(score \\"v\\" (row F
 run "$T/audition.moritz" --window-png none act=roll:s act=rollclick:1 act=scstate
 expect "connected: out of the notes outlet" "status the note 62 out of the notes outlet"
 
+# 45. tutorial 13, step 10: the tune written to Documents/Moritz (another folder: the motif it places named from
+#     there), transposed, read back as it was written (it failed: the motif was named from the tutorial's folder)
+mkdir -p "$HOME/Documents/Moritz"
+run "$HERE/tutorials/13-scores.moritz" --window-png none "act=send:sc:write ~/Documents/Moritz/t13tune.score" \
+    "act=send:sc:transpose 2" act=roll:sc act=rollstate "act=send:sc:read ~/Documents/Moritz/t13tune.score" act=rollstate
+expect "transposed" "state: roll note 1 0 0.45 77"
+expect "read back as written" "state: roll note 1 0 0.45 75"
+
 rm -rf "$T"
 echo "$count interface cases, $fails failed"
 [ $fails -eq 0 ]

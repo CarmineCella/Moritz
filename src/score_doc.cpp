@@ -664,7 +664,7 @@ bool ScoreDoc::save(std::string& err) {
         return false;
     }
     try {
-        sc::writeFile(*score_, p);
+        sc::writeFile(*score_, p, folder());
     } catch (const std::exception& e) {
         err = e.what();
         return false;
@@ -685,12 +685,14 @@ bool ScoreDoc::saveAs(const std::string& given, std::string& err) {
         return true;
     }
     std::string p = sc::normalPath(given);
+    std::string from = folder();
     try {
-        sc::writeFile(*score_, p);
+        sc::writeFile(*score_, p, from);         // its references named from the new file's folder
     } catch (const std::exception& e) {
         err = e.what();
         return false;
     }
+    sc::rebasePaths(*score_, from, sc::folderOf(p), false);   // the score is that file's now: the same, named from there
     path_ = p;
     where_ = Where::File;
     score_->path = p;
@@ -704,7 +706,7 @@ bool ScoreDoc::saveAs(const std::string& given, std::string& err) {
 
 bool ScoreDoc::exportTo(const std::string& p, std::string& err) const {
     try {
-        sc::writeFile(*score_, p);
+        sc::writeFile(*score_, p, folder());     // its references named from the copy's folder
     } catch (const std::exception& e) {
         err = e.what();
         return false;

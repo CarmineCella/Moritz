@@ -258,7 +258,7 @@ arg channels: the signal outlets, 1 to 16 (2)
 arg @size w h: the box's size (360 by 150)
 arg @view v: the view its window opens in the first time: timeline, roll, piano or list (roll)
 msg read [file]: reads a .score file (its own again without a name)
-msg write [file]: writes it as a .score file, in the patch's folder or in ~/Documents/Moritz
+msg write [file]: writes it as a .score file, in the patch's folder or in ~/Documents/Moritz; the scores it places and its sounds are named from the file's folder (relative when near, else absolute), so it reads back whole
 msg clear: no events
 msg add note at dur row pitch [dyn [tech]]: a note (at and dur in seconds; the pitch a MIDI number or a name, G5)
 msg add at row pitch [dyn [tech]]: a note a beat long (the kind and the duration may be left out)

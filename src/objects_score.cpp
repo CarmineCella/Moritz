@@ -286,7 +286,7 @@ public:
             auto s = sc::readText(text, here());
             if (!name_.empty()) s->name = name_;
             score_ = s;
-        } catch (const std::exception& e) { if (patch) patch->print(std::string("score: ") + e.what()); }
+        } catch (const std::exception& e) { if (patch) complain(e); }
     }
     void attached() override {
         t_ = transportOf(patch);
@@ -527,6 +527,17 @@ private:
         return patch->resolvePath(src);
     }
 
+    // an error said once (Musil's errors already start with "score: ")
+    void complain(const std::exception& e) const {
+        if (!patch) return;
+        std::string m = e.what();
+        patch->print(m.rfind("score: ", 0) == 0 ? m : "score: " + m);
+    }
+    // the folder the score's relative references are named from: its file's, else the patch's
+    std::string referenceFolder() const {
+        if (!score_->path.empty()) return sc::folderOf(score_->path);
+        return patch ? dirOf(patch->resolvePath("x")) : std::string();
+    }
     void readFile(const std::string& f) {
         if (f.empty()) { patch->print("score: read what? (read file.score)"); return; }
         try {
@@ -535,7 +546,7 @@ private:
             dropSelection();
             score_ = s;
             edited();
-        } catch (const std::exception& e) { patch->print(std::string("score: ") + e.what()); }
+        } catch (const std::exception& e) { complain(e); }
     }
     bool writeFile(const std::string& f, std::string* errOut = nullptr) {
         auto fail = [&](const std::string& e) { if (errOut) *errOut = e; else patch->print("score: " + e); return false; };
@@ -549,10 +560,21 @@ private:
         if (std::string home = homeDir(); !home.empty()) roots.push_back(home + "/Documents/Moritz");
         if (!musil::path_under(musil::resolved_path(path), roots))
             return fail("not written: " + path + " is outside the patch's folder and ~/Documents/Moritz");
+        std::string from = referenceFolder();
         try {
-            sc::writeFile(*score_, path);            // (its document, if one is open, keeps its history)
-            score_->path = path;
-        } catch (const std::exception& e) { return fail(e.what()); }
+            sc::writeFile(*score_, path, from);      // its references named from the file's folder
+        } catch (const std::exception& e) {
+            std::string m = e.what();
+            return fail(m.rfind("score: ", 0) == 0 ? m.substr(7) : m);
+        }
+        if (sc::folderOf(sc::normalPath(path)) != sc::normalPath(from)) {   // the score is that file's now: named from there
+            auto c = score_->clone();
+            sc::rebasePaths(*c, from, sc::folderOf(sc::normalPath(path)));
+            c->path = path;
+            replace(c);
+        } else {
+            score_->path = path;                     // (its document, if one is open, keeps its history)
+        }
         return true;
     }
     // add [note] at dur row pitch [dyn [tech]] | add [note] at row pitch ... : the words read as the score file's (note
@@ -579,7 +601,7 @@ private:
                 s->insert(c);
             }
             replace(s);
-        } catch (const std::exception& e) { patch->print(std::string("score: ") + e.what()); }
+        } catch (const std::exception& e) { complain(e); }
     }
     // select all | none | id... | row name | time t0 t1
     void select(const Message& m) {
@@ -639,7 +661,7 @@ private:
         auto s = score_->clone();
         try {
             if (!applyTransform(*s, ids, t)) return;
-        } catch (const std::exception& e) { patch->print(std::string("score: ") + e.what()); return; }
+        } catch (const std::exception& e) { complain(e); return; }
         for (auto it = c.selection.begin(); it != c.selection.end();) it = s->find(*it) ? std::next(it) : c.selection.erase(it);
         replace(s);
     }
@@ -775,7 +797,7 @@ private:
         plan->sr = sr;
         std::vector<sc::Placed> flat;
         try { sc::flatten(*score_, flat); }
-        catch (const std::exception& e) { patch->print(std::string("score: ") + e.what()); flat.clear(); }
+        catch (const std::exception& e) { complain(e); flat.clear(); }
         const sc::Mixer mixer(*score_);           // the tracks' strips: each event plays on the row that placed it
         std::vector<Ctl> ctl;
         std::map<std::string, int> files, bufs;

@@ -6,6 +6,7 @@
 #include "rig.h"
 #include "gui.h"
 #include "preview.h"
+#include "score_doc.h"
 #include "transport.h"
 
 #include "music/score.h"
@@ -635,4 +636,94 @@ TEST(score_audition) {
     pv.collect();
     std::error_code ec;
     fs::remove_all(dir, ec);
+}
+
+// A score written to another folder keeps what it places: its relative references (a score placed by reference, a
+// sound file, a note's own sample, the same inside a score placed by value) are named from the new file's folder (near:
+// relative, far: absolute), so the file reads back whole, from the score object's write, a document's Save As and
+// export, and Musil's writer; the score object's errors are said once ("score: cannot open", not "score: score: ...")
+TEST(score_written_elsewhere_keeps_its_references) {
+    namespace fs = std::filesystem;
+    fs::path T = fs::weakly_canonical(fs::temp_directory_path()) / ("moritz_refs_" + std::to_string(std::rand()));
+    fs::create_directories(T / "lib");
+    fs::create_directories(T / "tut");
+    SampleBuffer b;
+    b.channels = 1;
+    b.sr = 44100;
+    b.frames = 100;
+    b.data.assign(100, 0.5f);
+    std::string err;
+    CHECK(writeWavFile((T / "lib" / "snd.wav").string(), b, err));
+    {
+        std::ofstream m(T / "lib" / "motif.score");
+        m << "(score \"motif\" (note 0 0.5 Fl 60) (note 0.5 0.5 Fl 62))";
+    }
+    // the patch's score names them from the patch's folder
+    std::string text =
+        "(score \"tune\" (note 0 1 Fl 67 mf (data sound \"../lib/snd.wav\"))"
+        " (score 1 \"../lib/motif.score\" (row Fl))"
+        " (sound 2 0.5 \"../lib/snd.wav\" (row drums))"
+        " (score 3 (score \"inner\" (sound 0 0.5 \"../lib/snd.wav\")) (dur 1) (row drums)))";
+    Rig r("");
+    r.p.dir = (T / "tut").string();
+    CHECK(r.p.load("(patch (obj s score tune 1) (obj p print w))", err));
+    give(r, "s", sc::readText(text, (T / "tut" / "score s").string()));   // as kept in the patch: named from its folder
+    auto check = [&](const fs::path& file, const char* what) {
+        std::shared_ptr<sc::Score> back;
+        try { back = sc::readFile(file.string()); } catch (const std::exception& e) { std::printf("  %s: %s\n", what, e.what()); }
+        CHECK(back != nullptr);
+        if (!back) return;
+        std::string dir = sc::folderOf(file.string());
+        int found = 0;
+        for (auto& e : back->events()) {
+            if (e->kind == sc::Kind::Score && !e->ref.empty()) found += e->sub && e->sub->size() == 2;
+            if (e->kind == sc::Kind::Sound) found += !sc::resolveSource(e->source, dir, {}).empty();
+            if (e->kind == sc::Kind::Note) found += !sc::resolveSource(sc::field(e->extra, "sound")->s, dir, {}).empty();
+            if (e->kind == sc::Kind::Score && e->ref.empty() && e->sub && e->sub->size() == 1)
+                found += !sc::resolveSource(e->sub->events()[0]->source, dir, {}).empty();
+        }
+        if (found != 4) std::printf("  %s: %d of 4 found\n", what, found);
+        CHECK(found == 4);
+    };
+    // the score object's write: below the patch's folder (relative), and far below it (absolute)
+    fs::create_directories(T / "tut" / "out");
+    fs::create_directories(T / "tut" / "a" / "b" / "c");
+    r.box("s")->message(0, {Atom("write"), Atom((T / "tut" / "out" / "w.score").string())});
+    CHECK(!r.printedSomething("score:"));
+    check(T / "tut" / "out" / "w.score", "write");
+    std::string written;
+    {
+        std::ifstream f(T / "tut" / "out" / "w.score");
+        written.assign(std::istreambuf_iterator<char>(f), {});
+    }
+    CHECK(written.find("\"../../lib/motif.score\"") != std::string::npos);
+    r.box("s")->message(0, {Atom("read"), Atom((T / "tut" / "out" / "w.score").string())});   // and read back: whole
+    CHECK(!r.printedSomething("score:"));
+    CHECK(scoreOfBox(r.box("s"))->size() == 4);
+    r.box("s")->message(0, {Atom("write"), Atom((T / "tut" / "a" / "b" / "c" / "far.score").string())});
+    check(T / "tut" / "a" / "b" / "c" / "far.score", "write far");
+    // Musil's writer: named from the file it was read from
+    auto s = sc::readFile((T / "tut" / "out" / "w.score").string());
+    sc::writeFile(*s, (T / "lib" / "m.score").string());
+    check(T / "lib" / "m.score", "musil");
+    // a document's Save As and its export
+    std::string e2;
+    auto d = ScoreDoc::open((T / "tut" / "out" / "w.score").string(), e2);
+    CHECK(d != nullptr);
+    if (d) {
+        CHECK(d->exportTo((T / "copy.score").string(), e2));
+        check(T / "copy.score", "export");
+        CHECK(d->saveAs((T / "lib" / "saved.score").string(), e2));
+        check(T / "lib" / "saved.score", "save as");
+        for (auto& e : d->score().events())                 // the document is that file's now: named from there
+            if (e->kind == sc::Kind::Score && !e->ref.empty()) CHECK(e->ref == "motif.score");
+        CHECK(d->save(e2));
+        check(T / "lib" / "saved.score", "save");
+    }
+    // a read that fails is said once
+    r.printed.clear();
+    r.box("s")->message(0, {Atom("read"), Atom("nothing-here.score")});
+    CHECK(r.printedSomething("score: cannot open") && !r.printedSomething("score: score:"));
+    std::error_code ec;
+    fs::remove_all(T, ec);
 }

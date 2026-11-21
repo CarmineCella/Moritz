@@ -6,6 +6,7 @@
 #include "fileio.h"
 #include "moritz.h"
 #include "music/score.h"     // Musil's score, as the score object reads it
+#include "music/score_text.h"  // pathFor: how a score names a file
 
 #include <algorithm>
 #include <cmath>
@@ -268,23 +269,7 @@ bool writeMarksFor(const std::string& soundPath, const SoundMarks& m, double sr,
 // ---------------------------------------------------------------- score
 
 std::string soundPathForScore(const std::string& sound, const std::string& scorePath) {
-    namespace fs = std::filesystem;
-    std::error_code ec;
-    auto real = [&](const std::string& p) {             // absolute, links resolved (/var is /private/var on macOS)
-        fs::path a = fs::absolute(fs::path(p), ec);
-        fs::path c = fs::weakly_canonical(a, ec);
-        return (ec ? a : c).lexically_normal();
-    };
-    fs::path s = real(sound), dir = real(scorePath).parent_path();
-    fs::path rel = s.lexically_relative(dir);
-    if (rel.empty() || s.root_name() != dir.root_name()) return s.generic_string();
-    int up = 0;
-    for (const auto& part : rel) {
-        if (part == "..") ++up;
-        else break;
-    }
-    if (up > 2) return s.generic_string();
-    return rel.generic_string();
+    return musil::score::pathFor(sound, musil::score::folderOf(scorePath));    // the one rule (score_text.h)
 }
 
 std::string scoreText(const SoundMarks& m, double sr, const std::string& source, bool buffer, const std::string& name) {
