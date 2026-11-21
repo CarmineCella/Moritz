@@ -185,9 +185,12 @@ public:
     void processDialog(const std::string& kind);   // its settings asked, then run (in batch mode: printed)
     // run with these settings (missing ones: the defaults; with: "buffer~ NAME", "sound PATH" or "file PATH")
     bool runProcess(const std::string& kind, const std::map<std::string, std::string>& params);
-    void choosePatch();                        // A patch...: a file chosen, then processPatch
+    void choosePatch();                        // A patch...: a file chosen, its tail asked, then processPatch
     void chooseScript();                       // A Musil script...
-    bool processPatch(const std::string& path, double tail = 0);
+    // the selection through a patch, rendered tail seconds longer (a reverb's or an echo's ring; < 0: the tail asked
+    // last, 2 s at first); replacing the selection, the tail is mixed over what follows it (SoundDoc::replaceSelection)
+    bool processPatch(const std::string& path, double tail = -1);
+    static double patchTail();                 // the tail asked last (2 s at first)
     bool processScript(const std::string& path);
     void stopWork();                           // the process or analysis running
     bool working() const;
@@ -257,7 +260,7 @@ private:
     void refreshSelectionInfo();
     // a job of the editor's (a process, an analysis): work on the worker, then done on the GUI thread
     bool startWork(const std::string& name, std::function<void(Job&)> work, std::function<void()> done);
-    void deliver(const std::string& name, SampleBuffer&& result, uint64_t generation, const std::string& note);
+    void deliver(const std::string& name, SampleBuffer&& result, uint64_t generation, const std::string& note, bool mixTail = false);
     static void addRecent(const std::string& path);
     void after(bool done);                     // an edit's result: redraw, message, title
     void updateSpectrogram();                  // computed again if shown and out of date

@@ -1,8 +1,9 @@
 ; hall.moritz - a patch for the sound editor's Process > A patch...: the selection in a hall, a
 ; reverb~ of 3 s (a stereo Freeverb) on each channel, the left one's left output and the right one's
-; right output, with the dry sound. The editor renders exactly the selection through the patch, so
-; the hall's tail is cut where the selection ends: select a sound with some silence after it (its
-; end, or silence pasted there) to hear the tail. Change reverb~'s arguments: the mix (0 dry to 1
+; right output, with the dry sound. The editor renders the selection through the patch and then the
+; tail its dialog asks for (2 s at first; silence at its end is left out): replacing the selection,
+; the hall's tail rings on over what follows it (mixed; the sound grows only past its end). For the
+; whole decay, give a tail as long as it (3 s here). Change reverb~'s arguments: the mix (0 dry to 1
 ; wet) and the decay in seconds.
 (patch
   (obj title comment "Process > A patch...: the selection in a hall (reverb~ 0.35 3)" (pos 20 12))

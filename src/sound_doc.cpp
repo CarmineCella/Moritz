@@ -619,7 +619,7 @@ bool SoundDoc::reverse() {
     return process("Reverse", [ch](std::vector<float>& x) { edit::reverse(x.data(), x.size() / (size_t)ch, ch); });
 }
 
-bool SoundDoc::replaceSelection(const std::string& name, const SampleBuffer& r) {
+bool SoundDoc::replaceSelection(const std::string& name, const SampleBuffer& r, bool mixTail) {
     if (bound_ && followBuffer()) return false;          // the buffer~ is not what was processed
     Selection s = sel.empty() ? Selection{0, frames()} : sel;
     const int rc = std::max(1, r.channels), ch = channels();
@@ -631,6 +631,30 @@ bool SoundDoc::replaceSelection(const std::string& name, const SampleBuffer& r) 
     for (auto& x : v)
         if (!std::isfinite(x)) x = 0.f;
     const size_t chs = (size_t)ch;
+    long tail = 0;                                       // frames of the result past the selection, mixed over what follows
+    if (mixTail && (long)(v.size() / chs) > s.length()) {
+        tail = (long)(v.size() / chs) - s.length();
+        long over = std::min(tail, frames() - s.end);    // what follows the selection under the tail
+        for (size_t k = 0; k < (size_t)over * chs; ++k) v[(size_t)s.length() * chs + k] += sound_->data[(size_t)s.end * chs + k];
+        Step st;
+        st.name = name;
+        Splice sp;
+        sp.at = s.start;
+        sp.removedFrames = s.length() + over;
+        sp.removed.assign(sound_->data.begin() + (long)((size_t)s.start * chs), sound_->data.begin() + (long)((size_t)(s.end + over) * chs));
+        sp.insertedFrames = (long)(v.size() / chs);
+        sp.inserted = std::make_shared<const std::vector<float>>(std::move(v));
+        st.selBefore = sel;
+        st.playBefore = playhead;
+        st.selAfter = {s.start, s.start + sp.insertedFrames};
+        st.playAfter = s.start;
+        Sound next = spliced(sound_, sp.at, sp.removedFrames, sp.inserted->data(), sp.insertedFrames);
+        message = name + ": " + secs(seconds(s.length())) + " processed, its tail of " + secs(seconds(tail)) + " mixed over what follows" +
+                  (sp.insertedFrames > sp.removedFrames ? " (the sound grew by " + secs(seconds(sp.insertedFrames - sp.removedFrames)) + ")" : "");
+        st.splices.push_back(std::move(sp));
+        commit(std::move(st), std::move(next));
+        return true;
+    }
     Step st;
     st.name = name;
     Splice sp;

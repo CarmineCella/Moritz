@@ -210,7 +210,8 @@ Moritz follows Max's conventions:
   hpss, nmf, pvoc, sparkle~'s cross-synthesis, filterdesign's filters,
   condec), a patch with `inlet~` and `outlet~`, or a Musil script that
   defines `(process x sr)` (examples/14-sound-editor), in the background; the
-  result replaces the selection or opens as a new sound. Markers come by hand
+  result replaces the selection or opens as a new sound (a patch rings on
+  for a tail, mixed over what follows the selection). Markers come by hand
   (M, the Marker tool) or from onsets, beats and novelty; regions from the
   selection, soundtypes' units or onsets, listed in a table (rename, click to
   select; To coll... writes them as rows, To score... as a `.score` of sound

@@ -136,8 +136,11 @@ public:
     bool normalize(double db = 0.0);    // its peak to db
     bool reverse();
     // a process's result in place of the selection (all of the sound when nothing is selected): its channels and
-    // rate made the sound's (Musil's resample), one undo step; the result is selected
-    bool replaceSelection(const std::string& name, const SampleBuffer& result);
+    // rate made the sound's (Musil's resample), one undo step; the result is selected. mixTail: what the result has
+    // beyond the selection's length (a reverb's or an echo's tail) is mixed over what follows the selection, which
+    // keeps its place (the sound grows only when the tail goes past its end); otherwise the result takes the
+    // selection's place whatever its length
+    bool replaceSelection(const std::string& name, const SampleBuffer& result, bool mixTail = false);
     // frames (interleaved, as many channels as the sound) from frame at, in place of as many (the Draw tool's
     // stroke): one undo step
     bool replaceFrames(const std::string& name, long at, const std::vector<float>& frames);

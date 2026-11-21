@@ -1872,14 +1872,14 @@ void SoundEditor::stopWork() {
     setStatus(lastWork_);
 }
 
-void SoundEditor::deliver(const std::string& name, SampleBuffer&& result, uint64_t gen, const std::string& note) {
+void SoundEditor::deliver(const std::string& name, SampleBuffer&& result, uint64_t gen, const std::string& note, bool mixTail) {
     if (result.frames <= 0) {
         lastWork_ = name + ": the result is empty";
         setStatus(lastWork_);
         return;
     }
     bool changed = doc_->generation() != gen;
-    if (!resultNew_ && !changed && doc_->replaceSelection(name, result)) {
+    if (!resultNew_ && !changed && doc_->replaceSelection(name, result, mixTail)) {
         after(true);
         lastWork_ = doc_->message;
     } else {
@@ -2069,9 +2069,48 @@ void SoundEditor::processDialog(const std::string& kind) {
     runProcess(kind, params);
 }
 
+double SoundEditor::patchTail() {
+    auto it = lastAnswers().find("patch.tail");
+    double t = it == lastAnswers().end() ? 2.0 : std::atof(it->second.c_str());
+    return std::isfinite(t) ? std::clamp(t, 0.0, 60.0) : 2.0;
+}
+
 void SoundEditor::choosePatch() {
     std::string p = chooseFile(false, "Process the selection with a patch (inlet~ in, outlet~ out)", "Moritz patch\t*.moritz");
-    if (!p.empty()) processPatch(p);
+    if (p.empty()) return;
+    // the tail: how long the patch rings on after the selection (a reverb, an echo); and where the result goes
+    const int W = 460, H = 170;
+    Fl_Double_Window dlg(W, H, "Process with a patch");
+    centerOnScreen(&dlg, window());
+    Fl_Box head(16, 10, W - 32, 40);
+    head.copy_label(("The selection through " + baseName(p) + "; it rings on for the tail, mixed over what follows the selection when it replaces it").c_str());
+    head.labelsize(12);
+    head.align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE | FL_ALIGN_WRAP);
+    Fl_Input tail(190, 60, W - 210, 24, "Tail (seconds):");
+    char t[32];
+    std::snprintf(t, sizeof t, "%g", patchTail());
+    tail.value(t);
+    tail.labelsize(12);
+    tail.copy_tooltip("How long the patch is rendered after the selection ends (0 to 60 s): a reverb's or an echo's tail. Silence at its end is left out");
+    Fl_Choice result(190, 92, W - 210, 24, "Result:");
+    result.add("replace the selection");
+    result.add("a new sound");
+    result.value(resultNew_ ? 1 : 0);
+    result.labelsize(12);
+    Fl_Button cancel(W - 200, H - 40, 85, 28, "Cancel");
+    Fl_Return_Button ok(W - 105, H - 40, 85, 28, "Process");
+    dlg.end();
+    dlg.set_modal();
+    int answer = 0;
+    ok.callback([](Fl_Widget* w, void* r) { *(int*)r = 1; w->window()->hide(); }, &answer);
+    cancel.callback([](Fl_Widget* w, void*) { w->window()->hide(); });
+    dlg.show();
+    while (dlg.shown()) Fl::wait();
+    if (answer != 1) return;
+    lastAnswers()["patch.tail"] = tail.value();
+    resultNew_ = result.value() == 1;
+    menuDirty_ = true;
+    processPatch(p, patchTail());
 }
 
 void SoundEditor::chooseScript() {
@@ -2081,6 +2120,7 @@ void SoundEditor::chooseScript() {
 
 bool SoundEditor::processPatch(const std::string& path, double tail) {
     if (doc_->frames() == 0) { setStatus("the sound is empty"); return false; }
+    if (!(tail >= 0)) tail = patchTail();
     if (working()) { setStatus(workName_ + " is still running (Esc stops it)"); return false; }
     Selection s = doc_->sel.empty() ? Selection{0, doc_->frames()} : doc_->sel;
     SampleBuffer in;
@@ -2107,7 +2147,7 @@ bool SoundEditor::processPatch(const std::string& path, double tail) {
         SampleBuffer out = patchProc_ ? patchProc_->take(prints) : SampleBuffer();
         patchProc_.reset();                                // the patch destroyed here, on the GUI thread
         for (auto& p : prints) App::get().print(name + ": " + p);
-        deliver(name, std::move(out), gen, "");
+        deliver(name, std::move(out), gen, "", true);       // the tail mixed over what follows the selection
     });
 }
 

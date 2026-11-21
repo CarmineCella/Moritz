@@ -377,6 +377,59 @@ TEST(process_through_a_patch) {
     std::remove(path.c_str());
 }
 
+// Process > A patch... rendered the patch for the selection's length only (a tail of 0): an echo or a reverb was cut
+// at the selection's end. The patch rings on for the tail (silence at its end left out); replacing the selection, the
+// tail is mixed over what follows, which keeps its place
+TEST(process_through_a_patch_keeps_its_tail) {
+    std::string path = temp("moritz-engine-echo.moritz");
+    {
+        std::ofstream f(path);                           // the input, and an echo of it 100 ms later
+        f << "(patch\n  (obj i inlet~ (pos 20 20))\n  (obj t tapin~ 500 (pos 20 60))\n  (obj d tapout~ 100 (pos 20 100))\n"
+             "  (obj o outlet~ (pos 20 140))\n  (connect i 0 t 0)\n  (connect t 0 d 0)\n  (connect i 0 o 0)\n  (connect d 0 o 0))\n";
+    }
+    SampleBuffer in;
+    in.channels = 1;
+    in.sr = 44100;
+    in.frames = 4410;                                     // 100 ms of 0.25
+    in.data.assign(4410, 0.25f);
+    auto render = [&](double tail) {
+        PatchProcess pp;
+        std::string err;
+        CHECK(pp.prepare(path, in, tail, err));
+        bool sync = jobsSynchronous;
+        jobsSynchronous = true;
+        Job job;
+        job.start([&](Job& j) { pp.run(j); }, [] {});
+        jobsSynchronous = sync;
+        std::vector<std::string> prints;
+        return pp.take(prints);
+    };
+    SampleBuffer cut = render(0), rings = render(2);
+    CHECK(cut.frames == 4410);
+    CHECK(rings.frames > 4410 + 4000 && rings.frames < 4410 + 4800);   // the echo, then silence left out (not 2 s)
+    CHECK(rings.frames > 8000 && std::fabs(rings.data[6000] - 0.25f) < 1e-3f);
+    // replacing a selection in a longer sound: the echo over what follows, which stays where it was
+    SoundDoc d;
+    SampleBuffer s;
+    s.channels = 1;
+    s.sr = 44100;
+    s.frames = 44100;
+    s.data.assign(44100, 0.1f);
+    d.setSound(std::move(s));
+    d.select(10000, 14410);
+    CHECK(d.replaceSelection("echo", rings, true));
+    CHECK(d.frames() == 44100);                          // the sound keeps its length
+    CHECK(std::fabs(d.sound()->data[12000] - 0.25f) < 1e-3f);   // the selection: the patch's output
+    CHECK(std::fabs(d.sound()->data[16000] - 0.35f) < 1e-3f);   // after it: what was there plus the echo
+    CHECK(std::fabs(d.sound()->data[30000] - 0.1f) < 1e-6f);    // farther: as it was
+    CHECK(d.message.find("tail") != std::string::npos);
+    CHECK(d.undo() && std::fabs(d.sound()->data[16000] - 0.1f) < 1e-6f);
+    d.select(40000, 44100);                              // at the end: the sound grows by what is left of the tail
+    SampleBuffer end = rings;
+    CHECK(d.replaceSelection("echo", end, true) && d.frames() > 44100);
+    std::remove(path.c_str());
+}
+
 TEST(process_with_a_musil_script) {
     std::string path = temp("moritz-engine-process.mu");
     {

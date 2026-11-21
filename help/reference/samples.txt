@@ -29,7 +29,10 @@ object), typematch (by the units of another sound), hpss (the harmonic or the
 percussive part), nmf (some of its parts), pvoc (stretched or transposed),
 sparkle~ (cross-synthesis with another sound), filterdesign's filters, condec
 (convolved with a response). A patch... renders the selection offline through
-a .moritz patch, in through its inlet~s and out through its outlet~s; A Musil
+a .moritz patch, in through its inlet~s and out through its outlet~s, and on for
+the tail its dialog asks (2 s at first; silence at its end left out): replacing
+the selection, a reverb's or an echo's tail is mixed over what follows it, which
+keeps its place (the sound grows only when the tail goes past its end); A Musil
 script... calls the function (process x sr) a .mu file defines, x a list of
 channel vectors, sr the rate, which returns a vector or a list of channel
 vectors (examples/14-sound-editor has some). The result replaces the selection

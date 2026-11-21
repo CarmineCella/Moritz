@@ -85,7 +85,7 @@ private:
     std::shared_ptr<long> frame_ = std::make_shared<long>(0);
     std::vector<float> in_;
     int inCh_ = 1;
-    long total_ = 0;
+    long total_ = 0, inFrames_ = 0;          // frames rendered (the selection and the tail), frames of the selection
     double sr_ = 44100;
     std::vector<std::vector<float>> out_;
     std::shared_ptr<std::pair<std::mutex, std::vector<std::string>>> prints_;

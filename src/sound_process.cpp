@@ -387,7 +387,8 @@ bool PatchProcess::prepare(const std::string& path, const SampleBuffer& in, doub
     sr_ = in.sr > 0 ? in.sr : 44100.0;
     inCh_ = std::max(1, in.channels);
     in_ = in.data;
-    total_ = in.frames + (long)std::max(0.0, tail * sr_);
+    inFrames_ = in.frames;
+    total_ = in.frames + (long)std::max(0.0, std::min(60.0, tail) * sr_);
     prints_ = std::make_shared<std::pair<std::mutex, std::vector<std::string>>>();
     patch_ = std::make_unique<Patch>();
     Patch& p = *patch_;
@@ -441,6 +442,13 @@ SampleBuffer PatchProcess::take(std::vector<std::string>& prints) {
         std::lock_guard<std::mutex> lk(prints_->first);
         prints = prints_->second;
     }
+    // the tail kept up to where it falls silent (below -90 dB): a patch without one (a filter, a ring modulator)
+    // gives as much as it was given
+    size_t keep = (size_t)std::min<long>(inFrames_, total_);
+    for (auto& c : out_)
+        for (size_t f = c.size(); f > keep; --f)
+            if (std::fabs(c[f - 1]) > 3.2e-5f) { keep = f; break; }
+    for (auto& c : out_) if (c.size() > keep) c.resize(keep);
     return fromChannels(out_, sr_);
 }
 
