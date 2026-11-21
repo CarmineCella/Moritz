@@ -172,6 +172,7 @@ jobs:
           UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
           TSAN_OPTIONS: halt_on_error=1:second_deadlock_stack=1
           MUSIL_SKIP_TESTS: ${{ matrix.sanitizer == 'thread' && 'test_robust' || '' }}
+          MORITZ_TESTS_NO_WM: 1            # the virtual display has no window manager (tools/test-gui.sh)
         # under TSan: robust (100,000 calls deep, which TSan cannot follow) and the 219 patches (too slow) are left
         # to the address build, and the engine stress test covers threads; the examples and timings are long and
         # covered by the other jobs
