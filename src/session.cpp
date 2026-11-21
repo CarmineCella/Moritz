@@ -294,7 +294,9 @@ musil::vptr fnSetBuffer(musil::vlist& a, musil::Interp& I) {
 // the names the libraries define at their top level: their variables (var) and, with functions = true,
 // their functions; neither is shown among the user's variables
 const std::set<std::string>& languageLibraryNames(bool functions) {
-    static std::set<std::string> vars, fns;
+    // never destroyed, as the help's index: a script's thread may still look a name up while the program exits
+    static auto& vars = *new std::set<std::string>;
+    static auto& fns = *new std::set<std::string>;
     static bool read = [] {
         auto& s = vars;
         std::string dir = musilLibraryDir();
@@ -551,7 +553,7 @@ std::vector<std::string> LangContext::names() {
 
 namespace {
 std::shared_ptr<LangContext>& theSession() {
-    static std::shared_ptr<LangContext> c;
+    static auto& c = *new std::shared_ptr<LangContext>;   // never destroyed: its thread may outlive the exit
     return c;
 }
 }  // namespace
