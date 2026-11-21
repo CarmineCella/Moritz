@@ -11,6 +11,8 @@
 #include <chrono>
 #include <complex>
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <thread>
 
 using namespace musil;
@@ -262,6 +264,81 @@ static void test_nebula_switch() {
     }
 }
 
+// --- Nebula's output fixed: seeded clouds (waveforms morphed with glissandi, a sound with a read position moving
+// through it, a sound at a given pitch with grainlets, the three windows, a voice limit) rendered in float (nebula~)
+// and double (nebula), in blocks of odd sizes, summarised by sums that move with any change of the arithmetic. The
+// grain core it shares with the harmonizer (signals/grains.h) must leave them where they are. MUSIL_NEBULA_PRINT=1
+// prints them, with a hash of the bits (the same on one system before and after a refactor) ---
+template <class T>
+static std::vector<double> nebula_sums(int config, unsigned long long& hash) {
+    dsp::Nebula<T> n;
+    std::vector<T> snd(30011);
+    for (size_t i = 0; i < snd.size(); ++i) snd[i] = (T)(std::sin(0.013 * (double)i) * 0.7 + 0.2 * std::sin(0.071 * (double)i * (1 + (double)i / 60000.0)));
+    n.seed(config == 0 ? 7 : config == 1 ? 12345 : 99);
+    auto& p = n.p;
+    p.on = true;
+    if (config == 0) {
+        n.setWave(0, "sine"); n.setWave(1, "square");
+        p.density = 30; p.densityRnd = 0.5; p.length = 60; p.lengthRnd = 0.3; p.freq = 330; p.freqRnd = 0.2; p.gliss = 0.1; p.morph = 0.3;
+    } else if (config == 1) {
+        n.setSound(0, snd.data(), (long)snd.size(), 1, 44100); n.setWave(1, "triangle");
+        p.density = 120; p.densityRnd = 0.3; p.freq = 1.3; p.freqRnd = 0.1; p.length = 35; p.morph = 0.6;
+        p.speed = 0.7; p.jitter = 0.3; p.jitterRnd = 0.5; p.poly = 12;
+        n.setWindow("hamming");
+    } else {
+        n.setSound(0, snd.data(), (long)snd.size(), 1, 22050); n.setSound(1, snd.data(), (long)snd.size(), 1, 22050);
+        p.density = 400; p.freq = 440; p.pitch[0] = 220; p.grainlets = 3; p.morph = 0.5; p.gliss = 0.3; p.speed = -1.5;
+        n.setWindow("blackman");
+    }
+    const int sizes[] = {64, 17, 100, 1, 333, 64};
+    std::vector<T> L(400), R(400);
+    double s = 0, sq = 0, w = 0;
+    hash = 1469598103934665603ull;
+    long t = 0;
+    bool switched = false;
+    for (int b = 0; t < 88200; ++b) {
+        int m = sizes[b % 6];
+        if (t > 70000) p.on = false;
+        if (config == 0 && t > 30000 && !switched) { n.setWave(1, "noise"); switched = true; }
+        n.process(L.data(), R.data(), m, 44100);
+        for (int i = 0; i < m; ++i, ++t) {
+            double l = (double)L[(size_t)i], r = (double)R[(size_t)i];
+            s += l + r; sq += l * l + r * r; w += (double)(t % 997) * (l - r);
+            for (T v : {L[(size_t)i], R[(size_t)i]}) {
+                unsigned char bytes[sizeof(T)];
+                std::memcpy(bytes, &v, sizeof(T));
+                for (unsigned char c : bytes) { hash ^= c; hash *= 1099511628211ull; }
+            }
+        }
+    }
+    return {s, sq, w};
+}
+static void test_nebula_fixed() {
+    // the values of 0.14, before the grain core was shared with the harmonizer (on macOS arm64 the bits hashed to
+    // 8c1f979df67dc793 0ced9142ef256490 b17fda1fcf2fe0bd, d484e527d8fea6a4 f7170b529b5d753f 64ddf6aef69112b3); the
+    // tolerance leaves room for another system's sine and cosine in the last place of the tables, not for a change
+    const double want[2][3][3] = {
+        {{40.800917948059251, 876.93413805278442, -8633.461415861464},
+         {2761.2756614305877, 222.61716763484856, -293135.70090477704},
+         {33.713605408906176, 390.21224436554309, 5764.5940852549174}},
+        {{40.800917224588638, 876.9341382127875, -8633.4605546782168},
+         {2761.2756603864827, 222.61716742235384, -293135.70092074957},
+         {33.713602999735407, 390.21224412618386, 5764.5947884627612}},
+    };
+    bool print = std::getenv("MUSIL_NEBULA_PRINT") != nullptr;
+    for (int prec = 0; prec < 2; ++prec)
+        for (int c = 0; c < 3; ++c) {
+            unsigned long long h = 0;
+            auto got = prec ? nebula_sums<double>(c, h) : nebula_sums<float>(c, h);
+            if (print) std::printf("        %s{%.17g, %.17g, %.17g}%s   // %s %d, hash %016llx\n", c == 0 ? "{" : " ", got[0], got[1], got[2], c == 2 ? "}," : ",", prec ? "double" : "float", c, h);
+            for (int k = 0; k < 3; ++k) {
+                double ref = want[prec][c][k];
+                expect(std::fabs(got[(size_t)k] - ref) <= 1e-7 * std::max(1.0, std::fabs(ref)),
+                       "nebula: the seeded cloud " + std::to_string(c) + (prec ? " (double)" : " (float)") + " is as it was, sum " + std::to_string(k));
+            }
+        }
+}
+
 // --- key names: every tonic, major and minor, spelled as musicians spell them ---
 static void test_key_names() {
     const char* maj[12] = {"C", "Db", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"};
@@ -407,6 +484,7 @@ static void test_datasets() {
 int main() {
     test_key_names();
     test_nebula_switch();
+    test_nebula_fixed();
     test_hpss();
     test_partconv();
     test_denormals();
