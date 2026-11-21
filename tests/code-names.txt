@@ -474,6 +474,7 @@ score-flatten
 score-humanize!
 score-invert!
 score-make
+score-midi
 score-orchestral-order
 score-pan-gains
 score-placed

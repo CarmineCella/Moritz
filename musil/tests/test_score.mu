@@ -311,6 +311,28 @@ check (equal? (staff-clef (list 40 50 70)) "bass") "staff-clef: a median below C
 check (equal? (staff-clef (list 59 61)) "treble") "staff-clef: a median at C4"
 check (equal? (staff-clef (list)) "none") "staff-clef: no pitches"
 
+; --- MIDI files written (score-midi, music/midi.h) and read back ---
+var sm (text->score "(score \"midi\" (sr 44100) (bpm 120) (meter 3 4) (note 0 0.5 Vc 48 mf ord) (note 0 0.5 Vn 60 ff ord) (note 0.5 0.25 Vn 64.5 p ord) (note 1 0.5 Vn 67 pp ord (data player 2)) (note 1 0.5 Vn 72 f ord (data player 1)) (msg 0.5 density 0.6))")
+var mp (concat tmp "/m.mid")
+var mr (score-midi sm mp)
+check (and (== (get mr 'tracks) 5) (== (get mr 'notes) 5) (== (get mr 'rounded) 1)) "score-midi: a track for the tempo and one per part, the notes, the microtone rounded"
+check (equal? (get mr 'parts) (list "Vn" "Vn 1" "Vn 2" "Vc")) "score-midi: the parts in orchestral order, a row's players numbered"
+var mb (midi-read mp)
+check (== (get mb 'ppq) 480) "score-midi: 480 ticks a quarter"
+check (equal? (get mb 'tracks) (list "midi" "Vn" "Vn 1" "Vn 2" "Vc")) "score-midi: the tracks named"
+check (equal? (map (get mb 'notes) (function (n) (list (get n 'track) (get n 'pitch) (get n 'velocity)))) (list (list 1 60 112) (list 4 48 80) (list 1 65 48) (list 2 72 96) (list 3 67 32))) "score-midi: read back, the tracks, the pitches, the velocities of the dynamics"
+check (all? (get mb 'notes) (function (n) (and (close? (get n 'at) (/ (round (* 2 (get n 'at))) 2) 1e-9) (or (close? (get n 'dur) 0.5 1e-9) (close? (get n 'dur) 0.25 1e-9))))) "score-midi: the times, at the score's tempo"
+check (== (length (filter (get mb 'notes) (function (n) (== (get n 'track) 0)))) 0) "score-midi: the messages are not notes"
+var bend (score-midi sm mp (record (list 'microtones 'bend)))
+check (== (get bend 'rounded) 0) "score-midi 'bend: every note in tune"
+var bb (midi-read mp)
+var bq (getidx (get bb 'notes) 2)
+check (and (== (get bq 'pitch) 65) (== (length (unique (map (filter (get bb 'notes) (function (n) (== (get n 'at) 0))) (function (n) (get n 'channel))))) 2)) "score-midi 'bend: the quarter tone the semitone above bent down; notes at once on channels of their own"
+check (contains? (error-of (function () (score-midi sm mp (record (list 'microtones 'wobble))))) "round or bend") "score-midi: 'microtones is round or bend"
+var crowd (score "crowd" 44100)
+each (vec->list (range 17)) (function (k) (event crowd 0 1 (record (list 'kind 'note 'instr "Fl" 'midi (+ 60 (* k 1.03)) 'pitch "C4" 'dyn "mf" 'tech "ord" 'cents 0))))
+check (> (get (score-midi crowd mp (record (list 'microtones 'bend))) 'rounded) 0) "score-midi 'bend: past 15 tunings at once, the others rounded to what a channel's bend gives"
+
 each (ls (concat tmp "/sounds")) (function (f) (remove (concat tmp "/sounds/" f)))
 each (ls tmp) (function (f) (remove (concat tmp "/" f)))
 remove tmp

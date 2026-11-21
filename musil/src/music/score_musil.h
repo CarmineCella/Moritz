@@ -22,6 +22,7 @@
 #include "score_transform.h"
 #include "score_layout.h"
 #include "db_files.h"
+#include "midi.h"
 
 #ifdef OPAQUE      // Windows (wingdi.h) defines it; Musil has a value type of that name
 #undef OPAQUE
@@ -660,6 +661,40 @@ inline vptr mus_score_write(vlist& a, Interp& i) {
     s->path = path;
     return v_str(path);
 }
+// (score-midi s path [params])   the score's notes as a standard MIDI file (format 1, a track per part, midi.h's
+//                          score_midi), written whole or not at all; params: 'microtones 'round (the default: to the
+//                          nearest semitone) or 'bend (pitch bend, a note on a channel of its own), 'bend-range in
+//                          semitones (2), 'ppq (480); => a record: path tracks notes rounded parts
+inline vptr mus_score_midi(vlist& a, Interp& i) {
+    auto s = S(i, a[0]);
+    std::string path = i.writable(i.str(a[1]));
+    midi_write_options o;
+    if (a.size() > 2 && a[2] && a[2]->t == Value::LIST)
+        for (auto& p : a[2]->l) {
+            if (!p || p->t != Value::LIST || p->l.size() != 2 || !p->l[0] || p->l[0]->t != Value::SYM) continue;
+            const std::string& k = p->l[0]->s;
+            const vptr& v = p->l[1];
+            if (k == "microtones") {
+                std::string m = textOf(v);
+                if (m != "bend" && m != "round") i.bad("score-midi: 'microtones is round or bend, not " + m);
+                o.bend = m == "bend";
+            } else if (k == "bend-range") o.bend_range = i.scalar(v);
+            else if (k == "ppq") o.ppq = (int)i.scalar(v);
+        }
+    midi_written w = guarded(i, [&] {
+        midi_written r = score_midi(*detached(*s), o);
+        score::writeAtomically(path, r.bytes);
+        return r;
+    });
+    *i.out << "score-midi: " << w.notes << " notes in " << w.parts.size() << " parts";
+    if (w.rounded) *i.out << ", " << w.rounded << " rounded to the semitone";
+    *i.out << " -> " << path << std::endl;
+    vlist parts;
+    for (auto& n : w.parts) parts.push_back(v_str(n));
+    return v_list({ v_list({ v_sym("path"), v_str(path) }), v_list({ v_sym("tracks"), v_num(w.tracks) }),
+                    v_list({ v_sym("notes"), v_num((double)w.notes) }), v_list({ v_sym("rounded"), v_num((double)w.rounded) }),
+                    v_list({ v_sym("parts"), v_list(std::move(parts)) }) });
+}
 // (score->text s)          what score-write writes, as a string
 inline vptr mus_score_text(vlist& a, Interp& i) { return v_str(guarded(i, [&] { return score::toText(*detached(*S(i, a[0]))); })); }
 // (text->score text)       a score from the text of a .score file
@@ -868,6 +903,7 @@ inline void add_score(Interp& i) {
     i.def("score-flatten", mus_score_flatten, 2, 2); i.def("score-placed", mus_score_placed, 5, 5);
     i.def("score-read", mus_score_read, 1, 1); i.def("score-write", mus_score_write, 2, 2); i.def("score-sound-file", mus_score_sound_file, 1, 1);
     i.def("score->text", mus_score_text, 1, 1); i.def("text->score", mus_text_score, 1, 1);
+    i.def("score-midi", mus_score_midi, 2, 3);
     i.def("score->data", mus_score_data, 1, 1); i.def("data->score", mus_data_score, 1, 1);
     i.def("score->coll", mus_score_coll, 1, 1); i.def("coll->score", mus_coll_score, 3, 3);
     i.def("score-pan-gains", mus_score_pan_gains, 2, 2);
