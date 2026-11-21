@@ -465,6 +465,7 @@ score-add!
 score-augment!
 score-bbt
 score-bbt->sec
+score-choose-solution!
 score-copy
 score-density!
 score-diminish!
@@ -475,6 +476,7 @@ score-humanize!
 score-invert!
 score-make
 score-orchestral-order
+score-orchestrations
 score-pan-gains
 score-placed
 score-quantize-grid!

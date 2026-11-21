@@ -41,7 +41,7 @@
   (obj vcb *~ 0.4 (pos 620 430))
   (obj out dac~ (pos 535 465))
   (obj c9 comment "Static by default: one segment. segmentation flux (and threshold, timegate) or onsets ms... cut a target that changes; each segment" (pos 20 540))
-  (obj c10 comment "is searched, then a solution chosen per segment (connection closest, best or path), notes the target keeps held on. See the reference for the rest." (pos 20 558))
+  (obj c10 comment "is searched, then a solution chosen per segment (connection closest, best or path), notes the target keeps held on. The score keeps every segment's solutions: in its roll a click on a segment's mark (\"2/5\") picks another, one undo step, as choose does." (pos 20 558))
   (obj ex0 comment "Examples (Help > Examples, Orchestration), one a feature:" (pos 20 590))
   (obj ex1 comment "static-dynamic: segmentation none, flux (threshold, timegate), frames, onsets; Musil's dynamic settings" (pos 20 608))
   (obj ex2 comment "connections: closest, best, path (movement) on the same voice; memory: sustain, hold, dovetail, hysteresis" (pos 20 626))

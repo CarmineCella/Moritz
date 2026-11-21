@@ -612,6 +612,7 @@ void RollCore::draw(double ox, double oy) {
         zd::rect(ox + std::min(px_, cx_), oy + std::min(py_, cy_), std::fabs(cx_ - px_), std::fabs(cy_ - py_));
         zd::line_style(0);
     }
+    drawSegments(ox, oy);
     // the playhead
     double ph = shownTime(playhead);
     if (!std::isnan(ph)) {
@@ -653,6 +654,118 @@ void RollCore::drawRuler(double ox, double oy) {
     zd::pop_clip();
     fl_color(P.dim);
     zd::draw((fmtNum(s->bpm, 1) + " bpm " + std::to_string(s->meterNum) + "/" + std::to_string(s->meterDen)).c_str(), ox + 4, oy + H - 6);
+}
+
+// ---- the solutions of an orchestration: the segments' marks
+const std::vector<RollCore::SegmentMark>& RollCore::segments() const {
+    auto s = shown();
+    uint64_t g = target_ ? target_->generation() : 0;
+    if (s == marksOf_ && g == marksGen_) return marks_;
+    marksOf_ = s;
+    marksGen_ = g;
+    marks_.clear();
+    if (!s) return marks_;
+    auto os = sc::solutions::readOrNone(*s);
+    for (size_t o = 0; o < os.size(); ++o)
+        for (size_t k = 0; k < os[o].segments.size(); ++k) {
+            const auto& g2 = os[o].segments[k];
+            if (g2.solutions.empty()) continue;
+            SegmentMark m;
+            m.orch = o;
+            m.seg = k;
+            m.at = os[o].at + g2.at;
+            m.dur = g2.dur;
+            m.chosen = g2.chosen;
+            for (auto& sol : g2.solutions) m.costs.push_back(sol.cost);
+            marks_.push_back(std::move(m));
+        }
+    return marks_;
+}
+
+int RollCore::segmentAt(double t) const {
+    const auto& ms = segments();
+    for (size_t k = 0; k < ms.size(); ++k)
+        if (t >= ms[k].at && t < ms[k].at + ms[k].dur) return (int)k;
+    return -1;
+}
+
+std::string RollCore::segmentText(const SegmentMark& m) {
+    return std::to_string(m.chosen + 1) + "/" + std::to_string(m.costs.size());
+}
+
+std::string RollCore::solutionText(const SegmentMark& m, size_t rank) {
+    char b[96];
+    std::snprintf(b, sizeof b, "solution %d   cost %.3g", (int)rank + 1, rank < m.costs.size() ? m.costs[rank] : 0.0);
+    return b;
+}
+
+bool RollCore::segmentLabel(size_t mark, double& x, double& y, double& w, double& h) const {
+    const auto& ms = segments();
+    if (mark >= ms.size()) return false;
+    double fs = compact ? 8 : 10;
+    x = xOf(ms[mark].at) + 2;
+    y = rulerOf(compact) + 1;
+    w = (double)segmentText(ms[mark]).size() * fs * 0.62 + 6;
+    h = fs + 4;
+    return x + w > gutterOf(compact) && x < w_;
+}
+
+void RollCore::drawSegments(double ox, double oy) {
+    const auto& ms = segments();
+    if (ms.empty()) return;
+    const Palette& P = palette(compact);
+    const double ruler = rulerOf(compact);
+    Fl_Color line = compact ? fl_rgb_color(90, 110, 160) : fl_rgb_color(150, 170, 210);
+    Fl_Color ink = compact ? fl_rgb_color(170, 190, 240) : fl_rgb_color(70, 90, 150);
+    zd::line_style(FL_DASH, 1);
+    fl_color(line);
+    for (auto& m : ms) {
+        double x = xOf(m.at);
+        if (x >= gutterOf(compact) && x <= w_) zd::yxline(ox + x, oy + ruler, oy + h_);
+    }
+    zd::line_style(0);
+    zd::font(FL_HELVETICA, compact ? 8 : 10);
+    for (size_t k = 0; k < ms.size(); ++k) {
+        double x, y, w, h;
+        if (!segmentLabel(k, x, y, w, h)) continue;
+        fl_color(fl_color_average(P.bg, line, 0.8f));
+        zd::rectf(ox + x, oy + y, w, h);
+        fl_color(ink);
+        zd::draw(segmentText(ms[k]).c_str(), ox + x + 3, oy + y + h - 3);
+    }
+}
+
+bool RollCore::chooseSolution(size_t mark, size_t rank) {
+    if (!target_) return false;
+    const auto& ms = segments();
+    if (mark >= ms.size()) return false;
+    SegmentMark m = ms[mark];
+    if (!target_->chooseSolution(path, m.orch, m.seg, rank)) {
+        if (onStatus) onStatus(target_->lastError.empty() ? "that solution is the one there already" : target_->lastError);
+        if (onChange) onChange();
+        return false;
+    }
+    if (onStatus)
+        onStatus("segment " + std::to_string(m.seg + 1) + ": solution " + std::to_string(rank + 1) + " of " + std::to_string(m.costs.size()));
+    if (onChange) onChange();
+    return true;
+}
+
+void RollCore::solutionMenu(size_t mark) {
+    const auto& ms = segments();
+    if (mark >= ms.size()) return;
+    SegmentMark m = ms[mark];
+    std::vector<std::string> labels;
+    for (size_t r = 0; r < m.costs.size(); ++r) labels.push_back(solutionText(m, r));
+    std::vector<Fl_Menu_Item> items(labels.size() + 1);
+    std::memset((void*)items.data(), 0, items.size() * sizeof(Fl_Menu_Item));
+    for (size_t r = 0; r < labels.size(); ++r) {
+        items[r].text = labels[r].c_str();
+        items[r].flags = FL_MENU_RADIO | ((int)r == m.chosen ? FL_MENU_VALUE : 0);
+    }
+    std::string title = "segment " + std::to_string(m.seg + 1) + ": its solutions, by cost";
+    const Fl_Menu_Item* got = items[0].popup(Fl::event_x(), Fl::event_y(), title.c_str(), &items[(size_t)std::max(0, m.chosen)]);
+    if (got) chooseSolution(mark, (size_t)(got - items.data()));
 }
 
 RollCore::ClefInk RollCore::clefInk(int row) {
@@ -972,6 +1085,15 @@ bool RollCore::mouse(int event, double x, double y, int keys, int clicks) {
         clicked_ = 0;
         dragDt_ = dragDp_ = dragDd_ = 0;
         if (y < rulerOf(compact) || x < gutterOf(compact)) return false;
+        if (editable && clicks == 0)                                // a segment's "2/5": the menu of its solutions
+            for (size_t k = 0; k < segments().size(); ++k) {
+                double lx, ly, lw, lh;
+                if (segmentLabel(k, lx, ly, lw, lh) && x >= lx && x < lx + lw && y >= ly && y < ly + lh) {
+                    drag_ = Drag::None;
+                    solutionMenu(k);
+                    return true;
+                }
+            }
         Hit h = hit(x, y);
         if (clicks > 0 && h.id) {                                   // a double-click on a score placed: into it
             auto s = shown();
@@ -1268,9 +1390,11 @@ int RollWidget::handle(int e) {
     case FL_UNFOCUS:
         redraw();
         return 1;
+    case FL_MOVE:
+        panel_->followSolutions(c.tOf(Fl::event_x() - x()));   // the toolbar's solutions: the segment under the cursor
+        return 1;
     case FL_ENTER:
     case FL_LEAVE:
-    case FL_MOVE:
         return 1;
     case FL_PUSH: {
         // the event read first: taking the focus from another window can send events that change it
@@ -1633,7 +1757,21 @@ RollPanel::RollPanel(int X, int Y, int W, int H, std::shared_ptr<RollEditTarget>
     auto* zin = new ToolButton(bx, by, 28, bh, ToolButton::Plus, "", false);
     zin->tooltip("Zoom in (Cmd+wheel)");
     zin->callback([](Fl_Widget*, void* d) { auto* p = static_cast<P*>(d); p->core_.zoom(1.25, p->core_.width() / 2); p->changed(); }, this);
-    bx += 30;
+    bx += 30 + 12;
+    solMenu_ = new Fl_Choice(bx, by, 190, bh);
+    solMenu_->textsize(11);
+    solMenu_->labelsize(11);
+    solMenu_->clear_visible_focus();
+    solMenu_->tooltip("The solutions of the segment under the cursor, by cost (the score keeps an orchestration's): choosing one "
+                      "replaces the segment's notes (one undo step)");
+    solMenu_->callback([](Fl_Widget* w, void* d) {
+        auto* p = static_cast<P*>(d);
+        int v = static_cast<Fl_Choice*>(w)->value();
+        if (p->solMark_ >= 0 && v >= 0) p->core_.chooseSolution((size_t)p->solMark_, (size_t)v);
+        p->changed();
+    }, this);
+    solMenu_->hide();
+    bx += 190;
     auto* spacer = new Fl_Box(bx, Y, std::max(1, X + W - bx), kToolH);
     bar_->resizable(spacer);
     bar_->end();
@@ -1914,11 +2052,34 @@ void RollPanel::changed() {
         }
         if (onTitle) onTitle();
     }
+    followSolutions(solTime_);
     if (onChanged) onChanged();
     roll_->redraw();
     dyn_->redraw();
     dynRow_->redraw();
     list_->redraw();
+}
+
+void RollPanel::followSolutions(double t) {
+    solTime_ = t;
+    const auto& ms = core_.segments();
+    if (ms.empty()) {
+        solMark_ = -1;
+        if (solMenu_->visible()) { solMenu_->hide(); bar_->redraw(); }
+        return;
+    }
+    if (!solMenu_->visible()) { solMenu_->show(); bar_->redraw(); }
+    int k = core_.segmentAt(t);
+    if (k < 0 && solMark_ >= 0 && solMark_ < (int)ms.size()) k = solMark_;   // between segments: the last one stays
+    if (k < 0) k = 0;
+    const auto& m = ms[(size_t)k];
+    if (k == solMark_ && solMenu_->size() - 1 == (int)m.costs.size() && solMenu_->value() == m.chosen) return;
+    solMark_ = k;
+    solMenu_->clear();
+    for (size_t r = 0; r < m.costs.size(); ++r)
+        solMenu_->add(escapeMenu("segment " + std::to_string(m.seg + 1) + ": " + RollCore::solutionText(m, r)).c_str());
+    solMenu_->value(std::min(m.chosen, (int)m.costs.size() - 1));
+    solMenu_->redraw();
 }
 
 std::string RollPanel::crumbInfo() const {
