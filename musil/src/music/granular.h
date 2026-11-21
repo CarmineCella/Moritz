@@ -615,9 +615,9 @@ inline choice target_note_of(const dbindex& ix, entry_cache& ec, const target& g
     double f0 = ec.f0(entry, g.sr, g.block);
     c.n.cents = 0;
     if (!peaks.empty()) {
-        double near = peaks[0], bd = std::fabs(peaks[0] - f0);
-        for (double p : peaks) if (std::fabs(p - f0) < bd) { bd = std::fabs(p - f0); near = p; }
-        double cents = 1200 * std::log2(std::max(near, 1.0) / f0);
+        double nearest = peaks[0], bd = std::fabs(peaks[0] - f0);
+        for (double p : peaks) if (std::fabs(p - f0) < bd) { bd = std::fabs(p - f0); nearest = p; }
+        double cents = 1200 * std::log2(std::max(nearest, 1.0) / f0);
         c.n.cents = std::fabs(cents) < 50 ? std::round(cents) : 0;
     }
     return c;
@@ -964,13 +964,13 @@ inline run_result granulate(const dbindex& ix, std::vector<player>& orch, double
                     for (auto& i : ins) for (int m : pc.pitches(i, &qtech, dkey)) if (m >= lo && m <= hi) playable.push_back(m);
                     std::sort(playable.begin(), playable.end()); playable.erase(std::unique(playable.begin(), playable.end()), playable.end());
                     if (!leap.is_nil() && pl.has_last_pitch) {           // within the leap of the last pitch, when there are samples there
-                        std::vector<double> near;
+                        std::vector<double> nearest;
                         for (double m : playable) {
                             double d = m - pl.last_pitch;
-                            if (leap.is_list()) { if (leap.list.size() >= 2 && d >= number_of(leap.list.front(), "leap") && d <= number_of(leap.list.back(), "leap")) near.push_back(m); }
-                            else if (std::fabs(d) <= number_of(leap, "leap")) near.push_back(m);
+                            if (leap.is_list()) { if (leap.list.size() >= 2 && d >= number_of(leap.list.front(), "leap") && d <= number_of(leap.list.back(), "leap")) nearest.push_back(m); }
+                            else if (std::fabs(d) <= number_of(leap, "leap")) nearest.push_back(m);
                         }
-                        if (!near.empty()) playable = near;
+                        if (!nearest.empty()) playable = nearest;
                     }
                     if (playable.empty()) throw std::runtime_error("orchestrate-granular: a player without a pitch");
                     // a pitch by the method
