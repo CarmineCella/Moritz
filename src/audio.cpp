@@ -27,6 +27,13 @@ AudioEngine::~AudioEngine() {
     if (contextOk_) ma_context_uninit(&context_);
 }
 
+int AudioEngine::latencyFrames() const {
+    if (!running_) return 0;
+    long out = (long)device_.playback.internalPeriodSizeInFrames * (long)std::max<ma_uint32>(1, device_.playback.internalPeriods);
+    long in = duplex_ ? (long)device_.capture.internalPeriodSizeInFrames * (long)std::max<ma_uint32>(1, device_.capture.internalPeriods) : 0;
+    return (int)std::min<long>(out + in, 1 << 20);
+}
+
 void AudioEngine::refreshDevices() {
     outputs.clear();
     inputs.clear();
