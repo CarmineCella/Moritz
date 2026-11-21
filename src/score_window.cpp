@@ -760,7 +760,7 @@ ScoreWindow* openScore(std::shared_ptr<ScoreDoc> doc, int view) {
     for (auto* w : windows())
         if (w->docPtr() == doc) {
             if (view >= 0 && view <= 3) w->setView((ScoreView)view);
-            w->show();
+            showInFront(w);
             return w;
         }
     ScoreView v = ScoreView::Timeline;
@@ -772,7 +772,7 @@ ScoreWindow* openScore(std::shared_ptr<ScoreDoc> doc, int view) {
     int k = (int)windows().size();
     centerOnScreen(w, App::get().frontDoc(), 24 * (k % 6), 24 * (k % 6));
     windows().push_back(w);
-    w->show();
+    showInFront(w);
     return w;
 }
 
@@ -826,7 +826,7 @@ void closeAllScores() {
 
 bool confirmCloseScores() {
     for (auto* w : std::vector<ScoreWindow*>(windows())) {
-        w->show();
+        showInFront(w);
         if (!w->confirmDiscard()) return false;
     }
     return true;

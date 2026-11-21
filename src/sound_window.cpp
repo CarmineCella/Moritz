@@ -125,7 +125,7 @@ void place(SoundWindow* w, int index) {
 SoundWindow* App::openSound(const std::string& given) {
     std::string path = fileio::absolute(given);
     for (auto* w : soundWindows_)
-        if (!w->doc().boundToBuffer() && w->doc().path() == path) { w->show(); return w; }
+        if (!w->doc().boundToBuffer() && w->doc().path() == path) { showInFront(w); return w; }
     auto doc = std::make_shared<SoundDoc>();
     std::string err;
     if (!doc->load(path, err)) {
@@ -135,7 +135,7 @@ SoundWindow* App::openSound(const std::string& given) {
     auto* w = new SoundWindow(doc);
     place(w, (int)soundWindows_.size());
     soundWindows_.push_back(w);
-    w->show();
+    showInFront(w);
     addRecent(path);
     log("opened sound " + path);
     return w;
@@ -149,7 +149,7 @@ SoundWindow* App::newSound(SampleBuffer&& samples) {
     auto* w = new SoundWindow(doc);
     place(w, (int)soundWindows_.size());
     soundWindows_.push_back(w);
-    w->show();
+    showInFront(w);
     return w;
 }
 
@@ -168,14 +168,14 @@ SoundWindow* App::editBuffer(Patch* root, const std::string& name) {
         return nullptr;
     }
     for (auto* w : soundWindows_)
-        if (w->doc().boundToBuffer() && w->doc().bufferName() == name) { w->show(); return w; }
+        if (w->doc().boundToBuffer() && w->doc().bufferName() == name) { showInFront(w); return w; }
     fl_open_display();
     auto doc = std::make_shared<SoundDoc>();
     doc->bindBuffer(root, name);
     auto* w = new SoundWindow(doc);
     place(w, (int)soundWindows_.size());
     soundWindows_.push_back(w);
-    w->show();
+    showInFront(w);
     return w;
 }
 

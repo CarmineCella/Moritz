@@ -24,6 +24,14 @@ constexpr int kToolH = 34;
 constexpr const char* kExt = "moritz";
 
 // a text as a menu label: '/', '\\', '_' and '&' mean something there
+// A window opened or called up is the one in front, for FLTK too: the menus and keys act on Fl::first_window(),
+// which a window manager makes the window just shown, but not every system does it at once (X11 without a window
+// manager, as the tests run on Linux: Cut in a sound editor just opened went to the patch behind)
+inline void showInFront(Fl_Window* w) {
+    w->show();
+    Fl::first_window(w);
+}
+
 inline std::string escapeMenu(const std::string& s) {
     std::string r;
     for (char c : s) {
