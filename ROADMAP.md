@@ -103,9 +103,9 @@ the editor's command table and undo rule), YIN, `descriptors~` on the shared ana
       To coll, the pencil (move single samples by hand), Cmd+L for loop, tool modes.
 - [x] Orchidea in Moritz: `orchestra` and `orchidea`, mimetic mode.
 - [x] Score foundation: the score in Musil's C++, .score files as Musil data, `transport`, `score`.
-- [ ] One datasets folder for Moritz and Musil: FullSOL, TinySOL, MicroSOL by name; a Datasets window;
+- [x] One datasets folder for Moritz and Musil: FullSOL, TinySOL, MicroSOL by name; a Datasets window;
       TinySOL download; dbgen ("Analyse a folder…") without code.
-- [ ] The outlets of `orchestra` and `orchidea` described in the reference and tooltips.
+- [x] The outlets of `orchestra` and `orchidea` described in the reference and tooltips.
 - [x] Musil's live functions in Moritz say why they are missing.
 - [ ] Musil's plots as a host service in Moritz (`show`, `save-png`), one renderer with `plot`.
 - [ ] Musil's examples run in Moritz's tests too (those that can).
