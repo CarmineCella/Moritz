@@ -229,6 +229,9 @@ The patches in `tutorials/` are numbered in the order they are taught; the code 
 
 - [ ] **Orchestration**: a tutorial patch before the code one, written once the orchestration
       features are complete (queries, the morphological and granular modes, scores as output).
+- [x] **Sound editor** (tutorials/12-sound-editor): from a buffer~ to the sound editor: the views,
+      selecting and listening, edits with undo, the pencil, markers and regions, Process with an object,
+      a Musil script and a patch (with its tail), To score and To coll, saving.
 - [ ] **Scores**: what a score is for and how it works (the score object, the transport, timeline and
       roll, scores from Musil), before the code one, written once the roll and the timeline are together.
 
