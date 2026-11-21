@@ -269,6 +269,13 @@ feature it describes:
 
 ### Ideas to think through
 
+- **Video tutorials with a narrator, made from scripts.** A script per video (what is clicked, in which
+  order, what the voice says), written from the tutorials. Moritz drives itself with the interface tests'
+  actions and draws each step into PNG (no screen recording), with the pointer and highlights drawn over;
+  the patch's own sound recorded; the voice from macOS's speech synthesis (local) or a neural voice
+  service if the user chooses one (it needs an account and sends the text out); assembled with ffmpeg,
+  with subtitles, in Italian and English. Regenerated from its script when the interface changes.
+
 - **A local language model for patches.** A patch is text (the code view), and changes to it already
   go through one path that keeps what did not change and can be undone (`Patch::applyText`). A prompt
   ("add a reverb after the oscillator") goes to a local model (llama.cpp embedded, or a server such as
