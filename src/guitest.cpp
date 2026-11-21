@@ -87,7 +87,8 @@
 //   act=rollcell:<id>:<key>:<value>   the List view, a cell typed into and entered
 //   act=boxcents:<box>:<event>   print: how the score box's own roll shows the event's detuning (text, tick or none)
 //   act=boxclef:<box>:<row>, act=rollclef:<row>   print: whether a staff's clef is drawn (ink in its box) and, for the
-//                             G clef, its loop above the staff and its tail below
+//                             G clef, its loop above the staff and its tail below; whether it is upright (its ink spread
+//                             as the clef is engraved, RollCore::ClefInk) and that spread
 //   act=boxdrag:<box>:<event>:<dx>,<dy>   on the canvas, an event of a score box's own roll dragged by its head that
 //                             many pixels (the patch locked: the box edited in place)
 
@@ -418,8 +419,12 @@ bool act(const std::string& a) {
         RollCore* core = inlineRollOf(b);
         if (!core) return false;
         auto k = core->clefInk(std::atoi(arg.c_str() + c1 + 1));
-        std::string how = k.drawn && k.ink > 0.04 ? std::string("yes") + (k.above ? " above" : "") + (k.below ? " below" : "") : "no";
-        state("box clef %s ink %s", arg.substr(c1 + 1), how);
+        std::string how = k.drawn && k.ink > 0.04 ? std::string("yes") + (k.above ? " above" : "") + (k.below ? " below" : "") +
+                                                        (k.upright ? " upright" : " not upright")
+                                                  : "no";
+        char spread[96];
+        std::snprintf(spread, sizeof spread, " (lower %.2f top %.2f bottom %.2f mean %.2f)", k.lower, k.topX, k.bottomX, k.meanX);
+        state("box clef %s ink %s", arg.substr(c1 + 1), how + spread);
         return true;
     }
     if (verb == "boxcents") {                   // act=boxcents:<box>:<event>: how the box's own roll shows its detuning

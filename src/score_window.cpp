@@ -973,8 +973,10 @@ bool rollAction(ScoreWindow* w, const std::string& verb, const std::string& arg)
     }
     if (verb == "rollclef") {                      // act=rollclef:<row>: how the roll's clef of that row is drawn
         auto k = panel->core().clefInk(std::atoi(arg.c_str()));
+        char spread[96];
+        std::snprintf(spread, sizeof spread, " (lower %.2f top %.2f bottom %.2f mean %.2f)", k.lower, k.topX, k.bottomX, k.meanX);
         say("roll clef " + arg + " ink " + (k.drawn && k.ink > 0.04 ? "yes" : "no") + " above " + (k.above ? "yes" : "no") +
-            " below " + (k.below ? "yes" : "no"));
+            " below " + (k.below ? "yes" : "no") + " upright " + (k.upright ? "yes" : "no") + spread);
         return true;
     }
     if (verb == "rolldynrow") {

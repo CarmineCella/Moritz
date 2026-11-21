@@ -137,9 +137,12 @@ public:
     bool clefBox(int row, double& x, double& y, double& w, double& h) const;
     // the clef as drawn (the tests): how much of its box is inked in the text's colour, and whether the ink goes above
     // the staff's top line and below its bottom one (the G clef's loop and tail)
+    // and how the ink is spread, so that a clef turned upside down or mirrored is seen (fractions of its box): the share
+    // of the ink in its lower half, the mean x of all of it, of the ink above the staff and of the ink in the box's
+    // lowest quarter (-1: none there); upright: spread as the clef is engraved
     struct ClefInk {
-        bool drawn = false, above = false, below = false;
-        double ink = 0;
+        bool drawn = false, above = false, below = false, upright = false;
+        double ink = 0, lower = 0, meanX = 0, topX = -1, bottomX = -1;
     };
     ClefInk clefInk(int row);
     // how a note's detuning (its cents, and the fraction of its pitch) is drawn: not at all, as a number by its head,

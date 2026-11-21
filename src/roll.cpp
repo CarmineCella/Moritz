@@ -488,22 +488,22 @@ void clefDot(double x, double y, double r, double X, double Y, double u) {
 
 // a clef's box in staff spaces: from its left edge, and above and below the line it names
 void clefExtent(const std::string& clef, double& w, double& up, double& down) {
-    if (clef == "bass") { w = 2.6; up = 1.2; down = 2.7; }
+    if (clef == "bass") { w = 2.75; up = 1.1; down = 2.65; }
     else if (clef == "alto") { w = 2.4; up = 2.1; down = 2.1; }
-    else { w = 2.1; up = 4.75; down = 3.1; }
+    else { w = 2.7; up = 4.25; down = 2.75; }
 }
 
 // the clef of a staff: x its left edge, line the y of the line it names (G: the second from the bottom, F: the fourth,
 // C: the middle one), u the space between the lines
 void drawClef(const std::string& clef, double x, double line, double u) {
-    if (clef == "bass") {                                    // F: a hook from the dot on the F line, the dots around it
-        double X = x + 0.42 * u;
-        clefDot(0, 0, 0.4, X, line, u);
-        clefStroke({{-0.05, -0.15, 0.22}, {0.15, -0.7, 0.2}, {0.75, -1.05, 0.16}, {1.4, -0.85, 0.3}, {1.72, -0.2, 0.46},
-                    {1.6, 0.75, 0.42}, {1.05, 1.7, 0.26}, {0.0, 2.55, 0.06}},
-                   X, line, u);
-        clefDot(2.0, -0.5, 0.17, X, line, u);
-        clefDot(2.0, 0.5, 0.17, X, line, u);
+    if (clef == "bass") {                                    // F: the ball on the F line, the arc around it, the dots
+        clefDot(0.44, -0.02, 0.42, x, line, u);
+        clefStroke({{0.5, -0.05, 0.2},  {0.24, -0.35, 0.2}, {0.32, -0.75, 0.18}, {0.72, -0.98, 0.17}, {1.2, -0.95, 0.22},
+                    {1.62, -0.65, 0.32}, {1.88, -0.1, 0.44}, {1.85, 0.6, 0.42},  {1.55, 1.35, 0.32},  {1.0, 2.0, 0.2},
+                    {0.4, 2.38, 0.1},   {0.0, 2.55, 0.04}},
+                   x, line, u);
+        clefDot(2.5, -0.48, 0.19, x, line, u);
+        clefDot(2.5, 0.5, 0.19, x, line, u);
         return;
     }
     if (clef == "alto") {                                    // C: two bars, two curves meeting on the middle line
@@ -525,15 +525,19 @@ void drawClef(const std::string& clef, double x, double line, double u) {
         }
         return;
     }
-    // G (treble, and anything else with a staff): the spiral around the G line, the loop above, the stem and its hook
-    double X = x + 0.95 * u;
-    clefStroke({{0.12, 0.05, 0.14},  {0.42, -0.32, 0.16}, {0.15, -0.72, 0.18}, {-0.45, -0.62, 0.24}, {-0.85, 0.0, 0.38},
-                {-0.6, 0.78, 0.4},   {0.15, 1.05, 0.3},   {0.85, 0.62, 0.22},  {1.0, -0.12, 0.24},  {0.68, -0.95, 0.28},
-                {0.1, -1.72, 0.3},   {-0.32, -2.55, 0.26}, {-0.36, -3.45, 0.2}, {-0.05, -4.3, 0.15}, {0.32, -4.6, 0.13},
-                {0.48, -4.05, 0.14}, {0.28, -3.2, 0.18},  {-0.12, -2.35, 0.2}, {0.02, -0.9, 0.2},   {0.22, 0.6, 0.19},
-                {0.36, 2.0, 0.18},   {0.22, 2.62, 0.15},  {-0.28, 2.8, 0.13},  {-0.6, 2.45, 0.12}},
-               X, line, u);
-    clefDot(-0.5, 2.38, 0.32, X, line, u);
+    // G (treble, and anything else with a staff), as it is engraved: one stroke from the inside of the spiral around the
+    // G line, out round it (its thick side on the left), up the diagonal to the loop above the staff, down the stem
+    // through the spiral to below the staff, where it hooks left into the ball
+    clefStroke({{1.36, 0.5, 0.06},   {1.1, 0.34, 0.12},   {0.97, 0.0, 0.2},    {1.08, -0.38, 0.28}, {1.4, -0.64, 0.36},
+                {1.85, -0.7, 0.44},  {2.25, -0.52, 0.46}, {2.47, -0.1, 0.38},  {2.43, 0.32, 0.26},  {2.18, 0.72, 0.18},
+                {1.75, 0.93, 0.15},  {1.2, 0.94, 0.15},   {0.7, 0.76, 0.17},   {0.32, 0.34, 0.22},  {0.17, -0.18, 0.3},
+                {0.3, -0.85, 0.42},  {0.65, -1.35, 0.5},  {1.1, -1.78, 0.52},  {1.5, -2.15, 0.46},  {1.86, -2.52, 0.38},
+                {2.1, -2.97, 0.3},   {2.18, -3.42, 0.22}, {2.05, -3.86, 0.18}, {1.82, -4.08, 0.18}, {1.5, -3.86, 0.18},
+                {1.32, -3.4, 0.18},  {1.26, -2.9, 0.17},  {1.3, -2.4, 0.16},   {1.42, -1.7, 0.16},  {1.55, -0.9, 0.16},
+                {1.67, -0.1, 0.17},  {1.78, 0.7, 0.17},   {1.9, 1.3, 0.17},    {1.97, 1.82, 0.17},  {1.92, 2.26, 0.16},
+                {1.7, 2.52, 0.15},   {1.3, 2.6, 0.14},    {0.98, 2.5, 0.14},   {0.82, 2.3, 0.14}},
+               x, line, u);
+    clefDot(0.93, 2.03, 0.38, x, line, u);
 }
 
 // ---- drawing
@@ -668,7 +672,9 @@ RollCore::ClefInk RollCore::clefInk(int row) {
     int dp = img->d(), ld = img->ld() ? img->ld() : img->w() * dp;
     int x0 = std::max(0, (int)std::floor(x)), x1 = std::min(img->w(), (int)std::ceil(x + w));
     int y0 = std::max(0, (int)std::floor(y)), y1 = std::min(img->h(), (int)std::ceil(y + h));
-    int n = 0, ink = 0;
+    int n = 0, ink = 0, low = 0, nTop = 0, nBottom = 0;
+    double sumX = 0, sumTop = 0, sumBottom = 0;
+    const double midY = y + h / 2, quarterY = y + h * 0.75, top = r.yBottom - 4 * r.sp - 1;
     for (int py = y0; py < y1; ++py)
         for (int px = x0; px < x1; ++px) {
             const uchar* q = d + py * ld + px * dp;
@@ -676,13 +682,29 @@ RollCore::ClefInk RollCore::clefInk(int row) {
             // nearer the text's colour than the paper's (the edges of a shape are blended)
             if (std::abs(q[0] - tr) + std::abs(q[1] - tg) + std::abs(q[2] - tb) < std::abs(q[0] - br) + std::abs(q[1] - bg) + std::abs(q[2] - bb)) {
                 ++ink;
-                if (py < r.yBottom - 4 * r.sp - 1) out.above = true;
+                double fx = (px + 0.5 - x) / std::max(1.0, w);
+                sumX += fx;
+                if (py + 0.5 > midY) ++low;
+                if (py < top) { out.above = true; sumTop += fx; ++nTop; }
                 if (py > r.yBottom + 1) out.below = true;
+                if (py + 0.5 > quarterY) { sumBottom += fx; ++nBottom; }
             }
         }
     delete img;
     out.drawn = true;
     out.ink = n ? (double)ink / n : 0;
+    if (ink) {
+        out.lower = (double)low / ink;
+        out.meanX = sumX / ink;
+    }
+    if (nTop) out.topX = sumTop / nTop;
+    if (nBottom) out.bottomX = sumBottom / nBottom;
+    // spread as engraved: G, the spiral low and the loop above to the right of the tail below; F, the ink high and its
+    // tail down to the left of the rest; C, its bars on the left
+    const std::string& c = r.spec.clef;
+    if (c == "bass") out.upright = out.lower < 0.42 && out.bottomX >= 0 && out.bottomX < out.meanX - 0.04;
+    else if (c == "alto") out.upright = out.meanX < 0.5;
+    else out.upright = out.lower > 0.5 && out.topX > 0.55 && out.bottomX >= 0 && out.bottomX < out.topX - 0.08;
     return out;
 }
 

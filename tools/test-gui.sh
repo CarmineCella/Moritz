@@ -573,6 +573,16 @@ expect "none in the piano roll" "state: roll clef 0 ink no"
 expect "the G clef in the box" "state: box clef 0 ink yes above below"
 if [ $status -eq 0 ] && grep -q "state: box clef 1 ink yes" "$out" && grep -q "state: box clef 2 ink yes" "$out"; then ok
 else fail "the C and F clefs in the box"; fi
+# 41b. each clef the right way up and not mirrored, as its ink is spread (the G clef was drawn mirrored, its diagonal
+#      and its spiral turning the wrong way): G, most of the ink in the lower half (the spiral round the G line), the
+#      loop above the staff to the right of the tail below; F, the ink high and its tail down to the left; C, its bars
+#      on the left
+expect "the G clef upright in the roll" "state: roll clef 0 ink yes above yes below yes upright yes"
+expect "the C clef upright in the roll" "state: roll clef 1 ink yes above no below no upright yes"
+expect "the F clef upright in the roll" "state: roll clef 2 ink yes above no below no upright yes"
+expect "the G clef upright in the box" "state: box clef 0 ink yes above below upright"
+if [ $status -eq 0 ] && grep -q "state: box clef 1 ink yes upright" "$out" && grep -q "state: box clef 2 ink yes upright" "$out"; then ok
+else fail "the C and F clefs upright in the box"; fi
 
 rm -rf "$T"
 echo "$count interface cases, $fails failed"
