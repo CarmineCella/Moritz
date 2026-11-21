@@ -6,6 +6,7 @@
 #include "ui_util.h"
 #include "preview.h"
 #include "sound_editor.h"
+#include "timeline.h"
 
 #include <FL/Fl_Check_Button.H>
 #include <FL/Fl_Choice.H>
@@ -23,6 +24,12 @@ namespace moritz {
 // ---- tools: zoom, interface size, quick recorder, the toolbar's meters
 
 void App::zoomFront(int steps) {
+    if (TimelineWindow* t = frontTimeline()) {       // a timeline: zoomed in time; 0 shows the whole score
+        if (steps > 0) t->panel()->zoomIn();
+        else if (steps < 0) t->panel()->zoomOut();
+        else t->panel()->fit();
+        return;
+    }
     if (SoundWindow* s = frontSound()) {             // a sound: zoomed in time; 0 shows all of it
         if (steps > 0) s->editor()->zoomIn();
         else if (steps < 0) s->editor()->zoomOut();

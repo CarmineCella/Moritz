@@ -72,6 +72,7 @@
 //   act=processwait           waits (at most 60 s) for the process or analysis, then prints how it ended
 //   act=processstop           Process > Stop
 //   act=soundmenus            print: the items of the Process and Markers menus
+//   act=tl...:..., act=timeline   the timeline (timeline_window.cpp lists them)
 
 #include "gui.h"
 #include "codewindow.h"
@@ -82,6 +83,7 @@
 #include "sound_process.h"
 
 #include <map>
+#include "timeline.h"
 
 #include <FL/Fl_Image_Surface.H>
 #include <FL/Fl_PNG_Image.H>
@@ -179,6 +181,7 @@ std::string escape(const std::string& t) {
 bool act(const std::string& a) {
     App& app = App::get();
     std::string verb = a.substr(0, a.find(':')), arg = a.find(':') == std::string::npos ? "" : a.substr(a.find(':') + 1);
+    if (verb == "timeline" || verb.rfind("tl", 0) == 0) return timelineTestAction(verb, arg);   // timeline.h
     if (verb == "draw") {
         DocumentWindow* d = front();
         if (!d) return false;

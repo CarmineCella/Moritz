@@ -151,6 +151,9 @@ public:
 
     // a score kept in a patch was edited (the application marks the patch's document edited); may be empty
     static std::function<void(Patch*)> patchEdited;
+    // a patch is being destroyed (the application calls it from Patch::onDestroyed): a document bound to a box in
+    // it forgets where it was, so a patch made later at the same address is never taken for it
+    static void patchDestroyed(Patch* p);
 
 private:
     struct Step {

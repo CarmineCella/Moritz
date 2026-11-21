@@ -10,6 +10,7 @@
 #include "objects.h"
 #include "sysopen.h"
 #include "sound_editor.h"
+#include "timeline.h"
 
 #include <FL/Fl_Native_File_Chooser.H>
 #include <FL/fl_ask.H>
@@ -205,6 +206,10 @@ DocumentWindow* App::openDocument(const std::string& given) {
         openCode(path);
         return nullptr;
     }
+    if (endsWith(path, ".score")) {                   // a score: its timeline
+        openScoreFile(path);
+        return nullptr;
+    }
     std::string low = path;
     for (auto& ch : low) ch = (char)std::tolower((unsigned char)ch);
     for (const char* ext : {".wav", ".wave", ".aif", ".aiff", ".flac", ".mp3"})
@@ -239,7 +244,7 @@ void App::openDialog() {
     Fl_Native_File_Chooser fc;
     fc.title("Open");
     fc.type(Fl_Native_File_Chooser::BROWSE_FILE);
-    fc.filter("Moritz patch, Musil script or sound\t*.{moritz,mu,mlsp,wav,wave,aif,aiff,flac,mp3}\nAll files\t*");
+    fc.filter("Moritz patch, Musil script, score or sound\t*.{moritz,mu,mlsp,score,wav,wave,aif,aiff,flac,mp3}\nAll files\t*");
     DocumentWindow* front = frontDoc();
     std::string dir = front && !front->path().empty() ? dirOf(front->path()) : examplesDir();
     if (!dir.empty()) fc.directory(dir.c_str());
@@ -313,6 +318,10 @@ void App::closeFront() {
         if (sw->confirmDiscard()) closeSound(sw);
         return;
     }
+    if (auto tw = dynamic_cast<TimelineWindow*>(w)) {
+        if (tw->confirmDiscard()) closeTimeline(tw);
+        return;
+    }
     if (auto d = dynamic_cast<DocumentWindow*>(w)) {
         if (d->confirmDiscard()) closeDocument(d);
     }
@@ -332,6 +341,8 @@ void App::quit() {
         s->show();
         if (!s->confirmDiscard()) return;
     }
+    if (!confirmCloseTimelines()) return;
+    for (auto* t : timelineWindows()) t->hide();
     for (auto* c : codeWindows_) c->hide();
     for (auto* s : soundWindows_) s->editor()->stop();
     for (auto* s : soundWindows_) s->hide();

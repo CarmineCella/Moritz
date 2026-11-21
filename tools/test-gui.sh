@@ -382,6 +382,51 @@ expect "Stop stops a process" "state: process pvoc: stopped"
 expect "and a script" "state: process forever.mu: stopped"
 expect "closing while they run" "state: documents 0"
 
+# 24. a score box double-clicked (locked) opens its timeline; a clip dragged is one undo step, taken back by Undo;
+#     the score is kept in the patch, so the patch is edited (and the timeline asks nothing when it closes)
+run "$G/timeline.moritz" --window-png none act=dblclick:s act=timeline act=tldrag:3,1 act=timeline act=tlop:undo \
+    act=timeline act=state act=closefront act=timeline
+moves=$(grep "state: timeline clip 3 " "$out" | sed 's/state: timeline clip 3 //' | cut -d' ' -f1-4 | tr '\n' '|')
+if [ $status -eq 0 ] && grep -q "state: timeline score piece — timeline — Moritz" "$out" &&
+   [ "$moves" = "sound voice 1 2|sound voice 2 2|sound voice 1 2|" ] && grep -q "state: timeline undo no redo yes" "$out" &&
+   grep -q "state: front $G/timeline.moritz edited yes" "$out" && grep -q "state: timeline none" "$out" && ! grep -q "^ask:" "$out"
+then ok; else fail "a score box's timeline: a clip dragged, undone (got $moves)"; fi
+
+# 25. a clip dragged to another track, trimmed at both ends (a sound's from and to follow), split at the playhead,
+#     a point clicked on a lane, a track muted by its header's M
+run "$G/timeline.moritz" --window-png none act=tlopen:s act=tldrag:1,0,1 act=tltrim:3,right,2.5 act=tltrim:2,left,2.5 \
+    act=tlplayhead:2 act=tlclick:3 act=tlop:split act=tlpoint:voice,density,1.5,0.75 act=tlmute:drums act=timeline
+expect "a clip dragged to the other track" "state: timeline clip 1 sound voice 0 1"
+expect "trimmed at its end, split at the playhead" "state: timeline clip 3 sound voice 1 1 from 0 to 1"
+expect "the right half goes on in the source" "state: timeline clip 5 sound voice 2 0.5 from 1 to 1.5"
+expect "trimmed at its start" "state: timeline clip 2 sound drums 2.5 0.5 from 1 to 1.5"
+expect "a point on the lane (its value as near as a pixel)" "state: timeline clip 6 msg voice 1.5 0 value 0.7"
+if [ $status -eq 0 ] && grep -q "Mute" "$out"; then ok; else fail "a track muted by its header"; fi
+
+# 26. a new score: a sound added, saved where asked (atomically: no temporary file left), opened again the same;
+#     edited, closing asks (Cancel keeps it, Don't Save closes it)
+run --window-png none act=tlnew "act=tladdsound:$HERE/data/drums.wav" "saveas=$T/new.score" act=tlsave act=timeline
+if [ $status -eq 0 ] && grep -q "drums.wav" "$T/new.score" && grep -q "state: timeline new.score — timeline — Moritz" "$out" &&
+   [ -z "$(ls -A "$T" | grep '\.tmp$')" ]; then ok; else fail "a new score saved as a file"; fi
+run --window-png none "act=tlfile:$T/new.score" act=timeline act=tldrag:1,1 answer=0 act=closefront act=timeline answer=2 \
+    act=closefront act=timeline
+expect "a score file opened" "state: timeline clip 1 sound track 1 0"
+expect "closing an edited score asks" "ask: Save changes to the score \"new.score\"?"
+expect "Cancel keeps it" "state: timeline new.score — edited — timeline — Moritz"
+expect "Don't Save closes it" "state: timeline none"
+
+# 27. a sub-score clip double-clicked: its own timeline, the breadcrumb, the instance it is; an edit there is every
+#     instance's and goes into its file with Save; a patch clip double-clicked opens the patch
+mkdir -p "$T/sub"
+cp "$G/piece.score" "$G/gesture.score" "$G/timeline.moritz" "$T/sub/"
+run --window-png none "act=tlfile:$T/sub/piece.score" act=tldbl:3 act=timeline act=tldrag:2,0.25 act=tlsave act=timeline
+expect "a sub-score's timeline" "state: timeline gesture.score — timeline — Moritz"
+expect "the breadcrumb" "state: timeline crumbs piece.score|gesture.score|"
+if [ $status -ne 0 ] || ! grep -q "(note 0.5 0.25 Fl 74 mf (id 2))" "$T/sub/gesture.score"; then fail "an instance edited and saved"
+else ok; fi
+run --window-png none "act=tlfile:$T/sub/piece.score" act=tldbl:4 act=state
+expect "a patch clip opens its patch" "state: front $T/sub/timeline.moritz"
+
 rm -rf "$T"
 echo "$count interface cases, $fails failed"
 [ $fails -eq 0 ]

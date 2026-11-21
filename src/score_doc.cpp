@@ -139,6 +139,17 @@ std::shared_ptr<ScoreDoc> ScoreDoc::ofPlacement(const std::shared_ptr<ScoreDoc>&
     return d;
 }
 
+void ScoreDoc::patchDestroyed(Patch* p) {
+    for (auto& w : registry())
+        if (auto d = w.lock()) {
+            if (d->top_ == p || d->root_ == p) {
+                d->top_ = d->root_ = nullptr;
+                d->box_ = nullptr;
+            }
+            if (d->playerRoot_ == p) d->player_ = d->playerRoot_ = nullptr;   // gone with it
+        }
+}
+
 // ---------------------------------------------------------------- what it is
 
 Box* ScoreDoc::locate() const {

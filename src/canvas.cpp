@@ -6,6 +6,8 @@
 #include "zoom.h"
 #include "objects.h"
 #include "settings.h"
+#include "timeline.h"
+#include "transport.h"
 
 #include <FL/Fl_Menu_Item.H>
 #include <FL/fl_draw.H>
@@ -1233,11 +1235,12 @@ int Canvas::handle(int e) {
                 // argument names one), then the box's own items
                 std::vector<std::string> own = b->menuItems();
                 std::string buf = bufferOf(b);
-                if (b->cls == "buffer~") buf.clear();             // its own menu has Edit...
+                if (b->cls == "buffer~" || isScoreBox(b)) buf.clear();   // its own menu has Edit...; a score's name
                 std::string showLabel = "Edit buffer~ " + buf + "...";
                 for (size_t k = 0; k < showLabel.size(); ++k)
                     if (showLabel[k] == '/' || showLabel[k] == '&') showLabel.insert(k++, 1, '\\');
-                std::vector<Fl_Menu_Item> items(5 + own.size());
+                bool score = isScoreBox(b);                       // a score box: Open as Timeline
+                std::vector<Fl_Menu_Item> items(6 + own.size());
                 for (auto& it : items) it = Fl_Menu_Item{};
                 size_t n = 0;
                 items[n++].label(helpLabel.c_str());
@@ -1247,6 +1250,8 @@ int Canvas::handle(int e) {
                 if (!b->inner()) items[n].deactivate();
                 size_t openAt = n++, showAt = items.size();
                 if (!buf.empty()) { showAt = n; items[n++].label(showLabel.c_str()); }
+                size_t timelineAt = items.size();
+                if (score) { timelineAt = n; items[n++].label("Open as Timeline"); }
                 size_t ownAt = n;
                 if (!own.empty()) items[n - 1].flags |= FL_MENU_DIVIDER;
                 for (auto& o : own) items[n++].label(o.c_str());
@@ -1258,6 +1263,7 @@ int Canvas::handle(int e) {
                 else if (pick == refAt) App::get().showReference(b->cls);
                 else if (pick == openAt) ed_->openSubpatch(b);
                 else if (pick == showAt) openBufferEditor(patch_, buf);
+                else if (pick == timelineAt) openScoreBoxTimeline(b);
                 else if (pick >= ownAt && pick < ownAt + own.size()) b->menuAction((int)(pick - ownAt));
                 redraw();
                 return 1;
@@ -1282,6 +1288,10 @@ int Canvas::handle(int e) {
                         int dotX = nb->x + 16 + (int)zd::width(t.substr(0, dot).c_str());
                         if (dot != std::string::npos && mx > dotX) dragStep_ = 0.01;
                     }
+                } else if (h.box && Fl::event_clicks() && isScoreBox(h.box)) {
+                    Fl::event_clicks(0);                            // double-click: the score as a timeline
+                    openScoreBoxTimeline(h.box);
+                    return 1;
                 } else if (h.box && Fl::event_clicks() && h.box->cls != "plot" && !bufferOf(h.box).empty()) {
                     Fl::event_clicks(0);                            // double-click: the buffer~ in the sound editor
                     openBufferEditor(patch_, bufferOf(h.box));
@@ -1320,6 +1330,11 @@ int Canvas::handle(int e) {
                 if (h.box && h.box->inner() && opens) {
                     Fl::event_clicks(0);
                     ed_->openSubpatch(h.box);
+                    return 1;
+                }
+                if (h.box && isScoreBox(h.box) && opens) {
+                    Fl::event_clicks(0);
+                    openScoreBoxTimeline(h.box);                    // the score's timeline, in edit mode too
                     return 1;
                 }
                 if (h.box && h.box->cls == "code" && opens) {

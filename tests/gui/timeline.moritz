@@ -1,0 +1,15 @@
+; the timeline's tests (tools/test-gui.sh): a score kept in the patch, two tracks of sounds and a lane
+(patch
+  (obj s score piece (pos 20 20)
+    (script
+      "(score \"piece\""
+      "  (sr 44100) (bpm 120) (meter 4 4) (next-id 5)"
+      "  (row drums)"
+      "  (row voice (data lanes (list (list density 0 1))))"
+      "  (sound 0 1 \"../../data/drums.wav\" (id 1) (row drums))"
+      "  (sound 2 1 \"../../data/drums.wav\" (id 2) (row drums) (from 0.5))"
+      "  (sound 1 2 \"../../data/anechoic1.wav\" (id 3) (row voice))"
+      "  (msg 0.5 density 0.25 (id 4) (row voice)))"))
+  (obj o dac~ (pos 20 80))
+  (connect s 0 o 0)
+  (connect s 1 o 1))

@@ -1,0 +1,9 @@
+; the timeline's tests: a sound, a score placed twice (two instances of gesture.score), a patch clip
+(score "piece"
+  (sr 44100) (bpm 120) (meter 4 4) (next-id 5)
+  (row drums)
+  (row gestures)
+  (sound 0 1 "../../data/drums.wav" (id 1) (row drums))
+  (score 0 "gesture.score" (dur 1) (id 2) (row gestures))
+  (score 2 "gesture.score" (dur 1) (transpose 5) (id 3) (row gestures))
+  (patch 4 2 "timeline.moritz" (args) (id 4) (row drums)))
