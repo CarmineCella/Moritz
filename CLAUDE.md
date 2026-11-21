@@ -53,7 +53,9 @@ or `make`); `ctest --test-dir build` runs every test. These rules come from a fu
 ## Commits and releases
 - Work happens on `main`, on macOS, validated by hand; work in parallel goes on short branches merged into
   `main` when ready. CI runs only for a release tag (`v*`) or when asked (`gh workflow run build.yml`), never to
-  try a fix. A release: CI passes on all three systems, then the tag, then release notes written by hand.
+  try a fix. A release: CI passes on all three systems, then the tag, then release notes written by hand. Before
+  starting that CI, `make windows` (MinGW, cross-compiled on macOS) catches what macOS's headers let through (a
+  missing `<cstring>`, `M_PI`, macros of `windows.h`).
 - `ROADMAP.md` is kept current: a new request goes into it when it comes, an item is ticked when it lands.
 - No `Co-Authored-By` or other assistant attribution in commits or pull requests; no plan "weeks" or "steps"
   in messages or release notes.
