@@ -423,6 +423,27 @@ struct Mixer {
     bool anySolo = false;
 };
 
+// --- fades: a sound's fade-in and fade-out (its extra's fade-in and fade-out, seconds) have shapes (fade-in-shape,
+// fade-out-shape: linear, the default; equal, equal power, as overlapping clips crossfade; slow, squared; fast, the
+// square root). The gain at x, from 0 (the fade's silent end) to 1. Moritz plays and draws them.
+enum class FadeShape : uint8_t { Linear = 0, Equal = 1, Slow = 2, Fast = 3 };
+inline FadeShape fadeShapeOf(const Fields& f, const std::string& key) {
+    const Datum* d = field(f, key);
+    if (!d || (d->kind != Datum::Sym && d->kind != Datum::Str)) return FadeShape::Linear;
+    if (d->s == "equal" || d->s == "equal-power") return FadeShape::Equal;
+    if (d->s == "slow") return FadeShape::Slow;
+    if (d->s == "fast") return FadeShape::Fast;
+    return FadeShape::Linear;
+}
+inline float fadeGain(FadeShape shape, float x) {   // no allocation: Moritz's audio side calls it
+    switch (shape) {
+    case FadeShape::Equal: return std::sin(x * 1.57079632679f);
+    case FadeShape::Slow: return x * x;
+    case FadeShape::Fast: return std::sqrt(x);
+    default: return x;
+    }
+}
+
 // --- bars and beats -----------------------------------------------------------------------------------------------
 // A position as bars, beats (both from 1) and ticks (kTicks a beat), from seconds at a tempo and meter.
 constexpr int kTicks = 480;

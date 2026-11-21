@@ -345,19 +345,8 @@ double panAt(int px, int x0, int x1) {
     double az = std::clamp(90 - 180.0 * (px - x0) / std::max(1, x1 - x0), -90.0, 90.0);
     return std::fabs(az) < 3 ? 0.0 : az;
 }
-float fadeCurve(int shape, float x) {
-    switch (shape) {
-    case 1: return std::sin(x * 1.5707963f);
-    case 2: return x * x;
-    case 3: return std::sqrt(x);
-    default: return x;
-    }
-}
-int shapeOf(const sc::Fields& f, const char* key) {
-    const sc::Datum* d = sc::field(f, key);
-    if (!d || (d->kind != sc::Datum::Sym && d->kind != sc::Datum::Str)) return 0;
-    return d->s == "equal" || d->s == "equal-power" ? 1 : d->s == "slow" ? 2 : d->s == "fast" ? 3 : 0;
-}
+float fadeCurve(int shape, float x) { return sc::fadeGain((sc::FadeShape)shape, x); }
+int shapeOf(const sc::Fields& f, const char* key) { return (int)sc::fadeShapeOf(f, key); }
 std::string inputText(const mt::RowSettings& rs) {
     if (rs.input < 1) return "no input";
     return "in " + std::to_string(rs.input) + (rs.inputCh == 2 ? "-" + std::to_string(rs.input + 1) : std::string());

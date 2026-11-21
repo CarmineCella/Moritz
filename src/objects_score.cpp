@@ -1193,10 +1193,7 @@ private:
                 Message msg{Atom((float)e.sounding()), Atom((float)std::clamp(vel, 1, 127)), Atom((float)(e.dur * 1000.0)),
                             Atom(e.row.empty() ? std::string("-") : e.row), Atom(e.dyn.empty() ? std::string("-") : e.dyn),
                             Atom(e.tech.empty() ? std::string("-") : e.tech)};
-                Ctl k{at(e.at), nOut_, std::move(msg)};
-                k.kind = Ctl::Note;
-                k.track = track;
-                ctl.push_back(std::move(k));
+                ctl.push_back(Ctl{at(e.at), nOut_, std::move(msg), false, Ctl::Note, track, -1});
             } else if (e.kind == sc::Kind::Message) {
                 if (e.source.rfind("strip.", 0) == 0) {          // a lane of the track's strip: played on the audio thread
                     if (c < 0 || e.values.empty() || e.values[0].kind != sc::Datum::Num) continue;
@@ -1219,13 +1216,13 @@ private:
                 }
                 Message msg{Atom(e.source.empty() ? std::string("-") : e.source)};
                 for (auto& d : e.values) appendDatum(msg, d);
-                ctl.push_back({at(e.at), nOut_ + 1, std::move(msg), !e.source.empty()});
+                ctl.push_back(Ctl{at(e.at), nOut_ + 1, std::move(msg), !e.source.empty(), Ctl::Plain, std::string(), -1});
             } else if (e.kind == sc::Kind::Patch) {
                 // a patch clip: its patch (a .moritz file) loaded now, run while the clip plays (loadbang at its start,
                 // its timers stopped at its end); it leaves the messages outlet too, as `patch name duration-ms args...`
                 Message msg{Atom("patch"), Atom(e.source), Atom((float)(e.dur * 1000.0))};
                 for (auto& d : e.values) appendDatum(msg, d);
-                ctl.push_back({at(e.at), nOut_ + 1, std::move(msg)});
+                ctl.push_back(Ctl{at(e.at), nOut_ + 1, std::move(msg), false, Ctl::Plain, std::string(), -1});
                 std::string file = sourcePath(e.source, p.origin);
                 if (c >= 0 && endsWith(file, ".moritz") && std::filesystem::exists(std::filesystem::u8path(file))) {
                     int k = slotFor("clip:" + std::to_string(e.id) + ":" + std::to_string((uintptr_t)p.origin), file, slotsChanged);
@@ -1234,13 +1231,8 @@ private:
                     cl.start = at(e.at);
                     cl.end = at(e.end());
                     chans[(size_t)c].clips.push_back(cl);
-                    Ctl s{cl.start, -1, {}}, f{cl.end, -1, {}};
-                    s.kind = Ctl::ClipStart;
-                    s.slot = k;
-                    f.kind = Ctl::ClipEnd;
-                    f.slot = k;
-                    ctl.push_back(std::move(s));
-                    ctl.push_back(std::move(f));
+                    ctl.push_back(Ctl{cl.start, -1, {}, false, Ctl::ClipStart, std::string(), k});
+                    ctl.push_back(Ctl{cl.end, -1, {}, false, Ctl::ClipEnd, std::string(), k});
                 }
             }
         }
@@ -1342,14 +1334,7 @@ private:
         }
         follow();
     }
-    static uint8_t fadeShape(const sc::Fields& f, const char* key) {
-        const sc::Datum* d = sc::field(f, key);
-        if (!d || (d->kind != sc::Datum::Sym && d->kind != sc::Datum::Str)) return 0;
-        if (d->s == "equal" || d->s == "equal-power") return 1;
-        if (d->s == "slow") return 2;
-        if (d->s == "fast") return 3;
-        return 0;
-    }
+    static uint8_t fadeShape(const sc::Fields& f, const char* key) { return (uint8_t)sc::fadeShapeOf(f, key); }
 
     // the files read from disk told where the transport is (a locate: read there now) and where its loop starts (kept)
     void prepareStreams() {
@@ -1516,14 +1501,7 @@ struct StreamSource {
     }
 };
 
-inline float shapeOf(uint8_t shape, float x) {
-    switch (shape) {
-    case 1: return std::sin(x * 1.5707963f);
-    case 2: return x * x;
-    case 3: return std::sqrt(x);
-    default: return x;
-    }
-}
+inline float shapeOf(uint8_t shape, float x) { return sc::fadeGain((sc::FadeShape)shape, x); }
 
 // a voice's samples in [pos, pos + len) added into buf (channel-major, kBlock a channel) from offset i. Src: interp(sp,
 // c) as SampleBuffer's, frames, channels, sr; false from ok() stops it (a stream's miss)
