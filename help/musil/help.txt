@@ -1486,10 +1486,6 @@
   features written to path in the database format (first line: type block hop ncoeff; then the file's path
   relative to folder and the features); the file names carry the metadata (instr-tech-pitch-dyn-other).
   Sounds that cannot be read are skipped with a message.
-#db-locate
-  (db-locate root file)
-  => the path on disk of a sound named file (a path from a feature file) under root, found by its
-  file name whatever the folders are called; "" when it is not there. (db-index-size root) => how many sounds root holds
 #db-sounds-folder
   (db-sounds-folder dir entries)
   where the sounds of a feature file in dir are (db-load uses it): the folder next to it
