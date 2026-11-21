@@ -9,6 +9,7 @@
 #pragma once
 #include "../core.h"
 #include <fstream>
+#include <cstring>
 #include <deque>
 #include <map>
 

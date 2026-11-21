@@ -41,7 +41,7 @@ SampleBuffer sine(long frames, double hz, double sr = 44100, int ch = 1, double 
     b.sr = sr;
     b.frames = frames;
     for (long f = 0; f < frames; ++f)
-        for (int c = 0; c < ch; ++c) b.data.push_back((float)(amp * std::sin(2 * M_PI * hz * f / sr)));
+        for (int c = 0; c < ch; ++c) b.data.push_back((float)(amp * std::sin(2 * dsp::kPi * hz * f / sr)));
     return b;
 }
 std::string temp(const std::string& name) {
@@ -215,7 +215,7 @@ TEST(paste_resamples_to_the_sound_rate) {
     CHECK(b.message.find("resampled from 22050 to 44100") != std::string::npos);
     float worst = 0;                                     // and its pitch: the sine goes on
     for (long f = 4500; f < 8700; ++f)
-        worst = std::max(worst, std::fabs(b.sound()->data[(size_t)f] - (float)(0.5 * std::sin(2 * M_PI * 441 * (f - 4410) / 44100.0))));
+        worst = std::max(worst, std::fabs(b.sound()->data[(size_t)f] - (float)(0.5 * std::sin(2 * dsp::kPi * 441 * (f - 4410) / 44100.0))));
     CHECK(worst < 0.01f);
 }
 
@@ -513,7 +513,7 @@ TEST(markers_from_onsets_beats_and_regions) {
     std::vector<long> hits;
     for (int k = 0; k < 8; ++k) hits.push_back(22050 * k + 5000);
     for (long h : hits)                                  // decaying bursts of a 440 Hz tone
-        for (long f = 0; f < 15000; ++f) s.data[(size_t)(h + f)] += (float)(0.6 * std::exp(-f / 3000.0) * std::sin(2 * M_PI * 440 * f / 44100.0));
+        for (long f = 0; f < 15000; ++f) s.data[(size_t)(h + f)] += (float)(0.6 * std::exp(-f / 3000.0) * std::sin(2 * dsp::kPi * 440 * f / 44100.0));
     bool sync = jobsSynchronous;
     jobsSynchronous = true;
     Job job;

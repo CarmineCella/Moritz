@@ -340,7 +340,7 @@ TEST(sound_spectrogram_finds_a_sine) {
     s.channels = 1;
     s.sr = 44100;
     s.frames = 44100;
-    for (long f = 0; f < s.frames; ++f) s.data.push_back((float)std::sin(2 * M_PI * 1000.0 * f / 44100.0));
+    for (long f = 0; f < s.frames; ++f) s.data.push_back((float)std::sin(2 * dsp::kPi * 1000.0 * f / 44100.0));
     Spectrogram g;
     CHECK(computeSpectrogram(s, g));
     CHECK(g.cols > 10 && g.rows == 256);

@@ -27,6 +27,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <map>
 
 namespace moritz {
@@ -480,7 +481,7 @@ void clefStroke(const std::vector<ClefPt>& c, double X, double Y, double u) {
 void clefDot(double x, double y, double r, double X, double Y, double u) {
     fl_begin_polygon();
     for (int k = 0; k < 16; ++k) {
-        double a = k * M_PI / 8;
+        double a = k * dsp::kPi / 8;
         zd::vertex(X + (x + r * std::cos(a)) * u, Y + (y + r * std::sin(a)) * u);
     }
     fl_end_polygon();

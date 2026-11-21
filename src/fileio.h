@@ -19,6 +19,9 @@
 #ifdef _WIN32
 #include <io.h>
 #include <windows.h>
+#ifdef OPAQUE      // wingdi.h's; Musil has a value type of that name (a file including both would not build)
+#undef OPAQUE
+#endif
 #else
 #include <climits>
 #include <cstdlib>

@@ -24,6 +24,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <deque>
 #include <filesystem>
 #include <map>
@@ -710,7 +711,7 @@ private:
         double f = 440.0 * std::pow(2.0, (pitch - 69.0) / 12.0), amp = 0.25 * vel / 127.0;
         for (long i = 0; i < b->frames; ++i) {
             double t = (double)i / b->sr, decay = std::exp(-3.0 * t);
-            double x = std::sin(2 * M_PI * f * t) + 0.3 * std::sin(4 * M_PI * f * t) + 0.12 * std::sin(6 * M_PI * f * t);
+            double x = std::sin(2 * dsp::kPi * f * t) + 0.3 * std::sin(4 * dsp::kPi * f * t) + 0.12 * std::sin(6 * dsp::kPi * f * t);
             b->data[(size_t)i] = (float)(amp * decay * x / 1.42);
         }
         return b;
