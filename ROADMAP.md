@@ -287,6 +287,10 @@ The patches in `tutorials/` are numbered in the order they are taught; the code 
 
 ### Documents
 
+- [ ] **Papers** (how many and where to be decided; maybe ICMC, in one session): Moritz and Musil (the system);
+      the playability rules and the granular and morphological orchestrations, with Orchidea's search changed
+      by them; the new SoundTypes, Maple and the conjunction.
+
 Guides shipped as PDFs in `docs/` (Help > Documents), written as tutorials with patches to open
 alongside, in the style of `docs/hybridization/` (LaTeX source next to the PDF), each finished with the
 feature it describes:
