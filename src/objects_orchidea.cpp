@@ -459,7 +459,7 @@ std::vector<OrchNote> granularNotes(const GranResult& r) {
         const gr::note& n = run.notes[p.first];
         OrchNote o;
         o.at = r.start + n.at;
-        o.dur = p.second;
+        o.dur = std::max(0.0, p.second);
         o.entry = n.entry;
         o.player = n.player;
         o.cents = (int)std::lround(n.cents);
@@ -756,7 +756,7 @@ public:
             else patch->print("orchidea: mode is mimetic, granular or morphological");
         } else if (h.is("start")) start_ = std::clamp(decimalOf(num(0)), 0.0, 1e7);
         else if (h.is("continue")) continue_ = num(1) != 0;
-        else if (h.is("hop")) hop_ = clampInt(num(1024), 16, 1 << 16);
+        else if (h.is("hop")) hop_ = clampInt(num(1024), 64, 1 << 16);
         else if (h.is("fine")) { int n = 64; while (n < clampInt(num(8192), 64, 1 << 18)) n <<= 1; fine_ = n; }
         else if (h.is("attack-threshold")) attackThreshold_ = std::clamp((double)num(2), 0.0, 1e6);
         else if (h.is("markov")) {

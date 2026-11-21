@@ -695,6 +695,7 @@ check (contains? (error-of (function () (orchestrate-granular db orch 2 (record 
 check (contains? (error-of (function () (orchestrate-morphological db orch (record (list 'sr 44100)) (record (list))))) "not a target") "orchestrate-morphological: not a target"
 check (contains? (error-of (function () (target-analyse tx 0 2048 1024))) "rate") "target-analyse: a rate of 0"
 check (contains? (error-of (function () (env-at (list) 1))) "envelope") "env-at: an empty envelope"
+check (contains? (error-of (function () (target-analyse-with (zeros 441000) 44100 2048 1 (record (list 'fine 1048576))))) "too many frames") "target-analyse: more frames than it can hold, said before any is made"
 check (== (length (best-connection (orchestrate-granular db (list) 2 (record (list 'density (list 4 4)))))) 0) "orchestrate-granular: no players, no notes"
 check (== (length (best-connection (orchestrate-granular db (orchestra (list 'Tba)) 2 (record (list 'density (list 4 4)))))) 0) "orchestrate-granular: an instrument the database has not got plays nothing (unplayable)"
 var silent (target-analyse (zeros 44100) 44100 (get db 'block) 1024)

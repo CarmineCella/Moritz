@@ -362,6 +362,9 @@ struct analysis_options { double threshold = 2, window = 1; int fine = 8192; };
 inline target analyse(const std::vector<double>& x, double sr, int block, int hop, const analysis_options& o = {}) {
     if (!(sr > 0)) throw std::runtime_error("target-analyse: the sample rate must be > 0");
     if (block < 2 || hop < 1 || o.fine < 2) throw std::runtime_error("target-analyse: the block (2 at least) and the hop (1 at least)");
+    double frames = (double)x.size() / hop + 2;
+    if (frames * ((double)block / 2 + (double)o.fine / 2) > 3e8)
+        throw std::runtime_error("target-analyse: too many frames to hold (" + num_text(std::floor(frames)) + "): a larger hop or a shorter sound");
     target g; g.sr = sr; g.block = block; g.hop = hop; g.fine_block = o.fine;
     g.spectra = morph::frame_spectra(x, (size_t)block, (size_t)hop, (size_t)block / 2);
     size_t n = g.spectra.size();
@@ -788,10 +791,12 @@ inline run_result granulate(const dbindex& ix, std::vector<player>& orch, double
     std::map<double, int> covered;                              // the cluster method: how often each pitch has sounded
     std::vector<std::string> unplayable_keys;
     double t = 0, phase = 0;
-    long voice_k = 0;
+    long voice_k = 0, events_seen = 0;
     auto in_list = [](const std::vector<double>& v, double x) { return std::find(v.begin(), v.end(), x) != v.end(); };
     while (t < secs) {
         if (hooks.progress && !hooks.progress(secs > 0 ? t / secs : 1)) { res.stopped = true; return res; }
+        if (++events_seen > 100000000 || res.notes.size() > 5000000)
+            throw std::runtime_error("orchestrate-granular: more than five million notes or a hundred million events: a lower density or a shorter time");
         double T = start + t;
         // the rate: 'density, or one rate per paired group with 'group-density
         std::vector<double> rates;
