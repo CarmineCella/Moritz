@@ -21,6 +21,14 @@ The plan is in [ROADMAP.md](ROADMAP.md); how to work on the code is in [CLAUDE.m
 - GitHub Actions builds and tests on macOS, Linux and Windows, each on its own system, with both
   sanitizers and Musil built alone, for a `v*` tag (which publishes the release) or when started by
   hand.
+- The multitrack engine (`tests/engine/multitrack_tests.cpp`): recording is tested with a simulated
+  device (the output fed back to the input a latency later, the take checked to the sample once the
+  latency is taken off); streaming with a slow disk (`DiskStream::testDelayMs`) and a locate (misses
+  first, then the samples as decoded whole); tracks on several cores against one thread, bit for bit;
+  `multitrack_cpu_sixteen_tracks` prints what sixteen tracks cost on one thread and on the pool; the
+  threaded paths (the audio thread on its own thread while the interface records, moves faders, adds
+  inserts and undoes) under ThreadSanitizer. The interface cases record with a fake device too
+  (`act=mtrecord`: audio off, the session run by hand with a sine as its input).
 
 ## Max objects most missed in imported patches
 
