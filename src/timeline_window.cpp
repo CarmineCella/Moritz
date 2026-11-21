@@ -7,6 +7,7 @@
 
 #include "timeline.h"
 #include "fileio.h"
+#include "roll.h"
 #include "transport.h"
 #include "ui_util.h"
 
@@ -27,17 +28,6 @@ std::vector<TimelineWindow*>& windows() {
 std::string baseOf(const std::string& p) {
     size_t k = p.find_last_of("/\\");
     return k == std::string::npos ? p : p.substr(k + 1);
-}
-// a score kept in a patch was edited from a timeline: the patch's document is edited (saved with it)
-// and a patch closed: the documents bound to its boxes forget it
-void hookPatches() {
-    if (ScoreDoc::patchEdited) return;
-    ScoreDoc::patchEdited = [](Patch* p) { App::get().markEdited(p); };
-    auto before = Patch::onDestroyed;
-    Patch::onDestroyed = [before](Patch* p) {
-        if (before) before(p);
-        ScoreDoc::patchDestroyed(p);
-    };
 }
 }  // namespace
 
@@ -80,20 +70,35 @@ int TimelineWindow::handle(int e) {
 }
 
 bool TimelineWindow::save() {
-    ScoreDoc& d = doc();
+    bool ok = saveScoreDocument(panel_->docPtr(), [this](const std::string& m) { panel_->setStatus(m); });
+    updateTitle();
+    return ok;
+}
+
+bool TimelineWindow::saveAs() {
+    bool ok = saveScoreDocumentAs(panel_->docPtr(), [this](const std::string& m) { panel_->setStatus(m); });
+    updateTitle();
+    return ok;
+}
+
+bool TimelineWindow::confirmDiscard() { return confirmDiscardScoreDocument(panel_->docPtr(), this); }
+
+// ---------------------------------------------------------------- saving and closing a score's windows
+
+bool saveScoreDocument(const std::shared_ptr<ScoreDoc>& dp, const std::function<void(const std::string&)>& status) {
+    if (!dp) return false;
+    ScoreDoc& d = *dp;
     if (d.where() == ScoreDoc::Where::Box && d.path().empty()) {     // kept in its patch: the patch is saved
         if (Box* b = d.box())
             if (DocumentWindow* w = App::get().docOf(b->patch)) return w->save();
-        return saveAs();
+        return saveScoreDocumentAs(dp, status);
     }
-    if (d.where() == ScoreDoc::Where::Sub && d.path().empty()) {     // embedded: its parent holds it
+    if (d.where() == ScoreDoc::Where::Sub && d.path().empty()) {     // embedded: the score it is inside holds it
         auto top = d.chain().front();
-        for (auto* w : windows())
-            if (w->panel()->docPtr() == top) return w->save();
-        panel_->setStatus("this score is kept inside " + top->title() + ": save that one");
-        return false;
+        if (top == dp) { status("this score is kept inside another: save that one"); return false; }
+        return saveScoreDocument(top, status);
     }
-    if (!d.canSaveInPlace()) return saveAs();
+    if (!d.canSaveInPlace()) return saveScoreDocumentAs(dp, status);
     std::string err;
     if (!d.save(err)) {
         alertUser("Can't save %s:\n%s\n\nThe file on the disk is as it was.", baseOf(d.path()).c_str(), err.c_str());
@@ -101,13 +106,13 @@ bool TimelineWindow::save() {
         return false;
     }
     App::get().log("saved " + d.path());
-    panel_->setStatus("saved " + baseOf(d.path()));
-    updateTitle();
+    status("saved " + baseOf(d.path()));
     return true;
 }
 
-bool TimelineWindow::saveAs() {
-    ScoreDoc& d = doc();
+bool saveScoreDocumentAs(const std::shared_ptr<ScoreDoc>& dp, const std::function<void(const std::string&)>& status) {
+    if (!dp) return false;
+    ScoreDoc& d = *dp;
     bool copy = d.where() == ScoreDoc::Where::Box || d.where() == ScoreDoc::Where::Sub;
     Fl_Native_File_Chooser fc;
     fc.title(copy ? "Save a Copy of the Score" : "Save Score As");
@@ -128,21 +133,21 @@ bool TimelineWindow::saveAs() {
         return false;
     }
     App::get().log("saved " + p);
-    panel_->setStatus((copy ? "a copy saved as " : "saved ") + baseOf(p));
+    status((copy ? "a copy saved as " : "saved ") + baseOf(p));
     if (!copy) App::get().addRecent(p);
-    updateTitle();
     return true;
 }
 
-bool TimelineWindow::confirmDiscard() {
-    ScoreDoc& d = doc();
-    if (!d.needsSaving()) return true;
+bool confirmDiscardScoreDocument(const std::shared_ptr<ScoreDoc>& dp, const Fl_Window* except) {
+    if (!dp || !dp->needsSaving()) return true;
     for (auto* w : windows())                    // another window shows the same score: it is not lost
-        if (w != this && w->panel()->docPtr().get() == &d) return true;
-    std::string name = d.path().empty() ? std::string("Untitled score") : baseOf(d.path());
+        if (w != except && w->panel()->docPtr() == dp) return true;
+    for (auto* w : RollWindow::all())
+        if (w != except && w->shows(dp.get())) return true;
+    std::string name = dp->path().empty() ? std::string("Untitled score") : baseOf(dp->path());
     int r = askUser("Save changes to the score \"%s\"?", "Cancel", "Save", "Don't Save", name.c_str());
     if (r == 0) return false;
-    if (r == 1) return save();
+    if (r == 1) return saveScoreDocument(dp, [](const std::string&) {});
     return true;
 }
 
@@ -150,7 +155,6 @@ bool TimelineWindow::confirmDiscard() {
 
 TimelineWindow* openTimeline(std::shared_ptr<ScoreDoc> doc) {
     if (!doc) return nullptr;
-    hookPatches();
     for (auto* w : windows())
         if (w->panel()->docPtr() == doc) { w->show(); return w; }
     fl_open_display();
@@ -235,6 +239,7 @@ bool confirmCloseTimelines() {
 //   act=tlplayhead:<seconds>, act=tlsnap:<off|beat|bar>, act=tladdsound:<file>, act=tllane:<track>,<name>
 //   act=tlsave                       File > Save (saveas=<path> answers a Save As)
 //   act=tlpng:<file>                 the front timeline window drawn into a PNG file
+//   act=tlview:<roll|list>           the toolbar's Roll or List button (the roll's window, on the same document)
 namespace {
 
 TimelineWindow* front() {
@@ -390,6 +395,10 @@ bool timelineTestAction(const std::string& verb, const std::string& arg) {
                 return true;
             }
         return false;
+    }
+    if (verb == "tlview") {                         // act=tlview:roll|list: the toolbar's Roll or List button
+        w->panel()->showRoll(arg == "list" ? 2 : 0);
+        return true;
     }
     if (verb == "tlop") {
         static const std::pair<const char*, void (TimelinePanel::*)()> ops[] = {

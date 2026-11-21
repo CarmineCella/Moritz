@@ -1,11 +1,12 @@
 // Copyright (c) 2026 Carmine-Emanuele Cella. SPDX-License-Identifier: BSD-2-Clause
 // timeline.h — the timeline: a score seen as tracks (mockup 4). TimelinePanel is the panel (an Fl_Group that can
 // sit in any window) showing a ScoreDoc (score_doc.h) through the operations of timeline_ops.h; TimelineWindow is
-// the panel in a window of its own (a score box double-clicked or its menu's Open as Timeline, File > Open Score...,
-// File > New Score, a sub-score clip double-clicked).
+// the panel in a window of its own (a score box's menu's Open as Timeline, the roll's Timeline button, File > Open
+// Score..., File > New Score, a sub-score clip double-clicked).
 //
 // The panel, top to bottom: the transport bar (to start, play, stop, loop, the position in bars.beats.ticks and in
-// time, the tempo and meter, snap, zoom, the Add and Edit menus, Render), the breadcrumb (where this score is placed,
+// time, the tempo and meter, snap, zoom, the Add and Edit menus, Render, and Timeline / Roll / List: the views of the
+// same document, the roll in its own window, roll.h), the breadcrumb (where this score is placed,
 // when it is inside another), the view (a ruler, then for each track its header and its clips, its automation lanes
 // under it), the inspector on the right (the selected clip, point or track), and the status line.
 //
@@ -181,6 +182,7 @@ public:
     void tempoDialog();
     void renameTrackDialog(const std::string& track);
     void renderDialog();
+    void showRoll(int view);                   // the Roll and List buttons: the same document in the roll (0: Roll, 2: List)
     bool addSoundFile(const std::string& path, const std::string& track, double at);   // a file dropped or chosen
     void openClip(uint64_t id);                // a sub-score: its timeline; a patch: the patch; a sound: its editor
     bool rendering() const { return render_.running(); }
@@ -278,6 +280,12 @@ TimelineWindow* openScoreFile(const std::string& path);        // a .score file 
 void openScoreDialog();
 TimelineWindow* newScoreTimeline();                            // File > New Score
 TimelineWindow* frontTimeline();                               // the timeline window in front, if one is
+// saving a score as its windows (timeline and roll) do: its file; a score kept in a patch: the patch; a score kept
+// inside another: that one; a new score: Save As (a score of a box or placed: a copy). status: what was done
+bool saveScoreDocument(const std::shared_ptr<ScoreDoc>& d, const std::function<void(const std::string&)>& status);
+bool saveScoreDocumentAs(const std::shared_ptr<ScoreDoc>& d, const std::function<void(const std::string&)>& status);
+// a window showing d closes (except: that window): asks when edits only it shows would be lost; false: cancel
+bool confirmDiscardScoreDocument(const std::shared_ptr<ScoreDoc>& d, const Fl_Window* except);
 const std::vector<TimelineWindow*>& timelineWindows();
 void closeTimeline(TimelineWindow* w);                         // already confirmed
 void closeAllTimelines();                                      // at once, nothing asked (quitting, the tests' end)

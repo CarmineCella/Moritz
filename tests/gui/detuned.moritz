@@ -1,0 +1,11 @@
+; a score box with detuned notes (as orchidea's), for the cents' interface cases (tools/test-gui.sh)
+(patch
+  (obj s score detuned 1 (pos 20 40)
+    (script
+      "(score \"detuned\""
+      "  (sr 44100) (bpm 60) (meter 4 4) (next-id 4)"
+      "  (row Vn treble)"
+      "  (note 0 1 Vn 69 mf (id 1) (cents 19))"
+      "  (note 1 1 Vn 64 mf (id 2) (cents -41))"
+      "  (note 2 1 Vn 67 mf (id 3)))"))
+  (obj tr transport 60 4 4 (pos 420 40)))

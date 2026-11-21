@@ -131,6 +131,9 @@ public:
     int screenY(int py) const { return y() + (int)std::lround((py - sy_) * zoom_); }
     // the box a pointer the canvas kept still names (nullptr when it was deleted or replaced)
     Box* alive(Box* b) const;
+    // Edit > Undo (or Redo) taken by the interface box clicked last in locked mode (a score box: its score's history,
+    // the same as its roll's and its timeline's); false: the patch's undo
+    bool uiUndo(bool redo);
     // a box dragged with Shift held: the index of the cable it would go into, drawn lit (-1: none)
     int litCable() const { return drag_ == Drag::Move ? spliceCable_ : -1; }
 

@@ -5,6 +5,7 @@
 
 #include "musil_host.h"
 #include "roll_edit.h"
+#include "transport.h"
 
 #include "music/score_layout.h"
 #include "rig.h"
@@ -342,10 +343,10 @@ TEST(orchidea_solution_as_a_score) {
     o.send({Atom("seed"), Atom(3.f)});
     o.send({Atom("run"), Atom("tgt")});
     jobsSynchronous = sync;
-    auto* src = dynamic_cast<ScoreSource*>(o.r.box("s"));
-    CHECK(src != nullptr);
+    Box* src = o.r.box("s");
+    CHECK(src != nullptr && isScoreBox(src));
     if (!src) return;
-    auto s = src->scoreNow();
+    auto s = scoreOfBox(src);
     CHECK(!o.notes->got.empty() && s->size() == o.notes->got.size());
     bool same = true;
     size_t k = 0;
@@ -367,7 +368,7 @@ TEST(orchidea_solution_as_a_score) {
     }
     CHECK(!s->rows.empty() && ordered);
     o.send({Atom("score")});                         // again: the same score
-    CHECK(sc::toText(*src->scoreNow()) == sc::toText(*s));
+    CHECK(sc::toText(*scoreOfBox(src)) == sc::toText(*s));
     o.r.box("tr")->message(0, {Atom("play")});
     o.r.ch = 1;
     auto y = o.r.run(44100);

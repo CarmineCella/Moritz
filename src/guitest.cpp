@@ -79,7 +79,12 @@
 //   act=rollundo, act=rollredo   the roll's Undo and Redo
 //   act=rollview:roll|piano|list   the roll's view; act=rollpng:<file>: its window drawn into a PNG file
 //   act=rolltext:<file>       the roll's text view given the file's text and applied (an error is printed)
-//   act=rollstate             print: the roll's title, its notes (id at dur pitch) and the lines of its text with a note
+//   act=rollstate             print: the roll's title, its notes (id at dur pitch; cents), its selection, its undo and
+//                             redo, and the lines of its text with a note
+//   act=rolltimeline          the roll's Timeline button; act=rollselect:<id>,<id>... the roll's selection set
+//   act=rollkey:<up|down|left|right>[:alt][:shift]   a key on the roll (Alt+Up: a cent higher, Shift+Alt: ten)
+//   act=rollcell:<id>:<key>:<value>   the List view, a cell typed into and entered
+//   act=boxcents:<box>:<event>   print: how the score box's own roll shows the event's detuning (text, tick or none)
 //   act=boxdrag:<box>:<event>:<dx>,<dy>   on the canvas, an event of a score box's own roll dragged by its head that
 //                             many pixels (the patch locked: the box edited in place)
 
@@ -402,8 +407,18 @@ bool act(const std::string& a) {
     }
     if (verb == "roll") {
         DocumentWindow* d = front();
-        auto* src = d ? dynamic_cast<ScoreSource*>(d->patch.find(arg)) : nullptr;
-        return src && openRoll(src);
+        Box* b = d ? d->patch.find(arg) : nullptr;
+        return b && openRollOfBox(b);
+    }
+    if (verb == "boxcents") {                   // act=boxcents:<box>:<event>: how the box's own roll shows its detuning
+        DocumentWindow* d = front();
+        size_t c1 = arg.find(':');
+        if (!d || c1 == std::string::npos) return false;
+        RollCore* core = inlineRollOf(d->patch.find(arg.substr(0, c1)));
+        if (!core) return false;
+        RollCore::CentsMark m = core->centsMark(std::strtoull(arg.c_str() + c1 + 1, nullptr, 10));
+        state("box cents %s %s", m.kind == RollCore::CentsMark::Text ? "text" : m.kind == RollCore::CentsMark::Tick ? "tick" : "none", m.text);
+        return true;
     }
     if (verb.rfind("roll", 0) == 0) {
         RollWindow* w = RollWindow::all().empty() ? nullptr : RollWindow::all().back();
@@ -424,6 +439,33 @@ bool act(const std::string& a) {
             return true;
         }
         if (verb == "rollundo") { panel->undo(); return true; }
+        if (verb == "rolltimeline") { panel->showTimeline(); return true; }       // the toolbar's Timeline button
+        if (verb == "rollselect") {                 // act=rollselect:<id>,<id>...: as clicked in the roll
+            RollCore& c = panel->core();
+            c.selection.clear();
+            for (size_t k = 0; k < arg.size();) {
+                size_t e = arg.find(',', k);
+                c.selection.insert(std::strtoull(arg.substr(k, e == std::string::npos ? std::string::npos : e - k).c_str(), nullptr, 10));
+                k = e == std::string::npos ? arg.size() : e + 1;
+            }
+            panel->changed();
+            return true;
+        }
+        if (verb == "rollkey") {                    // act=rollkey:<up|down|left|right>[:alt][:shift]: a key on the roll
+            int key = arg.rfind("up", 0) == 0 ? FL_Up : arg.rfind("down", 0) == 0 ? FL_Down : arg.rfind("left", 0) == 0 ? FL_Left : FL_Right;
+            int keys = (arg.find(":alt") != std::string::npos ? FL_ALT : 0) | (arg.find(":shift") != std::string::npos ? FL_SHIFT : 0);
+            panel->core().key(key, keys);
+            panel->changed();
+            return true;
+        }
+        if (verb == "rollcell") {                   // act=rollcell:<id>:<key>:<value>: a cell of the list typed into
+            size_t c1 = arg.find(':'), c2 = c1 == std::string::npos ? c1 : arg.find(':', c1 + 1);
+            if (c2 == std::string::npos) return false;
+            panel->setView(RollPanel::View::List);
+            panel->editCell(std::strtoull(arg.c_str(), nullptr, 10), arg.substr(c1 + 1, c2 - c1 - 1), arg.substr(c2 + 1), 10, 10, 60);
+            panel->commitCell();
+            return true;
+        }
         if (verb == "rollredo") { panel->redo(); return true; }
         if (verb == "rolltext") {
             std::string src;
@@ -438,9 +480,17 @@ bool act(const std::string& a) {
             auto sc = t ? t->score() : nullptr;
             if (sc)
                 for (auto* e : sc->byTime())
-                    if (e->kind == musil::score::Kind::Note)
+                    if (e->kind == musil::score::Kind::Note) {
                         state("roll note %s %s", std::to_string(e->id), musil::score::numText(e->at) + " " + musil::score::numText(e->dur) + " " +
                                                                          musil::score::numText(e->pitch));
+                        if (e->cents != 0) state("roll cents %s %s", std::to_string(e->id), musil::score::numText(e->cents));
+                    }
+            std::string sel;
+            for (uint64_t id : panel->core().selection) sel += " " + std::to_string(id);
+            state("roll selection%s", sel);
+            state("roll undo %s redo %s", t && t->canUndo() ? "yes" : "no", t && t->canRedo() ? "yes" : "no");
+            state("roll windows %s view %s", std::to_string(RollWindow::all().size()),
+                  panel->view() == RollPanel::View::List ? "list" : panel->view() == RollPanel::View::Piano ? "piano" : "roll");
             std::string text = panel->text();
             for (size_t k = 0; k < text.size();) {
                 size_t end = text.find('\n', k);
@@ -490,8 +540,7 @@ bool act(const std::string& a) {
         size_t c1 = arg.find(':'), c2 = c1 == std::string::npos ? c1 : arg.find(':', c1 + 1);
         if (!d || c2 == std::string::npos) return false;
         Box* b = d->patch.find(arg.substr(0, c1));
-        auto* src = dynamic_cast<ScoreSource*>(b);
-        RollCore* core = src ? src->inlineRoll() : nullptr;
+        RollCore* core = inlineRollOf(b);
         if (!core) return false;
         uint64_t id = std::strtoull(arg.c_str() + c1 + 1, nullptr, 10);
         int dx = std::atoi(arg.c_str() + c2 + 1);

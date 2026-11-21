@@ -9,6 +9,7 @@
 // leaves its outlet at the logical time whose stamp is its sample, so a signal object it reaches starts there too.
 
 #include "roll.h"
+#include "score_doc.h"
 #include "transport.h"
 #include "zoom.h"
 
@@ -193,7 +194,8 @@ struct ScorePlan {
 // score name [file.score] [channels] [@size w h]: a score (rows, notes, sounds, messages, scores inside it) that plays
 // on the patch's transport. Without a file it is kept in the patch. The box draws its score as a roll (roll.h), edited
 // in place when the patch is locked (select, drag to move, drag an end to resize, Alt-drag copies, Delete, the arrows
-// nudge); a double-click opens the roll's window; in edit mode its corner sizes it. Outlets: one signal for each
+// nudge, Alt+Up and Alt+Down detune by a cent); a double-click opens the roll's window (its menu: Open Roll... and
+// Open as Timeline); in edit mode its corner sizes it. Outlets: one signal for each
 // channel (2 by default: its sounds, and the notes that carry a sound of their own, placed at their azimuths), then
 // notes (pitch velocity duration-ms row dynamics technique; - for none), then messages (name values...; a patch event
 // as patch name duration-ms args...), then info (end when it plays past its last event; the summary for info). A
@@ -212,7 +214,11 @@ struct ScorePlan {
 //   info                        rows events seconds, out of the info outlet
 //   score <token>               a score a code box (or orchidea) sent ((out k s) with s a Musil score)
 //   open                        the roll's window
-class ScoreBox : public Box, public ScoreSource {
+// The box's roll, its roll's window and its timeline are views of one document (score_doc.h): an edit in the box is
+// an undo step of the score's history (Edit > Undo with the box clicked last takes it back, the timeline's and the
+// roll's Undo too), and marks the patch edited; the messages above change the score from outside (the document
+// follows them, its history starting again), as the code view and the patch's undo do.
+class ScoreBox : public Box {
 public:
     explicit ScoreBox(const Message& a) {
         kind = BoxKind::UI;
@@ -234,8 +240,7 @@ public:
     }
     ~ScoreBox() override {
         if (t_) t_->unlisten(this);
-        inline_.reset();                         // its own target first: the windows' follow the box that comes next
-        scoreSourceClosed(this, patch, id);
+        inline_.reset();                         // its roll's target lets go of the document (the windows keep theirs)
     }
 
     Message saveArgs() const override {
@@ -253,7 +258,6 @@ public:
             auto s = sc::readText(text, here());
             if (!name_.empty()) s->name = name_;
             score_ = s;
-            ++gen_;
         } catch (const std::exception& e) { if (patch) patch->print(std::string("score: ") + e.what()); }
     }
     void attached() override {
@@ -278,7 +282,7 @@ public:
         else if (h.is("select")) select(m);
         else if (h.is("transpose") || h.is("invert") || h.is("retrograde") || h.is("augment") || h.is("diminish") ||
                  h.is("shift") || h.is("quantize") || h.is("humanize") || h.is("thin") || h.is("density")) transformBy(m);
-        else if (h.is("open")) openRoll(this);
+        else if (h.is("open")) openRollOfBox(this);
         else if (h.is("play") || h.is("start")) { if (t_) t_->play(patch); }
         else if (h.is("stop")) { if (t_) t_->stop(patch); }
         else if (h.is("locate") && t_) t_->locate(patch, t_->secondsOf(argf(m, 1, 1.f), argf(m, 2, 1.f), argf(m, 3, 0.f)));
@@ -327,22 +331,31 @@ public:
         }
         c.draw(X + 1, Y + head);
     }
+    // locked: the roll edited in place; a double-click opens the roll's window (on a score placed inside: into it)
     void uiMouse(int event, int mx, int my) override {
         RollCore& c = roll();
-        if (event == FL_PUSH && my < kBoxH) {              // the header: a double-click opens the window
-            if (Fl::event_clicks()) { Fl::event_clicks(0); openRoll(this); }
+        bool dbl = event == FL_PUSH && Fl::event_clicks();
+        if (dbl) Fl::event_clicks(0);
+        if (event == FL_PUSH && my < kBoxH) {              // the header
+            if (dbl) openRollOfBox(this);
             return;
         }
-        if (c.mouse(event, mx - 1, my - kBoxH, Fl::event_state(), event == FL_PUSH ? Fl::event_clicks() : 0) && event == FL_PUSH &&
-            Fl::event_clicks())
-            Fl::event_clicks(0);
+        if (!c.mouse(event, mx - 1, my - kBoxH, Fl::event_state(), dbl ? 1 : 0) && dbl) openRollOfBox(this);
     }
     bool uiKey(int key) override { return roll().key(key, Fl::event_state()); }
-    std::vector<std::string> menuItems() override { return {"Open Roll...", "Read...", "Write..."}; }
+    bool uiUndo(bool redo) override {                  // the score's own history (its edits in the box, the roll, the timeline)
+        RollEditTarget* t = roll().target();
+        if (!t || !(redo ? t->canRedo() : t->canUndo())) return false;
+        if (redo) t->redo();
+        else t->undo();
+        if (patch) patch->redraw();
+        return true;
+    }
+    // (the canvas's menu has Open Roll... and Open as Timeline for a score box)
+    std::vector<std::string> menuItems() override { return {"Read...", "Write..."}; }
     void menuAction(int k) override {
-        if (k == 0) { openRoll(this); return; }
-        std::string f = chooseFile(k == 2, k == 1 ? "Read a score" : "Write the score", "Score\t*.score", file_.empty() ? name_ + ".score" : file_);
-        if (!f.empty()) message(0, {Atom(k == 1 ? "read" : "write"), Atom(f)});
+        std::string f = chooseFile(k == 1, k == 0 ? "Read a score" : "Write the score", "Score\t*.score", file_.empty() ? name_ + ".score" : file_);
+        if (!f.empty()) message(0, {Atom(k == 0 ? "read" : "write"), Atom(f)});
     }
 
     // the score from elsewhere (GUI thread): what plays changes at once, the transport going on
@@ -354,27 +367,22 @@ public:
     // what an editor binds to (score_doc.h): the score now, and whether it is kept in the patch (no file of its own)
     std::shared_ptr<sc::Score> current() const { return score_; }
     bool keptInPatch() const { return file_.empty(); }
-    // ---- what the roll's editors ask (ScoreSource, roll_edit.h)
-    std::shared_ptr<const sc::Score> scoreNow() const override { return score_; }
-    uint64_t scoreGeneration() const override { return gen_; }
-    void setScore(std::shared_ptr<sc::Score> s) override { if (s) replace(std::move(s)); }
-    std::string scoreFile() const override { return file_.empty() || !patch ? std::string() : patch->resolvePath(file_); }
-    bool saveScoreFile(std::string& err) override { return writeFile(file_, &err); }
-    std::string scoreTitle() const override { return "score" + (name_.empty() ? std::string() : " " + name_); }
-    Patch* scorePatch() const override { return patch; }
-    bool scoreInPatch() const override { return patch && inPatch(); }
-    RollCore* inlineRoll() override { return &roll(); }
-    // the roll inside the box (made when first drawn, clicked or asked for its selection)
+    // the roll inside the box (made when first drawn, clicked or asked for its selection), on the score's document
     RollCore& roll() {
         if (!inline_) {
-            inline_ = std::make_unique<RollCore>(makeRollTarget(this, false));
+            inline_ = std::make_unique<RollCore>(nullptr);
             inline_->compact = true;
             inline_->onChange = [this] { if (patch) patch->redraw(); };
             inline_->onEnter = [this](uint64_t sub) {
-                RollWindow* w = openRoll(this);
+                RollWindow* w = openRollOfBox(this);
                 if (w && sub) { w->panel()->core().enter(sub); w->panel()->changed(); }
             };
         }
+        if (!inline_->target() && patch)
+            if (auto t = makeRollTarget(ScoreDoc::ofBox(this))) {
+                t->setListener([this](unsigned) { if (patch) patch->redraw(); });   // the timeline's edits, its selection
+                inline_->setTarget(t);
+            }
         return *inline_;
     }
 
@@ -390,7 +398,6 @@ private:
     int w_ = kDefaultW, h_ = kDefaultH;
     std::string name_, file_;
     std::shared_ptr<sc::Score> score_;           // never changed in place: a new one for every change (the views keep theirs)
-    uint64_t gen_ = 1;
     std::unique_ptr<RollCore> inline_;
     std::shared_ptr<Transport> t_;
     Published<ScorePlan> plan_;
@@ -446,11 +453,8 @@ private:
         if (!musil::path_under(musil::resolved_path(path), roots))
             return fail("not written: " + path + " is outside the patch's folder and ~/Documents/Moritz");
         try {
-            auto s = score_->clone();                // the one shown and played is not changed in place
-            sc::writeFile(*s, path);
-            s->path = path;
-            score_ = s;
-            ++gen_;
+            sc::writeFile(*score_, path);            // (its document, if one is open, keeps its history)
+            score_->path = path;
         } catch (const std::exception& e) { return fail(e.what()); }
         return true;
     }
@@ -483,6 +487,7 @@ private:
     // select all | none | id... | row name | time t0 t1
     void select(const Message& m) {
         RollCore& c = roll();
+        c.syncSelection();                       // the document's selection, then this one in its place
         c.path.clear();
         c.selection.clear();
         std::string how = m.size() > 1 && m[1].isSymbol() ? m[1].s : "";
@@ -494,6 +499,7 @@ private:
         } else if (how.empty()) {
             for (size_t k = 1; k < m.size(); ++k) if (m[k].isFloat() && m[k].f >= 1 && score_->find((uint64_t)m[k].f)) c.selection.insert((uint64_t)m[k].f);
         } else if (how != "none") { patch->print("score: select all, none, ids, row name or time t0 t1"); return; }
+        c.syncSelection();                       // the timeline and the roll's window show it too
         if (patch) patch->redraw();
     }
     // a transformation of the selection (all of it when nothing is selected), as Musil's (music/score_transform.h)
@@ -525,6 +531,7 @@ private:
             t.seed = 1;
         }
         RollCore& c = roll();
+        c.syncSelection();                       // what is selected in any view of the score
         auto s = score_->clone();
         try {
             if (!applyTransform(*s, c.path.empty() ? c.selectedIds() : Ids{}, t)) return;
@@ -533,7 +540,6 @@ private:
         replace(s);
     }
     void edited() {
-        ++gen_;
         rebuild();
         if (patch) patch->redraw();
     }
@@ -796,6 +802,10 @@ bool replaceScoreOfBox(Box* b, std::shared_ptr<sc::Score> score) {
 bool scoreBoxKeptInPatch(const Box* b) {
     auto* s = dynamic_cast<const ScoreBox*>(b);
     return s && s->keptInPatch();
+}
+RollCore* inlineRollOf(Box* b) {
+    auto* s = dynamic_cast<ScoreBox*>(b);
+    return s ? &s->roll() : nullptr;
 }
 
 void registerScoreObjects(ClassTable& t) {

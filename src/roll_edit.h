@@ -1,17 +1,19 @@
 // Copyright (c) 2026 Carmine-Emanuele Cella. SPDX-License-Identifier: BSD-2-Clause
 // roll_edit.h — what the roll asks of the score it edits: edit intents (move, resize, copy, insert, remove, set a
-// field, transform, replace the whole score), each one undo step, on the score at a path of sub-scores.
+// field, detune, transform, replace the whole score), each one undo step, on the score at a path of sub-scores.
 //
 // The roll (roll.h) never changes a score itself: it names what the user did, and a RollEditTarget does it. The
-// intents are written on one primitive, apply(): a function that changes a copy of the score at a path; the copy is
-// put back in its place (the scores placed on the way down copied too, every instance of the one edited following,
-// score_transform.h's replaceInstance). Scores handed out by score() are never changed in place: an edit makes a new
-// one, so a view, an undo step or the audio plan can keep the one it has.
+// intents are written on one primitive, apply(): a function that changes a copy of the score at a path, which then
+// becomes the score (one undo step named after the intent).
 //
-// ScoreBoxTarget is the target of a score box (ScoreSource, objects_score.cpp): the box's score is replaced after each
-// edit (what plays follows at once), the patch gets an undo step when the score is kept in it (Edit > Undo in the
-// patch takes the edit back, as for any box), and, for the roll's own window, a history of its own (Undo in the roll).
-// It is meant to be replaced by the score document (ScoreDoc) when it lands: see the end of this file.
+// ScoreDocTarget is the one target there is: the roll edits a ScoreDoc (score_doc.h), the document the timeline edits
+// too, so the timeline and the roll of a score are views of one document: one undo history, one selection, an edit
+// in one shown in the other at once, saved the same way. apply() makes the copy, runs the intent on it and hands the
+// document the difference (events removed, inserted, replaced, the rows, the header) as one Edit: the document keeps
+// only what changed, plays it at once (the box it is bound to), marks the patch edited when the score is kept in it,
+// and tells every view. A score placed inside another (a path) is the document of that placement
+// (ScoreDoc::ofPlacement: an instance, every placement following), with its own history, as in the timeline. Scores
+// handed out by score() are copies made once per change: a view can keep the one it has while the document changes.
 #pragma once
 
 #include "moritz.h"
@@ -20,6 +22,7 @@
 #include "music/score_transform.h"
 
 #include <functional>
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -28,34 +31,7 @@ namespace moritz {
 
 namespace sc = musil::score;
 
-class RollCore;
-
-// ---- what a score box is to the views that edit it (objects_score.cpp)
-class ScoreSource {
-public:
-    virtual ~ScoreSource() = default;
-    virtual std::shared_ptr<const sc::Score> scoreNow() const = 0;   // never changed in place: a new one after a change
-    virtual uint64_t scoreGeneration() const = 0;                   // changes with every new score
-    virtual void setScore(std::shared_ptr<sc::Score> s) = 0;        // what plays changes at once
-    virtual std::string scoreFile() const = 0;                      // the .score file it is kept in (resolved), or ""
-    virtual bool saveScoreFile(std::string& err) = 0;               // into that file
-    virtual std::string scoreTitle() const = 0;                     // "score piece"
-    virtual Patch* scorePatch() const = 0;
-    virtual bool scoreInPatch() const = 0;                         // false once removed (kept until the audio lets go)
-    virtual RollCore* inlineRoll() { return nullptr; }             // the roll drawn inside the box (made when needed)
-};
-// the box is going (its destructor, maybe during an undo that replaces it): its targets let go of it, and follow the
-// box that takes its place, if one does (settled from the event loop)
-void scoreSourceClosed(ScoreSource* s, Patch* p, const std::string& id);
-
-// What the application does for the roll's edits (set by App::init; unset in the engine tests and --render, where
-// nothing more is done): an undo step in the document showing a patch, the patch marked edited, and where a box is,
-// as a function that finds the box in its place later (after an undo or the code view replaced it), or nothing.
-struct RollHost {
-    std::function<void(Patch*)> pushUndo, markEdited;
-    std::function<std::function<Box*()>(Patch*, const std::string& id)> locate;
-};
-RollHost& rollHost();
+class ScoreDoc;
 
 using ScorePath = std::vector<uint64_t>;     // the ids of the score events from the top down to the score edited
 using Ids = std::vector<uint64_t>;
@@ -83,6 +59,11 @@ public:
     virtual Patch* patch() const = 0;                                // where it plays (the transport), or nullptr
     virtual bool dirty() const { return false; }                     // edits not yet in its file
     virtual bool save(std::string& err) { err = "nothing to save"; return false; }
+    // where the view is (the score at path): undo, redo, dirty and save act on that score
+    virtual void focus(const ScorePath&) {}
+    // the selection shared with the other views of the score at path (false: none is shared)
+    virtual bool sharedSelection(const ScorePath&, Ids&) const { return false; }
+    virtual void shareSelection(const ScorePath&, const Ids&) {}
     // ---- edits: one undo step each, on the score at path (empty: the top); false when nothing changed (lastError
     // says why, if something went wrong)
     bool moveEvents(const ScorePath& path, const Ids& ids, double dt, double dpitch);
@@ -93,6 +74,7 @@ public:
     // a field of each event: at dur pitch cents dyn tech row gain az el label (a number or a word), or any other key
     // (kept with the event: Datum)
     bool setField(const ScorePath& path, const Ids& ids, const std::string& key, const sc::Datum& value);
+    bool detune(const ScorePath& path, const Ids& ids, double dcents);    // the notes' cents by that much
     bool transform(const ScorePath& path, const Ids& ids, const ScoreTransform& t);
     bool replaceScore(std::shared_ptr<sc::Score> s, const std::string& label);       // the text view: all of it
     // ---- history
@@ -109,53 +91,50 @@ protected:
     virtual bool replaceTop(std::shared_ptr<sc::Score> s, const std::string& label) = 0;
 };
 
-// The target of a score box (see the top). Bound to the box until it goes; then to the box that took its place
-// (an undo in the patch, the code view), or to nothing (the score it had stays shown, read-only).
-class ScoreBoxTarget : public RollEditTarget {
+// The roll's edits on a score document (see the top). The target keeps the documents of the scores placed inside
+// that it was taken into (their unsaved edits are not lost while it lives).
+class ScoreDocTarget : public RollEditTarget {
 public:
-    // localHistory: Undo and Redo of its own (the roll's window); without, only the patch's undo steps (inline)
-    ScoreBoxTarget(ScoreSource* src, bool localHistory);
-    ~ScoreBoxTarget() override;
+    explicit ScoreDocTarget(std::shared_ptr<ScoreDoc> doc);
+    ~ScoreDocTarget() override;
     std::shared_ptr<const sc::Score> score() const override;
     uint64_t generation() const override;
-    bool editable() const override { return src_ && src_->scoreInPatch(); }
+    bool editable() const override { return true; }
     std::string title() const override;
-    Patch* patch() const override { return src_ ? src_->scorePatch() : nullptr; }
-    bool dirty() const override { return fileDirty_; }
+    Patch* patch() const override;
+    bool dirty() const override;
     bool save(std::string& err) override;
+    void focus(const ScorePath& path) override;
+    bool sharedSelection(const ScorePath& path, Ids& out) const override;
+    void shareSelection(const ScorePath& path, const Ids& ids) override;
     bool undo() override;
     bool redo() override;
-    bool canUndo() const override { return src_ && !undo_.empty(); }
-    bool canRedo() const override { return src_ && !redo_.empty(); }
-    ScoreSource* source() const { return src_; }
-    void unbind();                       // the box is gone
-    void rebind(ScoreSource* s);         // the box that took its place
-    // every target alive (the registry scoreSourceClosed walks)
-    static std::vector<ScoreBoxTarget*>& all();
+    bool canUndo() const override;
+    bool canRedo() const override;
+    const std::shared_ptr<ScoreDoc>& document() const { return doc_; }     // the top
+    std::shared_ptr<ScoreDoc> focused() const;                             // the score the view is in
+    std::vector<std::shared_ptr<ScoreDoc>> documents() const;              // the top, then those placed inside
+    // told when its document changes (ScoreDoc's Change flags: an edit inside a score placed in it is a change of it
+    // too); one at a time
+    void setListener(std::function<void(unsigned)> f);
 
 protected:
     bool apply(const ScorePath& path, const std::string& label, const std::function<bool(sc::Score&)>& f) override;
     bool replaceTop(std::shared_ptr<sc::Score> s, const std::string& label) override;
 
 private:
-    struct Step {
-        std::shared_ptr<const sc::Score> score;
-        std::string label;
-    };
-    void commit(std::shared_ptr<sc::Score> next, const std::string& label);
-    void put(std::shared_ptr<const sc::Score> s);     // into the box, marked as an edit
-    ScoreSource* src_;
-    bool local_;
-    bool fileDirty_ = false;
-    std::shared_ptr<const sc::Score> last_;           // what it showed when the box went
-    uint64_t gone_ = 0;                               // generations after the box went
-    std::vector<Step> undo_, redo_;
+    std::shared_ptr<ScoreDoc> docAt(const ScorePath& path) const;   // made (and kept) on first use
+    bool commitDiff(ScoreDoc& d, const sc::Score& next, const std::string& label);
+    std::shared_ptr<ScoreDoc> doc_;
+    mutable std::map<ScorePath, std::shared_ptr<ScoreDoc>> subs_;
+    ScorePath focus_;
+    mutable std::shared_ptr<const sc::Score> snap_;     // the copy handed out, and the version it is of
+    mutable uint64_t snapVersion_ = ~0ull;
+    std::function<void(unsigned)> listener_;
+    int token_ = 0;
 };
 
-// Switching to ScoreDoc (src/score_doc.h) when it lands: a ScoreDocTarget : RollEditTarget whose score() and
-// generation() are the document's, whose apply() and replaceTop() are the document's edit (one undo step in its
-// history, its listeners told) and whose undo/redo/canUndo/canRedo/dirty/save are the document's; then the roll's
-// window and the score box make one (openRoll and the box's inline roll call makeRollTarget), and ScoreBoxTarget goes.
-std::shared_ptr<RollEditTarget> makeRollTarget(ScoreSource* src, bool localHistory);
+// the roll's target for a document (the roll's window and the score box's own roll each make one)
+std::shared_ptr<ScoreDocTarget> makeRollTarget(std::shared_ptr<ScoreDoc> doc);
 
 }  // namespace moritz

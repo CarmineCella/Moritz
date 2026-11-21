@@ -3,6 +3,7 @@
 // lanes, the inspector, the mouse and the keys; every edit goes through timeline_ops.h, one undo step each.
 
 #include "timeline.h"
+#include "roll.h"
 #include "transport.h"
 #include "ui_util.h"
 
@@ -996,6 +997,15 @@ TimelinePanel::TimelinePanel(int X, int Y, int W, int H, std::shared_ptr<ScoreDo
     renderBtn_->tooltip("Render the score offline into a stereo WAV file");
     renderBtn_->callback([](Fl_Widget*, void* d) { static_cast<P*>(d)->renderDialog(); }, this);
     bx += 84 + 8;
+    // the views of the score (mockup 4): this one, and the roll's (a window of its own on the same document)
+    auto* here = button(74, ToolButton::None, "Timeline", true, "The score as tracks (this view)", [](Fl_Widget* w, void*) {
+        static_cast<ToolButton*>(w)->value(1);
+    }, 2);
+    here->value(1);
+    button(48, ToolButton::None, "Roll", false, "The same score as a roll: staves, edited note by note (the same edits, undo and selection)",
+           [](Fl_Widget*, void* d) { static_cast<P*>(d)->showRoll(0); }, 2);
+    button(44, ToolButton::None, "List", false, "The same score as a list of its events, each cell edited",
+           [](Fl_Widget*, void* d) { static_cast<P*>(d)->showRoll(2); }, 8);
     auto* spacer = new Fl_Box(bx, Y, std::max(1, X + W - bx), kToolH);
     spacer->box(FL_NO_BOX);
     bar_->resizable(spacer);
@@ -1061,6 +1071,8 @@ TimelinePanel::TimelinePanel(int X, int Y, int W, int H, std::shared_ptr<ScoreDo
               "wheel zooms · right-click: Edit");
     Fl::add_timeout(0.1, tick, this);
 }
+
+void TimelinePanel::showRoll(int view) { openRoll(doc_, view); }
 
 TimelinePanel::~TimelinePanel() {
     Fl::remove_timeout(tick, this);

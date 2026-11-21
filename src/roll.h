@@ -1,19 +1,22 @@
 // Copyright (c) 2026 Carmine-Emanuele Cella. SPDX-License-Identifier: BSD-2-Clause
 // roll.h — the roll: a score drawn as staves with proportional time (or as a piano roll), edited by hand.
 //
-// RollCore draws a score and turns the mouse and the keys into edit intents (roll_edit.h); it draws with the zoomed
+// RollCore draws a score and turns the mouse and the keys into edit intents (roll_edit.h) on the score's document
+// (score_doc.h, shared with the timeline: one undo history, one selection); it draws with the zoomed
 // calls of the canvas (zoom.h) in coordinates of its own, so the same code draws the roll in its window and, compact,
 // inside a score box (objects_score.cpp), where it is edited in place when the patch is locked. The staves follow
 // Musil's layout (music/score_layout.h: rows in orchestral order, clefs, steps on the staff): a note is a head at its
-// onset and a line for its duration, with a sharp, its cents when it is a microtone and its dynamics where they
-// change; a score placed inside is a faint block with its notes and its placement (+7 x1.5 -6 dB); sounds, patches
+// onset and a line for its duration, with a sharp, its cents when it is detuned (always: in the box too, small, or a
+// tick above the head when there is no room for the number) and its dynamics where they change; a score placed inside is a faint block with its notes and its placement (+7 x1.5 -6 dB); sounds, patches
 // and messages are blocks on lines of their own.
 //
 // RollPanel is the roll's whole editor, a panel that can sit in any window (RollWindow for now): its toolbar (play and
 // stop on the patch's transport, Roll / Piano roll / List, Select / Draw / Erase, snap, quantize, zoom), the
 // breadcrumb (where the view is among the scores placed inside one another: a double-click enters a score placed,
 // Esc goes up), the view, a lane of dynamics, the list of events, the score as Musil data (score_text.h), edited and
-// kept in sync both ways (nothing applied while it does not read), the Transform panel and a slot for Generate.
+// kept in sync both ways (nothing applied while it does not read), the Transform panel and a slot for Generate. Its
+// toolbar's Timeline button shows the same document as a timeline (timeline.h), whose Roll and List buttons come
+// back here.
 #pragma once
 
 #include "roll_edit.h"
@@ -86,10 +89,13 @@ public:
     double playhead = NAN;           // the transport's position, seconds of the top score (NaN: not shown)
     double shownTime(double topTime) const;   // the same moment in the score shown (NaN: outside it)
 
-    // ---- the selection (ids of the score shown)
+    // ---- the selection (ids of the score shown), shared with the other views of the score through the target
     std::set<uint64_t> selection;
     Ids selectedIds() const { return Ids(selection.begin(), selection.end()); }
     void selectAll();
+    // the selection changed here is given to the document, one changed there is taken (and the target told where the
+    // view is); => the selection was taken from the document
+    bool syncSelection();
 
     // ---- drawing and the mouse (coordinates of its own; ox, oy: where its corner is drawn)
     void draw(double ox, double oy);
@@ -99,6 +105,7 @@ public:
     // the edits the keys and buttons make on the selection (all of it when nothing is selected)
     void removeSelection();
     void nudge(double dt, double dpitch);
+    void detuneSelection(double dcents);                   // Alt+Up/Down: a cent; Shift+Alt: ten
     void quantizeSelection();
     bool transformSelection(ScoreTransform t);
     std::function<void(uint64_t)> onEnter;                 // a score placed was double-clicked (compact: the window)
@@ -124,6 +131,14 @@ public:
     };
     const std::vector<RowGeom>& rows() const { layoutRows(); return rows_; }
     std::string summary() const;      // "4 rows · 12 events · 0'08""
+    // how a note's detuning (its cents, and the fraction of its pitch) is drawn: not at all, as a number by its head,
+    // or (no room for the number: a small box) as a tick above it
+    struct CentsMark {
+        enum Kind { None, Text, Tick } kind = None;
+        double cents = 0;
+        std::string text;            // "+19"
+    };
+    CentsMark centsMark(uint64_t id) const;
 
 private:
     struct Item {                    // an event as drawn
@@ -139,7 +154,11 @@ private:
     void drawNote(double ox, double oy, const Item& it, Fl_Color c, bool sel, bool ghost, double dt, double dp, double dd);
     void drawPiano(double ox, double oy);
     void finishDrag(double x, double y, int keys);
+    CentsMark centsOf(const sc::Event& e, double pitch, double rad) const;
     std::shared_ptr<RollEditTarget> target_;
+    std::set<uint64_t> synced_;      // the selection as the document had it when last synced, and where
+    ScorePath syncedPath_, focusedPath_;
+    bool everSynced_ = false;
     double w_ = 400, h_ = 200;
     // made again when the score, the size or the view changes
     mutable uint64_t gen_ = ~0ull;
@@ -225,13 +244,14 @@ public:
     void stop();
     void undo();
     void redo();
-    bool save();
+    void showTimeline();                      // the Timeline button: the same document as a timeline
     // the text view: the score as Musil data
     std::string text() const;
     void setText(const std::string& t);       // as if typed (applied when it reads, see applyText)
     bool applyText();                         // now: false (and the error shown) when it does not read
     std::string textError() const { return textError_; }
     std::function<void()> onTitle;            // the window's title should change
+    ScoreDocTarget* docTarget() const { return dynamic_cast<ScoreDocTarget*>(target()); }
     int handle(int e) override;
     void resize(int x, int y, int w, int h) override;
     void layoutChildren();
@@ -258,6 +278,7 @@ private:
     // the toolbar
     Fl_Group* bar_;
     ToolButton* playBtn_;
+    ToolButton* timelineBtn_;
     ToolButton* viewBtn_[3];
     ToolButton* toolBtn_[3];
     Fl_Choice* snap_;
@@ -292,26 +313,36 @@ private:
     std::vector<std::unique_ptr<TransformButton>> transformButtons_;
 };
 
-// The roll in a window of its own: a score box double-clicked (or its Open Roll item)
+// The roll in a window of its own: a score box double-clicked (or its Open Roll... item, or its message open), the
+// timeline's Roll or List button. One window per document.
 class RollWindow : public Fl_Double_Window {
 public:
-    explicit RollWindow(std::shared_ptr<RollEditTarget> target);
+    explicit RollWindow(std::shared_ptr<ScoreDocTarget> target);
     ~RollWindow() override;
     RollPanel* panel() const { return panel_; }
+    ScoreDocTarget* target() const { return target_.get(); }
+    bool shows(const ScoreDoc* d) const;      // its document, or one placed inside it that it went into
+    bool save();                              // as the timeline saves (timeline.h: saveScoreDocument)
+    bool confirmDiscard();                    // asks when closing would lose edits only it shows; false: cancel
     void updateTitle();
     int handle(int e) override;
     static std::vector<RollWindow*>& all();
 
 private:
+    std::shared_ptr<ScoreDocTarget> target_;
     RollPanel* panel_;
     Fl_Menu_Bar* menu_ = nullptr;
 };
 
-// the roll of a score box: its window (already open: brought forward)
-RollWindow* openRoll(ScoreSource* s);
+// the roll of a score document: its window (already open: brought forward), in a view (Roll, Piano roll, List)
+RollWindow* openRoll(std::shared_ptr<ScoreDoc> doc, int view = -1);
+RollWindow* openRollOfBox(Box* box);           // a score box's (nullptr: not one)
 // the roll window in front, if one is (the menus act on it: Undo, Redo, Save, Select All, Delete)
 RollWindow* frontRoll();
-// closes every roll window at once (the tests' exit)
+// closes every roll window at once (the tests' exit); asks for each one that holds edits only it shows (Quit)
 void closeAllRolls();
+bool confirmCloseRolls();
+// the roll drawn inside a score box (objects_score.cpp; made when first asked for), nullptr: not a score box
+RollCore* inlineRollOf(Box* box);
 
 }  // namespace moritz

@@ -382,9 +382,9 @@ expect "Stop stops a process" "state: process pvoc: stopped"
 expect "and a script" "state: process forever.mu: stopped"
 expect "closing while they run" "state: documents 0"
 
-# 24. a score box double-clicked (locked) opens its timeline; a clip dragged is one undo step, taken back by Undo;
+# 24. a score box's timeline (its menu's Open as Timeline); a clip dragged is one undo step, taken back by Undo;
 #     the score is kept in the patch, so the patch is edited (and the timeline asks nothing when it closes)
-run "$G/timeline.moritz" --window-png none act=dblclick:s act=timeline act=tldrag:3,1 act=timeline act=tlop:undo \
+run "$G/timeline.moritz" --window-png none act=tlopen:s act=timeline act=tldrag:3,1 act=timeline act=tlop:undo \
     act=timeline act=state act=closefront act=timeline
 moves=$(grep "state: timeline clip 3 " "$out" | sed 's/state: timeline clip 3 //' | cut -d' ' -f1-4 | tr '\n' '|')
 if [ $status -eq 0 ] && grep -q "state: timeline score piece — timeline — Moritz" "$out" &&
@@ -429,19 +429,29 @@ if [ $status -ne 0 ] || ! grep -q "(note 0.5 0.25 Fl 74 mf (id 2))" "$T/sub/gest
 else ok; fi
 run --window-png none "act=tlfile:$T/sub/piece.score" act=tldbl:4 act=state
 expect "a patch clip opens its patch" "state: front $T/sub/timeline.moritz"
-# 24. the roll of a score box: a note dragged half a second later and a step up (one undo step of the roll, the patch
-#     edited, the text view following), the roll's Undo; then Undo in the patch replaces the box, and the roll follows
-#     the box that took its place
-run "$G/score.moritz" --window-png none act=roll:s "act=rolldrag:1:0.5,1" act=rollstate act=state act=rollundo act=rollstate \
-    "act=rolldrag:2:0.5,0" act=undo act=wait:0.3 act=rollstate "act=rolldrag:3:-0.25,0" act=rollstate
+
+# 30. the roll and the timeline of one score box are views of one document: a note dragged in the roll is an undo
+#     step of the score (the patch edited, but no undo step of the patch), the text view follows; the roll's Timeline
+#     button shows the edit there, the timeline's Undo takes it back and the roll shows it; a clip dragged in the
+#     timeline is undone by the roll's Undo; the roll's selection is the timeline's; the timeline's List button brings
+#     the same roll window forward, in its List view
+run "$G/score.moritz" --window-png none act=roll:s "act=rolldrag:1:0.5,1" act=rollstate act=state act=rolltimeline act=timeline \
+    act=tlop:undo act=rollstate act=tldrag:3,1 act=rollstate act=rollundo act=timeline act=rollselect:2,3 act=timeline \
+    act=tlview:list act=rollstate
 expect "a note dragged in the roll" "state: roll note 1 0.5 0.5 62"
 expect "the text view follows" "state: roll text (note 0.5 0.5 Fl 62 mf (id 1))"
-expect "a roll edit is an edit of the patch" "state: front $G/score.moritz edited yes"
-expect "the roll's undo" "state: roll text (note 0 0.5 Fl 60 mf (id 1))"
-if [ $status -eq 0 ] && [ "$(grep -c "state: roll note 2 0.5 0.5 64" "$out")" -ge 3 ] && grep -q "state: roll note 3 0.75 0.5 67" "$out" &&
-   ! grep -q "box is gone" "$out"; then ok; else fail "the roll follows the box an undo in the patch put back"; fi
+expect "a roll edit marks the patch edited" "state: front $G/score.moritz edited yes"
+expect "but is not an undo step of the patch" "state: undo no redo no"
+expect "the timeline shows the roll's edit" "state: timeline clip 1 note Fl 0.5 0.5"
+expect "the timeline's Undo takes the roll's edit back" "state: roll note 1 0 0.5 60"
+expect "a clip dragged in the timeline is in the roll" "state: roll note 3 2 0.5 67"
+expect "the roll's Undo takes the timeline's edit back" "state: timeline clip 3 note Fl 1 0.5"
+expect "one selection" "state: timeline selection 2 3 "
+expect "the timeline's List button: the same roll" "state: roll windows 1 view list"
+if [ $status -eq 0 ] && [ "$(grep -c "state: timeline score piece — timeline — Moritz" "$out")" = 3 ]; then ok
+else fail "the roll's Timeline button opens the timeline of the same score"; fi
 
-# 25. the text view: a valid text is applied (a note more), one that does not read is not (its error said, the score
+# 31. the text view: a valid text is applied (a note more), one that does not read is not (its error said, the score
 #     as it was)
 run "$G/score.moritz" --window-png none act=roll:s "act=rolltext:$G/score-text.txt" act=rollstate "act=rolltext:$G/score-bad.txt" act=rollstate
 expect "a text applied" "state: roll note 4 2 1 72"
@@ -449,10 +459,34 @@ expect "a text that does not read" "state: roll text error"
 expect "says why" "bars.beats.ticks"
 if [ "$(grep -c "state: roll note 4 2 1 72" "$out")" = 2 ]; then ok; else fail "a bad text leaves the score as it was"; fi
 
-# 26. the score box edited in place (locked): a click is not an edit; a note dragged is (one undo step of the patch)
-run "$G/score.moritz" --window-png none act=draw act=click:s act=state "act=boxdrag:s:2:40,0" act=state act=roll:s act=rollstate
+# 32. the score box edited in place (locked): a click is not an edit; a note dragged is (the patch edited, an undo step
+#     of the score); Edit > Undo with the box clicked last takes it back (the score's history, not the patch's), and
+#     the roll's window, opened then, can redo it
+run "$G/score.moritz" --window-png none act=draw act=click:s act=state "act=boxdrag:s:2:40,0" act=state act=menu:edit.undo \
+    act=roll:s act=rollstate act=menu:edit.redo act=rollstate
 if [ $status -eq 0 ] && grep -q "state: front $G/score.moritz edited no" "$out" && grep -q "state: front $G/score.moritz edited yes" "$out" &&
-   grep -q "state: roll note 2 1 0.5 64" "$out"; then ok; else fail "the score box edited in place"; fi
+   ! grep -q "state: undo yes" "$out" && grep -q "state: roll note 2 0.5 0.5 64" "$out" && grep -q "state: roll undo no redo yes" "$out" &&
+   grep -q "state: roll note 2 1 0.5 64" "$out"; then ok; else fail "the score box edited in place, undone by Edit > Undo"; fi
+
+# 33. both views of one box: a double-click (locked) on the box opens its roll, its menu's Open as Timeline its
+#     timeline; the timeline's Roll button brings the same roll window forward
+run "$G/score.moritz" --window-png none act=dblclick:s act=rollstate act=tlopen:s act=timeline act=tlview:roll act=rollstate
+expect "a double-click on the box opens its roll" "state: roll score piece — roll — Moritz"
+expect "and its timeline" "state: timeline score piece — timeline — Moritz"
+if [ $status -eq 0 ] && [ "$(grep -c "state: roll windows 1 view roll" "$out")" = 2 ]; then ok; else fail "one roll window for both"; fi
+
+# 34. the cents, always visible and edited: the box's own roll shows each detuned note's cents (a tempered one
+#     nothing); in the roll, Alt+Up a cent, Shift+Alt+Up ten, each an undo step; the List's cents cell typed into
+run "$G/detuned.moritz" --window-png none act=draw act=boxcents:s:1 act=boxcents:s:2 act=boxcents:s:3 act=roll:s act=rollselect:3 \
+    act=rollkey:up:alt act=rollkey:up:alt:shift act=rollstate act=rollundo act=rollundo act=rollstate "act=rollcell:3:cents:-12.5" \
+    act=rollstate act=rollundo act=rollstate
+expect "the box shows a note's cents" "state: box cents text +19"
+expect "and a lower one's" "state: box cents text -41"
+expect "nothing for a tempered note" "state: box cents none"
+expect "Alt+Up, then Shift+Alt+Up: eleven cents" "state: roll cents 3 11"
+expect "the List's cell" "state: roll cents 3 -12.5"
+if [ $status -eq 0 ] && [ "$(grep -c "state: roll cents 3 " "$out")" = 2 ] && [ "$(grep -c "state: roll cents 1 19" "$out")" = 4 ]; then ok
+else fail "the cents edits undone exactly"; fi
 
 rm -rf "$T"
 echo "$count interface cases, $fails failed"

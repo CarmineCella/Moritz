@@ -3,6 +3,8 @@
 
 #include "roll.h"
 #include "gui.h"
+#include "score_doc.h"
+#include "timeline.h"
 #include "transport.h"
 #include "ui_util.h"
 #include "zoom.h"
@@ -106,7 +108,44 @@ void RollCore::setTarget(std::shared_ptr<RollEditTarget> t) {
     target_ = std::move(t);
     path.clear();
     selection.clear();
+    synced_.clear();
+    syncedPath_.clear();
+    focusedPath_.clear();
+    everSynced_ = false;
     gen_ = ~0ull;
+}
+
+bool RollCore::syncSelection() {
+    if (!target_) return false;
+    if (path != focusedPath_ || !everSynced_) {
+        target_->focus(path);
+        focusedPath_ = path;
+    }
+    Ids theirs;
+    if (!target_->sharedSelection(path, theirs)) return false;
+    std::set<uint64_t> doc(theirs.begin(), theirs.end());
+    if (!everSynced_) {                           // a view opened: the document's selection
+        everSynced_ = true;
+        syncedPath_ = path;
+        bool took = doc != selection && selection.empty();
+        if (took) selection = doc;
+        else if (doc != selection) target_->shareSelection(path, selectedIds());
+        synced_ = selection;
+        return took;
+    }
+    if (path != syncedPath_ || selection != synced_) {     // changed here: the document's now
+        if (doc != selection) target_->shareSelection(path, selectedIds());
+        Ids kept;
+        target_->sharedSelection(path, kept);     // what is still in the score
+        selection = synced_ = std::set<uint64_t>(kept.begin(), kept.end());
+        syncedPath_ = path;
+        return false;
+    }
+    if (doc != synced_) {                         // changed in another view
+        selection = synced_ = doc;
+        return true;
+    }
+    return false;
 }
 
 void RollCore::setSize(double w, double h) {
@@ -154,6 +193,7 @@ void RollCore::enter(uint64_t id) {
     if (!e || e->kind != sc::Kind::Score || !e->sub) return;
     path.push_back(id);
     selection.clear();
+    syncSelection();
     fit();
     if (onStatus) onStatus("inside " + (e->sub->name.empty() ? std::string("the score placed") : e->sub->name) + placementText(*e) + ": Esc goes up");
     if (onChange) onChange();
@@ -164,6 +204,7 @@ void RollCore::up() {
     uint64_t from = path.back();
     path.pop_back();
     selection = {from};
+    syncSelection();
     fit();
     if (onChange) onChange();
 }
@@ -389,6 +430,7 @@ bool RollCore::eventBox(uint64_t id, double& x, double& y, double& w, double& h)
 
 // ---- drawing
 void RollCore::draw(double ox, double oy) {
+    syncSelection();
     layoutRows();
     const Palette& P = palette(compact);
     const double gut = gutterOf(compact), ruler = rulerOf(compact);
@@ -561,6 +603,16 @@ void RollCore::drawNote(double ox, double oy, const Item& it, Fl_Color c, bool s
         fl_color(ghost ? P.ghost : c);
         zd::rectf(ox + x, oy + y, w, it.h);
         if (sel || ghost) { fl_color(ghost ? P.sel : P.text); zd::rect(ox + x, oy + y, w, it.h); }
+        if (ghost) return;
+        CentsMark m = centsOf(e, e.pitch + dp, it.h / 2);
+        if (m.kind == CentsMark::Text) {
+            zd::font(FL_HELVETICA, compact ? 7 : 9);
+            fl_color(P.text);
+            zd::draw(m.text.c_str(), ox + x + w + 2, oy + y + it.h);
+        } else if (m.kind == CentsMark::Tick) {
+            fl_color(P.sel);
+            zd::yxline(ox + x, oy + y - 3, oy + y);
+        }
         return;
     }
     const RowGeom& r = rows_[(size_t)it.row];
@@ -583,17 +635,40 @@ void RollCore::drawNote(double ox, double oy, const Item& it, Fl_Color c, bool s
         fl_color(P.text);
         zd::arc(ox + x - rad - 1, oy + y - rad - 1, 2 * rad + 2, 2 * rad + 2, 0, 360);
     }
-    if (compact || ghost) return;
+    if (ghost) return;
+    // the detuning: always shown (orchidea's notes carry the cents of the partial they imitate)
+    CentsMark m = centsOf(e, pitch, rad);
+    if (m.kind == CentsMark::Text) {
+        zd::font(FL_HELVETICA, compact ? 7 : 9);
+        fl_color(compact ? P.text : P.dim);
+        zd::draw(m.text.c_str(), ox + x - rad, oy + y - rad - (compact ? 1 : 2));
+    } else if (m.kind == CentsMark::Tick) {
+        fl_color(P.sel);
+        zd::yxline(ox + x, oy + y - rad - 3, oy + y - rad);
+    }
+    if (compact) return;
     bool sharp;
     lay::diatonicStep((int)std::floor(pitch + 1e-9), sharp);
     zd::font(FL_HELVETICA_BOLD, std::max(8, (int)std::lround(r.sp * 2.2)));
     if (sharp) zd::draw("#", ox + x - rad - std::max(6.0, r.sp * 1.6), oy + y + r.sp * 0.8);
-    double cents = e.cents + (pitch - std::floor(pitch + 1e-9)) * 100;
-    if (std::fabs(cents) > 0.5) {
-        zd::font(FL_HELVETICA, 9);
-        fl_color(P.dim);
-        zd::draw(((cents > 0 ? "+" : "") + fmtNum(cents, 0)).c_str(), ox + x - rad, oy + y - rad - 2);
-    }
+}
+
+RollCore::CentsMark RollCore::centsOf(const sc::Event& e, double pitch, double rad) const {
+    CentsMark m;
+    if (!pitchedEv(e)) return m;
+    double c = e.cents + (pitch - std::floor(pitch + 1e-9)) * 100;
+    if (!(std::fabs(c) > 0.5)) return m;
+    m.cents = c;
+    m.text = (c > 0 ? "+" : "") + fmtNum(c, 0);
+    m.kind = compact && rad < 2.0 ? CentsMark::Tick : CentsMark::Text;   // no room for the number: a tick
+    return m;
+}
+
+RollCore::CentsMark RollCore::centsMark(uint64_t id) const {
+    layoutRows();
+    for (auto& it : items_)
+        if (it.e->id == id) return centsOf(*it.e, it.e->pitch, it.h / 2);
+    return {};
 }
 
 void RollCore::drawItems(double ox, double oy, double dt, double dp, double dd, bool ghost) {
@@ -694,6 +769,7 @@ void RollCore::drawItems(double ox, double oy, double dt, double dp, double dd, 
 // ---- the mouse and the keys
 bool RollCore::mouse(int event, double x, double y, int keys, int clicks) {
     if (!target_) return false;
+    syncSelection();
     layoutRows();
     bool editable = target_->editable();
     bool shift = keys & FL_SHIFT, alt = keys & FL_ALT;
@@ -710,7 +786,7 @@ bool RollCore::mouse(int event, double x, double y, int keys, int clicks) {
             auto e = s ? s->find(h.id) : nullptr;
             if (e && e->kind == sc::Kind::Score) { drag_ = Drag::None; if (onEnter) onEnter(h.id); else enter(h.id); return true; }
         }
-        if (clicks > 0 && !h.id && compact) { drag_ = Drag::None; if (onEnter) onEnter(0); return true; }
+        if (clicks > 0 && compact) { drag_ = Drag::None; if (onEnter) onEnter(0); return true; }   // the box: its window
         if (tool == Tool::Erase && editable) {
             drag_ = Drag::Erase;
             erasing_.clear();
@@ -795,6 +871,7 @@ bool RollCore::mouse(int event, double x, double y, int keys, int clicks) {
         cy_ = y;
         finishDrag(x, y, keys);
         drag_ = Drag::None;
+        syncSelection();
         if (onChange) onChange();
         return true;
     }
@@ -862,6 +939,14 @@ void RollCore::nudge(double dt, double dp) {
     if (onChange) onChange();
 }
 
+void RollCore::detuneSelection(double dc) {
+    if (selection.empty() || !target_) return;
+    bool ok = target_->detune(path, selectedIds(), dc);
+    if (onStatus) onStatus(ok ? (dc > 0 ? "+" : "") + fmtNum(dc, 0) + (std::fabs(dc) == 1 ? " cent" : " cents")
+                              : (target_->lastError.empty() ? std::string("no note to detune") : target_->lastError));
+    if (onChange) onChange();
+}
+
 void RollCore::quantizeSelection() {
     ScoreTransform t;
     t.kind = ScoreTransform::Quantize;
@@ -883,6 +968,7 @@ bool RollCore::transformSelection(ScoreTransform t) {
 }
 
 bool RollCore::key(int k, int keys) {
+    syncSelection();
     bool shift = keys & FL_SHIFT;
     bool cmd = keys & FL_COMMAND;
     if (cmd && (k == 'a' || k == 'A')) { selectAll(); return true; }
@@ -897,7 +983,10 @@ bool RollCore::key(int k, int keys) {
         return true;
     }
     case FL_Up:
-    case FL_Down: nudge(0, (k == FL_Up ? 1 : -1) * (shift ? 12 : 1)); return true;
+    case FL_Down:
+        if (keys & FL_ALT) detuneSelection((k == FL_Up ? 1 : -1) * (shift ? 10 : 1));   // the cents: one, or ten
+        else nudge(0, (k == FL_Up ? 1 : -1) * (shift ? 12 : 1));
+        return true;
     case 'q': quantizeSelection(); return true;
     case FL_Escape:
         if (!selection.empty()) { selection.clear(); if (onChange) onChange(); return true; }
@@ -1233,6 +1322,10 @@ RollPanel::RollPanel(int X, int Y, int W, int H, std::shared_ptr<RollEditTarget>
     stopBtn->tooltip("Stop the transport (Space)");
     stopBtn->callback([](Fl_Widget*, void* d) { static_cast<P*>(d)->stop(); }, this);
     bx += 34 + 14;
+    // the views of the score: as a timeline (its own window: the same document), or here
+    timelineBtn_ = pill(bx, by, 74, bh, "Timeline", "The same score as a timeline: tracks, clips, lanes (the same edits, undo and selection)",
+                        [](Fl_Widget*, void* d) { static_cast<P*>(d)->showTimeline(); }, this);
+    bx += 74 + 2;
     const char* views[] = {"Roll", "Piano roll", "List"};
     const int vw[] = {56, 86, 52};
     for (int k = 0; k < 3; ++k) {
@@ -1350,7 +1443,7 @@ RollPanel::RollPanel(int X, int Y, int W, int H, std::shared_ptr<RollEditTarget>
     core_.fit();
     changed();
     refreshText(true);
-    setStatus("drag to move, drag the end to resize, Alt-drag copies; a double-click on a score placed enters it, Esc goes up");
+    setStatus("drag to move, drag the end to resize, Alt-drag copies; Alt+Up/Down: a cent; a double-click on a score placed enters it, Esc goes up");
     Fl::add_timeout(1.0 / 30, tick, this);
 }
 
@@ -1511,36 +1604,49 @@ void RollPanel::setStatus(const std::string& s) {
 }
 
 void RollPanel::play() {
-    if (Patch* p = target() ? target()->patch() : nullptr) transportOf(p)->play(p);
-    else setStatus("the score's box is gone: nothing plays it");
+    if (Patch* p = target() ? target()->patch() : nullptr) { transportOf(p)->play(p); return; }
+    // a score of its own (a file, a new one, a box gone): on a score box of its own, as the timeline plays it
+    Box* b = docTarget() ? docTarget()->document()->player(&App::get().host) : nullptr;
+    if (!b) { setStatus("nothing can play this score now"); return; }
+    if (!App::get().audio.running()) setStatus("audio is off: turn it on to listen");
+    auto t = transportOf(b->patch);
+    const sc::Score& s = docTarget()->document()->score();
+    t->setTempo(b->patch, s.bpm);
+    t->setMeter(b->patch, s.meterNum, s.meterDen);
+    t->locate(b->patch, 0);
+    t->play(b->patch);
+}
+
+void RollPanel::showTimeline() {
+    applyText();
+    if (auto* dt = docTarget()) openTimeline(dt->document());
 }
 
 void RollPanel::stop() {
-    if (Patch* p = target() ? target()->patch() : nullptr) transportOf(p)->stop(p);
+    Patch* p = target() ? target()->patch() : nullptr;
+    if (!p && docTarget())
+        if (Box* b = docTarget()->document()->player(nullptr)) p = b->patch;
+    if (p) transportOf(p)->stop(p);
 }
 
 void RollPanel::undo() {
+    applyText();
+    core_.syncSelection();                        // the score the view is in: its history
     if (!target() || !target()->undo()) setStatus("nothing to undo");
     else setStatus("undo");
     changed();
 }
 
 void RollPanel::redo() {
+    applyText();
+    core_.syncSelection();
     if (!target() || !target()->redo()) setStatus("nothing to redo");
     else setStatus("redo");
     changed();
 }
 
-bool RollPanel::save() {
-    applyText();
-    std::string err;
-    if (!target() || !target()->save(err)) { setStatus(err); return false; }
-    setStatus("saved");
-    if (onTitle) onTitle();
-    return true;
-}
-
 void RollPanel::changed() {
+    core_.syncSelection();
     RollEditTarget* t = target();
     uint64_t g = t ? t->generation() : 0;
     bool scoreChanged = g != seenGen_;
@@ -1575,7 +1681,7 @@ void RollPanel::changed() {
         e.transpose = p.transpose; e.stretch = p.stretch; e.gain = p.gain;
         c += "     (placed at " + fmtNum(p.at, 3) + " s" + placementText(e) + "; Esc goes up)";
     }
-    if (t && !t->editable()) c += "     — read-only: the score's box is gone";
+    if (docTarget() && docTarget()->document()->boxGone()) c += "     — its box is gone: the score is kept here";
     c += "     " + core_.summary();
     if (c != crumbText_) { crumbText_ = c; crumbs_->copy_label(c.c_str()); crumbs_->redraw(); }
     setStatus(status_);
@@ -1588,7 +1694,7 @@ void RollPanel::tick(void* data) {
     auto* p = static_cast<RollPanel*>(data);
     Fl::repeat_timeout(1.0 / 30, tick, data);
     RollEditTarget* t = p->target();
-    if (t && t->generation() != p->seenGen_) p->changed();
+    if (p->core_.syncSelection() || (t && t->generation() != p->seenGen_)) p->changed();
     double ph = NAN;
     if (Patch* pt = t ? t->patch() : nullptr) {
         auto tp = transportOf(pt);
@@ -1657,7 +1763,6 @@ bool RollPanel::applyText() {
         auto s = sc::readText(src, where);
         auto cur = t ? t->score() : nullptr;
         if (cur) { s->path = cur->path; if (!cur->name.empty() && s->name != cur->name) s->name = cur->name; }
-        if (!t || !t->editable()) throw sc::Error("the score's box is gone: the text is not applied");
         if (!cur || sc::toText(*cur) != sc::toText(*s)) t->replaceScore(s, "text");
         textPending_ = false;
         refreshText(true);
@@ -1709,7 +1814,7 @@ std::vector<RollWindow*>& RollWindow::all() {
     return v;
 }
 
-RollWindow::RollWindow(std::shared_ptr<RollEditTarget> target) : Fl_Double_Window(1240, 800) {
+RollWindow::RollWindow(std::shared_ptr<ScoreDocTarget> target) : Fl_Double_Window(1240, 800), target_(target) {
     color(kStatusBg);
 #ifndef __APPLE__
     menu_ = new Fl_Menu_Bar(0, 0, w(), kMenuH);
@@ -1720,12 +1825,15 @@ RollWindow::RollWindow(std::shared_ptr<RollEditTarget> target) : Fl_Double_Windo
     resizable(panel_);
     size_range(820, 520);
     panel_->onTitle = [this] { updateTitle(); };
+    target_->setListener([this](unsigned what) { if (what & ScoreDoc::State) updateTitle(); });
     callback([](Fl_Widget* w, void*) {
         if (Fl::event() == FL_SHORTCUT && Fl::event_key() == FL_Escape) return;   // Escape goes up, not away
         auto* rw = static_cast<RollWindow*>(w);
         rw->panel()->applyText();
+        if (!rw->confirmDiscard()) return;
         rw->hide();
         Fl::delete_widget(rw);
+        App::get().refreshMenus();
     });
     all().push_back(this);
     updateTitle();
@@ -1734,13 +1842,32 @@ RollWindow::RollWindow(std::shared_ptr<RollEditTarget> target) : Fl_Double_Windo
 RollWindow::~RollWindow() {
     auto& v = all();
     v.erase(std::remove(v.begin(), v.end(), this), v.end());
+    target_->setListener(nullptr);
     if (menu_) App::get().forgetMenu(menu_);
 }
 
 void RollWindow::updateTitle() {
-    RollEditTarget* t = panel_->target();
-    std::string s = (t ? t->title() : std::string("score")) + (t && t->dirty() ? " — edited" : "") + " — roll — Moritz";
+    std::string s = target_->title() + " — roll — Moritz";       // the document's title says when it is edited
     if (!label() || s != label()) copy_label(s.c_str());
+}
+
+bool RollWindow::shows(const ScoreDoc* d) const {
+    for (auto& x : target_->documents())
+        if (x.get() == d) return true;
+    return false;
+}
+
+bool RollWindow::save() {
+    panel_->applyText();
+    bool ok = saveScoreDocument(target_->focused(), [this](const std::string& m) { panel_->setStatus(m); });
+    updateTitle();
+    return ok;
+}
+
+bool RollWindow::confirmDiscard() {
+    for (auto& d : target_->documents())
+        if (!confirmDiscardScoreDocument(d, this)) return false;
+    return true;
 }
 
 int RollWindow::handle(int e) {
@@ -1753,18 +1880,23 @@ int RollWindow::handle(int e) {
     return r;
 }
 
-RollWindow* openRoll(ScoreSource* s) {
-    if (!s) return nullptr;
-    for (auto* w : RollWindow::all()) {
-        auto* t = dynamic_cast<ScoreBoxTarget*>(w->panel()->target());
-        if (t && t->source() == s) { w->show(); return w; }
+RollWindow* openRoll(std::shared_ptr<ScoreDoc> doc, int view) {
+    if (!doc) return nullptr;
+    RollWindow* w = nullptr;
+    for (auto* x : RollWindow::all())
+        if (x->target()->document() == doc) { w = x; break; }
+    if (!w) {
+        fl_open_display();
+        w = new RollWindow(makeRollTarget(doc));
+        int k = (int)RollWindow::all().size() - 1;
+        centerOnScreen(w, App::get().frontDoc(), 30 * (k % 6), 30 * (k % 6));
     }
-    fl_open_display();
-    auto* w = new RollWindow(makeRollTarget(s, true));
-    centerOnScreen(w, App::get().frontDoc(), 30 * (int)(RollWindow::all().size() - 1), 30 * (int)(RollWindow::all().size() - 1));
+    if (view >= 0 && view <= 2) w->panel()->setView((RollPanel::View)view);
     w->show();
     return w;
 }
+
+RollWindow* openRollOfBox(Box* box) { return openRoll(ScoreDoc::ofBox(box)); }
 
 RollWindow* frontRoll() { return dynamic_cast<RollWindow*>(Fl::first_window()); }
 
@@ -1774,6 +1906,14 @@ void closeAllRolls() {
         w->hide();
         delete w;
     }
+}
+
+bool confirmCloseRolls() {
+    for (auto* w : std::vector<RollWindow*>(RollWindow::all())) {
+        w->panel()->applyText();
+        if (!w->confirmDiscard()) return false;
+    }
+    return true;
 }
 
 }  // namespace moritz

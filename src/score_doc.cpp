@@ -107,8 +107,21 @@ std::shared_ptr<ScoreDoc> ScoreDoc::open(const std::string& given, std::string& 
     return d;
 }
 
+// a patch destroyed: the documents bound to its boxes forget it (chained after what was there; once)
+static void hookPatchDestroyed() {
+    static bool done = false;
+    if (done) return;
+    done = true;
+    auto before = Patch::onDestroyed;
+    Patch::onDestroyed = [before](Patch* p) {
+        if (before) before(p);
+        ScoreDoc::patchDestroyed(p);
+    };
+}
+
 std::shared_ptr<ScoreDoc> ScoreDoc::ofBox(Box* box) {
     if (!box || !isScoreBox(box) || !box->patch) return nullptr;
+    hookPatchDestroyed();
     for (auto& w : registry())
         if (auto d = w.lock(); d && d->where_ == Where::Box && d->locate() == box) return d;
     auto s = scoreOfBox(box);

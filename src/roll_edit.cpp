@@ -1,9 +1,9 @@
 // Copyright (c) 2026 Carmine-Emanuele Cella. SPDX-License-Identifier: BSD-2-Clause
-// roll_edit.cpp — the roll's edit intents (roll_edit.h), and the target of a score box with its undo.
+// roll_edit.cpp — the roll's edit intents (roll_edit.h), and their target: a score document (score_doc.h).
 
 #include "roll_edit.h"
 
-#include <FL/Fl.H>
+#include "score_doc.h"
 
 #include <algorithm>
 #include <cmath>
@@ -159,184 +159,198 @@ bool RollEditTarget::replaceScore(std::shared_ptr<sc::Score> s, const std::strin
     return replaceTop(std::move(s), label);
 }
 
-// ---------------------------------------------------------------- the target of a score box
-std::vector<ScoreBoxTarget*>& ScoreBoxTarget::all() {
-    static std::vector<ScoreBoxTarget*> v;
-    return v;
+bool RollEditTarget::detune(const ScorePath& path, const Ids& ids, double dcents) {
+    if (ids.empty() || dcents == 0 || !std::isfinite(dcents)) return false;
+    return apply(path, "detune", [&](sc::Score& s) {
+        bool any = false;
+        for (auto* e : picked(s, ids)) {
+            if (!pitched(*e)) continue;
+            e->cents += dcents;
+            any = true;
+        }
+        s.touch();
+        return any;
+    });
 }
 
-ScoreBoxTarget::ScoreBoxTarget(ScoreSource* src, bool localHistory) : src_(src), local_(localHistory) {
-    all().push_back(this);
-}
-
-RollHost& rollHost() {
-    static RollHost h;
-    return h;
-}
-
+// ---------------------------------------------------------------- the target of a score document
 namespace {
-struct Orphan {
-    ScoreBoxTarget* target;
-    std::function<Box*()> find;        // the box in its place now
-};
-std::vector<Orphan>& orphans() {
-    static std::vector<Orphan> v;
-    return v;
+bool sameEvent(const sc::Event& a, const sc::Event& b) {
+    return a.id == b.id && a.kind == b.kind && a.at == b.at && a.dur == b.dur && a.gain == b.gain && a.az == b.az && a.el == b.el &&
+           a.row == b.row && a.pitch == b.pitch && a.cents == b.cents && a.dyn == b.dyn && a.tech == b.tech && a.source == b.source &&
+           a.buffer == b.buffer && a.from == b.from && a.to == b.to && a.values == b.values && a.sub == b.sub && a.ref == b.ref &&
+           a.stretch == b.stretch && a.transpose == b.transpose && a.variant == b.variant && a.label == b.label && a.extra == b.extra &&
+           a.host == b.host;
 }
-uint64_t& bumps() {
-    static uint64_t n = 0;
-    return n;
-}
-// from the event loop, after an undo or the code view replaced the box: the box that took its place
-void settle(void*) {
-    auto list = std::move(orphans());
-    orphans().clear();
-    for (auto& o : list) {
-        auto& live = ScoreBoxTarget::all();
-        if (std::find(live.begin(), live.end(), o.target) == live.end() || o.target->source() || !o.find) continue;
-        if (auto* s = dynamic_cast<ScoreSource*>(o.find()); s && s->scoreInPatch()) o.target->rebind(s);
-    }
+bool sameRows(const std::vector<sc::Row>& a, const std::vector<sc::Row>& b) {
+    if (a.size() != b.size()) return false;
+    for (size_t k = 0; k < a.size(); ++k)
+        if (a[k].name != b[k].name || a[k].clef != b[k].clef || a[k].extra != b[k].extra) return false;
+    return true;
 }
 }  // namespace
 
-ScoreBoxTarget::~ScoreBoxTarget() {
-    auto& v = all();
-    v.erase(std::remove(v.begin(), v.end(), this), v.end());
-    auto& o = orphans();
-    o.erase(std::remove_if(o.begin(), o.end(), [this](const Orphan& x) { return x.target == this; }), o.end());
+ScoreDocTarget::ScoreDocTarget(std::shared_ptr<ScoreDoc> doc) : doc_(std::move(doc)) {}
+
+ScoreDocTarget::~ScoreDocTarget() {
+    if (token_) doc_->unlisten(token_);
 }
 
-void scoreSourceClosed(ScoreSource* s, Patch* p, const std::string& id) {
-    // inside the box's destructor, maybe while its patch is being rebuilt: only note it, settle from the event loop
-    bool any = false;
-    for (auto* t : ScoreBoxTarget::all()) {
-        if (t->source() != s) continue;
-        Orphan o{t, nullptr};
-        if (p && rollHost().locate) o.find = rollHost().locate(p, id);
-        t->unbind();
-        orphans().push_back(o);
-        any = true;
+void ScoreDocTarget::setListener(std::function<void(unsigned)> f) {
+    if (token_) doc_->unlisten(token_);
+    token_ = 0;
+    listener_ = std::move(f);
+    if (listener_) token_ = doc_->listen([this](unsigned what) { if (listener_) listener_(what); });
+}
+
+std::shared_ptr<const sc::Score> ScoreDocTarget::score() const {
+    doc_->follow();                              // a message to the box, the box replaced or gone: seen here too
+    if (!snap_ || snapVersion_ != doc_->version()) {
+        snap_ = doc_->score().clone();
+        snapVersion_ = doc_->version();
     }
-    if (any && !Fl::has_timeout(settle)) Fl::add_timeout(0, settle);
+    return snap_;
 }
 
-std::shared_ptr<const sc::Score> ScoreBoxTarget::score() const { return src_ ? src_->scoreNow() : last_; }
-
-uint64_t ScoreBoxTarget::generation() const { return (src_ ? src_->scoreGeneration() : 0) + gone_; }
-
-std::string ScoreBoxTarget::title() const {
-    if (!src_) return "score (its box is gone)";
-    std::string f = src_->scoreFile();
-    return src_->scoreTitle() + (f.empty() ? std::string() : "  (" + f + ")");
+uint64_t ScoreDocTarget::generation() const {
+    doc_->follow();
+    return doc_->version();                      // an edit of a score placed inside changes its parent's too
 }
 
-void ScoreBoxTarget::unbind() {
-    if (!src_) return;
-    last_ = src_->scoreNow();
-    src_ = nullptr;
-    undo_.clear();
-    redo_.clear();
-    gone_ += ++bumps() << 32;
+std::shared_ptr<ScoreDoc> ScoreDocTarget::docAt(const ScorePath& path) const {
+    std::shared_ptr<ScoreDoc> d = doc_;
+    ScorePath prefix;
+    for (uint64_t id : path) {
+        prefix.push_back(id);
+        auto e = d->score().find(id);
+        if (!e || e->kind != sc::Kind::Score || !e->sub) return nullptr;
+        auto& kept = subs_[prefix];
+        if (!kept || kept->scorePtr() != e->sub) kept = ScoreDoc::ofPlacement(d, id);
+        if (!kept) return nullptr;
+        d = kept;
+    }
+    return d;
 }
 
-void ScoreBoxTarget::rebind(ScoreSource* s) {
-    src_ = s;
-    last_.reset();
-    fileDirty_ = false;
-    gone_ += ++bumps() << 32;
+std::shared_ptr<ScoreDoc> ScoreDocTarget::focused() const {
+    auto d = docAt(focus_);
+    return d ? d : doc_;
 }
 
-bool ScoreBoxTarget::save(std::string& err) {
-    if (!src_) { err = "the score's box is gone"; return false; }
-    if (src_->scoreFile().empty()) { err = "the score is kept in the patch: save the patch"; return false; }
-    if (!src_->saveScoreFile(err)) return false;
-    fileDirty_ = false;
+std::vector<std::shared_ptr<ScoreDoc>> ScoreDocTarget::documents() const {
+    std::vector<std::shared_ptr<ScoreDoc>> out{doc_};
+    for (auto& kv : subs_)
+        if (kv.second && std::find(out.begin(), out.end(), kv.second) == out.end()) out.push_back(kv.second);
+    return out;
+}
+
+void ScoreDocTarget::focus(const ScorePath& path) {
+    focus_ = path;
+    docAt(path);
+}
+
+std::string ScoreDocTarget::title() const {
+    auto f = focused();
+    return f == doc_ ? doc_->title() : doc_->title() + "  ›  " + f->title();
+}
+
+Patch* ScoreDocTarget::patch() const {
+    Box* b = doc_->box();
+    return b ? b->patch : nullptr;
+}
+
+bool ScoreDocTarget::dirty() const {
+    for (auto& d : documents())
+        if (d->needsSaving()) return true;
+    return false;
+}
+
+bool ScoreDocTarget::save(std::string& err) {
+    auto d = focused();
+    if (!d->canSaveInPlace() && d != doc_) d = doc_;     // kept inside its parent: the parent holds it
+    return d->save(err);
+}
+
+bool ScoreDocTarget::sharedSelection(const ScorePath& path, Ids& out) const {
+    auto d = docAt(path);
+    if (!d) return false;
+    out = d->selection();
     return true;
 }
 
-void ScoreBoxTarget::put(std::shared_ptr<const sc::Score> s) {
-    Patch* p = src_->scorePatch();
-    bool inPatch = src_->scoreFile().empty();
-    if (inPatch && p && rollHost().pushUndo) rollHost().pushUndo(p);
-    src_->setScore(std::const_pointer_cast<sc::Score>(std::move(s)));
-    if (inPatch && p && rollHost().markEdited) rollHost().markEdited(p);
-    else if (!inPatch) fileDirty_ = true;
+void ScoreDocTarget::shareSelection(const ScorePath& path, const Ids& ids) {
+    if (auto d = docAt(path)) d->select(ids);
 }
 
-void ScoreBoxTarget::commit(std::shared_ptr<sc::Score> next, const std::string& label) {
-    if (local_) {
-        undo_.push_back({src_->scoreNow(), label});
-        if (undo_.size() > 200) undo_.erase(undo_.begin());
-        redo_.clear();
+// (a change from outside first: the history then describes the score as it is, or starts again)
+bool ScoreDocTarget::undo() {
+    doc_->follow();
+    auto d = focused();
+    if (!d->undo()) { lastError = d->message; return false; }
+    return true;
+}
+bool ScoreDocTarget::redo() {
+    doc_->follow();
+    auto d = focused();
+    if (!d->redo()) { lastError = d->message; return false; }
+    return true;
+}
+bool ScoreDocTarget::canUndo() const {
+    doc_->follow();
+    return focused()->canUndo();
+}
+bool ScoreDocTarget::canRedo() const {
+    doc_->follow();
+    return focused()->canRedo();
+}
+
+bool ScoreDocTarget::commitDiff(ScoreDoc& d, const sc::Score& next, const std::string& label) {
+    const sc::Score& cur = d.score();
+    auto ed = d.edit(label);
+    if (!ed.ok()) { lastError = ed.error(); return false; }
+    std::vector<uint64_t> gone;
+    for (auto& e : cur.events())
+        if (!next.find(e->id)) gone.push_back(e->id);
+    for (uint64_t id : gone) ed.remove(id);
+    for (auto& e : next.events()) {
+        auto c = cur.find(e->id);
+        if (!c) ed.insert(std::make_shared<sc::Event>(*e));          // its id kept: the intent's copies are known by it
+        else if (!sameEvent(*c, *e)) ed.replace(*e);
     }
-    put(std::move(next));
+    if (!sameRows(cur.rows, next.rows)) ed.setRows(next.rows);
+    if (cur.name != next.name || cur.bpm != next.bpm || cur.meterNum != next.meterNum || cur.meterDen != next.meterDen)
+        ed.setHeader(next.name, next.bpm, next.meterNum, next.meterDen);
+    if (ed.ok() && ed.empty()) return false;
+    if (!ed.commit()) {
+        lastError = d.message;
+        return false;
+    }
+    return true;
 }
 
-bool ScoreBoxTarget::apply(const ScorePath& path, const std::string& label, const std::function<bool(sc::Score&)>& f) {
+bool ScoreDocTarget::apply(const ScorePath& path, const std::string& label, const std::function<bool(sc::Score&)>& f) {
     lastError.clear();
-    if (!editable()) { lastError = "the score's box is gone"; return false; }
-    auto top = std::const_pointer_cast<sc::Score>(src_->scoreNow());
-    if (!top) return false;
-    auto here = tr::descend(top, path);
-    if (!here) { lastError = "that score is not in the score any more"; return false; }
-    // a score placed from a file (anywhere, by any of its placements) is written back by its name: its edits would be
-    // lost, so it is read-only here
-    std::string ref;
-    const sc::Score* target = nullptr;
-    std::function<void(const sc::Score&, int)> find = [&](const sc::Score& s, int depth) {
-        if (depth > sc::kMaxDepth || !ref.empty()) return;
-        for (auto& e : s.events()) {
-            if (e->kind != sc::Kind::Score || !e->sub) continue;
-            if (e->sub.get() == target && !e->ref.empty()) { ref = e->ref; return; }
-            find(*e->sub, depth + 1);
-        }
-    };
-    for (size_t k = 1; k <= path.size() && ref.empty(); ++k) {     // the score edited, and those it is inside
-        auto s = tr::descend(top, ScorePath(path.begin(), path.begin() + (long)k));
-        target = s.get();
-        find(*top, 0);
-    }
-    if (!ref.empty()) { lastError = "a score placed from " + ref + ": edit it in its own file"; return false; }
-    auto copy = here->clone();
+    doc_->follow();                              // what the box plays now is what is edited
+    auto d = docAt(path);
+    if (!d) { lastError = "that score is not in the score any more"; return false; }
+    auto copy = d->score().clone();
     try {
         if (!f(*copy)) return false;
     } catch (const std::exception& e) {
         lastError = e.what();
         return false;
     }
-    std::shared_ptr<sc::Score> next = path.empty() ? copy : tr::replaceInstance(*top, here.get(), copy);
-    if (!next) { lastError = "that score is not in the score any more"; return false; }
-    commit(next, label);
-    return true;
+    return commitDiff(*d, *copy, label);
 }
 
-bool ScoreBoxTarget::replaceTop(std::shared_ptr<sc::Score> s, const std::string& label) {
+bool ScoreDocTarget::replaceTop(std::shared_ptr<sc::Score> s, const std::string& label) {
     lastError.clear();
-    if (!editable()) { lastError = "the score's box is gone"; return false; }
-    commit(std::move(s), label);
-    return true;
+    doc_->follow();
+    return commitDiff(*doc_, *s, label);
 }
 
-bool ScoreBoxTarget::undo() {
-    if (!canUndo()) return false;
-    Step st = std::move(undo_.back());
-    undo_.pop_back();
-    redo_.push_back({src_->scoreNow(), st.label});
-    put(st.score);
-    return true;
-}
-
-bool ScoreBoxTarget::redo() {
-    if (!canRedo()) return false;
-    Step st = std::move(redo_.back());
-    redo_.pop_back();
-    undo_.push_back({src_->scoreNow(), st.label});
-    put(st.score);
-    return true;
-}
-
-std::shared_ptr<RollEditTarget> makeRollTarget(ScoreSource* src, bool localHistory) {
-    return std::make_shared<ScoreBoxTarget>(src, localHistory);
+std::shared_ptr<ScoreDocTarget> makeRollTarget(std::shared_ptr<ScoreDoc> doc) {
+    return doc ? std::make_shared<ScoreDocTarget>(std::move(doc)) : nullptr;
 }
 
 }  // namespace moritz

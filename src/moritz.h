@@ -240,6 +240,9 @@ public:
     virtual void uiMouse(int event, int mx, int my) {}   // FL_PUSH/DRAG/RELEASE, box coords
     // a key typed (locked) after a click on the box (FLTK's key, Fl::event_state for the modifiers): true if used
     virtual bool uiKey(int key) { return false; }
+    // Edit > Undo (redo: Redo) while the box is the one clicked last (locked): true if the box took it back itself
+    // (a score box: its score's own history, score_doc.h); false: the patch's undo
+    virtual bool uiUndo(bool redo) { return false; }
     // its size dragged by its corner in edit mode (the canvas: one undo step); uiSize gives it back
     virtual bool uiResizable() const { return false; }
     virtual void uiResize(int w, int h) {}

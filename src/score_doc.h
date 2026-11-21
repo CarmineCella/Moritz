@@ -6,14 +6,17 @@
 //   Box    a score box of the open patches: the document edits the very score the box plays (scoreOfBox) and hands
 //          it back after each change (replaceScoreOfBox: the box makes its plan again, the transport going on). A
 //          score kept in the patch is patch memory: the patch is marked edited (patchEdited), nothing is unsaved
-//          here. A box with a file of its own (score name file.score): Save writes that file.
+//          here, and its edits are steps of this history, not of the patch's (Edit > Undo with the box clicked last
+//          comes here: Box::uiUndo); an undo of the patch, as any change from outside, is followed (see below).
+//          A box with a file of its own (score name file.score): Save writes that file.
 //   File   a .score file opened on its own (File > Open Score...): Save writes it.
 //   New    a new score (File > New Score): Save asks where.
 //   Sub    a score placed inside another document's score (a sub-score clip opened): an instance, shared with every
 //          other placement of it. Placed from a file, it is that file's (Save writes it); embedded, its parent's
 //          (the parent is marked edited and plays the change).
 // One document per score: the functions that open one return the document already open for it, so two views of
-// the same score show the same edits, selection and history.
+// the same score show the same edits, selection and history: the timeline (timeline.h) and the roll (roll.h, through
+// roll_edit.h's ScoreDocTarget: the score box's own roll, and the roll's window).
 //
 // Edits. An Edit is a transaction of insertions, removals and replacements of events (and of the rows and the
 // header): commit() makes it one undo step and tells the views; an Edit not committed (or one that failed: a cycle,

@@ -121,10 +121,10 @@ const std::vector<Command>& table() {
              if (auto* t = frontTimeline()) { t->save(); return; }
              if (auto* s = app().frontSound()) { s->save(); return; }
              if (auto* c = app().frontCode()) { c->save(); return; }
-             if (auto* r = frontRoll(); r && r->panel()->target()->dirty()) { r->panel()->save(); return; }
+             if (auto* r = frontRoll()) { r->save(); return; }
              if (auto* d = doc()) d->saveFront();
          },
-         [] { return frontTimeline() || app().frontSound() || app().frontCode() != nullptr || haveDoc(); }, nullptr},
+         [] { return frontTimeline() || frontRoll() || app().frontSound() || app().frontCode() != nullptr || haveDoc(); }, nullptr},
         {"file.saveas", "File/Save As...", FL_COMMAND + FL_SHIFT + 's', 0,
          [] {
              if (auto* t = frontTimeline()) { t->saveAs(); return; }
@@ -148,6 +148,7 @@ const std::vector<Command>& table() {
              if (auto* s = sound()) { s->undo(); return; }
              if (auto* ed = frontTextEditor()) { Fl_Text_Editor::kf_undo(0, ed); return; }
              if (auto* r = roll()) { r->undo(); return; }
+             if (auto* c = app().activeCanvas(); c && c->uiUndo(false)) return;   // a score box clicked last: its score's
              if (auto* d = doc()) d->undo();
          },
          textOrDoc, nullptr},
@@ -157,6 +158,7 @@ const std::vector<Command>& table() {
              if (auto* s = sound()) { s->redo(); return; }
              if (auto* ed = frontTextEditor()) { Fl_Text_Editor::kf_redo(0, ed); return; }
              if (auto* r = roll()) { r->redo(); return; }
+             if (auto* c = app().activeCanvas(); c && c->uiUndo(true)) return;   // a score box clicked last: its score's
              if (auto* d = doc()) d->redo();
          },
          textOrDoc, nullptr},
