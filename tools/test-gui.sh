@@ -560,6 +560,18 @@ run "$G/timeline.moritz" --window-png none act=tlopen:s act=tledge:voice,density
 expect "a lane sized on its own" "state: timeline row voice/density 58"
 expect "its track as it was" "state: timeline row voice 64"
 
+# 41. the clefs drawn as shapes (no font needed), in the roll's window and in the box: a G clef with its loop above the
+#     staff and its tail below, a C clef and an F clef inked in their place; none in the piano roll
+run "$G/clefs.moritz" --window-png none act=draw act=boxclef:s:0 act=boxclef:s:1 act=boxclef:s:2 act=roll:s act=rollclef:0 \
+    act=rollclef:1 act=rollclef:2 act=scview:piano act=rollclef:0
+expect "the G clef in the roll" "state: roll clef 0 ink yes above yes below yes"
+expect "the C clef" "state: roll clef 1 ink yes"
+expect "the F clef" "state: roll clef 2 ink yes"
+expect "none in the piano roll" "state: roll clef 0 ink no"
+expect "the G clef in the box" "state: box clef 0 ink yes above below"
+if [ $status -eq 0 ] && grep -q "state: box clef 1 ink yes" "$out" && grep -q "state: box clef 2 ink yes" "$out"; then ok
+else fail "the C and F clefs in the box"; fi
+
 rm -rf "$T"
 echo "$count interface cases, $fails failed"
 [ $fails -eq 0 ]

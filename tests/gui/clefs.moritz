@@ -1,0 +1,10 @@
+; a score box with a staff of each clef, for the roll's clef cases (tools/test-gui.sh)
+(patch
+  (obj s score clefs @size 420 260 (pos 20 40)
+    (script
+      "(score \"clefs\""
+      "  (sr 44100) (bpm 60) (meter 4 4) (next-id 4)"
+      "  (row Vn treble) (row Va alto) (row Vc bass)"
+      "  (note 0 1 Vn 67 mf (id 1))"
+      "  (note 0.5 1 Va 60 mf (id 2))"
+      "  (note 1 1 Vc 48 mf (id 3)))")))

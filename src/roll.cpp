@@ -15,6 +15,7 @@
 #include <FL/Fl_Box.H>
 #include <FL/Fl_Button.H>
 #include <FL/Fl_Choice.H>
+#include <FL/Fl_Image_Surface.H>
 #include <FL/Fl_Input.H>
 #include <FL/Fl_Menu_Bar.H>
 #include <FL/Fl_Text_Buffer.H>
@@ -428,6 +429,113 @@ bool RollCore::eventBox(uint64_t id, double& x, double& y, double& w, double& h)
     return false;
 }
 
+
+// ---- the clefs, drawn as shapes (no font needed): each a few strokes whose width varies along them, given as points
+// in staff spaces from the line the clef names (x right, y down), joined by a Catmull-Rom curve
+namespace {
+struct ClefPt {
+    double x, y, w;                  // where, and how wide the stroke is there (staff spaces)
+};
+void clefStroke(const std::vector<ClefPt>& c, double X, double Y, double u) {
+    if (c.size() < 2) return;
+    std::vector<ClefPt> pts;
+    const int kSteps = 10;
+    for (size_t i = 0; i + 1 < c.size(); ++i) {
+        const ClefPt& p0 = c[i ? i - 1 : 0];
+        const ClefPt& p1 = c[i];
+        const ClefPt& p2 = c[i + 1];
+        const ClefPt& p3 = c[i + 2 < c.size() ? i + 2 : c.size() - 1];
+        for (int k = 0; k < kSteps; ++k) {
+            double t = (double)k / kSteps, t2 = t * t, t3 = t2 * t;
+            auto cr = [&](double a, double b, double cc, double d) {
+                return 0.5 * (2 * b + (-a + cc) * t + (2 * a - 5 * b + 4 * cc - d) * t2 + (-a + 3 * b - 3 * cc + d) * t3);
+            };
+            pts.push_back({cr(p0.x, p1.x, p2.x, p3.x), cr(p0.y, p1.y, p2.y, p3.y), p1.w + (p2.w - p1.w) * t});
+        }
+    }
+    pts.push_back(c.back());
+    // the outline, a quadrilateral for each step (a stroke that crosses itself is drawn whole)
+    std::vector<double> lx, ly, rx, ry;
+    for (size_t i = 0; i < pts.size(); ++i) {
+        const ClefPt& a = pts[i ? i - 1 : 0];
+        const ClefPt& b = pts[i + 1 < pts.size() ? i + 1 : i];
+        double dx = b.x - a.x, dy = b.y - a.y, n = std::hypot(dx, dy);
+        if (n < 1e-9) { dx = 1; dy = 0; n = 1; }
+        double hw = pts[i].w / 2, nx = -dy / n * hw, ny = dx / n * hw;
+        lx.push_back(X + (pts[i].x + nx) * u);
+        ly.push_back(Y + (pts[i].y + ny) * u);
+        rx.push_back(X + (pts[i].x - nx) * u);
+        ry.push_back(Y + (pts[i].y - ny) * u);
+    }
+    for (size_t i = 0; i + 1 < pts.size(); ++i) {
+        fl_begin_polygon();
+        zd::vertex(lx[i], ly[i]);
+        zd::vertex(lx[i + 1], ly[i + 1]);
+        zd::vertex(rx[i + 1], ry[i + 1]);
+        zd::vertex(rx[i], ry[i]);
+        fl_end_polygon();
+    }
+}
+void clefDot(double x, double y, double r, double X, double Y, double u) {
+    fl_begin_polygon();
+    for (int k = 0; k < 16; ++k) {
+        double a = k * M_PI / 8;
+        zd::vertex(X + (x + r * std::cos(a)) * u, Y + (y + r * std::sin(a)) * u);
+    }
+    fl_end_polygon();
+}
+}  // namespace
+
+// a clef's box in staff spaces: from its left edge, and above and below the line it names
+void clefExtent(const std::string& clef, double& w, double& up, double& down) {
+    if (clef == "bass") { w = 2.6; up = 1.2; down = 2.7; }
+    else if (clef == "alto") { w = 2.4; up = 2.1; down = 2.1; }
+    else { w = 2.1; up = 4.75; down = 3.1; }
+}
+
+// the clef of a staff: x its left edge, line the y of the line it names (G: the second from the bottom, F: the fourth,
+// C: the middle one), u the space between the lines
+void drawClef(const std::string& clef, double x, double line, double u) {
+    if (clef == "bass") {                                    // F: a hook from the dot on the F line, the dots around it
+        double X = x + 0.42 * u;
+        clefDot(0, 0, 0.4, X, line, u);
+        clefStroke({{-0.05, -0.15, 0.22}, {0.15, -0.7, 0.2}, {0.75, -1.05, 0.16}, {1.4, -0.85, 0.3}, {1.72, -0.2, 0.46},
+                    {1.6, 0.75, 0.42}, {1.05, 1.7, 0.26}, {0.0, 2.55, 0.06}},
+                   X, line, u);
+        clefDot(2.0, -0.5, 0.17, X, line, u);
+        clefDot(2.0, 0.5, 0.17, X, line, u);
+        return;
+    }
+    if (clef == "alto") {                                    // C: two bars, two curves meeting on the middle line
+        double X = x;
+        for (int l = 0; l < 2; ++l) {
+            double bx = l ? 0.62 : 0, bw = l ? 0.16 : 0.42;
+            fl_begin_polygon();
+            zd::vertex(X + bx * u, line - 2.0 * u);
+            zd::vertex(X + (bx + bw) * u, line - 2.0 * u);
+            zd::vertex(X + (bx + bw) * u, line + 2.0 * u);
+            zd::vertex(X + bx * u, line + 2.0 * u);
+            fl_end_polygon();
+        }
+        for (int sgn : {-1, 1}) {
+            clefStroke({{0.82, 0.02 * sgn, 0.1}, {1.15, 0.45 * sgn, 0.14}, {1.65, 0.62 * sgn, 0.24}, {2.08, 1.15 * sgn, 0.34},
+                        {1.9, 1.78 * sgn, 0.24}, {1.4, 1.98 * sgn, 0.12}, {1.08, 1.7 * sgn, 0.1}},
+                       X, line, u);
+            clefDot(1.28, 1.6 * sgn, 0.26, X, line, u);
+        }
+        return;
+    }
+    // G (treble, and anything else with a staff): the spiral around the G line, the loop above, the stem and its hook
+    double X = x + 0.95 * u;
+    clefStroke({{0.12, 0.05, 0.14},  {0.42, -0.32, 0.16}, {0.15, -0.72, 0.18}, {-0.45, -0.62, 0.24}, {-0.85, 0.0, 0.38},
+                {-0.6, 0.78, 0.4},   {0.15, 1.05, 0.3},   {0.85, 0.62, 0.22},  {1.0, -0.12, 0.24},  {0.68, -0.95, 0.28},
+                {0.1, -1.72, 0.3},   {-0.32, -2.55, 0.26}, {-0.36, -3.45, 0.2}, {-0.05, -4.3, 0.15}, {0.32, -4.6, 0.13},
+                {0.48, -4.05, 0.14}, {0.28, -3.2, 0.18},  {-0.12, -2.35, 0.2}, {0.02, -0.9, 0.2},   {0.22, 0.6, 0.19},
+                {0.36, 2.0, 0.18},   {0.22, 2.62, 0.15},  {-0.28, 2.8, 0.13},  {-0.6, 2.45, 0.12}},
+               X, line, u);
+    clefDot(-0.5, 2.38, 0.32, X, line, u);
+}
+
 // ---- drawing
 void RollCore::draw(double ox, double oy) {
     syncSelection();
@@ -542,29 +650,89 @@ void RollCore::drawRuler(double ox, double oy) {
     zd::draw((fmtNum(s->bpm, 1) + " bpm " + std::to_string(s->meterNum) + "/" + std::to_string(s->meterDen)).c_str(), ox + 4, oy + H - 6);
 }
 
+RollCore::ClefInk RollCore::clefInk(int row) {
+    ClefInk out;
+    double x, y, w, h;
+    if (!clefBox(row, x, y, w, h)) return out;
+    const RowGeom& r = rows_[(size_t)row];
+    Fl_Image_Surface surf((int)std::ceil(w_), (int)std::ceil(h_));
+    Fl_Surface_Device::push_current(&surf);
+    draw(0, 0);
+    Fl_Surface_Device::pop_current();
+    Fl_RGB_Image* img = surf.image();
+    if (!img) return out;
+    uchar tr, tg, tb, br, bg, bb;
+    Fl::get_color(palette(compact).text, tr, tg, tb);
+    Fl::get_color(row % 2 ? palette(compact).rowAlt : palette(compact).bg, br, bg, bb);
+    const uchar* d = (const uchar*)img->data()[0];
+    int dp = img->d(), ld = img->ld() ? img->ld() : img->w() * dp;
+    int x0 = std::max(0, (int)std::floor(x)), x1 = std::min(img->w(), (int)std::ceil(x + w));
+    int y0 = std::max(0, (int)std::floor(y)), y1 = std::min(img->h(), (int)std::ceil(y + h));
+    int n = 0, ink = 0;
+    for (int py = y0; py < y1; ++py)
+        for (int px = x0; px < x1; ++px) {
+            const uchar* q = d + py * ld + px * dp;
+            ++n;
+            // nearer the text's colour than the paper's (the edges of a shape are blended)
+            if (std::abs(q[0] - tr) + std::abs(q[1] - tg) + std::abs(q[2] - tb) < std::abs(q[0] - br) + std::abs(q[1] - bg) + std::abs(q[2] - bb)) {
+                ++ink;
+                if (py < r.yBottom - 4 * r.sp - 1) out.above = true;
+                if (py > r.yBottom + 1) out.below = true;
+            }
+        }
+    delete img;
+    out.drawn = true;
+    out.ink = n ? (double)ink / n : 0;
+    return out;
+}
+
+bool RollCore::clefBox(int row, double& x, double& y, double& w, double& h) const {
+    layoutRows();
+    if (mode == Mode::Piano || row < 0 || row >= (int)rows_.size()) return false;
+    const RowGeom& r = rows_[(size_t)row];
+    if (!r.staff) return false;
+    double cw, up, down;
+    clefExtent(r.spec.clef, cw, up, down);
+    double line = r.yBottom - (r.spec.clef == "bass" ? 3 : r.spec.clef == "alto" ? 2 : 1) * r.sp;
+    x = compact ? gutterOf(true) - 3 - cw * r.sp : gutterOf(false) - 28;
+    y = line - up * r.sp;
+    w = cw * r.sp;
+    h = (up + down) * r.sp;
+    return true;
+}
+
 void RollCore::drawRow(double ox, double oy, const RowGeom& r, int k) {
     const Palette& P = palette(compact);
     const double gut = gutterOf(compact);
     if (r.top + r.h < rulerOf(compact) || r.top > h_) return;
-    // the name
+    // the clef: a shape scaled with the staff (in the box too; a letter when the staff is too small for one)
+    bool clef = r.staff && mode == Mode::Staves;
+    bool shape = clef && r.sp >= (compact ? 2.5 : 3.0);
+    double cx = 0, cy = 0, cw = 0, ch = 0;
+    if (clef) clefBox(k, cx, cy, cw, ch);
+    // the name (in the box: left of the clef)
     zd::font(compact ? FL_HELVETICA : FL_HELVETICA_BOLD, compact ? 9 : 12);
     fl_color(mode == Mode::Piano ? rollRowColour(k) : P.text);
     std::string name = lay::rowLabel(r.spec);
+    if (compact && clef) zd::push_clip(ox, oy + r.top, std::max(4.0, cx - 1), r.h);
     if (mode == Mode::Staves || compact)
-        zd::draw(name.c_str(), ox + 4, oy + (r.staff ? r.yBottom - 2 * r.sp + 4 : r.top + r.h / 2 + 4));
+        zd::draw(name.c_str(), ox + (compact ? 2 : 4), oy + (r.staff ? r.yBottom - 2 * r.sp + 4 : r.top + r.h / 2 + 4));
     else
         zd::draw(name.c_str(), ox + 4, oy + r.top + 12);
+    if (compact && clef) zd::pop_clip();
     if (mode == Mode::Piano) return;
     fl_color(P.line);
     if (r.staff) {
-        for (int l = 0; l < 5; ++l) zd::xyline(ox + (compact ? gut - 2 : gut - 30), oy + r.yBottom - l * r.sp, ox + w_);
-        if (!compact) {                                         // the clef, as a letter in the staff's height
+        double from = compact ? std::min(gut - 2, cx - 2) : gut - 30;
+        for (int l = 0; l < 5; ++l) zd::xyline(ox + from, oy + r.yBottom - l * r.sp, ox + w_);
+        fl_color(P.text);
+        double line = r.yBottom - (r.spec.clef == "bass" ? 3 : r.spec.clef == "alto" ? 2 : 1) * r.sp;
+        if (shape) {
+            drawClef(r.spec.clef, ox + cx, oy + line, r.sp);
+        } else if (clef) {                                      // too small for the shape: its letter
             const char* g = r.spec.clef == "bass" ? "F" : r.spec.clef == "alto" ? "C" : "G";
-            int size = std::max(8, (int)std::lround(r.sp * (r.spec.clef == "treble" ? 5.2 : 3.6)));
-            zd::font(FL_TIMES_BOLD, size);
-            fl_color(P.text);
-            double base = r.spec.clef == "treble" ? r.yBottom + r.sp * 0.9 : r.yBottom - r.sp * (r.spec.clef == "bass" ? 0.6 : 0.4);
-            zd::draw(g, ox + gut - 26, oy + base);
+            zd::font(FL_HELVETICA_BOLD, std::max(6, (int)std::lround(r.sp * 3)));
+            zd::draw(g, ox + cx, oy + r.yBottom - r.sp * 0.2);
         }
     } else {
         zd::xyline(ox + gut, oy + r.top + r.h / 2, ox + w_);

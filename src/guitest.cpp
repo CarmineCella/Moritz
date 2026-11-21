@@ -86,6 +86,8 @@
 //   act=rollkey:<up|down|left|right>[:alt][:shift]   a key on the roll (Alt+Up: a cent higher, Shift+Alt: ten)
 //   act=rollcell:<id>:<key>:<value>   the List view, a cell typed into and entered
 //   act=boxcents:<box>:<event>   print: how the score box's own roll shows the event's detuning (text, tick or none)
+//   act=boxclef:<box>:<row>, act=rollclef:<row>   print: whether a staff's clef is drawn (ink in its box) and, for the
+//                             G clef, its loop above the staff and its tail below
 //   act=boxdrag:<box>:<event>:<dx>,<dy>   on the canvas, an event of a score box's own roll dragged by its head that
 //                             many pixels (the patch locked: the box edited in place)
 
@@ -407,6 +409,17 @@ bool act(const std::string& a) {
         DocumentWindow* d = front();
         BufferBox* b = d ? findBuffer(&d->patch, arg) : nullptr;
         state("buffer %s frames %s", arg, b ? std::to_string(b->buf.frames) : std::string("none"));
+        return true;
+    }
+    if (verb == "boxclef") {                    // act=boxclef:<box>:<row>: how the box's own roll draws that row's clef
+        DocumentWindow* d = front();
+        size_t c1 = arg.find(':');
+        Box* b = d && c1 != std::string::npos ? d->patch.find(arg.substr(0, c1)) : nullptr;
+        RollCore* core = inlineRollOf(b);
+        if (!core) return false;
+        auto k = core->clefInk(std::atoi(arg.c_str() + c1 + 1));
+        std::string how = k.drawn && k.ink > 0.04 ? std::string("yes") + (k.above ? " above" : "") + (k.below ? " below" : "") : "no";
+        state("box clef %s ink %s", arg.substr(c1 + 1), how);
         return true;
     }
     if (verb == "boxcents") {                   // act=boxcents:<box>:<event>: how the box's own roll shows its detuning

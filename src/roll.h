@@ -5,7 +5,7 @@
 // (score_doc.h, shared with the timeline: one undo history, one selection); it draws with the zoomed
 // calls of the canvas (zoom.h) in coordinates of its own, so the same code draws the roll in its window and, compact,
 // inside a score box (objects_score.cpp), where it is edited in place when the patch is locked. The staves follow
-// Musil's layout (music/score_layout.h: rows in orchestral order, clefs, steps on the staff): a note is a head at its
+// Musil's layout (music/score_layout.h: rows in orchestral order, clefs (G, F and C, drawn as shapes, no font needed), steps on the staff): a note is a head at its
 // onset and a line for its duration, with a sharp, its cents when it is detuned (always: in the box too, small, or a
 // tick above the head when there is no room for the number) and its dynamics where they change; a score placed inside is a faint block with its notes and its placement (+7 x1.5 -6 dB); sounds, patches
 // and messages are blocks on lines of their own.
@@ -132,6 +132,16 @@ public:
     };
     const std::vector<RowGeom>& rows() const { layoutRows(); return rows_; }
     std::string summary() const;      // "4 rows · 12 events · 0'08""
+    // where a staff's clef is drawn (its own coordinates; false: no staff there, or the piano roll): a shape scaled with
+    // the staff (G, F or C clef, from score_layout.h's clef of the row), a letter when the staff is too small for one
+    bool clefBox(int row, double& x, double& y, double& w, double& h) const;
+    // the clef as drawn (the tests): how much of its box is inked in the text's colour, and whether the ink goes above
+    // the staff's top line and below its bottom one (the G clef's loop and tail)
+    struct ClefInk {
+        bool drawn = false, above = false, below = false;
+        double ink = 0;
+    };
+    ClefInk clefInk(int row);
     // how a note's detuning (its cents, and the fraction of its pitch) is drawn: not at all, as a number by its head,
     // or (no room for the number: a small box) as a tick above it
     struct CentsMark {
