@@ -231,6 +231,7 @@ bool confirmCloseTimelines() {
 //   act=tlpoint:<track>,<lane>,<seconds>,<value>   a click on a lane: a point there
 //   act=tlmute:<track>, act=tlsolo:<track>   the header's M or S button
 //   act=tlop:<op>                    undo redo cut copy paste duplicate delete split unique selectall addtrack fit play stop
+//                                    render (saveas=<path> answers where)
 //   act=tlplayhead:<seconds>, act=tlsnap:<off|beat|bar>, act=tladdsound:<file>, act=tllane:<track>,<name>
 //   act=tlsave                       File > Save (saveas=<path> answers a Save As)
 //   act=tlpng:<file>                 the front timeline window drawn into a PNG file
@@ -398,7 +399,8 @@ bool timelineTestAction(const std::string& verb, const std::string& arg) {
             {"delete", &TimelinePanel::erase},    {"split", &TimelinePanel::splitAtPlayhead},
             {"unique", &TimelinePanel::makeUnique}, {"selectall", &TimelinePanel::selectAll},
             {"addtrack", &TimelinePanel::addTrack}, {"fit", &TimelinePanel::fit},
-            {"play", &TimelinePanel::play},       {"stop", &TimelinePanel::stop}};
+            {"play", &TimelinePanel::play},       {"stop", &TimelinePanel::stop},
+            {"render", &TimelinePanel::renderDialog}};
         for (auto& o : ops)
             if (arg == o.first) {
                 (p->*o.second)();

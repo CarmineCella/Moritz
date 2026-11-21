@@ -408,6 +408,9 @@ if [ $status -eq 0 ] && grep -q "Mute" "$out"; then ok; else fail "a track muted
 run --window-png none act=tlnew "act=tladdsound:$HERE/data/drums.wav" "saveas=$T/new.score" act=tlsave act=timeline
 if [ $status -eq 0 ] && grep -q "drums.wav" "$T/new.score" && grep -q "state: timeline new.score — timeline — Moritz" "$out" &&
    [ -z "$(ls -A "$T" | grep '\.tmp$')" ]; then ok; else fail "a new score saved as a file"; fi
+run --window-png none "act=tlfile:$T/new.score" "saveas=$T/new.wav" act=tlop:render act=wait:3 act=timeline
+if [ $status -eq 0 ] && [ -s "$T/new.wav" ] && grep -q "state: timeline status rendered" "$out"; then ok
+else fail "a score rendered to a WAV file"; fi
 run --window-png none "act=tlfile:$T/new.score" act=timeline act=tldrag:1,1 answer=0 act=closefront act=timeline answer=2 \
     act=closefront act=timeline
 expect "a score file opened" "state: timeline clip 1 sound track 1 0"

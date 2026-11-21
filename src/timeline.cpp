@@ -659,6 +659,7 @@ void TimelineView::press(int ex, int ey, int clicks, bool shift, bool right) {
         if (clicks && r->lane < 0) tp_->renameTrackDialog(track);
         return;
     }
+    int rowIndex = (int)(r - rows_.data());             // (an edit lays the rows out again: r is not kept)
     tp_->setCurrentTrack(track);
     if (r->lane >= 0) {                                  // a lane: its points
         uint64_t p = pointAt(ex, ey);
@@ -668,8 +669,9 @@ void TimelineView::press(int ex, int ey, int clicks, bool shift, bool right) {
         }
         int Y = y() + kRulerH + r->y - tp_->scrollY();
         double v = r->lo + (1 - std::clamp((double)(ey - Y - 4) / std::max(1, r->h - 8), 0.0, 1.0)) * (r->hi - r->lo);
+        std::string lane = r->laneName;
         if (!p) {
-            p = tl::addPoint(d, track, r->laneName, std::max(0.0, tp_->snapped(tp_->timeAt(ex))), v);
+            p = tl::addPoint(d, track, lane, std::max(0.0, tp_->snapped(tp_->timeAt(ex))), v);
             tp_->after(p != 0);
             if (!p) return;
         }
@@ -678,7 +680,7 @@ void TimelineView::press(int ex, int ey, int clicks, bool shift, bool right) {
         drag_ = Drag::Point;
         dragId_ = p;
         dragTrack_ = track;
-        dragRow_ = (int)(r - rows_.data());
+        dragRow_ = rowIndex;
         dragPointT = e->at;
         dragPointV = tl::pointValue(*e);
         dragAt_ = e->at;
