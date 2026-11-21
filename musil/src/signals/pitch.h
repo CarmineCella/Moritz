@@ -19,12 +19,16 @@
 // The periodicity is 1 - d' at the chosen lag (the aperiodicity's complement), 0..1; a silent frame
 // has f0 0 and periodicity 0. The longest period searched is the smaller of sr / fmin and len / 2 - 2
 // samples, the shortest sr / fmax (2 at least).
+//
+// StreamingYin (at the end) runs it on a stream, a frame every few milliseconds: the detector of the
+// harmonizer (psola.h).
 #pragma once
 
 #include <algorithm>
 #include <cmath>
 #include <vector>
 
+#include "biquad.h"
 #include "fft.h"
 
 namespace musil {
@@ -208,6 +212,134 @@ private:
     double sr_ = 0, fmin_ = 0, fmax_ = 0;
     RealFFT<double> fft_;
     std::vector<double> a_, b_, ar_, ai_, br_, bi_, c_, e_, centre_, other_, rawCentre_, rawOther_;
+};
+
+// A biquad section run in direct form II transposed, with normalised coefficients (a0 = 1): the low-pass of the
+// streaming YIN and of the harmonizer's pitch marks
+struct BiquadSection {
+    double b0 = 1, b1 = 0, b2 = 0, a1 = 0, a2 = 0, z1 = 0, z2 = 0;
+    void set(const BiquadCoeffs& c) {
+        BiquadCoeffs n = c.normalized();
+        b0 = n.b0; b1 = n.b1; b2 = n.b2; a1 = n.a1; a2 = n.a2;
+    }
+    void reset() { z1 = z2 = 0; }
+    double tick(double x) {
+        double y = b0 * x + z1;
+        z1 = b1 * x - a1 * y + z2;
+        z2 = b2 * x - a2 * y;
+        return y;
+    }
+};
+
+// YIN on a stream (the harmonizer's detector, psola.h): the samples go into a ring; every hop (5 ms) the last frame
+// is estimated by Yin, so the estimate is of the newest samples. The frame is as short as YIN allows for fmin (a
+// window and as many lags as the longest period, 2 / fmin seconds); with `local` (step 6, the best local
+// estimate) it is half a longest period longer, so windows can shift. Options:
+//   decimate   1, 2 or 4: the signal is low-passed and decimated first (a quarter of the work at 4 for a low voice);
+//   lowpass    without decimation, a low-pass at 4 fmax (removes what no f0 in the range needs);
+//   gate       a frame whose RMS is under it (linear) is unvoiced;
+//   median     the f0 given is the median of the last three voiced estimates (one wrong frame is not heard);
+// Allocates in init only; push() and the estimates allocate nothing (an audio thread can run it).
+class StreamingYin {
+public:
+    struct Config {
+        double sr = 44100, fmin = 70, fmax = 1000, hopMs = 5, threshold = 0.15, gate = 0.003;
+        int decimate = 1;
+        bool lowpass = true, local = false, median = true;
+    };
+    void init(const Config& c) {
+        cfg_ = c;
+        dec_ = c.decimate >= 4 ? 4 : c.decimate >= 2 ? 2 : 1;
+        cfg_.decimate = dec_;
+        double sr = c.sr / dec_;
+        cfg_.fmax = std::min(c.fmax, 0.45 * sr);
+        int tauMax = (int)std::ceil(sr / std::max(1.0, c.fmin));
+        int len = 2 * (tauMax + 2) + (c.local ? tauMax : 0);
+        yin_.init(len, sr, c.fmin, cfg_.fmax);
+        len_ = len;
+        frame_.assign((size_t)len, 0.0);
+        size_t ring = 1;
+        while (ring < (size_t)len + 16) ring <<= 1;
+        ring_.assign(ring, 0.0);
+        mask_ = ring - 1;
+        hop_ = std::max(1, (int)std::lround(c.hopMs * 1e-3 * sr));
+        lp_[0].reset(); lp_[1].reset();
+        filtered_ = dec_ > 1 || c.lowpass;
+        double cut = dec_ > 1 ? 0.4 * sr : std::min(4 * cfg_.fmax, 0.45 * c.sr);
+        lp_[0].set(rbj(BiquadType::Lowpass, c.sr, cut, 0.5412));     // fourth-order Butterworth
+        lp_[1].set(rbj(BiquadType::Lowpass, c.sr, cut, 1.3066));
+        reset();
+    }
+    void reset() {
+        std::fill(ring_.begin(), ring_.end(), 0.0);
+        lp_[0].reset(); lp_[1].reset();
+        w_ = 0; phase_ = 0; untilHop_ = hop_;
+        f0_ = periodicity_ = 0; voiced_ = false; level_ = 0;
+        hist_[0] = hist_[1] = hist_[2] = 0; nhist_ = 0;
+    }
+    void setThreshold(double t) { cfg_.threshold = std::clamp(t, 0.001, 1.0); }
+    void setGate(double g) { cfg_.gate = std::max(0.0, g); }
+    bool ready() const { return yin_.ready(); }
+    const Config& config() const { return cfg_; }
+    // the input samples between the newest and the centre of the frame estimated
+    int lag() const { return len_ / 2 * dec_; }
+    int hop() const { return hop_ * dec_; }
+    // one input sample; true when it completed a hop (a new estimate)
+    template <class T>
+    bool push(T in) {
+        double x = (double)in;
+        if (!std::isfinite(x)) x = 0;
+        if (filtered_) x = lp_[1].tick(lp_[0].tick(x));
+        if (++phase_ < dec_) return false;
+        phase_ = 0;
+        ring_[w_ & mask_] = x;
+        ++w_;
+        if (--untilHop_ > 0) return false;
+        untilHop_ = hop_;
+        estimate();
+        return true;
+    }
+    double f0() const { return f0_; }                    // Hz (median of three when asked), 0 unvoiced
+    double rawF0() const { return raw_; }                // the last frame's own estimate
+    double periodicity() const { return periodicity_; }
+    double level() const { return level_; }              // the last frame's RMS
+    bool voiced() const { return voiced_; }
+
+private:
+    void estimate() {
+        size_t start = w_ - (size_t)len_;
+        double e = 0;
+        for (int k = 0; k < len_; ++k) {
+            double v = ring_[(start + (size_t)k) & mask_];
+            frame_[(size_t)k] = v;
+            e += v * v;
+        }
+        level_ = std::sqrt(e / std::max(1, len_));
+        PitchEstimate p;
+        if (level_ >= cfg_.gate && yin_.ready()) p = yin_.estimate(frame_.data(), cfg_.threshold);
+        raw_ = p.f0;
+        periodicity_ = p.periodicity;
+        if (!(p.f0 > 0)) {
+            voiced_ = false;
+            f0_ = 0;
+            nhist_ = 0;
+            return;
+        }
+        voiced_ = true;
+        hist_[2] = hist_[1]; hist_[1] = hist_[0]; hist_[0] = p.f0;
+        nhist_ = std::min(3, nhist_ + 1);
+        if (!cfg_.median || nhist_ < 3) { f0_ = p.f0; return; }
+        double a = hist_[0], b = hist_[1], c = hist_[2];
+        f0_ = std::max(std::min(a, b), std::min(std::max(a, b), c));
+    }
+    Config cfg_;
+    Yin yin_;
+    BiquadSection lp_[2];
+    std::vector<double> ring_, frame_;
+    size_t mask_ = 0, w_ = 0;
+    int len_ = 0, hop_ = 1, dec_ = 1, phase_ = 0, untilHop_ = 1, nhist_ = 0;
+    bool filtered_ = false, voiced_ = false;
+    double f0_ = 0, raw_ = 0, periodicity_ = 0, level_ = 0, hist_[3] = {0, 0, 0};
 };
 
 }  // namespace dsp

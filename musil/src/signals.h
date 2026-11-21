@@ -21,6 +21,7 @@
 #include "signals/fft.h"
 #include "signals/vocoder.h"
 #include "signals/nebula.h"
+#include "signals/psola.h"
 #include "signals/ambisonics.h"
 #include "signals/hrtf.h"
 #include "signals/convolution.h"
@@ -457,6 +458,227 @@ inline vptr sig_nebula(vlist& a, Interp& i) {
     }
     if (L.size() < total) { L.resize(total, 0.0); R.resize(total, 0.0); }
     return v_list({ v_arr(varr(L.data(), L.size())), v_arr(varr(R.data(), R.size())) });
+}
+
+// --- harmonize ----------------------------------------------------------------------
+// numbers from a number, a vector or a list of numbers
+inline std::vector<double> harm_numbers(Interp& i, const vptr& v) {
+    std::vector<double> out;
+    if (v->t == Value::LIST) for (auto& e : v->l) out.push_back(i.scalar(e));
+    else { const varr& x = i.num(v); out.assign(std::begin(x), std::end(x)); }
+    return out;
+}
+inline std::string harm_name(Interp& i, const vptr& v) {
+    if (v->t == Value::STR || v->t == Value::SYM) return v->s;
+    i.bad("expected a name"); return "";
+}
+struct HarmNote { size_t on, off; int pitch; double vel; };
+struct HarmRun {
+    std::unique_ptr<dsp::Psola<double>> ps;
+    std::vector<HarmNote> notes;
+    long latency = 0;
+};
+// the harmonizer of x set up by the arguments of harmonize: (x sr voices opts)
+inline HarmRun harm_setup(vlist& a, Interp& i, size_t nvoices_at, size_t opts_at) {
+    using Ps = dsp::Psola<double>;
+    HarmRun run;
+    run.ps = std::make_unique<Ps>();
+    Ps& ps = *run.ps;
+    double sr = i.scalar(a[1]);
+    if (!std::isfinite(sr) || sr < 8000 || sr > 384000) i.bad("sr must be in 8000 .. 384000");
+    std::vector<double> voices;
+    if (nvoices_at < a.size()) voices = harm_numbers(i, a[nvoices_at]);
+    else voices = {0};
+    if (voices.empty() || voices.size() > (size_t)Ps::kMaxVoices) i.bad("from 1 to 8 voices");
+    auto& p = ps.p;
+    p.voices = (int)voices.size();
+    for (size_t k = 0; k < voices.size(); ++k) {
+        p.v[k] = Ps::Voice{};
+        p.v[k].interval = voices[k];
+        p.v[k].pan = voices.size() > 1 ? -0.7 + 1.4 * (double)k / (double)(voices.size() - 1) : 0.0;
+    }
+    Ps::Setup st; st.sr = sr;
+    std::string window = "hann";
+    bool seeded = false;
+    uint32_t seed = 1;
+    int key = 0;
+    const int* steps = nullptr; int nsteps = 0; std::vector<int> own;
+    const music::ScaleDef* major = music::scale_named("major");
+    steps = major->steps; nsteps = major->n;
+    auto perVoice = [&](const vptr& v, double Ps::Voice::*field) {
+        auto x = harm_numbers(i, v);
+        if (x.empty()) i.bad("a value for each voice, or one for all");
+        for (size_t k = 0; k < voices.size(); ++k) p.v[k].*field = x[std::min(k, x.size() - 1)];
+    };
+    if (opts_at < a.size())
+        for (auto& e : i.list(a[opts_at])) {
+            vlist& kv = i.list(e);
+            if (kv.size() != 2) i.bad("an option is (list \"key\" value)");
+            std::string k = harm_name(i, kv[0]);
+            const vptr& v = kv[1];
+            if (k == "mode") { if (!dsp::harmony_mode(harm_name(i, v), p.mode)) i.bad("mode is \"intervals\" \"scale\" \"midi-chord\" or \"midi-root\""); }
+            else if (k == "key") {
+                if (v->t == Value::NUM) key = (((int)std::lround(i.scalar(v)) % 12) + 12) % 12;
+                else { key = music::key_class(harm_name(i, v)); if (key < 0) i.bad("a key is 0..11 or a name: C, F#, Bb ..."); }
+            }
+            else if (k == "scale") {
+                if (v->t == Value::STR || v->t == Value::SYM) {
+                    const music::ScaleDef* d = music::scale_named(v->s);
+                    if (!d) i.bad("unknown scale " + v->s + " (scale-names lists them)");
+                    steps = d->steps; nsteps = d->n;
+                } else {
+                    own.clear();
+                    for (double x : harm_numbers(i, v)) own.push_back((((int)std::lround(x) % 12) + 12) % 12);
+                    if (own.empty()) i.bad("a scale is a name or a list of pitch classes");
+                    steps = own.data(); nsteps = (int)own.size();
+                }
+            }
+            else if (k == "notes") {
+                for (auto& nv : i.list(v)) {
+                    auto x = harm_numbers(i, nv);
+                    if (x.size() < 3) i.bad("a note is (list onset duration pitch [velocity]), in seconds");
+                    if (x[0] < 0 || x[1] < 0) i.bad("a note's onset and duration are >= 0");
+                    double vel = x.size() > 3 ? x[3] : 100;
+                    size_t on = (size_t)std::llround(x[0] * sr), off = (size_t)std::llround((x[0] + x[1]) * sr);
+                    run.notes.push_back({on, std::max(on + 1, off), (int)std::lround(x[2]), vel});
+                }
+            }
+            else if (k == "levels") perVoice(v, &Ps::Voice::level);
+            else if (k == "pans") perVoice(v, &Ps::Voice::pan);
+            else if (k == "formants") perVoice(v, &Ps::Voice::formant);
+            else if (k == "vibrato") {
+                auto x = harm_numbers(i, v);
+                if (x.size() < 2) i.bad("vibrato is (list depth-cents rate-hz [random])");
+                for (size_t n = 0; n < voices.size(); ++n) { p.v[n].vibDepth = x[0]; p.v[n].vibRate = x[1]; p.v[n].vibRandom = x.size() > 2 ? x[2] : 0; }
+            }
+            else if (k == "humanize") {
+                auto x = harm_numbers(i, v);
+                if (x.size() != 2) i.bad("humanize is (list cents ms)");
+                p.humanizeCents = std::max(0.0, x[0]); p.humanizeMs = std::max(0.0, x[1]);
+            }
+            else if (k == "transpose") p.transpose = i.scalar(v);
+            else if (k == "dry") p.dry = std::max(0.0, i.scalar(v));
+            else if (k == "wet") p.wet = std::max(0.0, i.scalar(v));
+            else if (k == "fmin") st.fmin = i.scalar(v);
+            else if (k == "fmax") st.fmax = i.scalar(v);
+            else if (k == "threshold") { st.threshold = i.scalar(v); if (!(st.threshold > 0 && st.threshold <= 1)) i.bad("threshold is in (0, 1]"); }
+            else if (k == "gate") st.gate = std::pow(10.0, i.scalar(v) / 20.0);
+            else if (k == "cycles") p.cycles = v->t == Value::NUM ? std::clamp(i.scalar(v), 0.5, 4.0) : (harm_name(i, v) == "auto" ? 0.0 : (i.bad("cycles is a number or \"auto\""), 0.0));
+            else if (k == "window") { window = harm_name(i, v); if (!dsp::grains::GrainWindow::known(window)) i.bad("window is \"hann\" \"hamming\" or \"blackman\""); }
+            else if (k == "latency") { st.latencyMs = i.scalar(v); if (!(st.latencyMs >= 0) || st.latencyMs > 500) i.bad("latency is 0 (auto) .. 500 ms"); }
+            else if (k == "seed") { seed = (uint32_t)i.scalar(v); seeded = true; }
+            else if (k == "marks") { std::string m = harm_name(i, v); if (m != "snap" && m != "period") i.bad("marks is \"snap\" or \"period\""); p.marksPeriod = m == "period"; }
+            else if (k == "unvoiced") { std::string m = harm_name(i, v); if (m != "mute" && m != "dry") i.bad("unvoiced is \"mute\" or \"dry\""); p.unvoicedDry = m == "dry"; }
+            else if (k == "decimate") st.decimate = (int)i.scalar(v);
+            else i.bad("unknown option " + k);
+        }
+    if (!(st.fmin > 0) || !(st.fmax > st.fmin)) i.bad("need 0 < fmin < fmax");
+    ps.init(st);                                      // the parameters stay
+    ps.p.scaleMask = music::scale_mask(steps, nsteps, key);
+    ps.setWindow(window);
+    ps.seed(seeded ? seed : (uint32_t)(i.rng() & 0xffffffffu));
+    run.latency = ps.latency();
+    return run;
+}
+// runs x through it: the voices (each as long as x, the latency taken out) into voiceOut[k] when given, the mix into L R,
+// the f0 the voices follow into f0 when given
+inline void harm_run(Interp& i, HarmRun& run, const varr& x, std::vector<double>* L, std::vector<double>* R,
+                     std::vector<std::vector<double>>* voiceOut, std::vector<double>* f0) {
+    auto& ps = *run.ps;
+    const size_t n = x.size(), D = (size_t)run.latency, total = n + D;
+    const int nv = ps.voices();
+    std::vector<std::vector<double>> vo(voiceOut ? (size_t)nv : 0, std::vector<double>(total, 0.0));
+    std::vector<double> l(L ? total : 0), r(R ? total : 0), fz(f0 ? total : 0);
+    struct Ev { size_t at; int pitch; double vel; };
+    std::vector<Ev> ev;
+    for (auto& nt : run.notes) { ev.push_back({nt.on, nt.pitch, nt.vel}); ev.push_back({nt.off, nt.pitch, 0}); }
+    std::stable_sort(ev.begin(), ev.end(), [](const Ev& a, const Ev& b) { return a.at < b.at; });
+    size_t e = 0;
+    std::vector<double> in(64, 0.0);
+    double* ptr[dsp::Psola<double>::kMaxVoices] = {};
+    for (size_t t = 0; t < total;) {
+        while (e < ev.size() && ev[e].at <= t) {
+            if (ev[e].vel > 0) ps.noteOn(ev[e].pitch, ev[e].vel); else ps.noteOff(ev[e].pitch);
+            ++e;
+        }
+        size_t m = std::min<size_t>(64, total - t);
+        if (e < ev.size()) m = std::min(m, ev[e].at - t);
+        if (m == 0) m = 1;
+        for (size_t k = 0; k < m; ++k) in[k] = t + k < n ? x[t + k] : 0.0;
+        for (int k = 0; k < nv && voiceOut; ++k) ptr[k] = vo[(size_t)k].data() + t;
+        if (f0) {                                    // one sample at a time: the f0 of each
+            for (size_t k = 0; k < m; ++k) {
+                for (int j = 0; j < nv && voiceOut; ++j) ptr[j] = vo[(size_t)j].data() + t + k;
+                ps.process(&in[k], L ? &l[t + k] : nullptr, R ? &r[t + k] : nullptr, 1, voiceOut ? ptr : nullptr);
+                fz[t + k] = ps.f0Delayed();
+            }
+        } else ps.process(in.data(), L ? &l[t] : nullptr, R ? &r[t] : nullptr, (int)m, voiceOut ? ptr : nullptr);
+        t += m;
+        if ((t & 0xffff) < m) i.yield_check();
+    }
+    auto cut = [&](std::vector<double>& v) { v.erase(v.begin(), v.begin() + (long)D); };
+    if (L) { cut(l); *L = std::move(l); }
+    if (R) { cut(r); *R = std::move(r); }
+    if (f0) { cut(fz); *f0 = std::move(fz); }
+    if (voiceOut) { for (auto& v : vo) cut(v); *voiceOut = std::move(vo); }
+}
+inline vptr harm_vec(const std::vector<double>& v) { return v_arr(varr(v.data(), v.size())); }
+// (harmonize x sr voices opts) => (list left right): the voice x (a vector at sr) with pitch-shifted copies of itself
+//   (signals/psola.h, the engine of Moritz's harmonize~): grains of its own periods, overlapped at each copy's pitch,
+//   so the formants stay where they are. voices is a list of numbers, one per voice (up to 8): its interval in
+//   semitones ("intervals", the default mode), its steps in the scale ("scale": 2 a third, 4 a fifth, -3 a fourth
+//   below), its interval above the held note ("midi-root"); in "midi-chord" only their number counts. The output
+//   is as long as x and in time with it (the latency is taken out). opts is a record, (list key value) pairs:
+//   "mode" "intervals" "scale" "midi-chord" "midi-root"; "key" 0..11 or a name ("Eb"); "scale" a name (scale-names)
+//   or a list of pitch classes; "notes" (list (list onset duration pitch [velocity]) ...), seconds, for the midi
+//   modes; "levels" "pans" (-1 left .. 1 right) "formants" (1 keeps them, 1.2 a fifth of the way to a child's) a
+//   number for all or a list per voice; "vibrato" (list cents hz [random 0..1]); "humanize" (list cents ms): a slow
+//   drift and a random onset delay per voice; "transpose" semitones; "dry" the input's level in the mix (0), "wet"
+//   (1); "fmin" "fmax" the voice's range (70 1000 Hz); "threshold" YIN's (0.15); "gate" dB under which it is
+//   unvoiced (-50); "cycles" input periods per grain or "auto"; "window" "hann" "hamming" "blackman"; "latency"
+//   ms (0 auto); "marks" "snap" or "period"; "unvoiced" "mute" or "dry" (the consonants kept in every voice);
+//   "seed". Each voice keeps the input's level
+inline vptr sig_harmonize(vlist& a, Interp& i) {
+    const varr& x = i.num(a[0]);
+    HarmRun run = harm_setup(a, i, 2, 3);
+    std::vector<double> L, R;
+    harm_run(i, run, x, &L, &R, nullptr, nullptr);
+    return v_list({ harm_vec(L), harm_vec(R) });
+}
+// (harmonize-voices x sr voices opts) => a list of vectors, each voice of harmonize alone (its level, not panned)
+inline vptr sig_harmonize_voices(vlist& a, Interp& i) {
+    const varr& x = i.num(a[0]);
+    HarmRun run = harm_setup(a, i, 2, 3);
+    std::vector<std::vector<double>> vo;
+    harm_run(i, run, x, nullptr, nullptr, &vo, nullptr);
+    vlist out;
+    for (auto& v : vo) out.push_back(harm_vec(v));
+    return v_list(std::move(out));
+}
+// (harmonize-f0 x sr [opts]) => the f0 harmonize follows, a value per sample of x (Hz, 0 where it is unvoiced): its
+//   streaming YIN on the input (a frame every 5 ms), at the time each frame describes; opts as harmonize's ("fmin"
+//   "fmax" "threshold" "gate" "latency" ...)
+inline vptr sig_harmonize_f0(vlist& a, Interp& i) {
+    const varr& x = i.num(a[0]);
+    HarmRun run = harm_setup(a, i, 99, 2);
+    std::vector<double> f0;
+    harm_run(i, run, x, nullptr, nullptr, nullptr, &f0);
+    return harm_vec(f0);
+}
+// (scale-steps name) (scale-names) => the steps of a scale in semitones above its tonic, a list (music/scales.h:
+//   the scales of scale-pitches and of harmonize); the names of the scales it knows
+inline vptr sig_scale_steps(vlist& a, Interp& i) {
+    std::string n = harm_name(i, a[0]);
+    const music::ScaleDef* d = music::scale_named(n);
+    if (!d) i.bad("unknown scale " + n + " (scale-names lists them)");
+    vlist out;
+    for (int k = 0; k < d->n; ++k) out.push_back(v_num(d->steps[k]));
+    return v_list(std::move(out));
+}
+inline vptr sig_scale_names(vlist&, Interp&) {
+    vlist out;
+    for (auto& n : music::scale_names()) out.push_back(v_sym(n));
+    return v_list(std::move(out));
 }
 
 // (adsr sr gate a d s r) => an envelope following a gate signal (1 = on, 0 = off): attack a and
@@ -1051,7 +1273,7 @@ inline void add_signals(Interp& i) {
     i.def("interleave", sig_interleave, 1, 1); i.def("deinterleave", sig_deinterleave, 2, 2);
     i.def("local-maxima", sig_local_maxima, 1, 1); i.def("gather", sig_gather, 2, 2);
     i.def("add-at!", sig_add_at_inplace, 3, 3); i.def("comb", sig_comb, 3, 3); i.def("allpass", sig_allpass, 3, 3);
-    i.def("pvoc", sig_pvoc, 2, 2); i.def("nebula", sig_nebula, 3, 3); i.def("deconv", sig_deconv, 2, 3); i.def("svf", sig_svf, 5, 5); i.def("biquad", sig_biquad, 5, 5); i.def("spectral-envelope", sig_spectral_envelope, 2, 2);
+    i.def("pvoc", sig_pvoc, 2, 2); i.def("nebula", sig_nebula, 3, 3); i.def("harmonize", sig_harmonize, 3, 4); i.def("harmonize-voices", sig_harmonize_voices, 3, 4); i.def("harmonize-f0", sig_harmonize_f0, 2, 3); i.def("scale-steps", sig_scale_steps, 1, 1); i.def("scale-names", sig_scale_names, 0, 0); i.def("deconv", sig_deconv, 2, 3); i.def("svf", sig_svf, 5, 5); i.def("biquad", sig_biquad, 5, 5); i.def("spectral-envelope", sig_spectral_envelope, 2, 2);
     i.def("adsr", sig_adsr, 6, 6); i.def("lag", sig_lag, 3, 3); i.def("hpss", sig_hpss, 4, 4);
     i.def("chromagram", sig_chromagram, 4, 4); i.def("self-similarity", sig_self_similarity, 1, 1); i.def("foote-novelty", sig_foote_novelty, 2, 2);
     i.def("tempogram", sig_tempogram, 3, 4); i.def("beat-track", sig_beat_track, 4, 4);

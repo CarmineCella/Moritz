@@ -869,6 +869,35 @@
 #nebula
   (nebula sr seconds opts)
   => (list left right): a cloud of grains (signals/nebula.h, the engine of
+#harmonize
+  (harmonize x sr voices opts)
+  => (list left right): the voice x (a vector at sr) with pitch-shifted copies of itself
+  (signals/psola.h, the engine of Moritz's harmonize~): grains of its own periods, overlapped at each copy's pitch,
+  so the formants stay where they are. voices is a list of numbers, one per voice (up to 8): its interval in
+  semitones ("intervals", the default mode), its steps in the scale ("scale": 2 a third, 4 a fifth, -3 a fourth
+  below), its interval above the held note ("midi-root"); in "midi-chord" only their number counts. The output
+  is as long as x and in time with it (the latency is taken out). opts is a record, (list key value) pairs:
+  "mode" "intervals" "scale" "midi-chord" "midi-root"; "key" 0..11 or a name ("Eb"); "scale" a name (scale-names)
+  or a list of pitch classes; "notes" (list (list onset duration pitch [velocity]) ...), seconds, for the midi
+  modes; "levels" "pans" (-1 left .. 1 right) "formants" (1 keeps them, 1.2 a fifth of the way to a child's) a
+  number for all or a list per voice; "vibrato" (list cents hz [random 0..1]); "humanize" (list cents ms): a slow
+  drift and a random onset delay per voice; "transpose" semitones; "dry" the input's level in the mix (0), "wet"
+  (1); "fmin" "fmax" the voice's range (70 1000 Hz); "threshold" YIN's (0.15); "gate" dB under which it is
+  unvoiced (-50); "cycles" input periods per grain or "auto"; "window" "hann" "hamming" "blackman"; "latency"
+  ms (0 auto); "marks" "snap" or "period"; "unvoiced" "mute" or "dry" (the consonants kept in every voice);
+  "seed". Each voice keeps the input's level
+#harmonize-voices
+  (harmonize-voices x sr voices opts)
+  => a list of vectors, each voice of harmonize alone (its level, not panned)
+#harmonize-f0
+  (harmonize-f0 x sr [opts])
+  => the f0 harmonize follows, a value per sample of x (Hz, 0 where it is unvoiced): its
+  streaming YIN on the input (a frame every 5 ms), at the time each frame describes; opts as harmonize's ("fmin"
+  "fmax" "threshold" "gate" "latency" ...)
+#scale-steps scale-names
+  (scale-steps name)  (scale-names)
+  => the steps of a scale in semitones above its tonic, a list (music/scales.h:
+  the scales of scale-pitches and of harmonize); the names of the scales it knows
 #adsr
   (adsr sr gate a d s r)
   => an envelope following a gate signal (1 = on, 0 = off): attack a and
@@ -2735,7 +2764,8 @@
 #scale-pitches
   (scale-pitches root mode degrees)
   pitches of a scale: root a pitch, mode 'major 'minor 'dorian 'phrygian 'lydian
-  'mixolydian 'aeolian 'locrian 'chromatic 'whole 'pentatonic, degrees a list of scale steps (0 = root)
+  'mixolydian 'aeolian 'locrian 'harmonic-minor 'melodic-minor 'chromatic 'whole 'pentatonic
+  'minor-pentatonic 'blues (scale-names), degrees a list of scale steps (0 = root)
 #add-beats!
   (add-beats! s beat fragment)
   a fragment whose times are in beats, placed at a beat of the score (its tempo)

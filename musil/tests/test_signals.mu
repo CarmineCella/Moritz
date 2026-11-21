@@ -735,4 +735,69 @@ var pulse (vec (map (vec->list (range 600)) (function (k) (if (== (mod k 25) 0) 
 check (== (tempo-estimate-with pulse 50 100 0.6) (tempo-estimate-with-mu pulse 50 100 0.6)) "tempo-estimate-with: as written in Musil"
 check (== (tempo-estimate pulse 50) 120) "tempo-estimate: a pulse every 25 frames at 50 fps is 120 bpm"
 
+; --- harmonize ---
+var hsr 44100
+function cents (f g) (* 1200 (log2 (/ f g)))
+function db-ratio (y x) (* 20 (log10 (/ (rms y) (rms x))))
+var hx (* 0.5 (sine hsr 220 1.2))
+var hv (harmonize-voices hx hsr (list 4 7 12 -12) (list (list "seed" 1)))
+check (== (length hv) 4) "harmonize-voices: a vector per voice"
+check (== (length (head hv)) (length hx)) "harmonize-voices: as long as the input (the latency taken out)"
+each (list 0 1 2 3) (function (k) {
+    var y (getidx hv k)
+    var want (* 220 (pow 2 (/ (getidx (list 4 7 12 -12) k) 12)))
+    check (< (abs (cents (head (yin (slice y 26000 4096) hsr 0.15 50 2000)) want)) 5) (concat "harmonize: a sine's voice " k " at its interval, within 5 cents")
+    check (< (abs (db-ratio (slice y 22050 22050) (slice hx 22050 22050))) 1.5) (concat "harmonize: voice " k " at the input's level, within 1.5 dB")
+})
+; a voice: a pulse train at 150 Hz (a period of 294 samples) through resonances at 700 and 1200 Hz
+var glottal (== (mod (range (* 2 hsr)) 294) 0)
+var hvox (* 0.5 (normalize-peak (+ (bandpass glottal hsr 700 5) (* 0.4 (bandpass glottal hsr 1200 5)))))
+; where the first formant is: the centroid of the power between 450 and 1050 Hz
+function envelope-peak (y) {
+    var m (magnitudes (fft (* (slice y 40000 8192) (hann 8192))))
+    var lo (floor (/ (* 450 8192) hsr))
+    var hi (floor (/ (* 1050 8192) hsr))
+    var p (pow (slice m lo (- hi lo)) 2)
+    return (/ (sum (* p (* (+ lo (range (- hi lo))) (/ hsr 8192)))) (sum p))
+}
+var hf1 (head (harmonize-voices hvox hsr (list 4) (list (list "formants" 1))))
+var hf2 (head (harmonize-voices hvox hsr (list 4) (list (list "formants" 1.2))))
+check (< (abs (cents (head (yin (slice hf1 40000 4096) hsr 0.15 50 2000)) (* 150 (pow 2 (/ 4 12))))) 5) "harmonize: a voice a major third up"
+check (< (abs (- (envelope-peak hf1) 700)) 70) "harmonize: formant 1 keeps the voice's formant (700 Hz, within 10%)"
+check (< (abs (- (envelope-peak hf2) 840)) 84) "harmonize: formant 1.2 moves it to 840 Hz (within 10%)"
+check (< (abs (cents (head (yin (slice hf2 40000 4096) hsr 0.15 50 2000)) (* 150 (pow 2 (/ 4 12))))) 5) "harmonize: formant 1.2 leaves the pitch"
+; a glide from 150 to 300 Hz in 1.5 s: the f0 followed and the voice a fifth up, within 20 cents
+var gT 1.5
+var gt (/ (range (floor (* hsr gT))) hsr)
+var glide (* 0.5 (sin (* tau 150 (/ gT (log 2)) (- (pow 2 (/ gt gT)) 1))))
+var gf0 (harmonize-f0 glide hsr)
+var gv (head (harmonize-voices glide hsr (list 7) (list)))
+each (list 0.3 0.6 0.9 1.2) (function (t) {
+    var at (floor (* t hsr))
+    var want (* 150 (pow 2 (/ t gT)))
+    check (< (abs (cents (getidx gf0 at) want)) 20) (concat "harmonize-f0: the glide at " t " s, within 20 cents")
+    check (< (abs (cents (head (yin (slice gv (- at 512) 1024) hsr 0.15 50 2000)) (* want 1.4983))) 20) (concat "harmonize: a fifth above the glide at " t " s, within 20 cents")
+})
+; noise: no f0, nothing broken
+var hn (harmonize (noise 44100) hsr (list 4 7) (list (list "dry" 1)))
+check (all? (head hn) (function (v) (and (< v 10) (> v -10)))) "harmonize: noise gives numbers, no NaN"
+; scale: A3 sung in C major, two steps up is C4 (a minor third), four is E4; midi-chord and midi-root at absolute pitches
+var hsc (harmonize-voices hx hsr (list 2 4) (list (list "mode" "scale") (list "key" "C") (list "scale" "major")))
+check (< (abs (cents (head (yin (slice (head hsc) 26000 4096) hsr 0.15 50 2000)) 261.63)) 5) "harmonize: scale mode, a third in C major above A is C"
+check (< (abs (cents (head (yin (slice (last hsc) 26000 4096) hsr 0.15 50 2000)) 329.63)) 5) "harmonize: scale mode, a fifth in C major above A is E"
+var hch (harmonize-voices hx hsr (list 0 0) (list (list "mode" "midi-chord") (list "notes" (list (list 0 1.2 64 100) (list 0.2 1 55 64)))))
+check (< (abs (cents (head (yin (slice (head hch) 26000 4096) hsr 0.15 50 2000)) 329.63)) 5) "harmonize: midi-chord, the first note's voice at E4"
+check (< (abs (cents (head (yin (slice (last hch) 26000 4096) hsr 0.15 50 2000)) 196)) 5) "harmonize: midi-chord, the second note's voice at G3"
+check (< (rms (slice (last hch) 0 4000)) 1e-6) "harmonize: midi-chord, a voice is silent before its note"
+check (< (abs (- (db-ratio (slice (last hch) 26000 8000) (slice (head hch) 26000 8000)) (* 20 (log10 (/ 64 100))))) 1.5) "harmonize: midi-chord, velocity is level"
+var hrt (harmonize-voices hx hsr (list 0 7) (list (list "mode" "midi-root") (list "notes" (list (list 0 1.2 48)))))
+check (< (abs (cents (head (yin (slice (last hrt) 26000 4096) hsr 0.15 50 2000)) 196)) 5) "harmonize: midi-root, a fifth above C3"
+; the same seed, the same voices (vibrato's irregularity and humanizing are random)
+var hopt (list (list "seed" 9) (list "humanize" (list 10 30)) (list "vibrato" (list 20 5 0.5)))
+check (near? (head (harmonize hx hsr (list 4 -5) hopt)) (head (harmonize hx hsr (list 4 -5) hopt)) 1e-12) "harmonize: a seed gives the same output"
+check (> (max (abs (- (head (harmonize hx hsr (list 4 -5) hopt)) (head (harmonize hx hsr (list 4 -5) (list (list "seed" 10) (list "humanize" (list 10 30)) (list "vibrato" (list 20 5 0.5)))))))) 1e-3) "harmonize: another seed, other voices"
+check (contains? (error-of (function () (harmonize hx hsr (list 1 2 3 4 5 6 7 8 9) (list)))) "8 voices") "harmonize: at most 8 voices"
+check (contains? (error-of (function () (harmonize hx hsr (list 4) (list (list "scale" "nope"))))) "unknown scale") "harmonize: unknown scale"
+check (equal? (scale-steps 'dorian) (list 0 2 3 5 7 9 10)) "scale-steps"
+
 report "test_signals"
