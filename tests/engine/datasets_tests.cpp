@@ -74,8 +74,10 @@ fs::path copyOfMicroSOL(const fs::path& where, const std::string& name) {
     return to;
 }
 
+// up to two minutes: an analysis under ThreadSanitizer on a busy machine took more than the twenty seconds this had
 void drainUntil(const std::function<bool()>& cond) {
-    for (int k = 0; k < 10000 && !cond(); ++k) {
+    auto end = std::chrono::steady_clock::now() + std::chrono::seconds(120);
+    while (!cond() && std::chrono::steady_clock::now() < end) {
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
         drainMain();
     }

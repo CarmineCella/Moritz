@@ -30,6 +30,12 @@ constexpr const char* kExt = "moritz";
 inline void showInFront(Fl_Window* w) {
     w->show();
     Fl::first_window(w);
+    // again once the event that opened it is over: a click's release puts the window clicked in front again
+    Fl::add_timeout(0.0, [](void* d) {
+        auto* t = static_cast<Fl_Widget_Tracker*>(d);
+        if (t->exists()) Fl::first_window(static_cast<Fl_Window*>(t->widget()));
+        delete t;
+    }, new Fl_Widget_Tracker(w));
 }
 
 inline std::string escapeMenu(const std::string& s) {
