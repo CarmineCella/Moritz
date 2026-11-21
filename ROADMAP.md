@@ -186,6 +186,12 @@ the editor's command table and undo rule), YIN, `descriptors~` on the shared ana
       about 800 lines of music.mu), producing a score.
 - [x] `orchidea` outputs a score (the shared C++ score) instead of a plot: a `score` box shows it as a roll,
       edits it and plays each note's sample.
+- [ ] **The solutions of each segment in the roll**, as Musil's roll has them: the score from orchidea
+      carries every segment's ranked solutions; the roll draws a boundary at each segment with the
+      solution chosen ("2/5") and a menu of the solutions of the segment under the cursor, by cost;
+      choosing one replaces that segment's notes as one undo step, in the box, the roll and a saved
+      .score alike (one function in Musil's C++, used by the roll, orchidea's `choose` and Musil's
+      `score-choose!`).
 - [ ] Playability checks.
 - [ ] Examples as patches: Grisey (Partiels: an orchestral spectrum of a trombone note), Haas and
       Ligeti's Atmosphères (Musil's haas.mu and atmospheres.mu), played through the score.
