@@ -444,11 +444,15 @@ public:
     std::vector<std::string> menuItems() override { return {"Choose file..."}; }
     void menuAction(int) override {
         std::string f = chooseFile(true, "sfrecord~ writes to", "WAV\t*.wav", "recording.wav");
-        if (!f.empty()) message(0, {Atom("open"), Atom(f)});
+        if (!f.empty()) path_ = f;                       // the user chose it: written there
     }
     void message(int in, const Message& m) override {
         if (in > 0) { if (m[0].isFloat()) setScalar(in, m[0].f); return; }
-        if (m[0].is("open") && m.size() > 1) path_ = patch->resolvePath(m[1].str());
+        if (m[0].is("open") && m.size() > 1) {           // only where a patch may write (patchMayWrite)
+            std::string p = patch->resolvePath(m[1].str()), why;
+            if (patchMayWrite(patch, p, why)) path_ = p;
+            else { path_.clear(); patch->print("sfrecord~: " + why); }
+        }
         else if (m[0].isFloat()) m[0].f != 0.f ? start() : stop(true, true);
         else if (m[0].is("start")) start();
         else if (m[0].is("stop")) stop(true, true);

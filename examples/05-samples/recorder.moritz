@@ -9,7 +9,7 @@
   (obj rtog toggle (pos 90 85))
   (obj rlabel comment "record" (pos 120 87))
   (obj rec record~ loop (pos 20 200))
-  (obj save message "write ~/Desktop/my-loop.wav" (pos 20 250))
+  (obj save message "write ~/Documents/Moritz/my-loop.wav" (pos 20 250))
   (obj lb loadbang (pos 300 45))
   (obj init message "loop 1, 0" (pos 300 85))
   (obj speed flonum 1 (pos 420 85))

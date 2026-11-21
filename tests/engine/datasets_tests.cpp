@@ -135,7 +135,8 @@ TEST(orchestra_reads_a_registered_dataset) {
     jobsSynchronous = sync;
 }
 
-// analyse folder: the feature file next to the folder, the database read; never over a file; bad inputs answered
+// analyse folder: the feature file next to the folder, the database read; never over a file; bad inputs answered;
+// only where the patch may write (a patch from elsewhere does not write next to any folder of the machine)
 TEST(orchestra_analyses_a_folder) {
     bool sync = jobsSynchronous;
     jobsSynchronous = true;
@@ -143,6 +144,14 @@ TEST(orchestra_analyses_a_folder) {
     fs::path sounds = copyOfMicroSOL(d, "MySOL");
     {
         OrchestraRig o("");
+        o.r.p.dir = (d / "patches").string();               // a patch in another folder: not next to MySOL
+        o.send({Atom("analyse"), Atom(sounds.string())});
+        CHECK(o.r.printedSomething("not written"));
+        CHECK(!fs::exists(d / "MySOL.spectrum.db"));
+    }
+    {
+        OrchestraRig o("");
+        o.r.p.dir = d.string();                            // the patch next to the folder: it may write there
         o.send({Atom("analyse"), Atom(sounds.string())});
         CHECK(fs::exists(d / "MySOL.spectrum.db"));
         CHECK(o.sounds() == 32.f);

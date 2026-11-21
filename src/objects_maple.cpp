@@ -73,7 +73,7 @@ public:
     void menuAction(int k) override {
         if (k == 0) { message(0, {Atom("info")}); return; }
         std::string f = chooseFile(true, "Save atoms " + name, "Moritz atoms\t*.atoms", name + ".atoms");
-        if (!f.empty()) message(0, {Atom("write"), Atom(f)});
+        if (!f.empty() && !write(f)) patch->print("atoms " + name + ": can't write " + f);   // the user chose it: written there
     }
     void message(int, const Message& m) override {
         const Atom& h = m[0];
@@ -109,7 +109,9 @@ public:
             else s += ", " + std::to_string(dict_->atoms.size()) + " atoms";
             patch->print(s);
         } else if (h.is("write") && m.size() > 1) {
-            if (!write(patch->resolvePath(m[1].str()))) patch->print("atoms " + name + ": can't write " + m[1].str());
+            std::string path = patch->resolvePath(m[1].str()), why;
+            if (!patchMayWrite(patch, path, why)) patch->print("atoms " + name + ": " + why);   // only where a patch may write
+            else if (!write(path)) patch->print("atoms " + name + ": can't write " + m[1].str());
         } else if (h.is("read") && m.size() > 1) {
             read(patch->resolvePath(m[1].str()));
         }

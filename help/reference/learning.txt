@@ -18,7 +18,7 @@ msg weighted 0/1: 1 weights the neighbours by inverse distance (0)
 msg classify 0/1: 1 outputs the most frequent output instead of the mean (0)
 msg normalize 0/1: 0 compares raw values instead of standardised ones (1)
 msg clear: forgets the examples
-msg write file: saves the examples as text, one a line (as add, without the word add)
+msg write file: saves the examples as text, one a line (as add, without the word add), in the patch's folder or in ~/Documents/Moritz (elsewhere: not written)
 msg read file: replaces the examples with those of a file
 msg print: prints the number of examples in the Console
 see: kmeans linreg zscore pca mfcc~ descriptors~
@@ -37,7 +37,7 @@ msg centroid i: outputs the centroid of cluster i
 msg seed n: the seed of the random starts (1)
 msg normalize 0/1: 0 clusters raw values instead of standardised ones (1)
 msg clear: forgets the points
-msg write file: saves the points as text, one a line
+msg write file: saves the points as text, one a line, in the patch's folder or in ~/Documents/Moritz (elsewhere: not written)
 msg read file: replaces the points with those of a file
 msg print: prints the number of points and of clusters in the Console
 see: knn pca zscore soundtypes
@@ -54,7 +54,7 @@ msg train [dims]: finds the first dims components (2)
 msg explained: outputs the share of the variance of each component
 msg normalize 0/1: 0 uses raw values instead of standardised ones (1)
 msg clear: forgets the points
-msg write file: saves the points as text, one a line
+msg write file: saves the points as text, one a line, in the patch's folder or in ~/Documents/Moritz (elsewhere: not written)
 msg read file: replaces the points with those of a file
 msg print: prints the number of points in the Console
 see: zscore kmeans knn plot descriptors~
@@ -68,7 +68,7 @@ msg list: standardises this list
 msg add x1 x2 ...: adds a point
 msg train: measures the means and standard deviations
 msg clear: forgets the points
-msg write file: saves the points as text, one a line
+msg write file: saves the points as text, one a line, in the patch's folder or in ~/Documents/Moritz (elsewhere: not written)
 msg read file: replaces the points with those of a file
 msg print: prints the number of points in the Console
 see: pca kmeans knn scale
@@ -83,7 +83,7 @@ msg add x1 x2 ... -> y1 y2 ...: adds an example
 msg train: fits the weights
 msg weights: outputs the weights, intercept first, output after output
 msg clear: forgets the examples
-msg write file: saves the examples as text, one a line
+msg write file: saves the examples as text, one a line, in the patch's folder or in ~/Documents/Moritz (elsewhere: not written)
 msg read file: replaces the examples with those of a file
 msg print: prints the number of examples in the Console
 see: knn zscore pca expr

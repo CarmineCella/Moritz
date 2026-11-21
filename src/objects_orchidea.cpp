@@ -265,6 +265,10 @@ private:
             patch->print("orchestra " + name + ": " + db + " is already there: read it, or delete it to analyse the folder again");
             return;
         }
+        if (std::string why; !patchMayWrite(patch, db, why)) {       // a patch from elsewhere writes only where it may
+            patch->print("orchestra " + name + ": analyse: " + why + " (the Datasets window, Analyse a folder..., analyses one anywhere)");
+            return;
+        }
         auto out = std::make_shared<std::shared_ptr<OrchDb>>();
         auto err = std::make_shared<std::string>();
         run(
@@ -494,7 +498,7 @@ public:
     void menuAction(int k) override {
         if (k == 0) { message(0, {Atom("report")}); return; }
         std::string f = chooseFile(true, "Save the orchestration", "Orchidea connection\t*.txt", "orchestration.txt");
-        if (!f.empty()) message(0, {Atom("write"), Atom(f)});
+        if (!f.empty() && ready()) write(f, true);                  // the user chose it: written there
     }
 
     void message(int, const Message& m) override {
@@ -553,7 +557,7 @@ public:
         else if (h.is("score")) { if (ready()) outputScore(); }
         else if (h.is("show")) { if (ready()) printSolutions(std::clamp(clampInt(argf(m, 1, 1), 0, 1 << 20) - 1, 0, (int)result_->segments.size() - 1)); }
         else if (h.is("report")) { if (ready()) report(); }
-        else if (h.is("write") && m.size() > 1) { if (ready()) write(patch->resolvePath(m[1].str())); }
+        else if (h.is("write") && m.size() > 1) { if (ready()) write(patch->resolvePath(m[1].str()), false); }
         else if (h.is("roll") && m.size() > 1) { if (ready()) roll(m[1].str()); }
         else patch->print("orchidea: unknown message " + h.str());
     }
@@ -856,8 +860,11 @@ private:
         if (r.segments.size() > 40) patch->print("  ... " + std::to_string(r.segments.size() - 40) + " more");
     }
     // the solution as an Orchidea connection (music.mu's score-save writes the same; score-load reads it): a temporary
-    // file next to the destination, checked, then renamed
-    void write(const std::string& path) {
+    // file next to the destination, checked, then renamed. From a message, only in the patch's folder or
+    // ~/Documents/Moritz (patchMayWrite: a patch from elsewhere writes nowhere else); a file the user chose anywhere
+    void write(const std::string& path, bool chosen) {
+        std::string why;
+        if (!chosen && !patchMayWrite(patch, path, why)) { patch->print("orchidea: " + why); return; }
         auto notes = connectionOf(*result_);
         const OrchDb& db = *result_->spec->db;
         std::string text = "[ orchestra";

@@ -319,7 +319,9 @@ const std::set<std::string>& languageLibraryNames(bool functions) {
 // What a code box may do: Musil's sandboxed profile, checked inside every builtin that touches the system.
 // It reads anywhere; it writes only in its patch's folder and in ~/Documents/Moritz; it does not run
 // programs, use the network, wait or quit. A box whose patch the user trusted (code @trusted) may do all.
-musil::Capabilities codeBoxCapabilities(const Patch* p) {
+musil::Capabilities codeBoxCapabilities(const Patch* p) { return musil::Capabilities::sandboxed(patchWriteRoots(p)); }
+
+std::vector<std::string> patchWriteRoots(const Patch* p) {
     std::vector<std::string> roots;
     if (p) {
         const Patch* q = p;
@@ -327,7 +329,21 @@ musil::Capabilities codeBoxCapabilities(const Patch* p) {
         if (q && !q->dir.empty()) roots.push_back(q->dir);
     }
     if (std::string home = homeDir(); !home.empty()) roots.push_back(home + "/Documents/Moritz");
-    return musil::Capabilities::sandboxed(roots);
+    return roots;
+}
+
+bool patchMayWrite(const Patch* p, const std::string& path, std::string& why) {
+    std::vector<std::string> roots = patchWriteRoots(p);
+    std::filesystem::path r = musil::resolved_path(path);
+    if (path.empty() || !musil::path_under(r, roots)) {
+        why = "not written: " + path + " is outside the patch's folder and ~/Documents/Moritz";
+        return false;
+    }
+    if (std::string home = homeDir(); !home.empty() && musil::path_under(r, {home + "/Documents/Moritz"})) {
+        std::error_code ec;                                     // a fresh machine: ~/Documents/Moritz made
+        std::filesystem::create_directories(r.parent_path(), ec);
+    }
+    return true;
 }
 
 LangContext::LangContext(std::string l, ContextHooks h)

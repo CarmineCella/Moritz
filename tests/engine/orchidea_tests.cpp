@@ -283,7 +283,7 @@ TEST(orchidea_bad_inputs) {
         o.send({Atom("choose"), Atom(1.f), Atom(500.f)});
         CHECK(o.r.printedSomething("solutions"));
         o.send({Atom("write"), Atom("/nonexistent-folder-moritz/x.txt")});
-        CHECK(o.r.printedSomething("can't write"));
+        CHECK(o.r.printedSomething("not written"));        // outside the patch's folder and ~/Documents/Moritz
     }
     {   // an empty target buffer~, then a target of a few samples and a silent one
         OrchRig o("", "");
@@ -335,6 +335,9 @@ TEST(orchidea_writes_the_connection) {
     o.send({Atom("partials"), Atom(0.f)});
     o.send({Atom("run"), Atom("tgt")});
     std::string path = tempPath("moritz-orchidea-connection.txt");
+    o.send({Atom("write"), Atom(path)});                    // the patch has no folder: written nowhere
+    CHECK(o.r.printedSomething("not written") && !std::ifstream(path));
+    o.r.p.dir = path.substr(0, path.find_last_of('/'));     // the patch's folder: where it may write
     o.send({Atom("write"), Atom(path)});
     jobsSynchronous = sync;
     std::ifstream f(path);

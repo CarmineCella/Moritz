@@ -54,7 +54,9 @@ public:
             patch->print(cls + ": " + std::to_string(X_.size()) + " examples of " +
                          std::to_string(X_.empty() ? 0 : X_[0].size()) + " values" + summary());
         } else if (m[0].is("write") && m.size() > 1) {
-            std::ofstream f(patch->resolvePath(m[1].str()));
+            std::string path = patch->resolvePath(m[1].str()), why;
+            if (!patchMayWrite(patch, path, why)) { patch->print(cls + ": " + why); return; }   // only where a patch may write
+            std::ofstream f(path);
             for (size_t i = 0; i < X_.size(); ++i) {
                 for (float v : X_[i]) f << formatFloat(v) << ' ';
                 if (!Y_[i].empty()) f << "-> " << messageToString(Y_[i]);

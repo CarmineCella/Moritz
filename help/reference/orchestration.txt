@@ -40,7 +40,7 @@ orchestra, static-dynamic, connections, memory, search and output.
 arg name: the name orchidea uses (required)
 arg database: a feature file, or a dataset's name (fullsol, tinysol, microsol), to read when the box is made (none)
 msg read file: reads a database (a background job): a feature file, or a dataset's name (read fullsol); the sounds are looked for next to it
-msg analyse folder [type block hop ncoeff]: analyses every WAV under the folder into folder.spectrum.db next to it (a background job; spectrum 2048 256 1024 by default; logspec, specpeaks, specenv, mfcc 13, moments 4), then reads it
+msg analyse folder [type block hop ncoeff]: analyses every WAV under the folder into folder.spectrum.db next to it, when the patch may write there (its folder, ~/Documents/Moritz; the Datasets window analyses a folder anywhere) (a background job; spectrum 2048 256 1024 by default; logspec, specpeaks, specenv, mfcc 13, moments 4), then reads it
 msg players instrument [n] ...: the players, an instrument a player, a number after one making it that many players (players Vn 4 Va 2 Vc 2 Fl); A|B is one player who doubles, playing either (Fl|Picc); no instrument: the default orchestra
 msg add instrument [n]: more players of an instrument
 msg remove instrument: every player of an instrument
@@ -133,7 +133,7 @@ msg notes: the notes again
 msg score: the solution as a score again (score token, out of the last outlet)
 msg show segment: prints the solutions of a segment with their costs and sounds (the chosen one starred)
 msg report: prints a line per segment: its cost, players, players holding on (the notes the chosen connection holds from the segment before: one longer note each), sounds in the search space, and the target's pitches no instrument of the orchestra has; a rest says why
-msg write file: saves the notes as an Orchidea connection file (Musil's score-load reads it)
+msg write file: saves the notes as an Orchidea connection file (Musil's score-load reads it), in the patch's folder or in ~/Documents/Moritz (elsewhere: not written; its menu's Save... writes where you choose)
 msg roll buffer: writes the notes into a buffer~, a frame a note: onset (s), pitch (MIDI, with its cents), player, duration (s); plot in scatter mode draws it as a roll, a colour a player
 msg stop: cancels the search
 see: orchestra score buffer~ play~ code

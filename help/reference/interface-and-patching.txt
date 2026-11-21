@@ -154,7 +154,7 @@ msg colors viridis|gray|types: the colours of an image; types gives each value i
 msg history n: the points of a scrolling curve, the columns of a scrolling image (256)
 msg clear: removes the data, the buffer~, the marks and the cursor
 msg open: opens the window
-msg export file.png [w h]: writes the plot as a PNG, relative to the patch (900 500)
+msg export file.png [w h]: writes the plot as a PNG, relative to the patch (900 500), in the patch's folder or in ~/Documents/Moritz (elsewhere: not written; its menu's Save... writes where you choose)
 see: buffer~ waveform~ soundtypes melbands~ filterplot spectroscope~
 
 @ p

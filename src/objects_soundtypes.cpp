@@ -54,7 +54,7 @@ public:
     void menuAction(int k) override {
         if (k == 0) { message(0, {Atom("info")}); return; }
         std::string f = chooseFile(true, "The units of soundtypes " + name, "Text\t*.txt", name + "-units.txt");
-        if (!f.empty()) message(0, {Atom("write"), Atom(f)});
+        if (!f.empty()) writeUnits(f);                  // the user chose it: written there
     }
     void message(int, const Message& m) override {
         const Atom& h = m[0];
@@ -94,13 +94,9 @@ public:
             const soundtypes::Unit* u = in[(size_t)(rng_() % in.size())];
             outlet(3, {Atom((float)(u->start * 1000.0 / model_->sr)), Atom((float)(u->end * 1000.0 / model_->sr))});
         } else if (h.is("write") && m.size() > 1) {
-            if (!ready()) return;
-            std::ofstream f(patch->resolvePath(m[1].str()));
-            f << "; level start end type (seconds)\n";
-            for (size_t L = 0; L < model_->levels.size(); ++L)
-                for (auto& u : model_->levels[L].units)
-                    f << L + 1 << " " << u.start / model_->sr << " " << u.end / model_->sr << " " << u.type << "\n";
-            if (!f) patch->print("soundtypes " + name + ": can't write " + m[1].str());
+            std::string path = patch->resolvePath(m[1].str()), why;
+            if (!patchMayWrite(patch, path, why)) patch->print("soundtypes " + name + ": " + why);   // only where a patch may write
+            else writeUnits(path);
         } else if (h.is("info")) {
             if (!ready()) return;
             std::string s = "soundtypes " + name + ":";
@@ -116,6 +112,16 @@ private:
         if (model_) return true;
         patch->print("soundtypes " + name + ": nothing analysed yet");
         return false;
+    }
+    // the units as text, a line each: level start end type (seconds)
+    void writeUnits(const std::string& path) {
+        if (!ready()) return;
+        std::ofstream f(path);
+        f << "; level start end type (seconds)\n";
+        for (size_t L = 0; L < model_->levels.size(); ++L)
+            for (auto& u : model_->levels[L].units)
+                f << L + 1 << " " << u.start / model_->sr << " " << u.end / model_->sr << " " << u.type << "\n";
+        if (!f) patch->print("soundtypes " + name + ": can't write " + path);
     }
     void analyse(const std::string& src, const std::string& dictName) {
         if (busy()) return;

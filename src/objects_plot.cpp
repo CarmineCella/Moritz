@@ -755,9 +755,10 @@ public:
             open();
         } else if (w == "export" && m.size() > 1) {
             int W = std::clamp((int)argf(m, 2, 900.f), 100, 8000), H = std::clamp((int)argf(m, 3, 500.f), 100, 8000);
+            std::string path = patch->resolvePath(m[1].str()), why;
+            if (!chosen_ && !patchMayWrite(patch, path, why)) { patch->print("plot: " + why); return; }   // only where a patch may write
             reload();
             fl_open_display();
-            std::string path = patch->resolvePath(m[1].str());
             if (!PlotView::writePng(*s_, path, W, H, s_->dataRange())) patch->print("plot: can't write " + path);
         } else if (w == "list" || w == "set") {
             add(tailOf(m));
@@ -767,7 +768,9 @@ public:
     void menuAction(int k) override {
         if (k == 0) { open(); return; }
         std::string f = chooseFile(true, "Export the plot", "PNG\t*.png", "plot.png");
+        chosen_ = true;                                  // the user chose it: written there
         if (!f.empty()) message(0, {Atom("export"), Atom(f)});
+        chosen_ = false;
     }
     void uiMouse(int e, int mx, int my) override {
         if (e == FL_PUSH && Fl::event_clicks()) { Fl::event_clicks(0); open(); return; }
@@ -857,6 +860,7 @@ private:
         win_->show();
     }
     std::shared_ptr<PlotState> s_;
+    bool chosen_ = false;                         // export: a file the user chose in the dialog (not checked)
     ImageCache cache_;
     PlotWindow* win_ = nullptr;
     std::string bufName_, argName_;

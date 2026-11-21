@@ -55,7 +55,7 @@ arg file: a sound file read when the patch opens: WAV, AIFF, FLAC or MP3, relati
 arg ms: the length of an empty buffer, in milliseconds (0)
 arg channels: the channels of an empty buffer, 1 to 8 (1)
 msg read file: reads a sound file; the buffer takes its length, channels and sample rate
-msg write file: writes the buffer as a WAV file
+msg write file: writes the buffer as a WAV file, in the patch's folder or in ~/Documents/Moritz (elsewhere: not written; its menu's Save... writes where you choose)
 msg size ms: changes the length, keeping what fits and filling with silence
 msg clear: sets every sample to 0
 see: play~ groove~ record~ waveform~ index~ poke~
@@ -126,7 +126,7 @@ the recorded time in ms, every 250 ms and when it stops. A writer thread
 saves the file, so recording never holds up the audio. Right-click it and
 choose Choose file... to pick the file.
 arg channels: the number of signal inlets (and channels of the file), 1 to 8 (1)
-msg open file.wav: the file to write, relative to the patch (it is overwritten)
+msg open file.wav: the file to write, relative to the patch (it is overwritten), in the patch's folder or in ~/Documents/Moritz (elsewhere: refused; its menu's Choose file... writes where you choose)
 msg 1 / 0: 1 starts recording, 0 stops and closes the file
 msg start: starts recording
 msg stop: stops and closes the file

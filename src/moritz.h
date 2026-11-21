@@ -138,6 +138,15 @@ bool parseSExprs(const std::string& src, std::vector<SExpr>& out, std::string& e
 class Patch;
 struct PatchPlan;
 
+// ---- where a patch may write (session.cpp)
+// The folders a patch's objects write files into from a message, as its code boxes do in their sandbox: the folder of
+// its file (a subpatch's: its file's) and ~/Documents/Moritz. A patch opened from elsewhere writes nowhere else without
+// the user: a file chosen in a dialog (an object's Save... menu) is the user's choice and is not checked.
+std::vector<std::string> patchWriteRoots(const Patch* p);
+// may a message of p write the file at path (resolved)? false with why ("not written: ... is outside ..."); a folder
+// missing under ~/Documents/Moritz is made
+bool patchMayWrite(const Patch* p, const std::string& path, std::string& why);
+
 // Tap: the special tapin~ -> tapout~ link. It shares a delay line without
 // ordering the two objects, so feedback through a delay is allowed.
 enum class Port { Control, Signal, Tap };

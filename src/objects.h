@@ -400,8 +400,11 @@ public:
         if (m[0].is("read") && m.size() > 1) {
             read(m[1].str());
         } else if (m[0].is("write") && m.size() > 1) {
-            // the samples as they are now, copied under the lock; the file written outside it
-            if (!writeWavFile(patch->resolvePath(m[1].str()), copy(), err)) patch->print(err);
+            // the samples as they are now, copied under the lock; the file written outside it, only where a patch may
+            // write (its folder, ~/Documents/Moritz: patchMayWrite)
+            std::string path = patch->resolvePath(m[1].str());
+            if (!patchMayWrite(patch, path, err)) patch->print("buffer~ " + name + ": " + err);
+            else if (!writeWavFile(path, copy(), err)) patch->print(err);
         } else if (m[0].is("size") && m.size() > 1 && m[1].isFloat()) {
             SampleBuffer b;
             b.channels = buf.channels;
@@ -428,7 +431,8 @@ public:
             if (!f.empty()) read(f);
         } else if (k == 2) {
             std::string f = chooseFile(true, "Save buffer~ " + name, "WAV\t*.wav", name + ".wav");
-            if (!f.empty()) message(0, {Atom("write"), Atom(f)});
+            std::string err;                             // the user chose it: written there
+            if (!f.empty() && !writeWavFile(f, copy(), err)) patch->print(err);
         } else if (k == 3) {
             message(0, {Atom("clear")});
         }

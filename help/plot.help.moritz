@@ -42,7 +42,7 @@
   (obj cg message "colors gray" (pos 660 520))
   (obj cv message "colors viridis" (pos 750 520))
   (obj op message open (pos 860 520))
-  (obj ex message "export /tmp/moritz-plot.png 900 400" (pos 660 550))
+  (obj ex message "export ~/Documents/Moritz/moritz-plot.png 900 400" (pos 660 550))
   (connect l1 0 p1 0)
   (connect l2 0 p1 0)
   (connect l3 0 p1 0)

@@ -22,7 +22,7 @@ msg files folder [max]: every file whole, max ms at most (2000)
 msg add buffer [frames ms hop | onsets threshold max | whole]: adds atoms cut from a buffer~ (whole by default, 2000 ms at most), at the dictionary's sample rate
 msg get k buffer: writes atom k (from 0) of a dictionary of sounds into a buffer~, to listen to it
 msg clear: empties the dictionary
-msg write file: saves the dictionary (a .atoms file)
+msg write file: saves the dictionary (a .atoms file), in the patch's folder or in ~/Documents/Moritz (elsewhere: not written; its menu's Save... writes where you choose)
 msg read file: loads a dictionary saved with write
 msg info: prints its kind and size in the Console
 msg stop: cancels the job
@@ -94,7 +94,7 @@ msg seed n: the seed of the clustering (1)
 msg labels buffer: writes the type of every frame into a buffer~, one channel a level: plot it with colors types
 msg transitions level buffer: writes the probabilities of passing from type to type at a level into a buffer~ (a matrix)
 msg play level type: outputs the start and end (ms) of a unit of that type, chosen at random
-msg write file: writes the units as text, one a line: level start end type (seconds)
+msg write file: writes the units as text, one a line: level start end type (seconds), in the patch's folder or in ~/Documents/Moritz (elsewhere: not written; its menu's Save... writes where you choose)
 msg info: prints the units and types of each level in the Console
 msg stop: cancels the job
 see: typegen typematch pursuit atoms plot kmeans

@@ -7,6 +7,7 @@
 #include <chrono>
 #include <cfloat>
 #include <cmath>
+#include <filesystem>
 #include <fstream>
 #include <thread>
 
@@ -246,12 +247,52 @@ TEST(sfplay_plays_the_newest_file_opened_with_audio_off) {
     for (auto& f : files) std::remove(f.c_str());
 }
 
+// a patch from elsewhere does not write anywhere: the objects that write a file from a message (buffer~ write,
+// sfrecord~ open, knn write, atoms write, soundtypes write, plot export; orchidea and orchestra in their tests) write
+// only in the patch's folder and ~/Documents/Moritz, as the score object and the code boxes do; they wrote anywhere
+TEST(objects_write_only_where_the_patch_may) {
+    const char* t = std::getenv("TMPDIR");
+    std::string base = std::string(t && *t ? t : "/tmp");
+    if (base.back() == '/') base.pop_back();
+    std::string here = base + "/moritz-write-here", away = base + "/moritz-write-away";
+    std::error_code ec;
+    std::filesystem::create_directories(here, ec);
+    std::filesystem::create_directories(away, ec);
+    Rig r("");
+    r.p.dir = here;
+    std::string err;
+    r.p.load("(patch (obj b buffer~ snd 50) (obj f sfrecord~) (obj k knn) (obj a atoms dict) (obj s soundtypes st) (obj p plot))", err);
+    r.p.loadbangAll();
+    r.box("k")->message(0, parseMessage("add 1 2 -> 3"));
+    struct W { const char* box; const char* verb; const char* file; };
+    for (W w : {W{"b", "write", "x.wav"}, W{"f", "open", "x.wav"}, W{"k", "write", "x.txt"}, W{"a", "write", "x.atoms"},
+                W{"s", "write", "x.txt"}, W{"p", "export", "x.png"}}) {
+        r.printed.clear();
+        std::string out = away + "/" + w.file;
+        std::filesystem::remove(out, ec);
+        r.box(w.box)->message(0, {Atom(w.verb), Atom(out)});
+        CHECK(r.printedSomething("not written"));
+        CHECK(!std::filesystem::exists(out));
+    }
+    for (W w : {W{"b", "write", "x.wav"}, W{"k", "write", "x.txt"}}) {   // in the patch's folder (relative): written
+        r.printed.clear();
+        r.box(w.box)->message(0, {Atom(w.verb), Atom(w.file)});
+        CHECK(!r.printedSomething("not written"));
+        CHECK(std::filesystem::exists(here + "/" + w.file));
+    }
+    r.box("f")->message(0, {Atom("open"), Atom("x.wav")});
+    CHECK(!r.printedSomething("not written"));
+    std::filesystem::remove_all(here, ec);
+    std::filesystem::remove_all(away, ec);
+}
+
 // buffer~ write read the samples while record~ wrote them on the audio thread (a data race: the thread
 // sanitizer reports it): they are copied under the patch lock, and the file is written from the copy
 TEST(buffer_write_copies_the_samples_under_the_lock) {
     const char* t = std::getenv("TMPDIR");
     std::string path = std::string(t && *t ? t : "/tmp") + "/moritz-engine-buffer-write.wav";
     Rig r("(patch (obj s sig~ 0.5) (obj rec record~ tape) (obj b buffer~ tape 50) (connect s 0 rec 0))");
+    r.p.dir = path.substr(0, path.find_last_of('/'));   // the patch's folder: where buffer~ may write
     r.box("rec")->message(0, {Atom("loop"), Atom(1.f)});
     r.box("rec")->message(0, {Atom(1.f)});
     r.run(64);
