@@ -608,7 +608,7 @@ private:
         std::string form = "(score \"x\" (";
         for (size_t k = 1; k < m.size(); ++k) {
             if (k > 1) form += ' ';
-            if (k == 3 && m[1].is("sound")) form += sc::quoted(m[k].str());
+            if (k == 4 && m[1].is("sound")) form += sc::quoted(m[k].str());     // add sound at dur file: the file
             else form += m[k].isFloat() ? sc::numText(m[k].f) : sc::wordText(m[k].s);
         }
         form += "))";

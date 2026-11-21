@@ -397,6 +397,16 @@ TEST(score_kept_in_the_patch) {
     CHECK(back.error.empty());
 }
 
+// add sound at dur file: the file was quoted in the duration's place ("duration: a number is wanted"), so no
+// sound could be added by a message
+TEST(score_add_sound_message) {
+    Rig r("(patch (obj s score piece 2))");
+    r.box("s")->message(0, {Atom("add"), Atom("sound"), Atom(30.f), Atom(8.f), Atom("../../data/A_minor.wav")});
+    CHECK(!r.printedSomething("score"));
+    std::string text = r.p.serialize();
+    CHECK(text.find("(sound 30 8 \\\"../../data/A_minor.wav\\\"") != std::string::npos);
+}
+
 // A .score file next to the patch: read, played, written back the same (a file elsewhere is not written)
 TEST(score_file_read_and_written) {
     namespace fs = std::filesystem;
