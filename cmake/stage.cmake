@@ -24,9 +24,13 @@ endfunction()
 # of docs/ in their folders.
 function(copy_resources dest with_readme)
   file(MAKE_DIRECTORY ${dest})
+  # copied afresh, so that a file moved or removed from the sources is gone here too (a folder of examples
+  # renamed stayed under its old name as well)
   foreach(d examples library help tutorials)
+    file(REMOVE_RECURSE ${dest}/${d})
     file(COPY ${SRC}/${d} DESTINATION ${dest} PATTERN .DS_Store EXCLUDE)
   endforeach()
+  file(REMOVE_RECURSE ${dest}/musil/src ${dest}/musil/examples)
   file(GLOB_RECURSE pdfs RELATIVE ${SRC} ${SRC}/docs/*.pdf)
   foreach(f ${pdfs})
     get_filename_component(dir ${f} DIRECTORY)
