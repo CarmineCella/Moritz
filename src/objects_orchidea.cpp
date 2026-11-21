@@ -13,6 +13,10 @@
 #include "datasets.h"
 #include "fileio.h"
 #include "offline.h"
+#include "transport.h"
+
+#include "music/score.h"
+#include "music/score_layout.h"
 
 #include <cstdio>
 #include <filesystem>
@@ -467,14 +471,16 @@ std::vector<std::vector<float>> mixOf(const std::vector<OrchNote>& notes, const 
 //   segmentation none|flux|frames (none: static), onsets ms..., threshold x (2), timegate ms (100)
 //   partials x (0.2; 0: no pitch filter), window n (32768), pitches C4 ... (always admitted), octaves 0 -1 ...
 //   connection closest|best|path, solutions n (10), hysteresis x, dovetail x, movement x, sustain 1/0, hold ms
-//   seating 1/0, choose segment n, notes, show segment, report, write file, roll buffer (a frame a note: onset s,
-//   pitch with cents, player, duration s: plot scatter draws it), stop
+//   seating 1/0, choose segment n, notes, score, show segment, report, write file, roll buffer (a frame a note: onset
+//   s, pitch with cents, player, duration s: plot scatter draws it), stop
 // Outlets: progress, done, the notes (k instrument pitch dynamics technique onset duration path cents player; ms),
-// the distance (the mean cost of the chosen solutions).
+// the distance (the mean cost of the chosen solutions), and the solution as a score (score <token>, for a score box:
+// a row an instrument in orchestral order, each note with its dynamics, technique, cents, place and its sample as its
+// sound, so the score box plays it and its roll edits it), after each run and choose, and for score.
 class OrchideaBox : public OfflineBox {
 public:
     explicit OrchideaBox(const Message& a) : orchestra_(argstr(a, 0)) {
-        setPorts({P::Control}, {P::Control, P::Control, P::Control, P::Control});
+        setPorts({P::Control}, {P::Control, P::Control, P::Control, P::Control, P::Control});
     }
     ~OrchideaBox() override {
         *alive_ = false;
@@ -540,6 +546,7 @@ public:
         } else if (h.is("seating")) seating_ = num(1) != 0;
         else if (h.is("choose") && m.size() > 2) choose(clampInt(argf(m, 1, 1), -1, 1 << 20) - 1, clampInt(argf(m, 2, 1), -1, 1 << 20) - 1);
         else if (h.is("notes")) { if (ready()) outputNotes(); }
+        else if (h.is("score")) { if (ready()) outputScore(); }
         else if (h.is("show")) { if (ready()) printSolutions(std::clamp(clampInt(argf(m, 1, 1), 0, 1 << 20) - 1, 0, (int)result_->segments.size() - 1)); }
         else if (h.is("report")) { if (ready()) report(); }
         else if (h.is("write") && m.size() > 1) { if (ready()) write(patch->resolvePath(m[1].str())); }
@@ -619,6 +626,7 @@ private:
                 out_ = out;
                 if (!out.empty() && !mix->empty()) storeMix(*mix, *missing);
                 outputNotes();
+                outputScore();
                 return true;
             });
     }
@@ -633,6 +641,7 @@ private:
         if (out_.empty() || !findBuffer(patch, out_)) {
             result_ = res;
             outputNotes();
+            outputScore();
             outletBang(1);
             return;
         }
@@ -643,6 +652,7 @@ private:
                    result_ = res;
                    if (!mix->empty()) storeMix(*mix, *missing);
                    outputNotes();
+                   outputScore();
                    return true;
                });
     }
@@ -699,6 +709,47 @@ private:
                        Atom((float)(n.dur * 1000.0)), Atom(db.paths[(size_t)n.entry]), Atom((float)n.cents), Atom((float)n.player)});
         }
     }
+public:
+    // the solution as a score (Musil's C++ score, score.h): a row an instrument (orchestral order, a clef from its
+    // pitches), a note a sound chosen, with its dynamics, technique, cents and place (the seating), and its sample as
+    // its sound (data sound, sound-pitch: the score box plays it, transposed by as much as the note is moved), its
+    // player (data player)
+    std::shared_ptr<musil::score::Score> solutionScore() const {
+        namespace sc = musil::score;
+        auto s = std::make_shared<sc::Score>("orchidea", result_ ? result_->sr : 44100);
+        if (!result_) return s;
+        const OrchDb& db = *result_->spec->db;
+        auto notes = connectionOf(*result_);
+        std::map<std::string, std::vector<double>> pitches;
+        for (auto& n : notes) {
+            const orch::entry& e = db.entries[(size_t)n.entry];
+            auto ev = std::make_shared<sc::Event>();
+            ev->kind = sc::Kind::Note;
+            ev->at = n.at;
+            ev->dur = n.dur;
+            ev->row = e.instr;
+            ev->pitch = e.midi >= 0 ? e.midi : 60;
+            ev->cents = n.cents;
+            ev->dyn = e.dyn;
+            ev->tech = e.tech;
+            ev->az = n.az;
+            sc::setField(ev->extra, "sound", sc::Datum::string(db.paths[(size_t)n.entry]));
+            sc::setField(ev->extra, "sound-pitch", sc::Datum::number(ev->pitch));
+            sc::setField(ev->extra, "player", sc::Datum::number(n.player));
+            s->insert(ev);
+            pitches[e.instr].push_back(ev->pitch);
+        }
+        std::vector<std::string> rows;
+        for (auto& kv : pitches) rows.push_back(kv.first);
+        std::stable_sort(rows.begin(), rows.end(), [](const std::string& a, const std::string& b) {
+            return sc::layout::instrumentRank(a) < sc::layout::instrumentRank(b);
+        });
+        for (auto& r : rows) s->rows.push_back({r, sc::layout::clefFor(pitches[r]), {}});
+        return s;
+    }
+
+private:
+    void outputScore() { outlet(4, {Atom("score"), Atom(shareScore(solutionScore()))}); }
     std::string soundsOf(const std::vector<int>& sol) const {
         std::string s;
         for (int j : sol) {

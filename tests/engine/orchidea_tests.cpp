@@ -4,6 +4,9 @@
 // while it runs, a run waiting for its orchestra's database; bad inputs answered with a message, never a crash
 
 #include "musil_host.h"
+#include "roll_edit.h"
+
+#include "music/score_layout.h"
 #include "rig.h"
 
 #include <atomic>
@@ -326,4 +329,50 @@ TEST(orchidea_runs_in_the_background) {
         CHECK(o.done->got.empty());
     }
     jobsSynchronous = sync;
+}
+
+// the solution as a score, to a score box: a note a message of the notes outlet (instrument, pitch, dynamics,
+// technique, onset, duration, the sample, cents), a row an instrument in orchestral order, and the box plays it
+TEST(orchidea_solution_as_a_score) {
+    namespace sc = musil::score;
+    bool sync = jobsSynchronous;
+    jobsSynchronous = true;
+    OrchRig o(" (obj s score solution 1) (obj tr transport 60) (obj dac dac~ 1) (connect oi 4 s 0) (connect s 0 dac 0)");
+    o.send({Atom("partials"), Atom(0.f)});
+    o.send({Atom("seed"), Atom(3.f)});
+    o.send({Atom("run"), Atom("tgt")});
+    jobsSynchronous = sync;
+    auto* src = dynamic_cast<ScoreSource*>(o.r.box("s"));
+    CHECK(src != nullptr);
+    if (!src) return;
+    auto s = src->scoreNow();
+    CHECK(!o.notes->got.empty() && s->size() == o.notes->got.size());
+    bool same = true;
+    size_t k = 0;
+    for (auto* e : s->byTime()) {
+        if (k >= o.notes->got.size()) break;
+        const Message& m = o.notes->got[k++];
+        const sc::Datum* snd = sc::field(e->extra, "sound");
+        same = same && e->kind == sc::Kind::Note && e->row == m[1].str() && e->pitch == sc::pitchOfName(m[2].str()) &&
+               e->dyn == m[3].str() && e->tech == m[4].str() && std::fabs(e->at * 1000 - m[5].f) < 0.01 &&
+               std::fabs(e->dur * 1000 - m[6].f) < 0.01 && snd && snd->s == m[7].str() && e->cents == m[8].f;
+    }
+    CHECK(same);
+    int last = -1;
+    bool ordered = true;
+    for (auto& r : s->rows) {
+        int rank = sc::layout::instrumentRank(r.name);
+        ordered = ordered && rank > last && (r.clef == "treble" || r.clef == "bass");
+        last = rank;
+    }
+    CHECK(!s->rows.empty() && ordered);
+    o.send({Atom("score")});                         // again: the same score
+    CHECK(sc::toText(*src->scoreNow()) == sc::toText(*s));
+    o.r.box("tr")->message(0, {Atom("play")});
+    o.r.ch = 1;
+    auto y = o.r.run(44100);
+    double energy = 0;
+    for (float v : y) energy += std::fabs(v);
+    CHECK(energy > 1);
+    CHECK(!o.r.printedSomething("score:"));
 }

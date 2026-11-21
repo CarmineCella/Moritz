@@ -3,8 +3,9 @@
 ; gong, at its onsets for the voice); for each, a genetic search over the
 ; samples of the orchestra finds the sounds, one per player or a rest, whose
 ; summed spectrum is nearest the target's. The solution comes out as notes
-; (instrument, pitch, dynamics, technique, onset, duration, the sample), drawn
-; as a roll, and as the sum of the chosen samples, to hear next to the target.
+; (instrument, pitch, dynamics, technique, onset, duration, the sample), as a
+; score (a row an instrument, each note playing its sample), seen and edited in
+; a score box, and as the sum of the chosen samples, next to the target.
 ; The same seed gives the same orchestration, here and in Musil
 ; (orchestrate-mimetic). MicroSOL, which comes with Moritz, has four
 ; instruments around C4-G4: no pitch filter (partials 0) with it. With a
@@ -18,7 +19,6 @@
   (obj b2 buffer~ orgong gong_c_sharp.wav (pos 180 65))
   (obj b3 buffer~ orvox Vox.wav (pos 340 65))
   (obj b4 buffer~ ormix (pos 470 65))
-  (obj b5 buffer~ orroll (pos 570 65))
   (obj c1 comment "1. The orchestra: MicroSOL's oboes, horns, violins and cellos, two players each (the default orchestra, of what the database has)." (pos 20 100))
   (obj band orchestra orband microsol (pos 20 122))
   (obj inf message info (pos 290 122))
@@ -42,14 +42,16 @@
   (obj dist flonum (pos 160 435))
   (obj cdi comment "distance" (pos 220 436))
   (obj rp message report (pos 300 435))
-  (obj rlm message "roll orroll" (pos 380 435))
   (obj pp prepend set (pos 20 470))
   (obj last message "the notes, one a message: k instrument pitch dynamics technique onset duration (ms) sample cents player" (pos 20 500))
   (obj pr print solution (pos 160 470))
-  (obj c3 comment "3. The solution: a dot a note (onset and pitch), a colour a player; the notes also go to the Console (print solution)." (pos 20 540))
-  (obj l2 loadbang (pos 640 540))
-  (obj ps message "ylog 0, title onset (s) and pitch (MIDI), a colour a player" (pos 640 565))
-  (obj pl plot orroll 600 180 scatter (pos 20 565))
+  (obj c3 comment "3. The solution as a score: a row an instrument, a note a sound chosen. Drag notes to change it; double-click it for the roll." (pos 20 540))
+  (obj sc score solution 2 @size 600 190 (pos 20 565))
+  (obj tr transport 60 4 4 (pos 640 565))
+  (obj sp message play (pos 640 600))
+  (obj ss message stop (pos 690 600))
+  (obj sl message "locate 1" (pos 740 600))
+  (obj spl comment "the score plays each note's sample" (pos 640 625))
   (obj c4 comment "4. Listen: the target, then the orchestra (the sum of the chosen samples, the players seated as in Orchidea's mixes)." (pos 20 765))
   (obj rt receive tplay (pos 20 790))
   (obj p0 message start (pos 120 790))
@@ -68,15 +70,17 @@
   (connect sd 0 sdm 0)
   (connect ro 0 oi 0)
   (connect oi 0 prog 0)
-  (connect oi 1 rlm 0)
-  (connect rlm 0 oi 0)
+  (connect oi 4 sc 0)
+  (connect sp 0 sc 0)
+  (connect ss 0 sc 0)
+  (connect sl 0 sc 0)
+  (connect sc 0 vl 0)
+  (connect sc 1 vr 0)
   (connect rp 0 oi 0)
   (connect oi 2 pp 0)
   (connect oi 2 pr 0)
   (connect pp 0 last 0)
   (connect oi 3 dist 0)
-  (connect l2 0 ps 0)
-  (connect ps 0 pl 0)
   (connect rt 0 a0 0)
   (connect p0 0 a0 0)
   (connect p1 0 a1 0)

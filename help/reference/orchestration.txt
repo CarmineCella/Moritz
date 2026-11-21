@@ -66,7 +66,11 @@ the sound's path, the cents the target's partial is away from the pitch,
 and the player (from 0), then the done outlet bangs (not after a run that
 failed with a message); a note the target holds across segments on the
 same player is one longer note. The distance (the mean cost of the chosen
-solutions) comes out on the last outlet. With an out buffer~, the chosen
+solutions) comes out on its outlet, and the solution as a score on the last
+(score token, for a score object: a row an instrument in orchestral order, a
+note a sound chosen, with its dynamics, technique, cents and place, and its
+sample as its sound, so the score object plays it and its roll edits it). With
+an out buffer~, the chosen
 samples are summed into it in stereo, the players seated as in Orchidea's
 mixes, so that the orchestration is heard at once (scaled down when it
 would clip). The ten best solutions of each segment are kept: choose puts
@@ -106,9 +110,10 @@ msg hold ms: a held note is never longer than this; the player starts it again (
 msg seating 1/0: 1, the mix seats the players as Orchidea's mixes do (violins left, cellos right); 0, all in the middle (1)
 msg choose segment n: solution n (from 1, best first) of a segment (from 1) in place of the one chosen: the notes and the mix again
 msg notes: the notes again
+msg score: the solution as a score again (score token, out of the last outlet)
 msg show segment: prints the solutions of a segment with their costs and sounds (the chosen one starred)
 msg report: prints a line per segment: its cost, players, players holding on, sounds in the search space, and the target's pitches no instrument of the orchestra has
 msg write file: saves the notes as an Orchidea connection file (Musil's score-load reads it)
 msg roll buffer: writes the notes into a buffer~, a frame a note: onset (s), pitch (MIDI, with its cents), player, duration (s); plot in scatter mode draws it as a roll, a colour a player
 msg stop: cancels the search
-see: orchestra buffer~ play~ code
+see: orchestra score buffer~ play~ code
