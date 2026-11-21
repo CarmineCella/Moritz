@@ -10,13 +10,13 @@
 // tick above the head when there is no room for the number) and its dynamics where they change; a score placed inside is a faint block with its notes and its placement (+7 x1.5 -6 dB); sounds, patches
 // and messages are blocks on lines of their own.
 //
-// RollPanel is the roll's whole editor, a panel that can sit in any window (RollWindow for now): its toolbar (play and
-// stop on the patch's transport, Roll / Piano roll / List, Select / Draw / Erase, snap, quantize, zoom), the
-// breadcrumb (where the view is among the scores placed inside one another: a double-click enters a score placed,
-// Esc goes up), the view, a lane of dynamics, the list of events, the score as Musil data (score_text.h), edited and
-// kept in sync both ways (nothing applied while it does not read), the Transform panel and a slot for Generate. Its
-// toolbar's Timeline button shows the same document as a timeline (timeline.h), whose Roll and List buttons come
-// back here.
+// RollPanel is the roll's whole editor, a panel that can sit in any window (the score's window, score_window.h, beside
+// the timeline's panel: one view of the document at a time): its toolbar (Select / Draw / Erase, snap, quantize, zoom),
+// the view (staves, a piano roll or the list of events: setView, the host's switcher), a lane of dynamics (its row
+// chosen at its left), the score as Musil data (score_text.h), edited and kept in sync both ways (nothing applied
+// while it does not read), the Transform panel and a slot for Generate. A double-click enters a score placed, Esc
+// goes up (the host's breadcrumb shows where the view is). The transport bar and the status line are the host's: the
+// panel plays through its ScorePlayback and says what it does through onStatus.
 #pragma once
 
 #include "roll_edit.h"
@@ -45,6 +45,7 @@ class Fl_Menu_Bar;
 namespace moritz {
 
 class ToolButton;
+class ScorePlayback;
 
 class RollCore {
 public:
@@ -228,7 +229,8 @@ private:
 class RollPanel : public Fl_Group {
 public:
     enum class View { Roll, Piano, List };
-    RollPanel(int x, int y, int w, int h, std::shared_ptr<RollEditTarget> target);
+    // play: the host's transport for the document (nullptr: one of its own, when the target is a document's)
+    RollPanel(int x, int y, int w, int h, std::shared_ptr<RollEditTarget> target, std::shared_ptr<ScorePlayback> play = nullptr);
     ~RollPanel() override;
     RollCore& core() { return core_; }
     RollEditTarget* target() const { return core_.target(); }
@@ -240,11 +242,15 @@ public:
     void changed();
     void setStatus(const std::string& s);
     std::string status() const { return status_; }
+    std::function<void(const std::string&)> onStatus;   // a message for the host's status line
+    std::function<void()> onChanged;          // what the host shows of it changed (the breadcrumb, the selection)
+    std::string crumbInfo() const;            // where the view is: the placement it went into
     void play();
     void stop();
+    void togglePlay();                        // Space
+    ScorePlayback* playback() const { return play_.get(); }
     void undo();
     void redo();
-    void showTimeline();                      // the Timeline button: the same document as a timeline
     // the text view: the score as Musil data
     std::string text() const;
     void setText(const std::string& t);       // as if typed (applied when it reads, see applyText)
@@ -257,6 +263,8 @@ public:
     void layoutChildren();
     RollWidget* rollWidget() const { return roll_; }
     EventList* list() const { return list_; }
+    DynamicsLane* dynamicsLane() const { return dyn_; }
+    Fl_Choice* dynamicsRow() const { return dynRow_; }   // the row whose dynamics the lane shows ("all" first)
     // a cell of the list edited: an input over it; Enter sets the field (setField), Escape leaves it
     void editCell(uint64_t id, const std::string& key, const std::string& value, int x, int y, int w);
     void commitCell();
@@ -274,15 +282,12 @@ private:
     void buildTransform(int x, int y, int w, int h);
     double param(Fl_Input* in, double def) const;
     RollCore core_;
+    std::shared_ptr<ScorePlayback> play_;
     View view_ = View::Roll;
     // the toolbar
     Fl_Group* bar_;
-    ToolButton* playBtn_;
-    ToolButton* timelineBtn_;
-    ToolButton* viewBtn_[3];
     ToolButton* toolBtn_[3];
     Fl_Choice* snap_;
-    Fl_Box* crumbs_;
     RollWidget* roll_;
     DynamicsLane* dyn_;
     Fl_Choice* dynRow_;
@@ -297,7 +302,6 @@ private:
     Fl_Text_Editor* textEd_;
     Fl_Text_Buffer* text_;
     Fl_Box* textStatus_;
-    Fl_Box* statusBox_;
     std::string status_, crumbText_, textError_, shownText_;
     uint64_t seenGen_ = ~0ull;
     bool settingText_ = false, textPending_ = false;
@@ -313,35 +317,6 @@ private:
     std::vector<std::unique_ptr<TransformButton>> transformButtons_;
 };
 
-// The roll in a window of its own: a score box double-clicked (or its Open Roll... item, or its message open), the
-// timeline's Roll or List button. One window per document.
-class RollWindow : public Fl_Double_Window {
-public:
-    explicit RollWindow(std::shared_ptr<ScoreDocTarget> target);
-    ~RollWindow() override;
-    RollPanel* panel() const { return panel_; }
-    ScoreDocTarget* target() const { return target_.get(); }
-    bool shows(const ScoreDoc* d) const;      // its document, or one placed inside it that it went into
-    bool save();                              // as the timeline saves (timeline.h: saveScoreDocument)
-    bool confirmDiscard();                    // asks when closing would lose edits only it shows; false: cancel
-    void updateTitle();
-    int handle(int e) override;
-    static std::vector<RollWindow*>& all();
-
-private:
-    std::shared_ptr<ScoreDocTarget> target_;
-    RollPanel* panel_;
-    Fl_Menu_Bar* menu_ = nullptr;
-};
-
-// the roll of a score document: its window (already open: brought forward), in a view (Roll, Piano roll, List)
-RollWindow* openRoll(std::shared_ptr<ScoreDoc> doc, int view = -1);
-RollWindow* openRollOfBox(Box* box);           // a score box's (nullptr: not one)
-// the roll window in front, if one is (the menus act on it: Undo, Redo, Save, Select All, Delete)
-RollWindow* frontRoll();
-// closes every roll window at once (the tests' exit); asks for each one that holds edits only it shows (Quit)
-void closeAllRolls();
-bool confirmCloseRolls();
 // the roll drawn inside a score box (objects_score.cpp; made when first asked for), nullptr: not a score box
 RollCore* inlineRollOf(Box* box);
 

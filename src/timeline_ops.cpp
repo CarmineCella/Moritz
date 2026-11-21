@@ -50,6 +50,8 @@ std::vector<Lane> declaredLanes(const sc::Row* r) {
             lane.lo = x.list[1].num;
             lane.hi = x.list[2].num;
         }
+        if (x.list.size() > 3 && x.list[3].kind == sc::Datum::Num && std::isfinite(x.list[3].num) && x.list[3].num > 0)
+            lane.h = (int)std::lround(std::min(x.list[3].num, 4000.0));
         out.push_back(lane);
     }
     return out;
@@ -58,7 +60,11 @@ std::vector<Lane> declaredLanes(const sc::Row* r) {
 void writeLanes(sc::Row& r, const std::vector<Lane>& lanes) {
     if (lanes.empty()) { sc::eraseField(r.extra, "lanes"); return; }
     std::vector<sc::Datum> l;
-    for (auto& x : lanes) l.push_back(sc::Datum::of({sc::Datum::symbol(x.name), sc::Datum::number(x.lo), sc::Datum::number(x.hi)}));
+    for (auto& x : lanes) {
+        std::vector<sc::Datum> e{sc::Datum::symbol(x.name), sc::Datum::number(x.lo), sc::Datum::number(x.hi)};
+        if (x.h > 0) e.push_back(sc::Datum::number(x.h));
+        l.push_back(sc::Datum::of(std::move(e)));
+    }
     sc::setField(r.extra, "lanes", sc::Datum::of(std::move(l)));
 }
 
@@ -168,6 +174,46 @@ bool setStrip(ScoreDoc& d, const std::string& track, const sc::Strip& st) {
     sc::Strip old = stripOf(d.score(), track);
     const char* what = old.mute != st.mute ? "Mute" : old.solo != st.solo ? "Solo" : old.gain != st.gain ? "Track Gain" : "Track Pan";
     auto e = d.edit(what);
+    e.setRows(std::move(rows));
+    return e.commit();
+}
+
+// ---------------------------------------------------------------- heights
+
+int trackHeight(const sc::Score& s, const std::string& track) {
+    const sc::Row* r = rowOf(s, track);
+    if (!r) return 0;
+    double h = sc::numField(r->extra, "height", 0);
+    return h > 0 ? (int)std::lround(std::min(h, 4000.0)) : 0;
+}
+
+bool setHeights(ScoreDoc& d, const std::vector<Height>& hs) {
+    const sc::Score& s = d.score();
+    auto rows = declaredRows(s);
+    bool changed = false;
+    for (auto& h : hs) {
+        int v = std::max(0, std::min(h.h, 4000));
+        auto it = std::find_if(rows.begin(), rows.end(), [&](const sc::Row& r) { return r.name == h.track; });
+        if (it == rows.end()) return fail(d, "no track " + h.track);
+        if (h.lane.empty()) {
+            if (trackHeight(s, h.track) == v) continue;
+            if (v > 0) sc::setField(it->extra, "height", sc::Datum::number(v));
+            else sc::eraseField(it->extra, "height");
+            changed = true;
+            continue;
+        }
+        auto ls = declaredLanes(&*it);
+        for (auto& l : lanes(s, h.track))           // the lanes shown (some only by their points) are kept
+            if (std::none_of(ls.begin(), ls.end(), [&](const Lane& x) { return x.name == l.name; })) ls.push_back(l);
+        auto lt = std::find_if(ls.begin(), ls.end(), [&](const Lane& l) { return l.name == h.lane; });
+        if (lt == ls.end()) return fail(d, "no lane " + h.lane + " on " + h.track);
+        if (lt->h == v) continue;
+        lt->h = v;
+        writeLanes(*it, ls);
+        changed = true;
+    }
+    if (!changed) return fail(d, "the same height");
+    auto e = d.edit("Track Height");
     e.setRows(std::move(rows));
     return e.commit();
 }

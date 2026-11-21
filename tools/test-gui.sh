@@ -382,8 +382,8 @@ expect "Stop stops a process" "state: process pvoc: stopped"
 expect "and a script" "state: process forever.mu: stopped"
 expect "closing while they run" "state: documents 0"
 
-# 24. a score box's timeline (its menu's Open as Timeline); a clip dragged is one undo step, taken back by Undo;
-#     the score is kept in the patch, so the patch is edited (and the timeline asks nothing when it closes)
+# 24. a score box's window in its Timeline view; a clip dragged is one undo step, taken back by Undo; the score is
+#     kept in the patch, so the patch is edited (and the window asks nothing when it closes)
 run "$G/timeline.moritz" --window-png none act=tlopen:s act=timeline act=tldrag:3,1 act=timeline act=tlop:undo \
     act=timeline act=state act=closefront act=timeline
 moves=$(grep "state: timeline clip 3 " "$out" | sed 's/state: timeline clip 3 //' | cut -d' ' -f1-4 | tr '\n' '|')
@@ -431,10 +431,9 @@ run --window-png none "act=tlfile:$T/sub/piece.score" act=tldbl:4 act=state
 expect "a patch clip opens its patch" "state: front $T/sub/timeline.moritz"
 
 # 30. the roll and the timeline of one score box are views of one document: a note dragged in the roll is an undo
-#     step of the score (the patch edited, but no undo step of the patch), the text view follows; the roll's Timeline
-#     button shows the edit there, the timeline's Undo takes it back and the roll shows it; a clip dragged in the
-#     timeline is undone by the roll's Undo; the roll's selection is the timeline's; the timeline's List button brings
-#     the same roll window forward, in its List view
+#     step of the score (the patch edited, but no undo step of the patch), the text view follows; the Timeline view
+#     shows the edit there, its Undo takes it back and the roll shows it; a clip dragged in the timeline is undone by
+#     the roll's Undo; the roll's selection is the timeline's; the List view is the same window's
 run "$G/score.moritz" --window-png none act=roll:s "act=rolldrag:1:0.5,1" act=rollstate act=state act=rolltimeline act=timeline \
     act=tlop:undo act=rollstate act=tldrag:3,1 act=rollstate act=rollundo act=timeline act=rollselect:2,3 act=timeline \
     act=tlview:list act=rollstate
@@ -447,9 +446,9 @@ expect "the timeline's Undo takes the roll's edit back" "state: roll note 1 0 0.
 expect "a clip dragged in the timeline is in the roll" "state: roll note 3 2 0.5 67"
 expect "the roll's Undo takes the timeline's edit back" "state: timeline clip 3 note Fl 1 0.5"
 expect "one selection" "state: timeline selection 2 3 "
-expect "the timeline's List button: the same roll" "state: roll windows 1 view list"
+expect "the List view: the same window" "state: roll windows 1 view list"
 if [ $status -eq 0 ] && [ "$(grep -c "state: timeline score piece — timeline — Moritz" "$out")" = 3 ]; then ok
-else fail "the roll's Timeline button opens the timeline of the same score"; fi
+else fail "the Timeline view shows the same score"; fi
 
 # 31. the text view: a valid text is applied (a note more), one that does not read is not (its error said, the score
 #     as it was)
@@ -468,12 +467,12 @@ if [ $status -eq 0 ] && grep -q "state: front $G/score.moritz edited no" "$out" 
    ! grep -q "state: undo yes" "$out" && grep -q "state: roll note 2 0.5 0.5 64" "$out" && grep -q "state: roll undo no redo yes" "$out" &&
    grep -q "state: roll note 2 1 0.5 64" "$out"; then ok; else fail "the score box edited in place, undone by Edit > Undo"; fi
 
-# 33. both views of one box: a double-click (locked) on the box opens its roll, its menu's Open as Timeline its
-#     timeline; the timeline's Roll button brings the same roll window forward
+# 33. both views of one box: a double-click (locked) on the box opens its window in the Roll view (a box's default),
+#     opening it in the Timeline view brings the same window forward; its Roll view again
 run "$G/score.moritz" --window-png none act=dblclick:s act=rollstate act=tlopen:s act=timeline act=tlview:roll act=rollstate
 expect "a double-click on the box opens its roll" "state: roll score piece — roll — Moritz"
 expect "and its timeline" "state: timeline score piece — timeline — Moritz"
-if [ $status -eq 0 ] && [ "$(grep -c "state: roll windows 1 view roll" "$out")" = 2 ]; then ok; else fail "one roll window for both"; fi
+if [ $status -eq 0 ] && [ "$(grep -c "state: roll windows 1 view roll" "$out")" = 2 ]; then ok; else fail "one window for both"; fi
 
 # 34. the cents, always visible and edited: the box's own roll shows each detuned note's cents (a tempered one
 #     nothing); in the roll, Alt+Up a cent, Shift+Alt+Up ten, each an undo step; the List's cents cell typed into
@@ -487,6 +486,79 @@ expect "Alt+Up, then Shift+Alt+Up: eleven cents" "state: roll cents 3 11"
 expect "the List's cell" "state: roll cents 3 -12.5"
 if [ $status -eq 0 ] && [ "$(grep -c "state: roll cents 3 " "$out")" = 2 ] && [ "$(grep -c "state: roll cents 1 19" "$out")" = 4 ]; then ok
 else fail "the cents edits undone exactly"; fi
+
+# 35. one window per score, its views switched in place: the selection and the playhead kept; opening the score again
+#     brings the same window forward in the view asked; closed and double-clicked again, it opens in the view used last
+run "$G/score.moritz" --window-png none act=roll:s act=rollselect:2,3 act=tlplayhead:0.75 act=scview:timeline act=timeline \
+    act=scstate act=scview:piano act=rollstate act=scstate act=tlopen:s act=rollstate act=scview:list act=closefront \
+    act=scstate act=dblclick:s act=rollstate
+expect "the selection kept by the Timeline view" "state: timeline selection 2 3 "
+expect "the Piano roll view, in the same window" "state: roll windows 1 view piano"
+expect "the selection kept by the roll" "state: roll selection 2 3"
+expect "opened again: the same window" "state: roll windows 1 view timeline"
+expect "closed" "state: scstate none"
+expect "a double-click: the view used last" "state: roll windows 1 view list"
+if [ $status -eq 0 ] && [ "$(grep -c "playhead 0.75$" "$out")" = 2 ]; then ok; else fail "the playhead kept across the views"; fi
+
+# 36. a box's @view: the window opens in that view the first time (the timeline example: its Timeline); switching views
+#     does not change the box (the patch is not edited, its @view saved as it was)
+run "$HERE/examples/14-timeline/timeline.moritz" --window-png none act=dblclick:sc act=scstate
+expect "the timeline example opens its Timeline" "state: score view timeline"
+printf '(patch\n  (obj s score v @view list (pos 20 20)))\n' > "$T/view.moritz"
+run "$T/view.moritz" --window-png none act=dblclick:s act=scstate act=scview:roll act=state act=save
+expect "@view list" "state: score view list"
+if [ $status -eq 0 ] && grep -q "state: front $T/view.moritz edited no" "$out" && grep -q "@view list" "$T/view.moritz"; then ok
+else fail "@view kept, switching views is no edit"; fi
+
+# 37. Play always plays: from the playhead (the transport stopped), again Stop; with the patch's transport running past
+#     the score's end (the score not playing then), Play starts the score from its playhead; Space does what the button
+#     does whatever is selected (a selection made after the playhead was placed: from its start); a play started here
+#     stops at the score's end, the playhead back where it started
+run "$G/score.moritz" --window-png none act=roll:s act=tlplayhead:0.5 act=scplay act=scstate act=scplay act=scstate \
+    act=scpatchplay:30 act=scstate act=scplay act=scstate act=rollselect:3 act=scspace act=scspace act=scstate \
+    act=tlplayhead:1.4 act=scplay act=wait:0.4 act=sctick act=scstate
+expect "Play from the playhead" "state: score view roll playing yes transport yes button on position 0.5 playhead 0.5"
+expect "again: Stop" "state: score view roll playing no transport no button off"
+expect "the patch's clock past the score's end" "state: score view roll playing no transport yes button off"
+expect "Space from the selection's start" "state: score view roll playing yes transport yes button on position 1 playhead 1"
+expect "the end of the score" "state: score view roll playing no transport no button off position 1.4 playhead 1.4"
+if [ $status -eq 0 ] && [ "$(grep -c "state: score view roll playing yes transport yes button on position 0.5" "$out")" = 2 ]; then ok
+else fail "Play with the transport already running"; fi
+
+# 38. the dynamics lane's row chooser: a row chosen filters the lane, and the lane, drawn alone (as when only it is
+#     redrawn), never paints over the chooser (it vanished when clicked)
+run "$G/score.moritz" --window-png none act=roll:s act=rolldynrow:1 act=rolldynrow:0
+expect "a row chosen" "state: roll dynrow Fl lane Fl covered no shown yes"
+expect "all of them again" "state: roll dynrow all lane all covered no shown yes"
+
+# 39. what a track holds, opened from the timeline: a lane's name opens the patch that receives it with those receives
+#     selected (the header double-clicked too); a track's name the sound its clip plays, a sound clip double-clicked
+#     the sound editor with the clip's region selected; a track with only a lane, its receives (the timeline example)
+run "$G/timeline.moritz" --window-png none act=tlopen:s act=tlname:voice,density act=selected act=tlname:voice act=sound \
+    act=tldbl:2 act=sound
+expect "a lane's name: its receive selected" "state: selected timeline.moritz: rd"
+expect "a track's name: the sound it plays" "state: sound anechoic1.wav — Moritz"
+expect "a clip's region selected" "state: sound selection 22050 66150"
+run "$G/timeline.moritz" --window-png none act=tlopen:s act=tlheaddbl:voice,density act=selected
+expect "a lane's header double-clicked" "state: selected timeline.moritz: rd"
+run "$HERE/examples/14-timeline/timeline.moritz" --window-png none act=tlopen:sc act=tlname:filter act=selected
+expect "a track of lanes: the receives it drives" "state: selected timeline.moritz: rc"
+
+# 40. track heights: a track's lower edge dragged, another folded to one line (a double-click on its edge), kept in the
+#     score's rows, so saved and read again; Alt folds every one, Undo puts them back; a lane sized on its own
+mkdir -p "$T/h"
+cp "$G/piece.score" "$G/gesture.score" "$T/h/"
+run --window-png none "act=tlfile:$T/h/piece.score" act=tledge:drums,30 act=tlfold:gestures act=timeline act=tlsave
+expect "a track sized" "state: timeline row drums 94"
+expect "a track folded" "state: timeline row gestures 20"
+if [ $status -eq 0 ] && grep -q "(row drums (data height 94))" "$T/h/piece.score"; then ok; else fail "the heights saved with the score"; fi
+run --window-png none "act=tlfile:$T/h/piece.score" act=timeline act=tlfold:drums,alt act=timeline act=tlop:undo act=timeline
+expect "read again" "state: timeline row drums 94"
+expect "Alt: every track at once" "state: timeline row drums 20"
+if [ $status -eq 0 ] && [ "$(grep -c "state: timeline row drums 94" "$out")" = 2 ]; then ok; else fail "Undo puts the heights back"; fi
+run "$G/timeline.moritz" --window-png none act=tlopen:s act=tledge:voice,density,20 act=timeline act=state
+expect "a lane sized on its own" "state: timeline row voice/density 58"
+expect "its track as it was" "state: timeline row voice 64"
 
 rm -rf "$T"
 echo "$count interface cases, $fails failed"

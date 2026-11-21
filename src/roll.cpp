@@ -1,10 +1,10 @@
 // Copyright (c) 2026 Carmine-Emanuele Cella. SPDX-License-Identifier: BSD-2-Clause
-// roll.cpp — the roll (roll.h): RollCore, the drawing and the editing of a score; RollPanel, its editor; RollWindow.
+// roll.cpp — the roll (roll.h): RollCore, the drawing and the editing of a score; RollPanel, its editor.
 
 #include "roll.h"
 #include "gui.h"
 #include "score_doc.h"
-#include "timeline.h"
+#include "score_window.h"
 #include "transport.h"
 #include "ui_util.h"
 #include "zoom.h"
@@ -1035,18 +1035,26 @@ int RollWidget::handle(int e) {
     case FL_LEAVE:
     case FL_MOVE:
         return 1;
-    case FL_PUSH:
+    case FL_PUSH: {
+        // the event read first: taking the focus from another window can send events that change it
+        int ex = Fl::event_x(), ey = Fl::event_y(), keys = Fl::event_state(), clicks = Fl::event_clicks();
         take_focus();
-        if (Fl::event_y() - y() < 20 && Fl::event_x() - x() > 78) {      // the ruler: the transport goes there
-            double t = c.tOf(Fl::event_x() - x());
+        Fl::e_x = ex;
+        Fl::e_y = ey;
+        Fl::e_state = keys;
+        Fl::e_clicks = clicks;
+        if (ey - y() < 20 && ex - x() > 78) {      // the ruler: the transport goes there
+            double t = c.tOf(ex - x());
             auto pl = c.placements();
             for (auto it = pl.rbegin(); it != pl.rend(); ++it) t = it->at + t * it->stretch;
-            if (Patch* p = c.target() ? c.target()->patch() : nullptr) transportOf(p)->locate(p, std::max(0.0, t));
+            if (ScorePlayback* pb = panel_->playback()) pb->setPlayhead(std::max(0.0, t));
+            else if (Patch* p = c.target() ? c.target()->patch() : nullptr) transportOf(p)->locate(p, std::max(0.0, t));
             c.playhead = std::max(0.0, t);
             redraw();
             return 1;
         }
-        // fallthrough
+    }
+        [[fallthrough]];
     case FL_DRAG:
     case FL_RELEASE:
         if (c.mouse(e, Fl::event_x() - x(), Fl::event_y() - y(), Fl::event_state(), e == FL_PUSH ? Fl::event_clicks() : 0)) {
@@ -1063,10 +1071,8 @@ int RollWidget::handle(int e) {
         panel_->changed();
         return 1;
     case FL_KEYBOARD:
-        if (Fl::event_key() == ' ') {
-            Patch* p = c.target() ? c.target()->patch() : nullptr;
-            if (p && transportOf(p)->playing()) panel_->stop();
-            else panel_->play();
+        if (Fl::event_key() == ' ' && !Fl::event_state(FL_COMMAND | FL_CTRL | FL_ALT)) {   // whatever is selected
+            panel_->togglePlay();
             return 1;
         }
         if (c.key(Fl::event_key(), Fl::event_state())) { panel_->changed(); return 1; }
@@ -1080,7 +1086,17 @@ void DynamicsLane::draw() {
     const Palette& P = palette(false);
     fl_push_clip(x(), y(), w(), h());
     fl_color(fl_color_average(P.bg, FL_BLACK, 0.9f));
-    fl_rectf(x(), y(), w(), h());
+    // around the row chooser, never under it: redrawn alone (a value chosen, a note dragged), the lane would hide it
+    Fl_Widget* ch = panel_->dynRow_;
+    if (ch && ch->visible() && ch->parent() == parent() && ch->x() >= x() && ch->y() >= y() && ch->x() + ch->w() <= x() + w() &&
+        ch->y() + ch->h() <= y() + h()) {
+        fl_rectf(x(), y(), w(), ch->y() - y());
+        fl_rectf(x(), ch->y() + ch->h(), w(), y() + h() - ch->y() - ch->h());
+        fl_rectf(x(), ch->y(), ch->x() - x(), ch->h());
+        fl_rectf(ch->x() + ch->w(), ch->y(), x() + w() - ch->x() - ch->w(), ch->h());
+    } else {
+        fl_rectf(x(), y(), w(), h());
+    }
     fl_color(P.dim);
     fl_font(FL_HELVETICA, 10);
     fl_draw("dynamics", x() + 4, y() + 12);
@@ -1237,7 +1253,12 @@ int EventList::handle(int e) {
     RollCore& c = panel_->core_;
     switch (e) {
     case FL_PUSH: {
-        take_focus();
+        int ey0 = Fl::event_y(), ex0 = Fl::event_x(), keys0 = Fl::event_state(), clicks0 = Fl::event_clicks();
+        take_focus();                                   // (which can change the event: put back)
+        Fl::e_x = ex0;
+        Fl::e_y = ey0;
+        Fl::e_state = keys0;
+        Fl::e_clicks = clicks0;
         int k = (Fl::event_y() - y()) / kListRowH - 1;
         if (k < 0) return 1;
         auto rows = rowsShown();
@@ -1273,7 +1294,7 @@ int EventList::handle(int e) {
 
 // ================================================================ the panel
 namespace {
-constexpr int kCrumbH = 22, kDynH = 64, kSideW = 250, kTextH = 150, kTextStatusH = 18;
+constexpr int kDynH = 64, kSideW = 250, kTextH = 150, kTextStatusH = 18;
 
 Fl_Box* textBox(int x, int y, int w, int h, const char* text, Fl_Color c = kDim, int size = 11, Fl_Font f = FL_HELVETICA) {
     auto* b = new Fl_Box(x, y, w, h);
@@ -1303,8 +1324,10 @@ ToolButton* pill(int x, int y, int w, int h, const char* text, const char* tip, 
 }
 }  // namespace
 
-RollPanel::RollPanel(int X, int Y, int W, int H, std::shared_ptr<RollEditTarget> target)
-    : Fl_Group(X, Y, W, H), core_(std::move(target)) {
+RollPanel::RollPanel(int X, int Y, int W, int H, std::shared_ptr<RollEditTarget> target, std::shared_ptr<ScorePlayback> play)
+    : Fl_Group(X, Y, W, H), core_(std::move(target)), play_(std::move(play)) {
+    if (!play_)
+        if (auto* dt = dynamic_cast<ScoreDocTarget*>(core_.target())) play_ = std::make_shared<ScorePlayback>(dt->document());
     box(FL_FLAT_BOX);
     color(kBgLocked);
     // ---- the toolbar
@@ -1314,31 +1337,6 @@ RollPanel::RollPanel(int X, int Y, int W, int H, std::shared_ptr<RollEditTarget>
     int bx = X + 8;
     const int by = Y + 5, bh = kToolH - 10;
     using P = RollPanel;
-    playBtn_ = new ToolButton(bx, by, 34, bh, ToolButton::Play, "", false);
-    playBtn_->tooltip("Play on the patch's transport (Space)");
-    playBtn_->callback([](Fl_Widget*, void* d) { static_cast<P*>(d)->play(); }, this);
-    bx += 38;
-    auto* stopBtn = new ToolButton(bx, by, 34, bh, ToolButton::Stop, "", false);
-    stopBtn->tooltip("Stop the transport (Space)");
-    stopBtn->callback([](Fl_Widget*, void* d) { static_cast<P*>(d)->stop(); }, this);
-    bx += 34 + 14;
-    // the views of the score: as a timeline (its own window: the same document), or here
-    timelineBtn_ = pill(bx, by, 74, bh, "Timeline", "The same score as a timeline: tracks, clips, lanes (the same edits, undo and selection)",
-                        [](Fl_Widget*, void* d) { static_cast<P*>(d)->showTimeline(); }, this);
-    bx += 74 + 2;
-    const char* views[] = {"Roll", "Piano roll", "List"};
-    const int vw[] = {56, 86, 52};
-    for (int k = 0; k < 3; ++k) {
-        viewBtn_[k] = pill(bx, by, vw[k], bh, views[k], k == 0 ? "Staves, a row each, proportional time" : k == 1 ? "A keyboard of pitches" : "The events as a table",
-                           [](Fl_Widget* w, void* d) {
-                               auto* p = static_cast<P*>(d);
-                               for (int j = 0; j < 3; ++j) if (p->viewBtn_[j] == w) p->setView((View)j);
-                           }, this, true);
-        bx += vw[k] + 2;
-    }
-    auto* notation = pill(bx, by, 74, bh, "Notation", "Bars and rhythms: later", nullptr, nullptr);
-    notation->deactivate();
-    bx += 74 + 14;
     const char* tools[] = {"Select", "Draw", "Erase"};
     const int tw[] = {58, 50, 52};
     for (int k = 0; k < 3; ++k) {
@@ -1378,16 +1376,20 @@ RollPanel::RollPanel(int X, int Y, int W, int H, std::shared_ptr<RollEditTarget>
     auto* spacer = new Fl_Box(bx, Y, std::max(1, X + W - bx), kToolH);
     bar_->resizable(spacer);
     bar_->end();
-    // ---- the breadcrumb
-    crumbs_ = textBox(X, Y + kToolH, W, kCrumbH, "", kAccent, 12);
-    crumbs_->box(FL_FLAT_BOX);
-    crumbs_->color(fl_rgb_color(26, 27, 31));
     // ---- the view, the lane, the list
-    int mainH = H - kToolH - kCrumbH - kTextH - kStatusH;
-    roll_ = new RollWidget(X, Y + kToolH + kCrumbH, W - kSideW, mainH - kDynH, this);
-    dyn_ = new DynamicsLane(X, Y + kToolH + kCrumbH + mainH - kDynH, W - kSideW, kDynH, this);
-    dynRow_ = new Fl_Choice(X + 4, Y + kToolH + kCrumbH + mainH - kDynH + 18, 70, 18);
-    dynRow_->textsize(10);
+    int mainH = H - kToolH - kTextH;
+    roll_ = new RollWidget(X, Y + kToolH, W - kSideW, mainH - kDynH, this);
+    dyn_ = new DynamicsLane(X, Y + kToolH + mainH - kDynH, W - kSideW, kDynH, this);
+    dynRow_ = new Fl_Choice(X + 4, Y + kToolH + mainH - kDynH + 18, 70, 20);
+    dynRow_->textsize(11);
+    dynRow_->labelsize(11);
+    dynRow_->box(FL_FLAT_BOX);
+    dynRow_->down_box(FL_FLAT_BOX);
+    dynRow_->color(kBoxFill);
+    dynRow_->textcolor(kText);
+    dynRow_->clear_visible_focus();
+    dynRow_->add("all");
+    dynRow_->value(0);
     dynRow_->tooltip("The row whose dynamics the lane shows");
     dynRow_->callback([](Fl_Widget* w, void* d) {
         auto* p = static_cast<P*>(d);
@@ -1395,7 +1397,7 @@ RollPanel::RollPanel(int X, int Y, int W, int H, std::shared_ptr<RollEditTarget>
         p->dyn_->row = v <= 0 || v > (int)p->dynRows_.size() ? "" : p->dynRows_[(size_t)v - 1];
         p->dyn_->redraw();
     }, this);
-    list_ = new EventList(X, Y + kToolH + kCrumbH, W - kSideW, mainH, this);
+    list_ = new EventList(X, Y + kToolH, W - kSideW, mainH, this);
     list_->hide();
     cellInput_ = new Fl_Input(X, Y, 80, 18);
     cellInput_->textsize(11);
@@ -1403,13 +1405,13 @@ RollPanel::RollPanel(int X, int Y, int W, int H, std::shared_ptr<RollEditTarget>
     cellInput_->callback([](Fl_Widget*, void* d) { static_cast<P*>(d)->commitCell(); }, this);
     cellInput_->hide();
     // ---- the side panel: Generate (next) and Transform
-    side_ = new Fl_Group(X + W - kSideW, Y + kToolH + kCrumbH, kSideW, mainH);
+    side_ = new Fl_Group(X + W - kSideW, Y + kToolH, kSideW, mainH);
     side_->box(FL_FLAT_BOX);
     side_->color(fl_rgb_color(30, 31, 36));
-    buildTransform(X + W - kSideW, Y + kToolH + kCrumbH, kSideW, mainH);
+    buildTransform(X + W - kSideW, Y + kToolH, kSideW, mainH);
     side_->end();
     // ---- the score as Musil data
-    int ty = Y + kToolH + kCrumbH + mainH;
+    int ty = Y + kToolH + mainH;
     text_ = new Fl_Text_Buffer();
     textEd_ = new Fl_Text_Editor(X, ty, W, kTextH - kTextStatusH);
     textEd_->buffer(text_);
@@ -1428,10 +1430,6 @@ RollPanel::RollPanel(int X, int Y, int W, int H, std::shared_ptr<RollEditTarget>
     textStatus_ = textBox(X, ty + kTextH - kTextStatusH, W, kTextStatusH, "", kDim, 11);
     textStatus_->box(FL_FLAT_BOX);
     textStatus_->color(fl_rgb_color(30, 31, 35));
-    // ---- the status line
-    statusBox_ = textBox(X, Y + H - kStatusH, W, kStatusH, "", kDim, 11);
-    statusBox_->box(FL_FLAT_BOX);
-    statusBox_->color(kStatusBg);
     end();
     resizable(roll_);
     text_->add_modify_callback(textChanged, this);
@@ -1545,24 +1543,22 @@ double RollPanel::param(Fl_Input* in, double def) const {
 
 void RollPanel::layoutChildren() {
     int X = x(), Y = y(), W = w(), H = h();
-    int mainH = std::max(80, H - kToolH - kCrumbH - kTextH - kStatusH);
+    int mainH = std::max(80, H - kToolH - kTextH);
     bar_->resize(X, Y, W, kToolH);
-    crumbs_->resize(X, Y + kToolH, W, kCrumbH);
-    int vy = Y + kToolH + kCrumbH;
+    int vy = Y + kToolH;
     roll_->resize(X, vy, W - kSideW, mainH - kDynH);
     dyn_->resize(X, vy + mainH - kDynH, W - kSideW, kDynH);
-    dynRow_->resize(X + 4, vy + mainH - kDynH + 18, 70, 18);
+    dynRow_->resize(X + 4, vy + mainH - kDynH + 18, 70, 20);
     list_->resize(X, vy, W - kSideW, mainH);
     side_->resize(X + W - kSideW, vy, kSideW, mainH);
     textEd_->resize(X, vy + mainH, W, kTextH - kTextStatusH);
     textStatus_->resize(X, vy + mainH + kTextH - kTextStatusH, W, kTextStatusH);
-    statusBox_->resize(X, Y + H - kStatusH, W, kStatusH);
 }
 
 void RollPanel::resize(int X, int Y, int W, int H) {
     Fl_Widget::resize(X, Y, W, H);
     // the side panel keeps its children where they were relative to it
-    int dx = (X + W - kSideW) - side_->x(), dy = (Y + kToolH + kCrumbH) - side_->y();
+    int dx = (X + W - kSideW) - side_->x(), dy = (Y + kToolH) - side_->y();
     for (int k = 0; k < side_->children(); ++k) {
         Fl_Widget* c = side_->child(k);
         c->resize(c->x() + dx, c->y() + dy, c->w(), c->h());
@@ -1574,7 +1570,6 @@ void RollPanel::resize(int X, int Y, int W, int H) {
 
 void RollPanel::setView(View v) {
     view_ = v;
-    for (int k = 0; k < 3; ++k) viewBtn_[k]->value(k == (int)v);
     bool list = v == View::List;
     if (list) { roll_->hide(); dyn_->hide(); dynRow_->hide(); list_->show(); }
     else { list_->hide(); roll_->show(); dyn_->show(); dynRow_->show(); }
@@ -1598,35 +1593,23 @@ void RollPanel::setSnap(double s) {
 
 void RollPanel::setStatus(const std::string& s) {
     status_ = s;
-    std::string sel = core_.selection.empty() ? std::string() : std::to_string(core_.selection.size()) + " selected · ";
-    statusBox_->copy_label(("  " + sel + s).c_str());
-    statusBox_->redraw();
+    if (onStatus) onStatus(s);
 }
 
 void RollPanel::play() {
-    if (Patch* p = target() ? target()->patch() : nullptr) { transportOf(p)->play(p); return; }
-    // a score of its own (a file, a new one, a box gone): on a score box of its own, as the timeline plays it
-    Box* b = docTarget() ? docTarget()->document()->player(&App::get().host) : nullptr;
-    if (!b) { setStatus("nothing can play this score now"); return; }
-    if (!App::get().audio.running()) setStatus("audio is off: turn it on to listen");
-    auto t = transportOf(b->patch);
-    const sc::Score& s = docTarget()->document()->score();
-    t->setTempo(b->patch, s.bpm);
-    t->setMeter(b->patch, s.meterNum, s.meterDen);
-    t->locate(b->patch, 0);
-    t->play(b->patch);
-}
-
-void RollPanel::showTimeline() {
     applyText();
-    if (auto* dt = docTarget()) openTimeline(dt->document());
+    if (!play_) { setStatus("nothing can play this score now"); return; }
+    play_->play();
+    setStatus(play_->message);
 }
 
 void RollPanel::stop() {
-    Patch* p = target() ? target()->patch() : nullptr;
-    if (!p && docTarget())
-        if (Box* b = docTarget()->document()->player(nullptr)) p = b->patch;
-    if (p) transportOf(p)->stop(p);
+    if (play_) play_->stop();
+}
+
+void RollPanel::togglePlay() {
+    if (play_ && play_->playing()) stop();
+    else play();
 }
 
 void RollPanel::undo() {
@@ -1670,24 +1653,24 @@ void RollPanel::changed() {
         }
         if (onTitle) onTitle();
     }
-    // the breadcrumb
+    if (onChanged) onChanged();
+    roll_->redraw();
+    dyn_->redraw();
+    dynRow_->redraw();
+    list_->redraw();
+}
+
+std::string RollPanel::crumbInfo() const {
     std::string c;
-    auto names = core_.crumbs();
-    for (size_t k = 0; k < names.size(); ++k) c += (k ? "  ›  " : "  ") + names[k];
     auto pl = core_.placements();
     if (!pl.empty()) {
         const auto& p = pl.back();
         sc::Event e;
         e.transpose = p.transpose; e.stretch = p.stretch; e.gain = p.gain;
-        c += "     (placed at " + fmtNum(p.at, 3) + " s" + placementText(e) + "; Esc goes up)";
+        c += "placed at " + fmtNum(p.at, 3) + " s" + placementText(e) + "; Esc goes up     ";
     }
-    if (docTarget() && docTarget()->document()->boxGone()) c += "     — its box is gone: the score is kept here";
-    c += "     " + core_.summary();
-    if (c != crumbText_) { crumbText_ = c; crumbs_->copy_label(c.c_str()); crumbs_->redraw(); }
-    setStatus(status_);
-    roll_->redraw();
-    dyn_->redraw();
-    list_->redraw();
+    if (docTarget() && docTarget()->document()->boxGone()) c += "its box is gone: the score is kept here     ";
+    return c;
 }
 
 void RollPanel::tick(void* data) {
@@ -1696,13 +1679,15 @@ void RollPanel::tick(void* data) {
     RollEditTarget* t = p->target();
     if (p->core_.syncSelection() || (t && t->generation() != p->seenGen_)) p->changed();
     double ph = NAN;
-    if (Patch* pt = t ? t->patch() : nullptr) {
+    if (p->play_) {
+        p->play_->tick();
+        ph = p->play_->position();
+    } else if (Patch* pt = t ? t->patch() : nullptr) {
         auto tp = transportOf(pt);
         int lap;
         double pos;
         tp->where(pt, lap, pos);
         if (tp->playing() || pos > 0) ph = tp->seconds(pos);
-        p->playBtn_->value(tp->playing());
     }
     if (!(std::isnan(ph) && std::isnan(p->core_.playhead)) && ph != p->core_.playhead) {
         p->core_.playhead = ph;
@@ -1806,114 +1791,6 @@ void RollPanel::commitCell() {
 int RollPanel::handle(int e) {
     if (e == FL_KEYBOARD && cellInput_->visible() && Fl::event_key() == FL_Escape) { cellInput_->hide(); list_->take_focus(); redraw(); return 1; }
     return Fl_Group::handle(e);
-}
-
-// ================================================================ the window
-std::vector<RollWindow*>& RollWindow::all() {
-    static std::vector<RollWindow*> v;
-    return v;
-}
-
-RollWindow::RollWindow(std::shared_ptr<ScoreDocTarget> target) : Fl_Double_Window(1240, 800), target_(target) {
-    color(kStatusBg);
-#ifndef __APPLE__
-    menu_ = new Fl_Menu_Bar(0, 0, w(), kMenuH);
-    App::get().buildMenu(menu_);
-#endif
-    panel_ = new RollPanel(0, kMenuH, w(), h() - kMenuH, std::move(target));
-    end();
-    resizable(panel_);
-    size_range(820, 520);
-    panel_->onTitle = [this] { updateTitle(); };
-    target_->setListener([this](unsigned what) { if (what & ScoreDoc::State) updateTitle(); });
-    callback([](Fl_Widget* w, void*) {
-        if (Fl::event() == FL_SHORTCUT && Fl::event_key() == FL_Escape) return;   // Escape goes up, not away
-        auto* rw = static_cast<RollWindow*>(w);
-        rw->panel()->applyText();
-        if (!rw->confirmDiscard()) return;
-        rw->hide();
-        Fl::delete_widget(rw);
-        App::get().refreshMenus();
-    });
-    all().push_back(this);
-    updateTitle();
-}
-
-RollWindow::~RollWindow() {
-    auto& v = all();
-    v.erase(std::remove(v.begin(), v.end(), this), v.end());
-    target_->setListener(nullptr);
-    if (menu_) App::get().forgetMenu(menu_);
-}
-
-void RollWindow::updateTitle() {
-    std::string s = target_->title() + " — roll — Moritz";       // the document's title says when it is edited
-    if (!label() || s != label()) copy_label(s.c_str());
-}
-
-bool RollWindow::shows(const ScoreDoc* d) const {
-    for (auto& x : target_->documents())
-        if (x.get() == d) return true;
-    return false;
-}
-
-bool RollWindow::save() {
-    panel_->applyText();
-    bool ok = saveScoreDocument(target_->focused(), [this](const std::string& m) { panel_->setStatus(m); });
-    updateTitle();
-    return ok;
-}
-
-bool RollWindow::confirmDiscard() {
-    for (auto& d : target_->documents())
-        if (!confirmDiscardScoreDocument(d, this)) return false;
-    return true;
-}
-
-int RollWindow::handle(int e) {
-    if (e == FL_SHORTCUT && Fl::event_key() == FL_Escape) {
-        if (panel_->core().key(FL_Escape, 0)) { panel_->changed(); return 1; }
-        return 1;
-    }
-    int r = Fl_Double_Window::handle(e);
-    if (e == FL_FOCUS || e == FL_SHOW) App::get().refreshMenus();
-    return r;
-}
-
-RollWindow* openRoll(std::shared_ptr<ScoreDoc> doc, int view) {
-    if (!doc) return nullptr;
-    RollWindow* w = nullptr;
-    for (auto* x : RollWindow::all())
-        if (x->target()->document() == doc) { w = x; break; }
-    if (!w) {
-        fl_open_display();
-        w = new RollWindow(makeRollTarget(doc));
-        int k = (int)RollWindow::all().size() - 1;
-        centerOnScreen(w, App::get().frontDoc(), 30 * (k % 6), 30 * (k % 6));
-    }
-    if (view >= 0 && view <= 2) w->panel()->setView((RollPanel::View)view);
-    w->show();
-    return w;
-}
-
-RollWindow* openRollOfBox(Box* box) { return openRoll(ScoreDoc::ofBox(box)); }
-
-RollWindow* frontRoll() { return dynamic_cast<RollWindow*>(Fl::first_window()); }
-
-void closeAllRolls() {
-    auto list = RollWindow::all();
-    for (auto* w : list) {
-        w->hide();
-        delete w;
-    }
-}
-
-bool confirmCloseRolls() {
-    for (auto* w : std::vector<RollWindow*>(RollWindow::all())) {
-        w->panel()->applyText();
-        if (!w->confirmDiscard()) return false;
-    }
-    return true;
 }
 
 }  // namespace moritz

@@ -2,10 +2,12 @@
 // timeline_tests.cpp — the score document (undo exact and bounded, listeners, bound to a score box or a .score file,
 // saved and read back, one document per score, a placed score opened), the timeline's operations (tracks, move,
 // trim, split, placements, lanes, clipboard), the playback of tracks (mute, solo, gain, pan, fades) and of automation
-// lanes (their messages on their sample, to the receives), editing while the audio thread plays, and the render.
+// lanes (their messages on their sample, to the receives), editing while the audio thread plays, and the render; the
+// heights of tracks and lanes; the transport of a score's window (ScorePlayback: Play always plays).
 
 #include "rig.h"
 #include "score_doc.h"
+#include "score_window.h"
 #include "timeline_ops.h"
 #include "transport.h"
 
@@ -459,6 +461,79 @@ TEST(timeline_automation_lanes) {
     CHECK(tl::removeLane(*d, "A", "density") && d->score().empty() && tl::lanes(d->score(), "A").empty());
     d->undo();
     CHECK(d->score().size() == 2 && tl::lanes(d->score(), "A").size() == 1);
+}
+
+// Heights: a track's and a lane's, kept on the row (so in the file), one undo step for several; a lane known only by
+// its points gets a height too (declared then); the same height again is nothing to do; adding a lane keeps them
+TEST(timeline_heights) {
+    auto d = ScoreDoc::make("x");
+    tl::addTrack(*d, "A");
+    tl::addTrack(*d, "B");
+    tl::addLane(*d, "A", "density", 0, 2);
+    tl::addPoint(*d, "B", "cutoff", 1, 0.5);                       // a lane by its points only
+    CHECK(tl::trackHeight(d->score(), "A") == 0 && tl::lanes(d->score(), "A")[0].h == 0);
+    size_t steps = d->historySteps();
+    CHECK(tl::setHeights(*d, {{"A", "", 90}, {"A", "density", 25}, {"B", "cutoff", 30}}));
+    CHECK(d->historySteps() == steps + 1);
+    CHECK(tl::trackHeight(d->score(), "A") == 90 && tl::trackHeight(d->score(), "B") == 0);
+    CHECK(tl::lanes(d->score(), "A")[0].h == 25 && tl::lanes(d->score(), "B")[0].h == 30);
+    CHECK(tl::lanes(d->score(), "A")[0].hi == 2);                  // its range kept
+    CHECK(!tl::setHeights(*d, {{"A", "", 90}}));                     // the same
+    CHECK(!tl::setHeights(*d, {{"C", "", 40}}) && !tl::setHeights(*d, {{"A", "nope", 40}}));
+    auto back = sc::readText(text(*d), "x");                         // the file keeps them
+    CHECK(tl::trackHeight(*back, "A") == 90 && tl::lanes(*back, "A")[0].h == 25 && tl::lanes(*back, "B")[0].h == 30);
+    CHECK(tl::addLane(*d, "A", "gain"));                             // another lane: the heights stay
+    CHECK(tl::lanes(d->score(), "A")[0].h == 25 && tl::lanes(d->score(), "A")[1].h == 0);
+    CHECK(tl::setHeights(*d, {{"A", "", 0}}) && tl::trackHeight(d->score(), "A") == 0);   // 0: the default, nothing kept
+    CHECK(text(*d).find("height") == std::string::npos);
+    d->undo();
+    d->undo();
+    d->undo();
+    CHECK(tl::trackHeight(d->score(), "A") == 0 && tl::lanes(d->score(), "A")[0].h == 0);
+}
+
+// The transport of a score's window: Play plays from the playhead, located first, also when the patch's transport
+// already runs past the score's end (the score not playing then, the patch's clock left alone by the timer); a
+// selection made after the playhead was placed: from its start; a play started here stops at the score's end, the
+// playhead back where it started; looping, it goes on
+TEST(score_playback_always_plays) {
+    Rig r(kPatch);
+    impulse(r, "b");
+    auto d = ScoreDoc::ofBox(r.box("s"));
+    uint64_t a = tl::addSound(*d, "imp", true, "A", 0.5, 0.5);     // the score ends at 1 s
+    ScorePlayback pb(d, &r.p);
+    auto t = transportOf(&r.p);
+    CHECK(pb.clock() == &r.p);
+    pb.setPlayhead(0.25);
+    CHECK(!pb.playing() && !pb.running() && pb.position() == 0.25);
+    CHECK(pb.play() && pb.playing() && t->playing() && pb.startedHere());
+    r.run(4410);
+    CHECK(std::fabs(pb.position() - 0.35) < 0.01);
+    pb.stop();
+    CHECK(!t->playing() && std::fabs(pb.playhead() - 0.35) < 0.01);
+    t->locate(&r.p, 5);                                               // the patch's clock, past the score's end
+    t->play(&r.p);
+    CHECK(pb.running() && !pb.playing() && pb.position() == pb.playhead());
+    pb.tick();
+    CHECK(t->playing());                                              // not started here: left alone
+    CHECK(pb.play() && pb.playing() && std::fabs(pb.position() - pb.playhead()) < 0.01);   // located: it plays
+    d->clearSelection();                                              // (adding selected it)
+    d->select({a});                                                   // selected after the playhead was placed
+    CHECK(pb.startPoint() == 0.5);
+    pb.setPlayhead(0.9);
+    CHECK(pb.startPoint() == 0.9);
+    CHECK(pb.play());
+    r.run(4410 * 2);                                                  // past the end
+    pb.tick();
+    CHECK(!t->playing() && !pb.playing() && pb.playhead() == 0.9 && !pb.startedHere());
+    pb.setLoopRange(0.5, 1);
+    pb.setLoop(true);
+    CHECK(pb.loop() && pb.play());
+    r.run(44100);
+    pb.tick();
+    CHECK(t->playing() && pb.playing());
+    pb.stop();
+    CHECK(!t->playing());
 }
 
 // The tracks' strips in playback: a muted track is silent, a soloed one alone sounds, gain scales, pan places;

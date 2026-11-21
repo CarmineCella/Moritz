@@ -1,18 +1,20 @@
 ; timeline.moritz - a score of four stems (piece.score, next to this patch) played on the transport, and an
 ; automation lane of the score that drives this patch's receive "cutoff": the mix goes through a low-pass filter
-; whose cutoff follows the lane. Right-click the score box: Open as Timeline (a double-click opens its roll, the
-; same score, whose Timeline button does the same): move, trim and split the clips, mute or solo a track, draw points
-; on the lane, then Save writes piece.score again.
+; whose cutoff follows the lane. Double-click the score box: its window opens in the Timeline view (the box's
+; @view timeline); Roll, Piano roll and List, at its top, show the same score in the same window. Move, trim and
+; split the clips, mute or solo a track, draw points on the lane, drag a track's lower edge to size it; a click on
+; the track filter's lane name selects the receive it drives here; Space plays from the playhead; then Save writes
+; piece.score again.
 (patch
   (obj title comment "timeline: a score seen as tracks, its automation lane driving the patch" (pos 20 12))
-  (obj tip comment "right-click the score: Open as Timeline (double-click it: its roll, the same score; its Timeline button)" (pos 20 34))
+  (obj tip comment "double-click the score: its timeline (Roll, Piano roll, List: the same score, at the window's top)" (pos 20 34))
   (obj play message play (pos 20 70))
   (obj stop message stop (pos 65 70))
   (obj loc message "locate 1" (pos 110 70))
   (obj loop message "loop 3 7" (pos 180 70))
   (obj noloop message "loop 0" (pos 250 70))
   (obj tr transport 100 4 4 (pos 320 70))
-  (obj sc score piece piece.score (pos 20 110))
+  (obj sc score piece piece.score @view timeline (pos 20 110))
   (obj rc r cutoff (pos 300 160))
   (obj nb number (pos 300 190))
   (obj ramp message "$1 80" (pos 300 220))

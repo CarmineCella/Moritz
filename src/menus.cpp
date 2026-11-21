@@ -13,6 +13,7 @@
 #include "codewindow.h"
 #include "datasets.h"
 #include "sound_editor.h"
+#include "score_window.h"
 #include "timeline.h"
 
 #include <FL/filename.H>
@@ -76,11 +77,15 @@ App& app() { return App::get(); }
 DocumentWindow* doc() { return app().targetDoc(); }
 bool haveDoc() { return doc() != nullptr; }
 SoundEditor* sound() { return app().frontSound() ? app().frontSound()->editor() : nullptr; }
-TimelinePanel* timeline() { return frontTimeline() ? frontTimeline()->panel() : nullptr; }
-// the roll in front (roll.h), when its text is not what the keys go to
+// a score's window in front (score_window.h): its timeline, when it shows it; its roll, when it shows the roll (and
+// its text is not what the keys go to)
+TimelinePanel* timeline() {
+    ScoreWindow* w = frontScore();
+    return w && w->view() == ScoreView::Timeline ? w->timeline() : nullptr;
+}
 RollPanel* roll() {
-    RollWindow* r = frontRoll();
-    return r && !frontTextEditor() ? r->panel() : nullptr;
+    ScoreWindow* w = frontScore();
+    return w && w->view() != ScoreView::Timeline && !frontTextEditor() ? w->roll() : nullptr;
 }
 bool textOrDoc() { return sound() || timeline() || frontTextEditor() || roll() || haveDoc(); }
 bool canvasOrText() { return sound() || timeline() || frontTextEditor() || roll() || app().activeCanvas(); }
@@ -111,31 +116,30 @@ const std::vector<Command>& table() {
         {"file.open", "File/Open...", FL_COMMAND + 'o', 0, [] { app().openDialog(); }, nullptr, nullptr},
         {"file.opensound", "File/Open Sound...", FL_COMMAND + FL_SHIFT + 'o', 0, [] { app().openSoundDialog(); },
          nullptr, nullptr},
-        {"file.newscore", "File/New Score", 0, 0, [] { newScoreTimeline(); }, nullptr, nullptr},
+        {"file.newscore", "File/New Score", 0, 0, [] { newScore(); }, nullptr, nullptr},
         {"file.openscore", "File/Open Score...", 0, 0, [] { openScoreDialog(); }, nullptr, nullptr},
         {"@recent", "File/Open Recent", 0, 0, nullptr, nullptr, nullptr},
         {"file.import", "File/Import from Max...", FL_COMMAND + FL_SHIFT + 'i', FL_MENU_DIVIDER,
          [] { app().importDialog(); }, nullptr, nullptr},
         {"file.save", "File/Save", FL_COMMAND + 's', 0,
          [] {
-             if (auto* t = frontTimeline()) { t->save(); return; }
+             if (auto* t = frontScore()) { t->save(); return; }
              if (auto* s = app().frontSound()) { s->save(); return; }
              if (auto* c = app().frontCode()) { c->save(); return; }
-             if (auto* r = frontRoll()) { r->save(); return; }
              if (auto* d = doc()) d->saveFront();
          },
-         [] { return frontTimeline() || frontRoll() || app().frontSound() || app().frontCode() != nullptr || haveDoc(); }, nullptr},
+         [] { return frontScore() || app().frontSound() || app().frontCode() != nullptr || haveDoc(); }, nullptr},
         {"file.saveas", "File/Save As...", FL_COMMAND + FL_SHIFT + 's', 0,
          [] {
-             if (auto* t = frontTimeline()) { t->saveAs(); return; }
+             if (auto* t = frontScore()) { t->saveAs(); return; }
              if (auto* s = app().frontSound()) { s->saveAs(); return; }
              if (auto* c = app().frontCode()) { c->saveAs(); return; }
              if (auto* d = doc()) d->saveAs();
          },
-         [] { return frontTimeline() || app().frontSound() || app().frontCode() != nullptr || haveDoc(); }, nullptr},
+         [] { return frontScore() || app().frontSound() || app().frontCode() != nullptr || haveDoc(); }, nullptr},
         {"file.revert", "File/Revert to Saved", 0, FL_MENU_DIVIDER, [] { if (auto* d = doc()) d->revert(); },
          [] {
-             auto* d = app().frontCode() || app().frontSound() || frontTimeline() ? nullptr : doc();
+             auto* d = app().frontCode() || app().frontSound() || frontScore() ? nullptr : doc();
              return d && !d->path().empty() && d->doc.anyDirty();
          },
          nullptr},

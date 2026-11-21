@@ -1,4 +1,5 @@
-; the timeline's tests (tools/test-gui.sh): a score kept in the patch, two tracks of sounds and a lane
+; the timeline's tests (tools/test-gui.sh): a score kept in the patch, two tracks of sounds and a lane, and the
+; receive its lane drives
 (patch
   (obj s score piece (pos 20 20)
     (script
@@ -11,5 +12,6 @@
       "  (sound 1 2 \"../../data/anechoic1.wav\" (id 3) (row voice))"
       "  (msg 0.5 density 0.25 (id 4) (row voice)))"))
   (obj o dac~ (pos 20 200))
+  (obj rd r density (pos 200 200))
   (connect s 0 o 0)
   (connect s 1 o 1))

@@ -11,6 +11,7 @@
 #include "objects.h"
 #include "sysopen.h"
 #include "sound_editor.h"
+#include "score_window.h"
 #include "timeline.h"
 
 #include <FL/Fl_Native_File_Chooser.H>
@@ -321,11 +322,7 @@ void App::closeFront() {
         if (sw->confirmDiscard()) closeSound(sw);
         return;
     }
-    if (auto tw = dynamic_cast<TimelineWindow*>(w)) {
-        if (tw->confirmDiscard()) closeTimeline(tw);
-        return;
-    }
-    if (auto rw = dynamic_cast<RollWindow*>(w)) { rw->do_callback(); return; }
+    if (auto sw = dynamic_cast<ScoreWindow*>(w)) { sw->do_callback(); return; }
     if (auto d = dynamic_cast<DocumentWindow*>(w)) {
         if (d->confirmDiscard()) closeDocument(d);
     }
@@ -345,9 +342,8 @@ void App::quit() {
         s->show();
         if (!s->confirmDiscard()) return;
     }
-    if (!confirmCloseTimelines()) return;
-    if (!confirmCloseRolls()) return;
-    for (auto* t : timelineWindows()) t->hide();
+    if (!confirmCloseScores()) return;
+    for (auto* t : scoreWindows()) t->hide();
     for (auto* c : codeWindows_) c->hide();
     for (auto* s : soundWindows_) s->editor()->stop();
     for (auto* s : soundWindows_) s->hide();

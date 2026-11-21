@@ -10,6 +10,7 @@
 
 #include "roll.h"
 #include "score_doc.h"
+#include "score_window.h"
 #include "transport.h"
 #include "zoom.h"
 
@@ -191,11 +192,12 @@ struct ScorePlan {
     std::vector<std::unique_ptr<BufferRef>> bufs;
 };
 
-// score name [file.score] [channels] [@size w h]: a score (rows, notes, sounds, messages, scores inside it) that plays
-// on the patch's transport. Without a file it is kept in the patch. The box draws its score as a roll (roll.h), edited
-// in place when the patch is locked (select, drag to move, drag an end to resize, Alt-drag copies, Delete, the arrows
-// nudge, Alt+Up and Alt+Down detune by a cent); a double-click opens the roll's window (its menu: Open Roll... and
-// Open as Timeline); in edit mode its corner sizes it. Outlets: one signal for each
+// score name [file.score] [channels] [@size w h] [@view timeline|roll|piano|list]: a score (rows, notes, sounds,
+// messages, scores inside it) that plays on the patch's transport. Without a file it is kept in the patch. The box
+// draws its score as a roll (roll.h), edited in place when the patch is locked (select, drag to move, drag an end to
+// resize, Alt-drag copies, Delete, the arrows nudge, Alt+Up and Alt+Down detune by a cent); a double-click (or its
+// menu's Open) opens the score's window (score_window.h) in the view used last for it, the first time in its @view
+// (Roll when none); in edit mode its corner sizes it. Outlets: one signal for each
 // channel (2 by default: its sounds, and the notes that carry a sound of their own, placed at their azimuths), then
 // notes (pitch velocity duration-ms row dynamics technique; - for none), then messages (name values...; a patch event
 // as patch name duration-ms args...), then info (end when it plays past its last event; the summary for info). A
@@ -213,8 +215,8 @@ struct ScorePlan {
 //   play, stop, locate bar [beat], seek ms   the transport's (the same for every score of the patch)
 //   info                        rows events seconds, out of the info outlet
 //   score <token>               a score a code box (or orchidea) sent ((out k s) with s a Musil score)
-//   open                        the roll's window
-// The box's roll, its roll's window and its timeline are views of one document (score_doc.h): an edit in the box is
+//   open [view]                 the score's window (timeline, roll, piano, list; none: the view used last)
+// The box's roll and its window's views are views of one document (score_doc.h): an edit in the box is
 // an undo step of the score's history (Edit > Undo with the box clicked last takes it back, the timeline's and the
 // roll's Undo too), and marks the patch edited; the messages above change the score from outside (the document
 // follows them, its history starting again), as the code view and the patch's undo do.
@@ -228,6 +230,11 @@ public:
                 w_ = std::clamp((int)argf(a, k + 1, (float)kDefaultW), 120, 4000);
                 h_ = std::clamp((int)argf(a, k + 2, (float)kDefaultH), 50, 3000);
                 k += 2;
+            }
+            else if (x.is("@view")) {                    // the view its window opens in the first time
+                ScoreView v;
+                if (k + 1 < a.size() && parseScoreView(a[k + 1].str(), v)) view_ = (int)v;
+                ++k;
             }
             else if (x.isFloat()) nOut_ = std::clamp((int)x.f, 1, 16);
             else if (endsWith(x.s, ".score")) file_ = x.s;
@@ -249,6 +256,11 @@ public:
         if (!file_.empty()) m.push_back(Atom(file_));
         if (nOut_ != 2) m.push_back(Atom((float)nOut_));
         if (w_ != kDefaultW || h_ != kDefaultH) { m.push_back(Atom("@size")); m.push_back(Atom((float)w_)); m.push_back(Atom((float)h_)); }
+        if (view_ >= 0) {
+            std::string v = scoreViewName((ScoreView)view_);
+            m.push_back(Atom("@view"));
+            m.push_back(Atom(v == "piano roll" ? std::string("piano") : v));
+        }
         return m;
     }
     // kept in the patch when it has no file of its own
@@ -282,7 +294,11 @@ public:
         else if (h.is("select")) select(m);
         else if (h.is("transpose") || h.is("invert") || h.is("retrograde") || h.is("augment") || h.is("diminish") ||
                  h.is("shift") || h.is("quantize") || h.is("humanize") || h.is("thin") || h.is("density")) transformBy(m);
-        else if (h.is("open")) openRollOfBox(this);
+        else if (h.is("open")) {
+            ScoreView v;
+            bool given = m.size() > 1 && parseScoreView(m[1].str(), v);
+            openScoreBox(this, given ? (int)v : -1);
+        }
         else if (h.is("play") || h.is("start")) { if (t_) t_->play(patch); }
         else if (h.is("stop")) { if (t_) t_->stop(patch); }
         else if (h.is("locate") && t_) t_->locate(patch, t_->secondsOf(argf(m, 1, 1.f), argf(m, 2, 1.f), argf(m, 3, 0.f)));
@@ -331,16 +347,17 @@ public:
         }
         c.draw(X + 1, Y + head);
     }
-    // locked: the roll edited in place; a double-click opens the roll's window (on a score placed inside: into it)
+    // locked: the roll edited in place; a double-click opens the score's window (on a score placed inside: the roll,
+    // into it)
     void uiMouse(int event, int mx, int my) override {
         RollCore& c = roll();
         bool dbl = event == FL_PUSH && Fl::event_clicks();
         if (dbl) Fl::event_clicks(0);
         if (event == FL_PUSH && my < kBoxH) {              // the header
-            if (dbl) openRollOfBox(this);
+            if (dbl) openScoreBox(this);
             return;
         }
-        if (!c.mouse(event, mx - 1, my - kBoxH, Fl::event_state(), dbl ? 1 : 0) && dbl) openRollOfBox(this);
+        if (!c.mouse(event, mx - 1, my - kBoxH, Fl::event_state(), dbl ? 1 : 0) && dbl) openScoreBox(this);
     }
     bool uiKey(int key) override { return roll().key(key, Fl::event_state()); }
     bool uiUndo(bool redo) override {                  // the score's own history (its edits in the box, the roll, the timeline)
@@ -351,7 +368,7 @@ public:
         if (patch) patch->redraw();
         return true;
     }
-    // (the canvas's menu has Open Roll... and Open as Timeline for a score box)
+    // (the canvas's menu has Open for a score box: its window, in the view used last)
     std::vector<std::string> menuItems() override { return {"Read...", "Write..."}; }
     void menuAction(int k) override {
         std::string f = chooseFile(k == 1, k == 0 ? "Read a score" : "Write the score", "Score\t*.score", file_.empty() ? name_ + ".score" : file_);
@@ -367,6 +384,9 @@ public:
     // what an editor binds to (score_doc.h): the score now, and whether it is kept in the patch (no file of its own)
     std::shared_ptr<sc::Score> current() const { return score_; }
     bool keptInPatch() const { return file_.empty(); }
+    // the view its window opens in: the one used last, else its @view, else Roll
+    int openView() const { return lastView_ >= 0 ? lastView_ : view_ >= 0 ? view_ : (int)ScoreView::Roll; }
+    void setLastView(int v) { lastView_ = v; }
     // the roll inside the box (made when first drawn, clicked or asked for its selection), on the score's document
     RollCore& roll() {
         if (!inline_) {
@@ -374,8 +394,8 @@ public:
             inline_->compact = true;
             inline_->onChange = [this] { if (patch) patch->redraw(); };
             inline_->onEnter = [this](uint64_t sub) {
-                RollWindow* w = openRollOfBox(this);
-                if (w && sub) { w->panel()->core().enter(sub); w->panel()->changed(); }
+                ScoreWindow* w = openScoreBox(this, (int)ScoreView::Roll);
+                if (w && sub) { w->roll()->core().enter(sub); w->roll()->changed(); }
             };
         }
         if (!inline_->target() && patch)
@@ -396,6 +416,7 @@ private:
     static constexpr int kDefaultW = 360, kDefaultH = 150;
     int nOut_ = 2;
     int w_ = kDefaultW, h_ = kDefaultH;
+    int view_ = -1, lastView_ = -1;              // @view (saved), the view used last (not saved)
     std::string name_, file_;
     std::shared_ptr<sc::Score> score_;           // never changed in place: a new one for every change (the views keep theirs)
     std::unique_ptr<RollCore> inline_;
@@ -803,6 +824,13 @@ bool scoreBoxKeptInPatch(const Box* b) {
     auto* s = dynamic_cast<const ScoreBox*>(b);
     return s && s->keptInPatch();
 }
+int scoreBoxView(const Box* b) {
+    auto* s = dynamic_cast<const ScoreBox*>(b);
+    return s ? s->openView() : (int)ScoreView::Roll;
+}
+void setScoreBoxView(Box* b, int view) {
+    if (auto* s = dynamic_cast<ScoreBox*>(b)) s->setLastView(view);
+}
 RollCore* inlineRollOf(Box* b) {
     auto* s = dynamic_cast<ScoreBox*>(b);
     return s ? &s->roll() : nullptr;
@@ -812,7 +840,7 @@ void registerScoreObjects(ClassTable& t) {
     t.insert(t.end(), {
         {"transport", "Timing", "the patch's clock: play, stop, locate bar, loop bar1 bar2, tempo; bars, beats and ms out: [bpm] [num den]",
          with<TransportBox>()},
-        {"score", "Timing", "a score that plays on the transport: notes, messages and sounds out; read/write .score: name [file.score] [channels]",
+        {"score", "Timing", "a score that plays on the transport: notes, messages and sounds out; read/write .score: name [file.score] [channels] [@view timeline]",
          with<ScoreBox>()},
     });
 }

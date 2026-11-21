@@ -288,6 +288,7 @@ public:
     // toggle: keeps its state (audio, edit); otherwise a push button
     ToolButton(int x, int y, int w, int h, Icon icon, const char* label, bool toggle = true);
     void draw() override;
+    void setIcon(Icon i) { icon_ = i; }   // (a play button that shows Stop while playing)
     bool alert = false;          // a red dot (the console has errors)
     bool lit = false;            // drawn on without being a toggle (the record button)
 

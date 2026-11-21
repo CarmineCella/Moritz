@@ -142,6 +142,7 @@ public:
     // ---- following what changed elsewhere (true when it did: the views were told)
     bool follow();
     std::string message;                       // what the last operation did, or why it did nothing
+    int lastView = -1;                         // the view its window showed last (score_window.h's ScoreView; -1 none)
 
     // ---- who shows it
     enum Change : unsigned { Content = 1, Selection = 2, State = 4 };   // State: title, saved, bound

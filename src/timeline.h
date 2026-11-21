@@ -1,17 +1,22 @@
 // Copyright (c) 2026 Carmine-Emanuele Cella. SPDX-License-Identifier: BSD-2-Clause
 // timeline.h — the timeline: a score seen as tracks (mockup 4). TimelinePanel is the panel (an Fl_Group that can
-// sit in any window) showing a ScoreDoc (score_doc.h) through the operations of timeline_ops.h; TimelineWindow is
-// the panel in a window of its own (a score box's menu's Open as Timeline, the roll's Timeline button, File > Open
-// Score..., File > New Score, a sub-score clip double-clicked).
+// sit in any window) showing a ScoreDoc (score_doc.h) through the operations of timeline_ops.h; the score's window
+// (score_window.h) hosts it beside the roll's panel, one view of the same document at a time, and gives both the
+// transport bar, the breadcrumb and the status line.
 //
-// The panel, top to bottom: the transport bar (to start, play, stop, loop, the position in bars.beats.ticks and in
-// time, the tempo and meter, snap, zoom, the Add and Edit menus, Render, and Timeline / Roll / List: the views of the
-// same document, the roll in its own window, roll.h), the breadcrumb (where this score is placed,
-// when it is inside another), the view (a ruler, then for each track its header and its clips, its automation lanes
-// under it), the inspector on the right (the selected clip, point or track), and the status line.
+// The panel, top to bottom: its toolbar (the tempo and meter, snap, zoom, the Add and Edit menus, Render), the view (a
+// ruler, then for each track its header and its clips, its automation lanes under it), the inspector on the right
+// (the selected clip, point or track). What it says goes to its host (onStatus, onInfo).
 //
-// Playing: the transport is the patches' (transport.h: one for every open patch); the score plays on the box it is
-// bound to, or on a box of its own (ScoreDoc::player). The playhead follows the transport (a timer).
+// Tracks and lanes: each is as high as its row says (dragging its lower edge in the header; a double-click there
+// folds it to one line or unfolds it; with Alt every track and lane at once), kept with the score (timeline_ops.h),
+// so saved with it. What a track holds is opened from its header: a click on its name, or a double-click on the
+// header, opens what it plays (its clips' source: a sound in the sound editor with the clip's region selected, a
+// patch, a score placed) or, for its automation lanes, the patch that receives them with those receives selected.
+//
+// Playing: through the host's ScorePlayback (score_window.h): the transport is the patches' (transport.h: one for
+// every open patch); the score plays on the box it is bound to, or on a box of its own (ScoreDoc::player). The
+// playhead follows the transport (a timer).
 //
 // For a later multitrack mode the model is ready (a track is a row with its strip; inputs, streaming and track
 // patches go on the row too); what is drawn of the strip is small for now (M, S, gain and pan in the header and the
@@ -25,12 +30,15 @@
 
 #include <FL/Fl_Menu_Button.H>
 
+#include <functional>
+
 #include <map>
 #include <memory>
 
 namespace moritz {
 
 class TimelinePanel;
+class ScorePlayback;
 
 // the ruler, the track headers, the clips and the lanes
 class TimelineView : public Fl_Widget {
@@ -40,8 +48,10 @@ public:
     int handle(int e) override;
     static constexpr int kHeadW = 184;     // the track headers
     static constexpr int kRulerH = 26;
-    static constexpr int kTrackH = 64;
-    static constexpr int kLaneH = 38;
+    static constexpr int kTrackH = 64;     // a track's height unless its row says another
+    static constexpr int kLaneH = 38;      // a lane's
+    static constexpr int kFoldedH = 20;    // folded to one line
+    static constexpr int kMinH = 20, kMaxH = 400;
     int laneX() const { return x() + kHeadW; }
     int laneW() const { return std::max(1, w() - kHeadW); }
 
@@ -61,13 +71,16 @@ public:
     bool clipRect(const sc::Event& e, int& X, int& Y, int& W, int& H) const;
     uint64_t clipAt(int ex, int ey, int* zone = nullptr) const;   // zone: -1 left edge, 1 right edge, 0 body
     uint64_t pointAt(int ex, int ey) const;
-    // the mouse as a user moves it (the tests drive these as the events do)
-    void press(int ex, int ey, int clicks, bool shift, bool right);
+    const Row* edgeAt(int ex, int ey) const;   // the row whose lower edge is under the mouse, in the headers
+    bool onName(const Row& r, int ex, int ey) const;   // on the name of a track or a lane, in its header
+    int rowTop(const Row& r) const;        // its window y
+    // the mouse as a user moves it (the tests drive these as the events do); alt: a height for every row at once
+    void press(int ex, int ey, int clicks, bool shift, bool right, bool alt = false);
     void dragTo(int ex, int ey);
     void release(int ex, int ey);
 
 private:
-    enum class Drag { None, Move, TrimL, TrimR, Point, Ruler, Loop } drag_ = Drag::None;
+    enum class Drag { None, Move, TrimL, TrimR, Point, Ruler, Loop, Height } drag_ = Drag::None;
     void drawRuler();
     void drawHeader(const Row& r, int Y);
     void drawTrack(const Row& r, int Y);
@@ -85,18 +98,21 @@ private:
     double dragAt_ = 0, dragEnd_ = 0;
     int dragRow_ = -1;
     double dragV_ = 0;
-    std::string dragTrack_;
+    std::string dragTrack_, dragLane_;
+    bool dragAlt_ = false;
 
 public:
     // the drag as it shows now (for drawing): a move by dt seconds and dTrack tracks, a trimmed edge, a point
     double dragDt = 0;
     int dragDTrack = 0;
     double dragEdge = 0, dragPointT = 0, dragPointV = 0;
+    int dragHeight = 0;                    // Height: the row's new height (drawn so until it is released)
     bool dragging() const { return drag_ != Drag::None && moved_; }
     bool movingSelection() const { return dragging() && drag_ == Drag::Move; }
     bool trimming(uint64_t id) const { return dragging() && (drag_ == Drag::TrimL || drag_ == Drag::TrimR) && dragId_ == id; }
     bool trimmingLeft() const { return drag_ == Drag::TrimL; }
     bool movingPoint(uint64_t id) const { return dragging() && drag_ == Drag::Point && dragId_ == id; }
+    bool sizing() const { return dragging() && drag_ == Drag::Height; }
 };
 
 // The waveforms of the sounds clips show: decoded in the background (a file) or copied from a buffer~, kept by name
@@ -122,7 +138,8 @@ private:
 
 class TimelinePanel : public Fl_Group {
 public:
-    TimelinePanel(int x, int y, int w, int h, std::shared_ptr<ScoreDoc> doc);
+    // play: the host's transport for the document (nullptr: one of its own)
+    TimelinePanel(int x, int y, int w, int h, std::shared_ptr<ScoreDoc> doc, std::shared_ptr<ScorePlayback> play = nullptr);
     ~TimelinePanel() override;
     ScoreDoc& doc() { return *doc_; }
     const std::shared_ptr<ScoreDoc>& docPtr() const { return doc_; }
@@ -145,23 +162,23 @@ public:
     void setSnap(timeline::Snap s);
     double snapped(double t) const { return timeline::snap(doc_->score(), t, snap_); }
 
-    // ---- the track that adding goes to, the playhead
+    // ---- the track that adding goes to, the playhead (the host's ScorePlayback)
     std::string currentTrack() const;
     void setCurrentTrack(const std::string& t);
     double playhead() const;                   // where the transport is (seconds), or the playhead set
     void setPlayhead(double t);                // and the transport there
-    bool loop() const { return loop_; }
+    bool loop() const;
     void setLoop(bool on);
-    double loopFrom() const { return loopA_; }
-    double loopTo() const { return loopB_; }
+    double loopFrom() const;
+    double loopTo() const;
     void setLoopRange(double a, double b);
+    ScorePlayback& playback() { return *play_; }
 
     // ---- playing
     void togglePlay();
     void play();
     void stop();
     bool playing() const;
-    Box* player();                             // the box that plays the score
 
     // ---- the commands (menus, keys, the inspector); each one undo step
     void cut();
@@ -182,9 +199,15 @@ public:
     void tempoDialog();
     void renameTrackDialog(const std::string& track);
     void renderDialog();
-    void showRoll(int view);                   // the Roll and List buttons: the same document in the roll (0: Roll, 2: List)
     bool addSoundFile(const std::string& path, const std::string& track, double at);   // a file dropped or chosen
-    void openClip(uint64_t id);                // a sub-score: its timeline; a patch: the patch; a sound: its editor
+    // a sub-score: its window; a patch: the patch; a sound: the sound editor, the clip's region selected
+    void openClip(uint64_t id);
+    // what a track plays or drives (its name clicked, its header double-clicked): its clips' source, or the patch
+    // receiving its lanes (lane: that one) with those receives selected; false: nothing (the status says why)
+    bool openTrack(const std::string& track, const std::string& lane = "");
+    // the height of a track (lane "") or a lane (0: the default), of every track and lane when all; one undo step
+    bool setHeight(const std::string& track, const std::string& lane, int h, bool all = false);
+    void toggleFold(const std::string& track, const std::string& lane, bool all = false);   // one line, or back
     bool rendering() const { return render_.running(); }
 
     // ---- showing
@@ -196,6 +219,8 @@ public:
     const std::string& info() const { return infoText_; }
     const std::string& status() const { return messageText_; }
     std::function<void()> onTitle;             // the window's title should change
+    std::function<void(const std::string&)> onStatus;   // a message for the host's status line
+    std::function<void()> onInfo;              // info() changed
     WaveCache& waves() { return waves_; }
 
     int handle(int e) override;
@@ -209,31 +234,23 @@ private:
     void showInspector();                      // the fields of the selection
     void applyField(int k);
     void updateScrollbars();
-    void updateCrumbs();
     static void tick(void* data);
     std::shared_ptr<ScoreDoc> doc_;
+    std::shared_ptr<ScorePlayback> play_;
     int token_ = 0;
     double t0_ = 0, pps_ = 60;
     int sy_ = 0;
     timeline::Snap snap_ = timeline::Snap::Beat;
     std::string track_;                        // the current track
-    double playhead_ = 0;
-    bool loop_ = false;
-    double loopA_ = 0, loopB_ = 0;
-    bool wasPlaying_ = false;
     int followCount_ = 0;
+    bool wasPlaying_ = false;
     // the toolbar
     Fl_Group* bar_;
-    ToolButton* audioBtn_;
-    ToolButton* playBtn_;
-    ToolButton* loopBtn_;
-    Fl_Box* position_;
     Fl_Button* tempo_;
     Fl_Menu_Button* snapMenu_;
     Fl_Menu_Button* addMenu_;
     Fl_Menu_Button* editMenu_;
     Fl_Button* renderBtn_;
-    Fl_Group* crumbs_;
     TimelineView* view_;
     Fl_Scrollbar* hbar_;
     Fl_Scrollbar* vbar_;
@@ -247,50 +264,9 @@ private:
     };
     std::vector<Field> fields_;
     std::vector<Fl_Button*> insButtons_;
-    Fl_Box* info_;
-    Fl_Box* message_;
-    std::string infoText_, messageText_, positionText_, tempoText_, insKey_;
-    std::vector<std::weak_ptr<ScoreDoc>> crumbDocs_;   // the breadcrumb's scores
+    std::string infoText_, messageText_, tempoText_, insKey_;
     WaveCache waves_;
     ScoreRender render_;
 };
-
-// The panel in a window of its own
-class TimelineWindow : public Fl_Double_Window {
-public:
-    explicit TimelineWindow(std::shared_ptr<ScoreDoc> doc);
-    ~TimelineWindow() override;
-    TimelinePanel* panel() const { return panel_; }
-    ScoreDoc& doc() { return panel_->doc(); }
-    bool save();                               // its file (Save As when it has none; a score kept in a patch: a copy)
-    bool saveAs();
-    bool confirmDiscard();                     // asks when closing would lose edits; false: cancel
-    void updateTitle();
-    int handle(int e) override;
-
-private:
-    TimelinePanel* panel_;
-    Fl_Menu_Bar* menu_ = nullptr;
-};
-
-// ---- the application's side (timeline_window.cpp)
-TimelineWindow* openTimeline(std::shared_ptr<ScoreDoc> doc);   // its window (already open: brought forward)
-TimelineWindow* openScoreBoxTimeline(Box* box);                // a score box's
-TimelineWindow* openScoreFile(const std::string& path);        // a .score file (File > Open Score...)
-void openScoreDialog();
-TimelineWindow* newScoreTimeline();                            // File > New Score
-TimelineWindow* frontTimeline();                               // the timeline window in front, if one is
-// saving a score as its windows (timeline and roll) do: its file; a score kept in a patch: the patch; a score kept
-// inside another: that one; a new score: Save As (a score of a box or placed: a copy). status: what was done
-bool saveScoreDocument(const std::shared_ptr<ScoreDoc>& d, const std::function<void(const std::string&)>& status);
-bool saveScoreDocumentAs(const std::shared_ptr<ScoreDoc>& d, const std::function<void(const std::string&)>& status);
-// a window showing d closes (except: that window): asks when edits only it shows would be lost; false: cancel
-bool confirmDiscardScoreDocument(const std::shared_ptr<ScoreDoc>& d, const Fl_Window* except);
-const std::vector<TimelineWindow*>& timelineWindows();
-void closeTimeline(TimelineWindow* w);                         // already confirmed
-void closeAllTimelines();                                      // at once, nothing asked (quitting, the tests' end)
-bool confirmCloseTimelines();                                  // Quit: each one asked; false: cancel
-// the test actions (guitest.cpp): act=tl...
-bool timelineTestAction(const std::string& verb, const std::string& arg);
 
 }  // namespace moritz

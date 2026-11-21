@@ -1,9 +1,11 @@
 // Copyright (c) 2026 Carmine-Emanuele Cella. SPDX-License-Identifier: BSD-2-Clause
-// timeline.cpp — the timeline's panel (timeline.h): the transport bar, the ruler, tracks and clips, automation
-// lanes, the inspector, the mouse and the keys; every edit goes through timeline_ops.h, one undo step each.
+// timeline.cpp — the timeline's panel (timeline.h): its toolbar, the ruler, tracks and clips, automation lanes, the
+// heights of tracks and lanes, opening what a track holds, the inspector, the mouse and the keys; every edit goes
+// through timeline_ops.h, one undo step each. The transport is the host's (score_window.h).
 
 #include "timeline.h"
-#include "roll.h"
+#include "score_window.h"
+#include "sound_editor.h"
 #include "transport.h"
 #include "ui_util.h"
 
@@ -24,7 +26,6 @@ namespace tl = timeline;
 namespace {
 
 constexpr int kInspectorW = 252;
-constexpr int kCrumbsH = 24;
 constexpr int kScrollW = 14;
 constexpr int kFields = 10;
 constexpr int kButtons = 6;
@@ -193,16 +194,40 @@ void TimelineView::layoutRows() {
     const sc::Score& s = tp_->doc().score();
     rows_.clear();
     int y = 0;
+    auto height = [](int h, int def) { return h > 0 ? std::clamp(h, kMinH, kMaxH) : def; };
     for (auto& t : tl::tracks(s)) {
-        rows_.push_back(Row{t, -1, "", 0, 1, y, kTrackH});
-        y += kTrackH;
+        int h = height(tl::trackHeight(s, t), kTrackH);
+        rows_.push_back(Row{t, -1, "", 0, 1, y, h});
+        y += h;
         int k = 0;
         for (auto& l : tl::lanes(s, t)) {
-            rows_.push_back(Row{t, k++, l.name, l.lo, l.hi, y, kLaneH});
-            y += kLaneH;
+            int lh = height(l.h, kLaneH);
+            rows_.push_back(Row{t, k++, l.name, l.lo, l.hi, y, lh});
+            y += lh;
         }
     }
     contentH_ = y;
+}
+
+int TimelineView::rowTop(const Row& r) const { return y() + kRulerH + r.y - tp_->scrollY(); }
+
+const TimelineView::Row* TimelineView::edgeAt(int ex, int ey) const {
+    if (ex >= laneX() || ey < y() + kRulerH) return nullptr;
+    for (auto& r : rows_) {
+        int bottom = rowTop(r) + r.h;
+        if (std::abs(ey - bottom) <= 3) return &r;
+    }
+    return nullptr;
+}
+
+bool TimelineView::onName(const Row& r, int ex, int ey) const {
+    int Y = rowTop(r);
+    std::string name = r.lane >= 0 ? r.laneName : r.track.empty() ? std::string("(no track)") : r.track;
+    fl_font(r.lane >= 0 ? FL_HELVETICA : FL_HELVETICA_BOLD, r.lane >= 0 ? 11 : 12);
+    int nx = x() + (r.lane >= 0 ? 16 : 12);
+    int nw = std::min((int)fl_width(name.c_str()) + 4, kHeadW - 64);
+    int base = Y + std::min(r.lane >= 0 ? 15 : 20, r.h - 5);
+    return ex >= nx - 2 && ex < nx + nw && ey >= base - 14 && ey < base + 4;
 }
 
 const TimelineView::Row* TimelineView::rowAt(int ey) const {
@@ -218,12 +243,14 @@ bool TimelineView::clipRect(const sc::Event& e, int& X, int& Y, int& W, int& H) 
         if (r.lane >= 0 || r.track != e.row) continue;
         X = tp_->xOf(e.at);
         W = std::max(4, tp_->xOf(e.end()) - X);
+        int rh = sizing() && dragTrack_ == r.track && dragLane_.empty() ? dragHeight : r.h;
         Y = y() + kRulerH + r.y - tp_->scrollY() + 3;
-        H = r.h - 6;
+        H = std::max(4, rh - 6);
         if (e.kind == sc::Kind::Note) {              // a note: a bar at its pitch
             double p = std::clamp((e.sounding() - 36) / 60.0, 0.0, 1.0);
-            Y = Y + 14 + (int)std::lround((1 - p) * (H - 20));
-            H = 5;
+            int top = H > 30 ? 14 : 1;
+            Y = Y + top + (int)std::lround((1 - p) * std::max(0, H - top - 6));
+            H = std::min(5, H);
         }
         return true;
     }
@@ -265,7 +292,7 @@ uint64_t TimelineView::pointAt(int ex, int ey) const {
 int TimelineView::headerButton(const Row& r, int ex, int ey) const {
     if (r.lane >= 0) return 0;
     int Y = y() + kRulerH + r.y - tp_->scrollY();
-    int bx = x() + kHeadW - 50, by = Y + 8;
+    int bx = x() + kHeadW - 50, by = Y + std::min(8, std::max(0, (r.h - 17) / 2));
     if (ey >= by && ey < by + 16) {
         if (ex >= bx && ex < bx + 20) return 1;
         if (ex >= bx + 22 && ex < bx + 42) return 2;
@@ -326,19 +353,26 @@ void TimelineView::drawRuler() {
 void TimelineView::drawHeader(const Row& r, int Y) {
     ScoreDoc& d = tp_->doc();
     bool cur = r.track == tp_->currentTrack();
+    fl_push_clip(x(), Y, kHeadW, std::max(1, r.h - 1));
     fl_color(cur && r.lane < 0 ? kHeadSel : r.lane < 0 ? kHeadBg : fl_rgb_color(33, 34, 40));
     fl_rectf(x(), Y, kHeadW, r.h - 1);
     int ti = tl::trackIndex(d.score(), r.track);
     fl_color(kTrackColours[(ti < 0 ? 0 : ti) % 6]);
     fl_rectf(x(), Y, 4, r.h - 1);
+    // the lower edge: dragged, it sizes the row (a grip, faint)
+    fl_color(fl_rgb_color(58, 61, 70));
+    fl_xyline(x() + kHeadW / 2 - 8, Y + r.h - 3, x() + kHeadW / 2 + 8);
     if (r.lane >= 0) {
         fl_font(FL_HELVETICA, 11);
-        fl_color(kText);
-        fl_draw(r.laneName.c_str(), x() + 16, Y + 15);
-        fl_font(FL_HELVETICA, 9);
-        fl_color(kDim);
-        std::string sub = "receive " + r.laneName + " · " + fmt(r.lo) + "…" + fmt(r.hi);
-        fl_draw(sub.c_str(), x() + 16, Y + 28);
+        fl_color(fl_rgb_color(150, 190, 250));            // the name opens the patch that receives it
+        fl_draw(r.laneName.c_str(), x() + 16, Y + std::min(15, r.h - 5));
+        if (r.h >= 32) {
+            fl_font(FL_HELVETICA, 9);
+            fl_color(kDim);
+            std::string sub = "receive " + r.laneName + " · " + fmt(r.lo) + "…" + fmt(r.hi);
+            fl_draw(sub.c_str(), x() + 16, Y + 28);
+        }
+        fl_pop_clip();
         return;
     }
     sc::Strip st = tl::stripOf(d.score(), r.track);
@@ -346,17 +380,21 @@ void TimelineView::drawHeader(const Row& r, int Y) {
     fl_color(kText);
     std::string name = r.track.empty() ? "(no track)" : r.track;
     fl_push_clip(x() + 8, Y, kHeadW - 64, r.h);
-    fl_draw(name.c_str(), x() + 12, Y + 20);
+    fl_draw(name.c_str(), x() + 12, Y + std::min(20, r.h - 5));
     fl_pop_clip();
     fl_font(FL_HELVETICA, 10);
     fl_color(kDim);
-    std::string sub = "gain " + dbText(st.gain) + " dB · pan " + azText(st.az);
-    fl_draw(sub.c_str(), x() + 12, Y + 38);
-    int n = 0;
-    for (auto& e : d.score().events()) n += e->row == r.track && tl::isClip(*e);
-    fl_draw((std::to_string(n) + (n == 1 ? " clip" : " clips")).c_str(), x() + 12, Y + 53);
+    if (r.h >= 44) {
+        std::string sub = "gain " + dbText(st.gain) + " dB · pan " + azText(st.az);
+        fl_draw(sub.c_str(), x() + 12, Y + 38);
+    }
+    if (r.h >= 58) {
+        int n = 0;
+        for (auto& e : d.score().events()) n += e->row == r.track && tl::isClip(*e);
+        fl_draw((std::to_string(n) + (n == 1 ? " clip" : " clips")).c_str(), x() + 12, Y + 53);
+    }
     // M and S
-    int bx = x() + kHeadW - 50, by = Y + 8;
+    int bx = x() + kHeadW - 50, by = Y + std::min(8, std::max(0, (r.h - 17) / 2));
     auto button = [&](int bxx, const char* t, bool on, Fl_Color onC) {
         fl_color(on ? onC : fl_rgb_color(60, 63, 72));
         fl_rectf(bxx, by, 20, 16);
@@ -366,6 +404,7 @@ void TimelineView::drawHeader(const Row& r, int Y) {
     };
     button(bx, "M", st.mute, fl_rgb_color(230, 170, 60));
     button(bx + 22, "S", st.solo, fl_rgb_color(110, 200, 120));
+    fl_pop_clip();
 }
 
 void TimelineView::drawClip(const sc::Event& e, int X, int Y, int W, int H, bool sel) {
@@ -522,6 +561,7 @@ void TimelineView::drawTrack(const Row& r, int Y) {
 
 void TimelineView::drawLane(const Row& r, int Y) {
     ScoreDoc& d = tp_->doc();
+    if (r.h < 12) return;
     fl_color(fl_rgb_color(24, 25, 30));
     fl_rectf(laneX(), Y, laneW(), r.h - 1);
     fl_push_clip(laneX(), Y, laneW(), r.h - 1);
@@ -565,7 +605,14 @@ void TimelineView::draw() {
     fl_rectf(x(), y(), w(), h());
     int top = y() + kRulerH;
     fl_push_clip(x(), top, w(), h() - kRulerH);
-    for (auto& r : rows_) {
+    int shift = 0;                                       // a row being sized: those under it move
+    for (auto& rr : rows_) {
+        Row r = rr;
+        r.y += shift;
+        if (sizing() && rr.track == dragTrack_ && (rr.lane < 0 ? dragLane_.empty() : rr.laneName == dragLane_)) {
+            shift += dragHeight - rr.h;
+            r.h = dragHeight;
+        }
         int Y = top + r.y - tp_->scrollY();
         if (Y + r.h < top || Y > y() + h()) continue;
         drawHeader(r, Y);
@@ -603,7 +650,7 @@ void TimelineView::draw() {
 
 // ---------------------------------------------------------------- the view: the mouse
 
-void TimelineView::press(int ex, int ey, int clicks, bool shift, bool right) {
+void TimelineView::press(int ex, int ey, int clicks, bool shift, bool right, bool alt) {
     ScoreDoc& d = tp_->doc();
     pressX_ = ex;
     pressY_ = ey;
@@ -611,6 +658,20 @@ void TimelineView::press(int ex, int ey, int clicks, bool shift, bool right) {
     drag_ = Drag::None;
     dragDt = 0;
     dragDTrack = 0;
+    dragAlt_ = alt;
+    if (const Row* er = right ? nullptr : edgeAt(ex, ey)) {   // a lower edge: sized by a drag, folded by a double-click
+        std::string track = er->track, lane = er->lane >= 0 ? er->laneName : std::string();
+        if (clicks) {
+            tp_->toggleFold(track, lane, alt);
+            return;
+        }
+        drag_ = Drag::Height;
+        dragTrack_ = track;
+        dragLane_ = lane;
+        dragHeight = er->h;
+        dragV_ = er->h;
+        return;
+    }
     if (ey < y() + kRulerH) {                            // the ruler: the playhead there; dragged: the loop
         if (ex < laneX()) return;
         tp_->setPlayhead(std::max(0.0, tp_->snapped(tp_->timeAt(ex))));
@@ -657,7 +718,8 @@ void TimelineView::press(int ex, int ey, int clicks, bool shift, bool right) {
             else if (k == 4) tp_->after(tl::deleteTrack(d, track));
             return;
         }
-        if (clicks && r->lane < 0) tp_->renameTrackDialog(track);
+        // its name (a click) or the header (a double-click): what the track plays or drives, or the lane's patch
+        if (clicks || onName(*r, ex, ey)) tp_->openTrack(track, r->lane >= 0 ? r->laneName : std::string());
         return;
     }
     int rowIndex = (int)(r - rows_.data());             // (an edit lays the rows out again: r is not kept)
@@ -746,6 +808,9 @@ void TimelineView::dragTo(int ex, int ey) {
         dragPointV = r.lo + (1 - std::clamp((double)(ey - Y - 4) / std::max(1, r.h - 8), 0.0, 1.0)) * (r.hi - r.lo);
         break;
     }
+    case Drag::Height:
+        dragHeight = std::clamp((int)std::lround(dragV_) + (ey - pressY_), kMinH, kMaxH);
+        break;
     case Drag::Ruler:
         drag_ = Drag::Loop;
         [[fallthrough]];
@@ -785,6 +850,7 @@ void TimelineView::release(int ex, int ey) {
         if (dragPointT != dragAt_ || dragPointV != dragV_) tp_->after(tl::movePoint(d, dragId_, dragPointT, dragPointV));
         break;
     case Drag::Loop: tp_->setLoop(true); break;
+    case Drag::Height: tp_->setHeight(dragTrack_, dragLane_, dragHeight, dragAlt_); break;
     default: break;
     }
     dragDt = 0;
@@ -845,15 +911,20 @@ int TimelineView::handle(int e) {
     case FL_MOVE: {
         int zone = 0;
         bool edge = Fl::event_y() >= y() + kRulerH && Fl::event_x() >= laneX() && clipAt(Fl::event_x(), Fl::event_y(), &zone) && zone != 0;
-        window()->cursor(edge ? FL_CURSOR_WE : FL_CURSOR_DEFAULT);
+        const Row* r = edgeAt(Fl::event_x(), Fl::event_y());
+        window()->cursor(r ? FL_CURSOR_NS : edge ? FL_CURSOR_WE : FL_CURSOR_DEFAULT);
         return 1;
     }
-    case FL_PUSH:
+    case FL_PUSH: {
+        // the event read first: taking the focus from another window can send events that change it
+        int ex = Fl::event_x(), ey = Fl::event_y(), clicks = Fl::event_clicks();
+        bool shift = Fl::event_shift() != 0, alt = Fl::event_alt() != 0;
+        bool right = Fl::event_button() == FL_RIGHT_MOUSE || (Fl::event_button() == FL_LEFT_MOUSE && Fl::event_ctrl());
         take_focus();
-        press(Fl::event_x(), Fl::event_y(), Fl::event_clicks(), Fl::event_shift() != 0,
-              Fl::event_button() == FL_RIGHT_MOUSE || (Fl::event_button() == FL_LEFT_MOUSE && Fl::event_ctrl()));
-        if (Fl::event_clicks()) Fl::event_clicks(0);
+        press(ex, ey, clicks, shift, right, alt);
+        if (clicks) Fl::event_clicks(0);
         return 1;
+    }
     case FL_DRAG:
         dragTo(Fl::event_x(), Fl::event_y());
         return 1;
@@ -886,8 +957,8 @@ int TimelineView::handle(int e) {
 
 // ---------------------------------------------------------------- the panel
 
-TimelinePanel::TimelinePanel(int X, int Y, int W, int H, std::shared_ptr<ScoreDoc> doc)
-    : Fl_Group(X, Y, W, H), doc_(std::move(doc)) {
+TimelinePanel::TimelinePanel(int X, int Y, int W, int H, std::shared_ptr<ScoreDoc> doc, std::shared_ptr<ScorePlayback> play)
+    : Fl_Group(X, Y, W, H), doc_(std::move(doc)), play_(play ? std::move(play) : std::make_shared<ScorePlayback>(doc_)) {
     box(FL_FLAT_BOX);
     color(kBgLocked);
     bar_ = new Fl_Group(X, Y, W, kToolH);
@@ -917,23 +988,6 @@ TimelinePanel::TimelinePanel(int X, int Y, int W, int H, std::shared_ptr<ScoreDo
         bx += bw + 4;
         return m;
     };
-    audioBtn_ = button(96, ToolButton::Power, "Audio", true, withShortcut("Start or stop audio", "patch.audio"),
-                       [](Fl_Widget*, void* d) { App::get().toggleAudio(); static_cast<P*>(d)->refreshInfo(); }, 12);
-    button(34, ToolButton::ToStart, "", false, "The playhead to the start (Home)",
-           [](Fl_Widget*, void* d) { static_cast<P*>(d)->setPlayhead(0); });
-    playBtn_ = button(34, ToolButton::Play, "", true, "Play from the playhead (Space)",
-                      [](Fl_Widget*, void* d) { static_cast<P*>(d)->togglePlay(); });
-    button(34, ToolButton::Stop, "", false, "Stop (Space)", [](Fl_Widget*, void* d) { static_cast<P*>(d)->stop(); });
-    loopBtn_ = button(34, ToolButton::Loop, "", true, "Loop (L): drag in the ruler to set where",
-                      [](Fl_Widget* w, void* d) { static_cast<P*>(d)->setLoop(static_cast<ToolButton*>(w)->value() != 0); }, 8);
-    position_ = new Fl_Box(bx, by, 190, bh);
-    position_->box(FL_FLAT_BOX);
-    position_->color(fl_rgb_color(14, 15, 17));
-    position_->labelfont(FL_COURIER_BOLD);
-    position_->labelsize(13);
-    position_->labelcolor(fl_rgb_color(110, 220, 140));
-    position_->tooltip("Where the playhead is: bar.beat.tick and minutes:seconds");
-    bx += 190 + 8;
     tempo_ = new Fl_Button(bx, by, 96, bh);
     tempo_->box(FL_FLAT_BOX);
     tempo_->color(kBoxFill);
@@ -997,24 +1051,11 @@ TimelinePanel::TimelinePanel(int X, int Y, int W, int H, std::shared_ptr<ScoreDo
     renderBtn_->tooltip("Render the score offline into a stereo WAV file");
     renderBtn_->callback([](Fl_Widget*, void* d) { static_cast<P*>(d)->renderDialog(); }, this);
     bx += 84 + 8;
-    // the views of the score (mockup 4): this one, and the roll's (a window of its own on the same document)
-    auto* here = button(74, ToolButton::None, "Timeline", true, "The score as tracks (this view)", [](Fl_Widget* w, void*) {
-        static_cast<ToolButton*>(w)->value(1);
-    }, 2);
-    here->value(1);
-    button(48, ToolButton::None, "Roll", false, "The same score as a roll: staves, edited note by note (the same edits, undo and selection)",
-           [](Fl_Widget*, void* d) { static_cast<P*>(d)->showRoll(0); }, 2);
-    button(44, ToolButton::None, "List", false, "The same score as a list of its events, each cell edited",
-           [](Fl_Widget*, void* d) { static_cast<P*>(d)->showRoll(2); }, 8);
     auto* spacer = new Fl_Box(bx, Y, std::max(1, X + W - bx), kToolH);
     spacer->box(FL_NO_BOX);
     bar_->resizable(spacer);
     bar_->end();
-    crumbs_ = new Fl_Group(X, Y + kToolH, W, kCrumbsH);
-    crumbs_->box(FL_FLAT_BOX);
-    crumbs_->color(fl_rgb_color(30, 32, 40));
-    crumbs_->end();
-    int midY = Y + kToolH + kCrumbsH, midH = H - kToolH - kCrumbsH - kStatusH;
+    int midY = Y + kToolH, midH = H - kToolH;
     int viewW = W - kInspectorW - kScrollW;
     view_ = new TimelineView(X, midY, viewW, midH - kScrollW, this);
     vbar_ = new Fl_Scrollbar(X + viewW, midY, kScrollW, midH - kScrollW);
@@ -1038,16 +1079,6 @@ TimelinePanel::TimelinePanel(int X, int Y, int W, int H, std::shared_ptr<ScoreDo
     inspector_->color(fl_rgb_color(32, 33, 38));
     buildInspector();
     inspector_->end();
-    info_ = new Fl_Box(X, Y + H - kStatusH, W / 2, kStatusH);
-    message_ = new Fl_Box(X + W / 2, Y + H - kStatusH, W - W / 2, kStatusH);
-    for (Fl_Box* b : {info_, message_}) {
-        b->box(FL_FLAT_BOX);
-        b->color(kStatusBg);
-        b->labelcolor(kDim);
-        b->labelsize(11);
-    }
-    info_->align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE | FL_ALIGN_CLIP);
-    message_->align(FL_ALIGN_RIGHT | FL_ALIGN_INSIDE | FL_ALIGN_CLIP);
     end();
     resizable(view_);
     token_ = doc_->listen([this](unsigned what) {
@@ -1059,20 +1090,15 @@ TimelinePanel::TimelinePanel(int X, int Y, int W, int H, std::shared_ptr<ScoreDo
     render_.onProgress = [this](float f) { setStatus("rendering… " + std::to_string((int)(f * 100)) + "%"); };
     auto all = tl::tracks(doc_->score());
     if (!all.empty()) track_ = all.front();
-    audioBtn_->value(App::get().audio.running());
-    audioBtn_->copy_label(App::get().audio.running() ? "Audio On" : "Audio Off");
     view_->layoutRows();
     layoutChildren();
     fit();
-    updateCrumbs();
     showInspector();
     refreshInfo();
-    setStatus("Space plays · drag clips, their edges to trim · click a lane to add a point · " + shortcutText(FL_COMMAND) +
-              "wheel zooms · right-click: Edit");
+    setStatus("drag clips, their edges trim · click a lane: a point · a track's name opens what it plays · drag a "
+              "header's lower edge to size it");
     Fl::add_timeout(0.1, tick, this);
 }
-
-void TimelinePanel::showRoll(int view) { openRoll(doc_, view); }
 
 TimelinePanel::~TimelinePanel() {
     Fl::remove_timeout(tick, this);
@@ -1090,19 +1116,13 @@ void TimelinePanel::layoutChildren() {
     int X = x(), Y = y(), W = w(), H = h();
     bar_->resize(X, Y, W, kToolH);
     int top = Y + kToolH;
-    int ch = crumbs_->visible() ? kCrumbsH : 0;
-    crumbs_->resize(X, top, W, ch);
-    top += ch;
-    int status = Y + H - kStatusH;
-    int midH = std::max(60, status - top);
+    int midH = std::max(60, Y + H - top);
     int viewW = std::max(300, W - kInspectorW - kScrollW);
     view_->resize(X, top, viewW, midH - kScrollW);
     vbar_->resize(X + viewW, top, kScrollW, midH - kScrollW);
     hbar_->resize(X + TimelineView::kHeadW, top + midH - kScrollW, viewW - TimelineView::kHeadW + kScrollW, kScrollW);
     inspector_->resize(X + W - kInspectorW, top, kInspectorW, midH);
     showInspector();
-    info_->resize(X, status, W / 2, kStatusH);
-    message_->resize(X + W / 2, status, W - W / 2, kStatusH);
     updateScrollbars();
     redraw();
 }
@@ -1170,46 +1190,26 @@ void TimelinePanel::setCurrentTrack(const std::string& t) {
 
 // ---- playing
 
-Box* TimelinePanel::player() { return doc_->player(&App::get().host); }
-
-// the transport the score plays on: its box's patch's, or the application's (every open patch's)
-static Patch* clockPatch(const ScoreDoc& d) {
-    Box* b = d.box();
-    return b ? b->patch : &App::get().host;
-}
-
-bool TimelinePanel::playing() const { return transportOf(clockPatch(*doc_))->playing(); }
-
-double TimelinePanel::playhead() const {
-    if (!playing()) return playhead_;
-    Patch* p = clockPatch(*doc_);
-    auto t = transportOf(p);
-    int lap;
-    double pos;
-    t->where(p, lap, pos);
-    return t->seconds(pos);
-}
+bool TimelinePanel::playing() const { return play_->playing(); }
+double TimelinePanel::playhead() const { return play_->position(); }
 
 void TimelinePanel::setPlayhead(double t) {
-    playhead_ = std::max(0.0, t);
-    if (playing())
-        if (Box* b = player()) transportOf(b->patch)->locate(b->patch, playhead_);
+    play_->setPlayhead(t);
     view_->redraw();
     refreshInfo();
 }
 
+bool TimelinePanel::loop() const { return play_->loop(); }
+double TimelinePanel::loopFrom() const { return play_->loopFrom(); }
+double TimelinePanel::loopTo() const { return play_->loopTo(); }
+
 void TimelinePanel::setLoop(bool on) {
-    loop_ = on && loopB_ > loopA_;
-    loopBtn_->value(loop_);
-    loopBtn_->redraw();
-    if (playing())
-        if (Box* b = player()) transportOf(b->patch)->setLoop(b->patch, loop_, loopA_, loopB_);
+    play_->setLoop(on);
     view_->redraw();
 }
 
 void TimelinePanel::setLoopRange(double a, double b) {
-    loopA_ = a;
-    loopB_ = b;
+    play_->setLoopRange(a, b);
     view_->redraw();
 }
 
@@ -1219,59 +1219,28 @@ void TimelinePanel::togglePlay() {
 }
 
 void TimelinePanel::play() {
-    App& app = App::get();
-    playBtn_->value(0);
-    if (!app.audio.running()) {
-        setStatus("audio is off: turn it on (the Audio button, " + shortcutText(FL_COMMAND + '/') + ") to listen");
-        return;
-    }
-    Box* b = player();
-    if (!b) {
-        setStatus("nothing can play this score now");
-        return;
-    }
-    auto t = transportOf(b->patch);
-    const sc::Score& s = doc_->score();
-    t->setTempo(b->patch, s.bpm);                       // bars and beats as the score counts them
-    t->setMeter(b->patch, s.meterNum, s.meterDen);
-    t->setLoop(b->patch, loop_, loopA_, loopB_);
-    t->locate(b->patch, playhead_);
-    t->play(b->patch);
-    wasPlaying_ = true;
-    playBtn_->value(1);
-    Fl::remove_timeout(tick, this);
-    Fl::add_timeout(1.0 / 30, tick, this);
+    play_->play();
+    setStatus(play_->message);
+    view_->redraw();
 }
 
 void TimelinePanel::stop() {
-    Patch* p = clockPatch(*doc_);
-    auto t = transportOf(p);
-    if (t->playing()) {
-        playhead_ = playhead();
-        t->stop(p);
-    }
-    wasPlaying_ = false;
-    playBtn_->value(0);
+    play_->stop();
     view_->redraw();
     refreshInfo();
 }
 
 void TimelinePanel::tick(void* data) {
     auto* p = static_cast<TimelinePanel*>(data);
-    App& app = App::get();
     if (++p->followCount_ % 3 == 0) p->doc_->follow();     // a message to the box, the box replaced or gone
-    if (p->audioBtn_->value() != (app.audio.running() ? 1 : 0)) {
-        p->audioBtn_->value(app.audio.running());
-        p->audioBtn_->copy_label(app.audio.running() ? "Audio On" : "Audio Off");
-        p->audioBtn_->redraw();
-    }
+    p->play_->tick();
     bool now = p->playing();
-    if (now != (p->playBtn_->value() != 0)) {
-        p->playBtn_->value(now);
-        p->playBtn_->redraw();
-        if (!now) p->wasPlaying_ = false;
+    if (now != p->wasPlaying_) {                            // stopped: the playhead drawn where it is left
+        p->wasPlaying_ = now;
+        p->view_->redraw();
+        p->refreshInfo();
     }
-    if (now) {
+    if (now && p->visible_r()) {
         double ph = p->playhead();
         double shown = p->view_->laneW() / p->pps_;
         if (ph < p->t0_ || ph > p->t0_ + shown) p->setView(ph - shown * 0.05, p->pps_);   // the view follows
@@ -1451,7 +1420,7 @@ void TimelinePanel::openClip(uint64_t id) {
     switch (e->kind) {
     case sc::Kind::Score: {
         auto sub = ScoreDoc::ofPlacement(doc_, id);
-        if (sub) openTimeline(sub);
+        if (sub) openScore(sub, (int)ScoreView::Timeline);
         break;
     }
     case sc::Kind::Patch: {
@@ -1460,18 +1429,128 @@ void TimelinePanel::openClip(uint64_t id) {
         App::get().openDocument(p);
         break;
     }
-    case sc::Kind::Sound:
+    case sc::Kind::Sound: {
+        SoundWindow* w = nullptr;
         if (e->buffer) {
             Patch* root = doc_->box() ? doc_->box()->patch->root() : &App::get().host;
-            openBufferEditor(root, e->source);
+            w = App::get().editBuffer(root, e->source);
         } else {
-            App::get().openSound(tl::sourcePath(*doc_, e->source));
+            w = App::get().openSound(tl::sourcePath(*doc_, e->source));
         }
+        if (!w) break;
+        // the clip's region selected and shown (to < 0: as long as the clip, at the clip's stretch)
+        SoundDoc& sd = w->doc();
+        double from = std::max(0.0, e->from), to = e->to >= 0 ? e->to : from + e->dur;
+        long a = (long)std::lround(from * sd.sr()), b = (long)std::lround(to * sd.sr());
+        sd.select(a, b);
+        SoundEditor* ed = w->editor();
+        double pad = std::max(1.0, (double)(b - a) * 0.1);
+        ed->setView(a - pad, std::max(1e-3, (b - a + 2 * pad) / std::max(1, ed->view()->w())));
+        ed->selectionChanged();
+        ed->setStatus("the clip's region: " + fmt(from, "%.3f") + " s to " + fmt(to, "%.3f") + " s");
         break;
+    }
     default:
         setStatus("notes are edited in the roll");
         break;
     }
+}
+
+// the receives of these names in the open patches selected (each document brought forward, the subpatch that holds
+// one opened, the view scrolled to the first); how many there are
+static int selectReceives(const std::vector<std::string>& names, std::string& where) {
+    App& app = App::get();
+    std::vector<Box*> found;
+    for (auto& n : names)
+        for (ReceiveBox* r : app.host.receivers(n)) found.push_back(r);
+    if (found.empty()) return 0;
+    std::vector<DocumentWindow*> docs;
+    for (Box* b : found)
+        if (DocumentWindow* d = b->patch ? app.docOf(b->patch) : nullptr)
+            if (std::find(docs.begin(), docs.end(), d) == docs.end()) docs.push_back(d);
+    for (DocumentWindow* d : docs) d->patch.forEachBox([](Box* b) { b->selected = false; });
+    for (Box* b : found) b->selected = true;
+    for (DocumentWindow* d : docs) {
+        d->show();
+        if (!where.empty()) where += ", ";
+        where += baseOf(d->path().empty() ? std::string("Untitled") : d->path());
+        for (Box* b : found) {
+            if (app.docOf(b->patch) != d) continue;
+            if (b->patch != &d->patch && b->patch->owner) d->openSubpatch(b->patch->owner);   // inside a subpatch: its window
+            else if (Canvas* c = d->canvas) {
+                double z = c->zoom() > 0 ? c->zoom() : 1;
+                int vw = (int)(c->w() / z), vh = (int)(c->h() / z);
+                if (b->x < c->scrollX() || b->y < c->scrollY() || b->x + b->w > c->scrollX() + vw || b->y + b->h > c->scrollY() + vh)
+                    c->scrollTo(b->x - 40, b->y - 40);
+            }
+        }
+        d->patch.redraw();
+    }
+    return (int)found.size();
+}
+
+bool TimelinePanel::openTrack(const std::string& track, const std::string& lane) {
+    const sc::Score& s = doc_->score();
+    setCurrentTrack(track);
+    std::vector<std::string> names;
+    if (!lane.empty()) names.push_back(lane);
+    else {
+        // what it plays: the clip selected on it, else its first one (a sound, a patch, a score placed)
+        uint64_t clip = 0;
+        for (uint64_t id : doc_->selection())
+            if (auto e = s.find(id); e && e->row == track && tl::isClip(*e) && e->kind != sc::Kind::Note) { clip = id; break; }
+        if (!clip)
+            for (const sc::Event* e : s.byTime())
+                if (e->row == track && tl::isClip(*e) && e->kind != sc::Kind::Note) { clip = e->id; break; }
+        if (clip) {
+            openClip(clip);
+            return true;
+        }
+        for (auto& l : tl::lanes(s, track)) names.push_back(l.name);    // what it drives: its lanes' receives
+    }
+    if (names.empty()) {
+        bool notes = std::any_of(s.events().begin(), s.events().end(), [&](const auto& e) { return e->row == track && e->kind == sc::Kind::Note; });
+        setStatus(notes ? "its notes are played by the score's notes outlet: edit them in the Roll" : "nothing on this track to open");
+        return false;
+    }
+    std::string where, list;
+    for (auto& n : names) list += (list.empty() ? "" : " ") + n;
+    int n = selectReceives(names, where);
+    if (!n) {
+        if (Box* b = doc_->box())                              // the patch the score is in, at least
+            if (DocumentWindow* d = App::get().docOf(b->patch)) d->show();
+        setStatus("no receive " + list + " in the open patches");
+        return false;
+    }
+    setStatus("receive " + list + ": " + std::to_string(n) + " selected in " + where);
+    return true;
+}
+
+bool TimelinePanel::setHeight(const std::string& track, const std::string& lane, int h, bool all) {
+    std::vector<tl::Height> hs;
+    int v = h <= 0 ? 0 : std::clamp(h, TimelineView::kMinH, TimelineView::kMaxH);
+    if ((lane.empty() ? TimelineView::kTrackH : TimelineView::kLaneH) == v) v = 0;   // the default: nothing kept
+    if (all) {                                              // every track (a track's edge) or every lane (a lane's)
+        for (auto& r : view_->rows())
+            if (lane.empty() == (r.lane < 0)) hs.push_back({r.track, r.lane < 0 ? std::string() : r.laneName, v});
+    } else {
+        hs.push_back({track, lane, v});
+    }
+    bool ok = tl::setHeights(*doc_, hs);
+    after(ok);
+    return ok;
+}
+
+void TimelinePanel::toggleFold(const std::string& track, const std::string& lane, bool all) {
+    int h = 0;
+    for (auto& r : view_->rows())
+        if (r.track == track && (lane.empty() ? r.lane < 0 : r.laneName == lane)) h = r.h;
+    bool fold = h > TimelineView::kFoldedH;                 // folded: back to the default; else to one line
+    std::vector<tl::Height> hs;
+    for (auto& r : view_->rows())
+        if (all || (r.track == track && (lane.empty() ? r.lane < 0 : r.laneName == lane)))
+            hs.push_back({r.track, r.lane < 0 ? std::string() : r.laneName, fold ? TimelineView::kFoldedH : 0});
+    after(tl::setHeights(*doc_, hs));
 }
 
 // ---- showing
@@ -1483,7 +1562,6 @@ void TimelinePanel::contentsChanged() {
     view_->redraw();
     showInspector();
     refreshInfo();
-    updateCrumbs();
 }
 
 void TimelinePanel::selectionChanged() {
@@ -1493,7 +1571,6 @@ void TimelinePanel::selectionChanged() {
 }
 
 void TimelinePanel::stateChanged() {
-    updateCrumbs();
     refreshInfo();
     if (!doc_->message.empty()) setStatus(doc_->message);
     if (onTitle) onTitle();
@@ -1502,8 +1579,7 @@ void TimelinePanel::stateChanged() {
 void TimelinePanel::setStatus(const std::string& s) {
     if (s == messageText_) return;
     messageText_ = s;
-    message_->copy_label((s + "  ").c_str());
-    message_->redraw();
+    if (onStatus) onStatus(s);
 }
 
 void TimelinePanel::refreshInfo() {
@@ -1515,15 +1591,7 @@ void TimelinePanel::refreshInfo() {
     if (!doc_->selection().empty()) inf += " · " + std::to_string(doc_->selection().size()) + " selected";
     if (inf != infoText_) {
         infoText_ = inf;
-        info_->copy_label(inf.c_str());
-        info_->redraw();
-    }
-    double ph = playhead();
-    std::string pos = tl::bbt(s, ph) + "  " + clock(ph);
-    if (pos != positionText_) {
-        positionText_ = pos;
-        position_->copy_label(pos.c_str());
-        position_->redraw();
+        if (onInfo) onInfo();
     }
     std::string tempo = "♩ " + fmt(s.bpm) + "  " + std::to_string(s.meterNum) + "/" + std::to_string(s.meterDen);
     if (tempo != tempoText_) {
@@ -1531,58 +1599,6 @@ void TimelinePanel::refreshInfo() {
         tempo_->copy_label(tempo.c_str());
         tempo_->redraw();
     }
-}
-
-void TimelinePanel::updateCrumbs() {
-    auto chain = doc_->chain();
-    bool show = chain.size() > 1;
-    crumbs_->clear();
-    crumbDocs_.clear();
-    for (auto& c : chain) crumbDocs_.push_back(c);
-    if (show) {
-        crumbs_->begin();
-        int bx = crumbs_->x() + 8;
-        for (size_t k = 0; k < chain.size(); ++k) {
-            std::string t = chain[k]->title();
-            if (k + 1 == chain.size()) {
-                auto e = doc_->parent()->score().find(doc_->placement());
-                int which = 0, n = tl::instances(doc_->parent()->score(), &doc_->score(), &which, doc_->placement());
-                if (e && n > 0) t += "   (instance " + std::to_string(which) + " of " + std::to_string(n) + ")";
-            }
-            fl_font(FL_HELVETICA, 12);
-            int bw = (int)fl_width(t.c_str()) + 16;
-            auto* b = new Fl_Button(bx, crumbs_->y() + 2, bw, kCrumbsH - 4);
-            b->copy_label(t.c_str());
-            b->box(FL_FLAT_BOX);
-            b->color(fl_rgb_color(30, 32, 40));
-            b->labelsize(12);
-            b->labelcolor(k + 1 == chain.size() ? kText : kAccent);
-            b->clear_visible_focus();
-            if (k + 1 < chain.size()) {
-                b->tooltip("Open this score's timeline");
-                b->callback([](Fl_Widget* w, void* d) {
-                    auto* p = static_cast<TimelinePanel*>(w->parent()->parent());
-                    size_t i = (size_t)(intptr_t)d;
-                    if (i < p->crumbDocs_.size())
-                        if (auto s = p->crumbDocs_[i].lock()) openTimeline(s);
-                }, (void*)(intptr_t)k);
-            }
-            bx += bw;
-            if (k + 1 < chain.size()) {
-                auto* sep = new Fl_Box(bx, crumbs_->y() + 2, 14, kCrumbsH - 4, "›");
-                sep->labelcolor(kDim);
-                sep->labelsize(12);
-                bx += 14;
-            }
-        }
-        crumbs_->end();
-    }
-    if (show != (crumbs_->visible() != 0)) {
-        if (show) crumbs_->show();
-        else crumbs_->hide();
-        layoutChildren();
-    }
-    crumbs_->redraw();
 }
 
 // ---- the inspector
@@ -1853,7 +1869,7 @@ int TimelinePanel::handle(int e) {
             case FL_Home: setPlayhead(0); setView(0, pps_); return 1;
             case FL_Left: setView(t0_ - view_->laneW() / pps_ / 8, pps_); return 1;
             case FL_Right: setView(t0_ + view_->laneW() / pps_ / 8, pps_); return 1;
-            case 'l': setLoop(!loop_); return 1;
+            case 'l': setLoop(!loop()); return 1;
             case 's': splitAtPlayhead(); return 1;
             }
         } else if (cmd) {

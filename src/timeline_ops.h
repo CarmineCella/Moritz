@@ -10,7 +10,9 @@
 //             placements of the same score until Make Unique copies it), patches (they do not run yet).
 //   lanes     the automation of a track: the message events of its row, one lane per name (the receive name they
 //             drive), each point one message (name value) at its time. A lane's range and order are kept on the row
-//             (extra "lanes": (list (list name lo hi) ...)), so a lane without points stays.
+//             (extra "lanes": (list (list name lo hi [height]) ...)), so a lane without points stays.
+//   heights   how high the timeline draws a track (its row's extra "height") and each of its lanes (the fourth number
+//             of its entry), in pixels; none: the view's default. Kept with the score, so saved with it.
 // Times are seconds, as in the score; snapping to beats and bars counts them at the score's tempo and meter.
 #pragma once
 
@@ -37,10 +39,19 @@ bool setStrip(ScoreDoc& d, const std::string& track, const sc::Strip& st);
 struct Lane {
     std::string name;
     double lo = 0, hi = 1;
+    int h = 0;                                   // its height (0: the default)
 };
 std::vector<Lane> lanes(const sc::Score& s, const std::string& track);
 bool addLane(ScoreDoc& d, const std::string& track, const std::string& name, double lo = 0, double hi = 1);
 bool removeLane(ScoreDoc& d, const std::string& track, const std::string& name);   // and its points
+// ---- heights (pixels; 0: the view's default)
+int trackHeight(const sc::Score& s, const std::string& track);
+struct Height {
+    std::string track, lane;                     // lane "": the track itself
+    int h = 0;
+};
+bool setHeights(ScoreDoc& d, const std::vector<Height>& hs);   // one undo step ("Track Height")
+
 // the points of a lane, by time
 std::vector<const sc::Event*> points(const sc::Score& s, const std::string& track, const std::string& lane);
 uint64_t addPoint(ScoreDoc& d, const std::string& track, const std::string& lane, double t, double v);

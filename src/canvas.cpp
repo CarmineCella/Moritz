@@ -7,6 +7,7 @@
 #include "objects.h"
 #include "roll.h"
 #include "settings.h"
+#include "score_window.h"
 #include "timeline.h"
 #include "transport.h"
 
@@ -1256,24 +1257,24 @@ int Canvas::handle(int e) {
                 std::string showLabel = "Edit buffer~ " + buf + "...";
                 for (size_t k = 0; k < showLabel.size(); ++k)
                     if (showLabel[k] == '/' || showLabel[k] == '&') showLabel.insert(k++, 1, '\\');
-                bool score = isScoreBox(b);                       // a score box: Open Roll..., Open as Timeline
+                bool score = isScoreBox(b);                       // a score box: Open (its window, in the view used last)
+                std::string openLabel = "Open";
+                if (score) {
+                    std::string v = scoreViewName((ScoreView)std::clamp(scoreBoxView(b), 0, 3));
+                    v[0] = (char)std::toupper((unsigned char)v[0]);
+                    openLabel = "Open " + v;
+                    if (v == "Piano roll") openLabel = "Open Piano Roll";
+                }
                 std::vector<Fl_Menu_Item> items(7 + own.size());
                 for (auto& it : items) it = Fl_Menu_Item{};
                 size_t n = 0;
                 items[n++].label(helpLabel.c_str());
                 size_t refAt = n;
                 items[n++].label("Reference");
-                items[n].label("Open");
-                if (!b->inner()) items[n].deactivate();
+                items[n].label(openLabel.c_str());
+                if (!b->inner() && !score) items[n].deactivate();
                 size_t openAt = n++, showAt = items.size();
                 if (!buf.empty()) { showAt = n; items[n++].label(showLabel.c_str()); }
-                size_t rollAt = items.size(), timelineAt = items.size();
-                if (score) {
-                    rollAt = n;
-                    items[n++].label("Open Roll...");
-                    timelineAt = n;
-                    items[n++].label("Open as Timeline");
-                }
                 size_t ownAt = n;
                 if (!own.empty()) items[n - 1].flags |= FL_MENU_DIVIDER;
                 for (auto& o : own) items[n++].label(o.c_str());
@@ -1283,10 +1284,9 @@ int Canvas::handle(int e) {
                 size_t pick = (size_t)(r - items.data());
                 if (pick == 0) App::get().openHelp(b->cls);
                 else if (pick == refAt) App::get().showReference(b->cls);
+                else if (pick == openAt && score) openScoreBox(b);
                 else if (pick == openAt) ed_->openSubpatch(b);
                 else if (pick == showAt) openBufferEditor(patch_, buf);
-                else if (pick == rollAt) openRollOfBox(b);
-                else if (pick == timelineAt) openScoreBoxTimeline(b);
                 else if (pick >= ownAt && pick < ownAt + own.size()) b->menuAction((int)(pick - ownAt));
                 redraw();
                 return 1;
@@ -1354,7 +1354,7 @@ int Canvas::handle(int e) {
                 }
                 if (h.box && isScoreBox(h.box) && opens) {
                     Fl::event_clicks(0);
-                    openRollOfBox(h.box);                           // the score's roll, in edit mode too
+                    openScoreBox(h.box);                            // the score's window, in edit mode too
                     return 1;
                 }
                 if (h.box && h.box->cls == "code" && opens) {
