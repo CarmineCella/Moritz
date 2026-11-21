@@ -29,6 +29,10 @@
   found from that score's folder. `(score-sound-file e)` says which file an event plays. One rule in
   C++ (`score::resolveSource`) for every host. `score-read` of Moritz's `piece.score` failed with
   "cannot open WAV file stems_drums.wav" before.
+- **Numbers in `.score` files are written without the arithmetic's noise**: a value a unit or two in
+  the last place from a short decimal is written as that decimal (`0.225`, not
+  `0.22499999999999998`), any other value with every digit it needs (`1/3`, a time in samples), so
+  the files stay readable and read back as they were meant.
 
 ### Orchestration
 

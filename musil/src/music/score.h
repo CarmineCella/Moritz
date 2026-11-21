@@ -587,14 +587,21 @@ inline std::shared_ptr<Event> eventOfRow(const std::vector<Datum>& r) {
 //   (patch at dur "name" (args values...) options...)
 //   (msg at name values... options...)
 //   (score at "file.score" (dur d) (stretch k) (transpose t) options...)   or with an embedded (score "name" ...)
-// Numbers are written so that they read back exactly; a list value is (list ...).
+// Numbers are written short and read back as they were: the shortest form that reads back exactly (up to 17 digits),
+// except that a value the arithmetic left a unit or two in the last place away from a short decimal (12 significant
+// digits at most: 0.1 + 0.2, a time converted to samples and back, 0.22499999999999998) is written as that decimal
+// (0.3, 0.225), which reads back that unit or two away, far below any time or value a score means (and written
+// again, it is the same text). Any other value keeps every digit it needs (1/3, a time in samples: 9922/44100, a
+// float's 0.3: 0.30000001192092896). A list value is (list ...).
 inline std::string numText(double v) {
     if (v == 0) return "0";
     char b[40];
     if (std::fabs(v) < 1e15 && v == std::floor(v)) { std::snprintf(b, sizeof b, "%.0f", v); return b; }
+    double a = std::fabs(v), ulp = std::isfinite(v) ? std::nextafter(a, HUGE_VAL) - a : 0;
     for (int prec = 1; prec <= 17; prec++) {
         std::snprintf(b, sizeof b, "%.*g", prec, v);
-        if (std::strtod(b, nullptr) == v) break;
+        double r = std::strtod(b, nullptr);
+        if (r == v || (prec <= 12 && std::isfinite(v) && std::fabs(r - v) <= 2 * ulp)) break;
     }
     return b;
 }

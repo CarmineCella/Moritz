@@ -114,6 +114,16 @@ check (equal? (get r 'rows) (list (list "Fl" "treble") (list "Vc" "bass"))) "sco
 check (equal? (score->data r) (score->data w)) "score->data: the same data"
 check (equal? (score->text (data->score (score->data w))) (score->text w)) "data->score: back from the data"
 check (equal? (head (score->data w)) 'score) "score->data: a (score ...) form"
+; numbers written short and still read back: the arithmetic's noise is not written, a value that needs 17 digits has them
+var noisy (score "noisy" 44100)
+event noisy (* 0.3 0.75) (+ 0.1 0.2) (record (list 'kind 'note 'instr "Fl" 'midi 60 'pitch "C4" 'dyn "mf" 'tech "ord" 'cents 0))
+event noisy (/ 1 3) (/ 9922 44100) (record (list 'kind 'note 'instr "Fl" 'midi 62 'pitch "D4" 'dyn "mf" 'tech "ord" 'cents 0))
+var ntext (score->text noisy)
+check (and (contains? ntext "(note 0.225 0.3 ") (not (contains? ntext "0.22499999999999998")) (not (contains? ntext "0.30000000000000004"))) "score->text: 0.3 x 0.75 is written 0.225, 0.1 + 0.2 is 0.3"
+var nback (text->score ntext)
+check (and (close? (get (head (score-events nback)) 'at) (* 0.3 0.75) 1e-15) (== (get (head (score-events nback)) 'at) 0.225)) "the noise left out reads back as the number meant"
+check (and (== (get (last (score-events nback)) 'at) (/ 1 3)) (== (get (last (score-events nback)) 'dur) (/ 9922 44100))) "a value that needs 17 digits reads back exactly"
+check (equal? (score->text nback) ntext) "written again: the same text"
 ; a score placed by file, three times: one score
 var tex-path (concat tmp "/texture.score")
 score-write tex tex-path
