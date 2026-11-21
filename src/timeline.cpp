@@ -42,6 +42,9 @@ const Fl_Color kNote = fl_rgb_color(232, 156, 36);
 const Fl_Color kPatchC = fl_rgb_color(62, 128, 236);
 const Fl_Color kScoreC = fl_rgb_color(150, 122, 232);
 const Fl_Color kMsgC = fl_rgb_color(150, 156, 170);
+const Fl_Color kMarkerC = fl_rgb_color(236, 178, 70);
+const Fl_Color kMarkerLine = fl_rgb_color(110, 88, 48);
+const Fl_Color kBandC = fl_rgb_color(150, 190, 250);
 const Fl_Color kTrackColours[] = {fl_rgb_color(66, 186, 128), fl_rgb_color(232, 156, 36), fl_rgb_color(62, 128, 236),
                                   fl_rgb_color(150, 122, 232), fl_rgb_color(48, 190, 190), fl_rgb_color(226, 98, 140)};
 
@@ -65,6 +68,11 @@ std::string dbText(double g) { return g <= 0 ? std::string("-inf") : fmt(20 * st
 std::string azText(double az) {
     if (std::fabs(az) < 0.05) return "C";
     return (az > 0 ? "L" : "R") + fmt(std::fabs(az), "%.0f");
+}
+// a marker's tag on the ruler: its name on a flag, so wide (the font set here)
+int markerTagW(const std::string& name) {
+    fl_font(FL_HELVETICA_BOLD, 10);
+    return std::clamp((int)fl_width(name.c_str()) + 8, 10, 120);
 }
 std::string clock(double s) {
     if (!(s >= 0)) s = 0;
@@ -300,6 +308,26 @@ uint64_t TimelineView::pointAt(int ex, int ey) const {
     return 0;
 }
 
+int TimelineView::markerAt(int ex, int ey) const {
+    if (ey < y() || ey >= y() + kRulerH || ex < laneX()) return -1;
+    auto ms = tl::markers(tp_->doc().score());
+    for (int k = (int)ms.size() - 1; k >= 0; --k) {          // the last drawn is on top
+        int px = tp_->xOf(ms[(size_t)k].at);
+        if (ex >= px - 3 && ex < px + markerTagW(ms[(size_t)k].name)) return k;
+    }
+    return -1;
+}
+
+int TimelineView::trackSlotAt(int ey) const {
+    int cy = ey - (y() + kRulerH) + tp_->scrollY();
+    int slot = -1, k = -1;
+    for (auto& r : rows_) {
+        if (r.lane < 0) ++k;
+        if (cy >= r.y) slot = k;                             // the last track whose rows start above the mouse
+    }
+    return std::max(0, slot);
+}
+
 int TimelineView::headW() const { return tp_->headW(); }
 
 int TimelineView::headerButton(const Row& r, int ex, int ey) const {
@@ -394,6 +422,7 @@ void TimelineView::drawRuler() {
                 fl_yxline(q, Y + kRulerH - 6, Y + kRulerH - 1);
             }
     }
+    drawMarkers();
     // the playhead's mark
     int ph = tp_->xOf(tp_->playhead());
     fl_color(kPlayhead);
@@ -401,6 +430,23 @@ void TimelineView::drawRuler() {
     fl_pop_clip();
     fl_color(kGrid);
     fl_xyline(x(), Y + kRulerH - 1, x() + w());
+}
+
+// the markers: a flag with its name on the ruler (where a drag takes it, while it is dragged)
+void TimelineView::drawMarkers() {
+    auto ms = tl::markers(tp_->doc().score());
+    int Y = y();
+    for (size_t k = 0; k < ms.size(); ++k) {
+        double at = movingMarker() && (int)k == dragMarker ? dragMarkerT : ms[k].at;
+        int px = tp_->xOf(at), tw = markerTagW(ms[k].name);
+        fl_color(kMarkerC);
+        fl_yxline(px, Y + 1, Y + kRulerH - 1);
+        fl_rectf(px, Y + 1, tw, 12);
+        fl_color(FL_BLACK);
+        fl_push_clip(px, Y + 1, tw, 12);
+        fl_draw(ms[k].name.c_str(), px + 4, Y + 11);
+        fl_pop_clip();
+    }
 }
 
 void TimelineView::drawHeader(const Row& r, int Y) {
@@ -424,7 +470,9 @@ void TimelineView::drawHeader(const Row& r, int Y) {
             fl_font(FL_HELVETICA, 9);
             fl_color(kDim);
             bool strip = r.laneName.rfind("strip.", 0) == 0;
-            std::string sub = (strip ? std::string("the track's strip") : "receive " + r.laneName) + " · " + fmt(r.lo) + "…" + fmt(r.hi);
+            bool ramps = tl::laneRamp(d.score(), r.track, r.laneName) == tl::Ramp::Linear;
+            std::string sub = (strip ? std::string("the track's strip") : "receive " + r.laneName) + " · " + fmt(r.lo) + "…" + fmt(r.hi) +
+                              (ramps ? " · ramps" : " · steps");
             fl_draw(sub.c_str(), x() + 16, Y + 28);
         }
         fl_pop_clip();
@@ -745,10 +793,10 @@ void TimelineView::drawLane(const Row& r, int Y) {
     }
     std::stable_sort(ps.begin(), ps.end(), [](const P& a, const P& b) { return a.t < b.t; });
     fl_color(fl_rgb_color(100, 160, 240));
-    // the values hold from one point to the next (each point is the message sent there); a lane of the track's strip
-    // (strip.gain, strip.pan, strip.send.<bus>) ramps from one to the next (played on the audio thread), and holds its
+    // a lane that steps holds each value until the next point (each point is the message sent there); one that ramps
+    // goes from one to the next in a line (a strip's on the audio thread, a receive's sent on the way), and holds its
     // first value before it
-    bool ramps = r.laneName.rfind("strip.", 0) == 0 && r.laneName != "strip.mute";
+    bool ramps = tl::laneRamp(d.score(), r.track, r.laneName) == tl::Ramp::Linear;
     if (ramps && !ps.empty()) fl_xyline(laneX(), yOf(ps.front().v), tp_->xOf(ps.front().t));
     for (size_t k = 0; k < ps.size(); ++k) {
         int x0 = tp_->xOf(ps[k].t), y0 = yOf(ps[k].v);
@@ -811,10 +859,32 @@ void TimelineView::draw() {
                 fl_color(fl_rgb_color(44, 46, 54));
                 fl_yxline(tp_->xOf(k * bar), top, top + std::min(h() - kRulerH, contentH_ - tp_->scrollY()));
             }
+        int bottom = top + std::min(h() - kRulerH, contentH_ - tp_->scrollY());
+        auto ms = tl::markers(s);
+        fl_color(kMarkerLine);
+        fl_line_style(FL_DOT);
+        for (size_t k = 0; k < ms.size(); ++k)
+            fl_yxline(tp_->xOf(movingMarker() && (int)k == dragMarker ? dragMarkerT : ms[k].at), top, bottom);
+        fl_line_style(0);
         fl_color(kPlayhead);
         fl_yxline(tp_->xOf(tp_->playhead()), top, y() + h());
     }
     fl_pop_clip();
+    if (banding()) {
+        fl_color(kBandC);
+        fl_rect(std::min(bandX0, bandX1), std::min(bandY0, bandY1), std::abs(bandX1 - bandX0) + 1, std::abs(bandY1 - bandY0) + 1);
+    }
+    if (reordering() && reorderTo >= 0) {                // where the header dragged goes: a line above or under that track
+        int from = tl::trackIndex(tp_->doc().score(), dragTrack_), k = -1, rt = -1, rb = -1;
+        for (auto& rr : rows_) {
+            if (rr.lane < 0) ++k;
+            if (k == reorderTo) { if (rt < 0) rt = rr.y; rb = rr.y + rr.h; }
+        }
+        if (rt >= 0 && reorderTo != from) {
+            fl_color(kBandC);
+            fl_rectf(x(), top + (reorderTo > from ? rb : rt) - tp_->scrollY() - 1, w(), 3);
+        }
+    }
     fl_pop_clip();
     drawRuler();
     fl_color(kGrid);
@@ -846,15 +916,50 @@ void TimelineView::press(int ex, int ey, int clicks, bool shift, bool right, boo
         dragV_ = er->h;
         return;
     }
-    if (ey < y() + kRulerH) {                            // the ruler: the playhead there; dragged: the loop
+    if (ey < y() + kRulerH) {                            // the ruler: the playhead there; dragged: the loop; the markers
         if (ex < laneX()) return;
-        tp_->setPlayhead(std::max(0.0, tp_->snapped(tp_->timeAt(ex))));
+        int mk = markerAt(ex, ey);
+        double t = std::max(0.0, tp_->snapped(tp_->timeAt(ex)));
+        if (right) {
+            Fl_Menu_Item marker[] = {{"Rename Marker...", 0, nullptr, nullptr, 0, 0, 0, 0, 0},
+                                     {"Delete Marker", 0, nullptr, nullptr, FL_MENU_DIVIDER, 0, 0, 0, 0},
+                                     {"Loop This Section", 0, nullptr, nullptr, 0, 0, 0, 0, 0},
+                                     {nullptr, 0, nullptr, nullptr, 0, 0, 0, 0, 0}};
+            Fl_Menu_Item here[] = {{"Add Marker Here", 0, nullptr, nullptr, FL_MENU_DIVIDER, 0, 0, 0, 0},
+                                   {"Loop This Section", 0, nullptr, nullptr, 0, 0, 0, 0, 0},
+                                   {nullptr, 0, nullptr, nullptr, 0, 0, 0, 0, 0}};
+            Fl_Menu_Item* items = mk >= 0 ? marker : here;
+            const Fl_Menu_Item* m = items->popup(ex, ey);
+            if (!m) return;
+            std::string what = m->label();
+            if (what == "Rename Marker...") tp_->renameMarkerDialog(mk);
+            else if (what == "Delete Marker") tp_->after(tl::removeMarker(d, mk));
+            else if (what == "Add Marker Here") tp_->after(tl::addMarker(d, t) >= 0);
+            else tp_->loopSection(tp_->timeAt(ex));
+            return;
+        }
+        if (mk >= 0) {                                   // a marker: dragged, it moves; clicked, the playhead there
+            if (clicks) { tp_->renameMarkerDialog(mk); return; }
+            drag_ = Drag::Marker;
+            dragMarker = mk;
+            dragMarkerT = tl::markers(d.score())[(size_t)mk].at;
+            dragAt_ = dragMarkerT;
+            return;
+        }
+        if (clicks) { tp_->loopSection(tp_->timeAt(ex)); return; }   // a double-click: the section looped
+        tp_->setPlayhead(t);
         drag_ = Drag::Ruler;
         return;
     }
     const Row* r = rowAt(ey);
     if (!r) {
         if (!shift) d.clearSelection();
+        if (ex >= laneX() && !right) {                   // under the tracks: a rubber band
+            drag_ = Drag::Band;
+            bandBase_ = d.selection();
+            bandX0 = bandX1 = ex;
+            bandY0 = bandY1 = ey;
+        }
         return;
     }
     std::string track = r->track;
@@ -905,9 +1010,17 @@ void TimelineView::press(int ex, int ey, int clicks, bool shift, bool right, boo
         }
         if (right) {
             if (r->lane >= 0) {
-                Fl_Menu_Item items[] = {{"Remove Lane", 0, nullptr, nullptr, 0, 0, 0, 0, 0}, {nullptr, 0, nullptr, nullptr, 0, 0, 0, 0, 0}};
                 std::string lane = r->laneName;
-                if (const Fl_Menu_Item* m = items->popup(ex, ey); m == &items[0]) tp_->after(tl::removeLane(d, track, lane));
+                bool ramps = tl::laneRamp(d.score(), track, lane) == tl::Ramp::Linear, mute = lane == "strip.mute";
+                Fl_Menu_Item items[] = {
+                    {"Ramp Between Points", 0, nullptr, nullptr, FL_MENU_RADIO | (ramps ? FL_MENU_VALUE : 0) | (mute ? FL_MENU_INACTIVE : 0), 0, 0, 0, 0},
+                    {"Hold Each Point (Steps)", 0, nullptr, nullptr, FL_MENU_RADIO | FL_MENU_DIVIDER | (ramps ? 0 : FL_MENU_VALUE), 0, 0, 0, 0},
+                    {"Remove Lane", 0, nullptr, nullptr, 0, 0, 0, 0, 0},
+                    {nullptr, 0, nullptr, nullptr, 0, 0, 0, 0, 0}};
+                const Fl_Menu_Item* m = items->popup(ex, ey);
+                if (m == &items[0]) tp_->setLaneRamp(track, lane, tl::Ramp::Linear);
+                else if (m == &items[1]) tp_->setLaneRamp(track, lane, tl::Ramp::Step);
+                else if (m == &items[2]) tp_->after(tl::removeLane(d, track, lane));
                 return;
             }
             Fl_Menu_Item items[] = {{"Add Automation Lane...", 0, nullptr, nullptr, 0, 0, 0, 0, 0},
@@ -924,6 +1037,15 @@ void TimelineView::press(int ex, int ey, int clicks, bool shift, bool right, boo
             else if (k == 2) tp_->after(tl::moveTrack(d, track, -1));
             else if (k == 3) tp_->after(tl::moveTrack(d, track, 1));
             else if (k == 4) tp_->after(tl::deleteTrack(d, track));
+            return;
+        }
+        // a track's header dragged: the track goes there (its name clicked opens it at the release, when not dragged)
+        if (r->lane < 0 && !clicks) {
+            drag_ = Drag::Reorder;
+            dragTrack_ = track;
+            pressName_ = onName(*r, ex, ey);
+            dragRow_ = tl::trackIndex(d.score(), track);
+            reorderTo = dragRow_;
             return;
         }
         // its name (a click) or the header (a double-click): what the track plays or drives, or the lane's patch
@@ -966,9 +1088,13 @@ void TimelineView::press(int ex, int ey, int clicks, bool shift, bool right, boo
         if (const Fl_Menu_Item* it = m ? m->popup(ex, ey) : nullptr) tp_->editMenu_->picked(it);
         return;
     }
-    if (!c) {
+    if (!c) {                                            // empty: the playhead there; dragged, a rubber band
         if (!shift) d.clearSelection();
         tp_->setPlayhead(std::max(0.0, tp_->snapped(tp_->timeAt(ex))));
+        drag_ = Drag::Band;
+        bandBase_ = d.selection();
+        bandX0 = bandX1 = ex;
+        bandY0 = bandY1 = ey;
         return;
     }
     if (clicks) {
@@ -1064,6 +1190,24 @@ void TimelineView::dragTo(int ex, int ey) {
         }
         break;
     }
+    case Drag::Band:
+        bandX1 = ex;
+        bandY1 = ey;
+        bandSelect();
+        break;
+    case Drag::Reorder:
+        reorderTo = trackSlotAt(ey);
+        if (reorderTo != dragRow_) {
+            auto all = tl::tracks(d.score());
+            if (reorderTo < (int)all.size()) tp_->setStatus("move " + dragTrack_ + " to the place of " + all[(size_t)reorderTo]);
+        }
+        break;
+    case Drag::Marker: {
+        dragMarkerT = std::max(0.0, tp_->snapped(t));
+        auto ms = tl::markers(d.score());
+        if (dragMarker >= 0 && dragMarker < (int)ms.size()) tp_->setStatus(ms[(size_t)dragMarker].name + " at " + tl::bbt(d.score(), dragMarkerT));
+        break;
+    }
     case Drag::Ruler:
         drag_ = Drag::Loop;
         [[fallthrough]];
@@ -1084,6 +1228,11 @@ void TimelineView::release(int ex, int ey) {
     Drag was = drag_;
     drag_ = Drag::None;
     if (!moved_) {
+        if (was == Drag::Reorder && pressName_) tp_->openTrack(dragTrack_);   // a click on its name: what it plays
+        if (was == Drag::Marker) {                       // a click on a marker: the playhead there
+            auto ms = tl::markers(d.score());
+            if (dragMarker >= 0 && dragMarker < (int)ms.size()) tp_->setPlayhead(ms[(size_t)dragMarker].at);
+        }
         redraw();
         return;
     }
@@ -1103,6 +1252,13 @@ void TimelineView::release(int ex, int ey) {
         if (dragPointT != dragAt_ || dragPointV != dragV_) tp_->after(tl::movePoint(d, dragId_, dragPointT, dragPointV));
         break;
     case Drag::Loop: tp_->setLoop(true); break;
+    case Drag::Reorder:
+        if (reorderTo >= 0 && reorderTo != dragRow_) tp_->after(tl::moveTrackTo(d, dragTrack_, reorderTo));
+        break;
+    case Drag::Marker:
+        if (dragMarkerT != dragAt_) tp_->after(tl::moveMarker(d, dragMarker, dragMarkerT));
+        break;
+    case Drag::Band: break;
     case Drag::Height: tp_->setHeight(dragTrack_, dragLane_, dragHeight, dragAlt_); break;
     case Drag::FadeIn:
     case Drag::FadeOut: {
@@ -1128,7 +1284,33 @@ void TimelineView::release(int ex, int ey) {
     }
     dragDt = 0;
     dragDTrack = 0;
+    reorderTo = -1;
+    dragMarker = -1;
     redraw();
+}
+
+// the rubber band: the clips it touches and the points inside it, with the selection it started from (Shift)
+void TimelineView::bandSelect() {
+    ScoreDoc& d = tp_->doc();
+    int x0 = std::min(bandX0, bandX1), x1 = std::max(bandX0, bandX1), y0 = std::min(bandY0, bandY1), y1 = std::max(bandY0, bandY1);
+    std::vector<uint64_t> ids = bandBase_;
+    auto add = [&](uint64_t id) { if (std::find(ids.begin(), ids.end(), id) == ids.end()) ids.push_back(id); };
+    for (auto& ep : d.score().events()) {
+        if (!tl::isClip(*ep)) continue;
+        int X, Y, W, H;
+        if (clipRect(*ep, X, Y, W, H) && X <= x1 && X + W >= x0 && Y <= y1 && Y + H >= y0) add(ep->id);
+    }
+    for (auto& r : rows_) {
+        if (r.lane < 0) continue;
+        int Y = rowTop(r);
+        if (Y > y1 || Y + r.h < y0) continue;
+        for (auto* p : tl::points(d.score(), r.track, r.laneName)) {
+            int px = tp_->xOf(p->at);
+            int py = Y + 4 + (int)std::lround((1 - (tl::pointValue(*p) - r.lo) / (r.hi - r.lo)) * (r.h - 8));
+            if (px >= x0 && px <= x1 && py >= y0 && py <= y1) add(p->id);
+        }
+    }
+    if (ids != d.selection()) d.select(ids);
 }
 
 // the device's inputs a track records from (a menu where its input is clicked)
@@ -1318,7 +1500,8 @@ TimelinePanel::TimelinePanel(int X, int Y, int W, int H, std::shared_ptr<ScoreDo
                                 {"Sound...", &P::addSoundDialog, 0},
                                 {"Sub-score...", &P::addScoreDialog, 0},
                                 {"Patch Clip...", &P::addPatchDialog, FL_MENU_DIVIDER},
-                                {"Automation Lane...", &P::addLaneDialog, 0}};
+                                {"Automation Lane...", &P::addLaneDialog, FL_MENU_DIVIDER},
+                                {"Marker at Playhead", &P::addMarker, 0}};
     for (const Item& it : adds)
         addMenu_->add(it.label, 0, [](Fl_Widget* w, void* d) {
             auto* p = static_cast<P*>(w->parent()->parent());
@@ -1395,8 +1578,8 @@ TimelinePanel::TimelinePanel(int X, int Y, int W, int H, std::shared_ptr<ScoreDo
     fit();
     showInspector();
     refreshInfo();
-    setStatus("drag clips, their edges trim · click a lane: a point · a track's name opens what it plays · drag a "
-              "header's lower edge to size it");
+    setStatus("drag clips, their edges trim · drag on empty space to select · click a lane: a point · drag a header to "
+              "reorder, its lower edge to size it · M: a marker");
     Fl::add_timeout(0.1, tick, this);
 }
 
@@ -1867,6 +2050,69 @@ bool TimelinePanel::setHeight(const std::string& track, const std::string& lane,
     return ok;
 }
 
+bool TimelinePanel::setLaneRamp(const std::string& track, const std::string& lane, tl::Ramp r) {
+    bool ok = tl::setLaneRamp(*doc_, track, lane, r);
+    after(ok);
+    return ok;
+}
+
+void TimelinePanel::addMarker() {
+    double t = playhead();
+    int k = tl::addMarker(*doc_, t);
+    after(k >= 0);
+    if (k >= 0) {
+        auto ms = tl::markers(doc_->score());
+        setStatus(ms[(size_t)k].name + " at " + tl::bbt(doc_->score(), t) + " (double-click it to rename it)");
+    }
+}
+
+void TimelinePanel::renameMarkerDialog(int k) {
+    auto ms = tl::markers(doc_->score());
+    if (k < 0 || k >= (int)ms.size()) return;
+    std::string r = askLine("The marker's name", ms[(size_t)k].name);
+    if (!r.empty()) renameMarker(k, r);
+}
+
+bool TimelinePanel::renameMarker(int k, const std::string& name) {
+    bool ok = tl::renameMarker(*doc_, k, name);
+    after(ok);
+    return ok;
+}
+
+namespace {
+// the playhead to a marker, the view following it
+bool goToMarker(TimelinePanel* p, double t, const char* none) {
+    if (t < 0) { p->setStatus(none); return false; }
+    p->setPlayhead(t);
+    double shown = p->view()->laneW() / p->pixelsPerSecond();
+    if (t < p->start() || t > p->start() + shown) p->setView(std::max(0.0, t - shown * 0.1), p->pixelsPerSecond());
+    for (auto& m : tl::markers(p->doc().score()))
+        if (m.at == t) { p->setStatus("at " + m.name + " (" + tl::bbt(p->doc().score(), t) + ")"); break; }
+    p->view()->redraw();
+    return true;
+}
+}  // namespace
+
+bool TimelinePanel::nextMarker() { return goToMarker(this, tl::nextMarker(doc_->score(), playhead()), "no marker after the playhead"); }
+bool TimelinePanel::previousMarker() {
+    // playing, the playhead has just passed the marker it is at: a little before it goes to the one before
+    return goToMarker(this, tl::previousMarker(doc_->score(), playhead() - (playing() ? 0.25 : 0)), "no marker before the playhead");
+}
+
+bool TimelinePanel::loopSection(double t) {
+    const sc::Score& s = doc_->score();
+    auto ms = tl::markers(s);
+    if (ms.empty()) { setStatus("no markers: M adds one at the playhead"); return false; }
+    auto sec = tl::section(s, t);
+    if (!(sec.to > sec.from)) { setStatus("no section here: after the last marker the score has ended"); return false; }
+    setLoopRange(sec.from, sec.to);
+    setLoop(true);
+    setStatus("looping " + (sec.marker >= 0 ? ms[(size_t)sec.marker].name : std::string("the start")) + ": " + tl::bbt(s, sec.from) +
+              " to " + tl::bbt(s, sec.to));
+    view_->redraw();
+    return true;
+}
+
 void TimelinePanel::toggleFold(const std::string& track, const std::string& lane, bool all) {
     int h = 0;
     for (auto& r : view_->rows())
@@ -1977,6 +2223,11 @@ void TimelinePanel::buildInspector() {
             else if (what == "Split at Playhead") p->splitAtPlayhead();
             else if (what == "Delete") p->erase();
             else if (what == "Add Automation Lane...") p->addLaneDialog();
+            else if (what == "Ramp Between Points" || what == "Hold Each Point (Steps)") {
+                auto e = doc.selection().size() == 1 ? doc.score().find(doc.selection()[0]) : nullptr;
+                if (e && e->kind == sc::Kind::Message)
+                    p->setLaneRamp(e->row, e->source, what == "Ramp Between Points" ? tl::Ramp::Linear : tl::Ramp::Step);
+            }
             else if (what == "Move Track Up") p->after(tl::moveTrack(doc, t, -1));
             else if (what == "Move Track Down") p->after(tl::moveTrack(doc, t, 1));
             else if (what == "Delete Track") p->after(tl::deleteTrack(doc, t));
@@ -2041,11 +2292,14 @@ void TimelinePanel::showInspector() {
             break;
         case sc::Kind::Message: {
             title = "Point " + e->source;
-            sub = "sent to receive " + e->source;
+            bool ramps = tl::laneRamp(s, e->row, e->source) == tl::Ramp::Linear;
+            sub = (e->source.rfind("strip.", 0) == 0 ? std::string("the track's strip") : "sent to receive " + e->source) +
+                  (ramps ? " · ramps to the next" : " · held to the next");
             std::string v;
             for (auto& x : e->values) v += (v.empty() ? "" : " ") + (x.kind == sc::Datum::Num ? fmt(x.num) : x.s);
             fs = {{"at", "time", fmt(e->at, "%.4g")}, {"values", "value", v}};
-            buttons = {"Delete"};
+            if (e->source == "strip.mute") buttons = {"Delete"};
+            else buttons = {ramps ? "Hold Each Point (Steps)" : "Ramp Between Points", "Delete"};
             break;
         }
         }
@@ -2197,6 +2451,12 @@ int TimelinePanel::handle(int e) {
             case FL_Right: setView(t0_ + view_->laneW() / pps_ / 8, pps_); return 1;
             case 'l': setLoop(!loop()); return 1;
             case 's': splitAtPlayhead(); return 1;
+            case 'm': addMarker(); return 1;
+            }
+        } else if (Fl::event_alt() && !cmd && !Fl::event_ctrl()) {     // the markers: the previous one, the next
+            switch (k) {
+            case FL_Left: previousMarker(); return 1;
+            case FL_Right: nextMarker(); return 1;
             }
         } else if (cmd) {
             switch (k) {

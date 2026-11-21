@@ -1374,6 +1374,13 @@ bool scoreTestAction(const std::string& verb, const std::string& arg) {
         for (uint64_t id : d.selection()) sel += std::to_string(id) + " ";
         say("timeline selection " + sel);
         say("timeline status " + p->status());
+        std::string marks;
+        for (auto& m : timeline::markers(s)) marks += num(m.at) + ":" + m.name + "|";
+        say("timeline markers " + marks);
+        say("timeline at " + num(p->playhead()) + " loop " + num(p->loopFrom()) + " " + num(p->loopTo()) + (p->loop() ? " on" : " off"));
+        for (auto& t : timeline::tracks(s))
+            for (auto& l : timeline::lanes(s, t))
+                say("timeline lane " + t + "/" + l.name + (timeline::laneRamp(s, t, l.name) == timeline::Ramp::Linear ? " ramps" : " steps"));
         std::string crumbs;
         for (auto& c : d.chain()) crumbs += c->title() + "|";
         say("timeline crumbs " + crumbs);
@@ -1507,6 +1514,89 @@ bool scoreTestAction(const std::string& verb, const std::string& arg) {
                 return true;
             }
         return false;
+    }
+    if (verb == "tlband") {                        // act=tlband:t0,row0,t1,row1[,shift]: a drag from empty space to there
+        auto a = split(arg, ',');                  // (a row: a track, or track/lane)
+        if (a.size() < 4) return false;
+        auto row = [&](const std::string& n) {
+            size_t sl = n.find('/');
+            return sl == std::string::npos ? rowOf(v, n, "") : rowOf(v, n.substr(0, sl), n.substr(sl + 1));
+        };
+        auto* r0 = row(a[1]);
+        auto* r1 = row(a[3]);
+        if (!r0 || !r1) return false;
+        int ex = p->xOf(std::atof(a[0].c_str())), ey = v->rowTop(*r0) + r0->h - 6;
+        int tx = p->xOf(std::atof(a[2].c_str())), ty = v->rowTop(*r1) + r1->h - 6;
+        if (v->clipAt(ex, ey)) return false;       // it must start on empty space
+        int keys = a.size() > 4 && a[4] == "shift" ? FL_SHIFT : 0;
+        mouse(v, ex, ey, FL_PUSH, 0, keys);
+        mouse(v, (ex + tx) / 2, (ey + ty) / 2, FL_DRAG, 0, keys);
+        mouse(v, tx, ty, FL_DRAG, 0, keys);
+        mouse(v, tx, ty, FL_RELEASE, 0, keys);
+        return true;
+    }
+    if (verb == "tlheaddrag") {                    // act=tlheaddrag:track,to: its header dragged onto the other's
+        auto a = split(arg, ',');
+        if (a.size() < 2) return false;
+        auto* r0 = rowOf(v, a[0], "");
+        auto* r1 = rowOf(v, a[1], "");
+        if (!r0 || !r1) return false;
+        int ex = v->x() + 6, ey = v->rowTop(*r0) + 6;   // away from its name, its buttons and its controls
+        int ty = v->rowTop(*r1) + r1->h / 2;
+        if (v->onName(*r0, ex, ey) || v->edgeAt(ex, ey)) return false;
+        mouse(v, ex, ey, FL_PUSH, 0);
+        mouse(v, ex, (ey + ty) / 2, FL_DRAG, 0);
+        mouse(v, ex, ty, FL_DRAG, 0);
+        mouse(v, ex, ty, FL_RELEASE, 0);
+        return true;
+    }
+    if (verb == "tlkey") {                         // act=tlkey:m, alt+left, alt+right: a key to the timeline
+        std::string k = arg;
+        int state = 0;
+        if (k.rfind("alt+", 0) == 0) { state = FL_ALT; k = k.substr(4); }
+        int key = k == "left" ? FL_Left : k == "right" ? FL_Right : k.empty() ? 0 : (int)(unsigned char)k[0];
+        Fl::e_keysym = key;
+        Fl::e_state = state;
+        static char text[2] = {0, 0};
+        text[0] = key < 128 ? (char)key : 0;
+        Fl::e_text = text;
+        Fl::e_length = text[0] ? 1 : 0;
+        Fl::e_number = FL_KEYBOARD;
+        w->show();
+        bool done = p->handle(FL_KEYBOARD) != 0;
+        Fl::e_state = 0;
+        return done;
+    }
+    if (verb == "tlrulerdbl" || verb == "tlruler") {   // act=tlrulerdbl:t: the ruler double-clicked there (a section looped)
+        int ex = p->xOf(std::atof(arg.c_str())), ey = v->y() + TimelineView::kRulerH - 8;
+        if (v->markerAt(ex, ey) >= 0) ey = v->y() + TimelineView::kRulerH - 3;
+        int clicks = verb == "tlrulerdbl" ? 1 : 0;
+        mouse(v, ex, ey, FL_PUSH, clicks);
+        mouse(v, ex, ey, FL_RELEASE, clicks);
+        return true;
+    }
+    if (verb == "tlmarkerdrag") {                  // act=tlmarkerdrag:k,t: a marker's flag dragged to a time
+        auto a = split(arg, ',');
+        auto ms = timeline::markers(s);
+        int k = a.empty() ? -1 : std::atoi(a[0].c_str());
+        if (a.size() < 2 || k < 0 || k >= (int)ms.size()) return false;
+        int ex = p->xOf(ms[(size_t)k].at) + 3, ey = v->y() + 6, tx = p->xOf(std::atof(a[1].c_str())) + 3;
+        if (v->markerAt(ex, ey) != k) return false;
+        mouse(v, ex, ey, FL_PUSH, 0);
+        mouse(v, (ex + tx) / 2, ey, FL_DRAG, 0);
+        mouse(v, tx, ey, FL_DRAG, 0);
+        mouse(v, tx, ey, FL_RELEASE, 0);
+        return true;
+    }
+    if (verb == "tlmarkername") {                  // act=tlmarkername:k,name: as its rename dialog answered
+        size_t c = arg.find(',');
+        if (c == std::string::npos) return false;
+        return p->renameMarker(std::atoi(arg.c_str()), arg.substr(c + 1));
+    }
+    if (verb == "tlramp") {                        // act=tlramp:track,lane,linear|step: as its header's menu
+        auto a = split(arg, ',');
+        if (a.size() < 3) return false;
+        return p->setLaneRamp(a[0], a[1], a[2] == "linear" ? timeline::Ramp::Linear : timeline::Ramp::Step);
     }
     if (verb == "tlplayhead") { p->setPlayhead(std::atof(arg.c_str())); return true; }
     if (verb == "tlsnap") {

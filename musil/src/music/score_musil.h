@@ -751,6 +751,37 @@ inline vptr mus_score_bbt_sec(vlist& a, Interp& i) {
     return v_num(score::fromBBT(i.scalar(a[1]), i.scalar(a[2]), i.scalar(a[3]), s->bpm, s->meterNum));
 }
 
+// (score-markers s)        the markers of the score's ruler, by time: (list (list at "name") ...) (Moritz's timeline sets them)
+inline vptr mus_score_markers(vlist& a, Interp& i) {
+    vlist out;
+    for (auto& m : score::markersOf(*S(i, a[0]))) out.push_back(v_list({v_num(m.at), v_str(m.name)}));
+    return v_list(std::move(out));
+}
+// (score-markers! s markers)   the score's markers set: a list of (list at name), in any order (an empty list: none); => s
+inline vptr mus_score_set_markers(vlist& a, Interp& i) {
+    auto s = S(i, a[0]);
+    std::vector<score::Marker> ms;
+    for (auto& x : i.list(a[1])) {
+        if (!x || x->t != Value::LIST || x->l.empty()) i.bad("a marker is (list at name)");
+        score::Marker m;
+        m.at = i.scalar(x->l[0]);
+        if (!std::isfinite(m.at) || m.at < 0) i.bad("a marker's time is a number of seconds, 0 or more");
+        if (x->l.size() > 1) m.name = textOf(x->l[1]);
+        ms.push_back(std::move(m));
+    }
+    guarded(i, [&] { score::writeMarkers(s->extra, std::move(ms)); return 0; });
+    s->touch();
+    return a[0];
+}
+// (score-section s seconds)    the section a time falls in, from its marker to the next: (list from to "name"); to is the
+//                          score's end after the last marker (-1 when the score ends before), the name "" before the first
+inline vptr mus_score_section(vlist& a, Interp& i) {
+    auto s = S(i, a[0]);
+    auto ms = score::markersOf(*s);
+    auto sec = score::sectionAt(ms, i.scalar(a[1]), s->duration());
+    return v_list({v_num(sec.from), v_num(sec.to), v_str(sec.marker >= 0 ? ms[(size_t)sec.marker].name : std::string())});
+}
+
 // --- transformations (score_transform.h): the same functions Moritz's roll and score object call ---------------------------------------
 // the ids an optional argument names: a list of ids or of events of the score (none: every event)
 inline score::transform::Ids idsArg(Interp& i, vlist& a, size_t k) {
@@ -908,6 +939,8 @@ inline void add_score(Interp& i) {
     i.def("score->coll", mus_score_coll, 1, 1); i.def("coll->score", mus_coll_score, 3, 3);
     i.def("score-pan-gains", mus_score_pan_gains, 2, 2);
     i.def("score-bbt", mus_score_bbt, 2, 2); i.def("score-bbt->sec", mus_score_bbt_sec, 4, 4);
+    i.def("score-markers", mus_score_markers, 1, 1); i.def("score-markers!", mus_score_set_markers, 2, 2);
+    i.def("score-section", mus_score_section, 2, 2);
     i.def("score-transpose!", mus_score_transpose, 2, 3); i.def("score-invert!", mus_score_invert, 2, 3);
     i.def("score-retrograde!", mus_score_retrograde, 1, 2); i.def("score-augment!", mus_score_augment, 2, 3);
     i.def("score-diminish!", mus_score_diminish, 2, 3); i.def("score-quantize-grid!", mus_score_quantize_grid, 3, 4);

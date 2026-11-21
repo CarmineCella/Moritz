@@ -8,6 +8,13 @@
 // ruler, then for each track its header and its clips, its automation lanes under it), the inspector on the right
 // (the selected clip, point or track). What it says goes to its host (onStatus, onInfo).
 //
+// The mouse: a drag on empty space selects what the rectangle touches (clips, and points of the lanes it crosses; with
+// Shift added to the selection), so Delete, Copy and a drag act on them; a track's header dragged up or down puts the
+// track there (one undo step; a session's mixer follows the order). The ruler holds the markers (M adds one at the
+// playhead, Alt+Left and Alt+Right go to the previous and next): a marker dragged moves, double-clicked is renamed, its
+// right button renames or deletes it; a double-click between two markers loops that section. A lane ramps between its
+// points (drawn as lines) or holds each value until the next (drawn as steps): its header's right button switches it.
+//
 // Tracks and lanes: each is as high as its row says (dragging its lower edge in the header; a double-click there
 // folds it to one line or unfolds it; with Alt every track and lane at once), kept with the score (timeline_ops.h),
 // so saved with it. What a track holds is opened from its header: a click on its name, or a double-click on the
@@ -75,6 +82,8 @@ public:
     bool clipRect(const sc::Event& e, int& X, int& Y, int& W, int& H) const;
     uint64_t clipAt(int ex, int ey, int* zone = nullptr) const;   // zone: -1 left edge, 1 right edge, 0 body
     uint64_t pointAt(int ex, int ey) const;
+    int markerAt(int ex, int ey) const;   // the marker whose flag is under the mouse on the ruler (-1 none)
+    int trackSlotAt(int ey) const;        // the place among the tracks a header dragged there takes
     const Row* edgeAt(int ex, int ey) const;   // the row whose lower edge is under the mouse, in the headers
     bool onName(const Row& r, int ex, int ey) const;   // on the name of a track or a lane, in its header
     int rowTop(const Row& r) const;        // its window y
@@ -84,7 +93,9 @@ public:
     void release(int ex, int ey);
 
 private:
-    enum class Drag { None, Move, TrimL, TrimR, Point, Ruler, Loop, Height, FadeIn, FadeOut, Gain, Volume, Pan } drag_ = Drag::None;
+    enum class Drag { None, Move, TrimL, TrimR, Point, Ruler, Loop, Height, FadeIn, FadeOut, Gain, Volume, Pan, Band, Reorder, Marker } drag_ = Drag::None;
+    void drawMarkers();
+    void bandSelect();                     // the selection: what the rectangle touches (and what was selected, with Shift)
     void drawRuler();
     void drawHeader(const Row& r, int Y);
     void drawTrack(const Row& r, int Y);
@@ -112,6 +123,8 @@ private:
     double dragV_ = 0;
     std::string dragTrack_, dragLane_;
     bool dragAlt_ = false;
+    bool pressName_ = false;               // a track's header pressed on its name: opened at the release, unless dragged
+    std::vector<uint64_t> bandBase_;       // the selection a Shift-drag adds to
 
 public:
     // the drag as it shows now (for drawing): a move by dt seconds and dTrack tracks, a trimmed edge, a point
@@ -125,6 +138,14 @@ public:
     bool trimmingLeft() const { return drag_ == Drag::TrimL; }
     bool movingPoint(uint64_t id) const { return dragging() && drag_ == Drag::Point && dragId_ == id; }
     bool sizing() const { return dragging() && drag_ == Drag::Height; }
+    // the rubber band (window coordinates), a header dragged to another place, a marker dragged
+    int bandX0 = 0, bandY0 = 0, bandX1 = 0, bandY1 = 0;
+    bool banding() const { return dragging() && drag_ == Drag::Band; }
+    int reorderTo = -1;
+    bool reordering() const { return dragging() && drag_ == Drag::Reorder; }
+    int dragMarker = -1;
+    double dragMarkerT = 0;
+    bool movingMarker() const { return dragging() && drag_ == Drag::Marker; }
     // a clip's fades and gain dragged on it, a track's volume and pan in its header (drawn so until released)
     double dragFade = 0, dragGain = 1, dragStrip = 0;
     bool shaping(uint64_t id) const { return dragging() && dragId_ == id && (drag_ == Drag::FadeIn || drag_ == Drag::FadeOut || drag_ == Drag::Gain); }
@@ -239,6 +260,16 @@ public:
     bool setHeight(const std::string& track, const std::string& lane, int h, bool all = false);
     void toggleFold(const std::string& track, const std::string& lane, bool all = false);   // one line, or back
     bool rendering() const { return render_.running(); }
+    // a lane's ramps (linear) or steps; one undo step
+    bool setLaneRamp(const std::string& track, const std::string& lane, timeline::Ramp r);
+    // the markers: one added at the playhead (named "marker N"), renamed (a dialog, or the name), the transport to the
+    // next or previous one, the loop set to the section a time falls in
+    void addMarker();
+    void renameMarkerDialog(int k);
+    bool renameMarker(int k, const std::string& name);
+    bool nextMarker();
+    bool previousMarker();
+    bool loopSection(double t);
 
     // ---- showing
     void contentsChanged();                    // the score changed

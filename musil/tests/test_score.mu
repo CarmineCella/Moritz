@@ -194,6 +194,19 @@ check (equal? (score-bbt w 0) (list 1 1 0)) "score-bbt: the start"
 check (equal? (score-bbt w (/ 60 108)) (list 1 2 0)) "score-bbt: the second beat"
 check (equal? (score-bbt w (* 4 (/ 60 108))) (list 2 1 0)) "score-bbt: the second bar"
 check (close? (score-bbt->sec w 2 1 240) (* 4.5 (/ 60 108)) 1e-12) "score-bbt->sec"
+; --- markers and sections (Moritz's timeline sets them on its ruler): kept in the file, a section from one to the next ---
+var mk (score "marked" 44100)
+event mk 0 10 (record (list 'kind 'note 'instr "Fl" 'midi 60 'pitch "C4" 'dyn "mf" 'tech "ord" 'cents 0))
+check (equal? (score-markers mk) (list)) "score-markers: none"
+score-markers! mk (list (list 4 "B") (list 1 'A))
+check (equal? (score-markers mk) (list (list 1 "A") (list 4 "B"))) "score-markers!: by time"
+check (equal? (score-section mk 2) (list 1 4 "A")) "score-section: from its marker to the next"
+check (equal? (score-section mk 5) (list 4 10 "B")) "score-section: the last one to the end"
+check (equal? (score-section mk 0.5) (list 0 1 "")) "score-section: before the first marker"
+check (equal? (score-markers (text->score (score->text mk))) (list (list 1 "A") (list 4 "B"))) "markers: written and read back"
+check (contains? (error-of (function () (score-markers! mk (list (list -1 "x"))))) "marker") "score-markers!: a time before 0"
+score-markers! mk (list)
+check (equal? (score-markers mk) (list)) "score-markers!: none again"
 check (close? (score-pan-gains 45 2) (vec (map (pan-azimuth (vec 1) 45) head)) 1e-15) "score-pan-gains: pan-azimuth's law"
 check (close? (score-pan-gains 30 6) (vec (map (pan-n (vec 1) (speaker-ring 6) 30) head)) 1e-12) "score-pan-gains: pan-n on a ring"
 

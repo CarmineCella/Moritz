@@ -15,6 +15,7 @@
 #include "score_doc.h"
 #include "score_export.h"
 #include "score_window.h"
+#include "timeline_ops.h"
 #include "transport.h"
 #include "zoom.h"
 
@@ -32,6 +33,7 @@
 #include <filesystem>
 #include <map>
 #include <set>
+#include <tuple>
 #include <mutex>
 
 namespace moritz {
@@ -211,9 +213,10 @@ struct ScorePlan {
         int slot = -1;
         int64_t start = 0, end = 0;
     };
-    struct Curve {                       // a strip lane: ramps between its points
+    struct Curve {                       // a strip lane: ramps between its points (or holds each: step; mute always does)
         enum What : uint8_t { Gain, Pan, Mute, Send } what = Gain;
         int send = 0;
+        bool step = false;
         std::vector<std::pair<int64_t, float>> pts;   // by position
         float at(int64_t pos) const {
             if (pts.empty()) return 0.f;
@@ -222,7 +225,7 @@ struct ScorePlan {
             auto it = std::upper_bound(pts.begin(), pts.end(), pos,
                                        [](int64_t p, const std::pair<int64_t, float>& q) { return p < q.first; });
             auto a = *(it - 1), b = *it;
-            if (what == Mute || b.first == a.first) return a.second;
+            if (what == Mute || step || b.first == a.first) return a.second;
             return a.second + (b.second - a.second) * (float)((double)(pos - a.first) / (double)(b.first - a.first));
         }
     };
@@ -283,7 +286,8 @@ struct BlockCtx;
 // channel (2 by default: its sounds, and the notes that carry a sound of their own, placed at their azimuths), then
 // notes (pitch velocity duration-ms row dynamics technique; - for none), then messages (name values...; a patch event
 // as patch name duration-ms args...), then info (end when it plays past its last event; the summary for info). A
-// message is also sent to the receive objects of its name (automation lanes drive a patch's receives). The rows are
+// message is also sent to the receive objects of its name (automation lanes drive a patch's receives; a lane that ramps
+// sends the values between its points too, 100 a second, one that steps only its points). The rows are
 // tracks, and the score plays as a multitrack session (multitrack.h): each track a channel through its mixer strip (gain,
 // az as a pan, mute, solo: values the mixer changes through atomics, no new plan), its insert patch, into a bus or the
 // master, with sends to buses; a track's instrument patch plays its notes (they leave the notes outlet otherwise), a
@@ -715,6 +719,14 @@ private:
     std::shared_ptr<Transport> t_;
     Published<ScorePlan> plan_;
     std::vector<Ctl> ctl_;                       // notes and messages by onset (GUI)
+    // a lane that ramps (timeline_ops.h's Ramp::Linear) to a receive: its points (each sent as a message, in ctl_) and,
+    // between two of different values, the values on the way at kRampRate (the scheduler: GUI, never the audio thread)
+    struct RampLane {
+        std::string name;
+        std::vector<std::pair<int64_t, double>> pts;   // by position
+    };
+    std::vector<RampLane> ramps_;
+    uint64_t rampGen_ = 0;                       // a new one for each follow(): the ticks of an older one stop
     int64_t end_ = 0;                            // where the last event ends
     std::map<std::string, std::shared_ptr<const SampleBuffer>> decoded_;   // files read once (GUI)
     // what the scheduler is on: the pass through the loop and the next control event
@@ -1098,6 +1110,7 @@ private:
         for (auto& r : score_->rows) {
             sc::Row c = r;
             for (const char* k : {"gain", "mute", "solo", "monitor", "height", "lanes"}) sc::eraseField(c.extra, k);
+            for (auto& l : timeline::rowLanes(r)) mix(l.name + (l.ramp == timeline::Ramp::Linear ? " linear" : " step"));
             if (nOut_ == 2) sc::eraseField(c.extra, "az");
             mt::RowSettings rs = mt::rowSettings(r);
             for (auto& x : rs.sends) x.gain = 0;
@@ -1186,6 +1199,17 @@ private:
         std::vector<Ctl> ctl;
         std::map<std::string, int> files, bufs, streams;
         std::map<std::pair<int, std::string>, ScorePlan::Curve> curves;
+        // the lanes that ramp to receives: by the placement they come from (one ramp each), their row and their name
+        std::map<std::tuple<const void*, const void*, std::string, std::string>, RampLane> ramps;
+        std::map<std::tuple<const void*, std::string, std::string>, bool> linear;   // a lane's mode, read once
+        auto rampsHere = [&](const sc::Placed& p) {
+            const sc::Score* o = p.origin ? p.origin : score_.get();
+            auto key = std::make_tuple((const void*)o, p.ev.row, p.ev.source);
+            auto it = linear.find(key);
+            if (it == linear.end())
+                it = linear.emplace(key, timeline::laneRamp(*o, p.ev.row, p.ev.source) == timeline::Ramp::Linear).first;
+            return it->second;
+        };
         for (auto& s : slots_) s->used = false;
         bool slotsChanged = false;
         end_ = 0;
@@ -1262,13 +1286,18 @@ private:
                         if (cv.send < 0) continue;
                     } else continue;
                     auto& slot = curves[{c, what}];
-                    if (slot.pts.empty()) { slot.what = cv.what; slot.send = cv.send; }
+                    if (slot.pts.empty()) { slot.what = cv.what; slot.send = cv.send; slot.step = !rampsHere(p); }
                     slot.pts.push_back({at(e.at), (float)e.values[0].num});
                     continue;
                 }
                 Message msg{Atom(e.source.empty() ? std::string("-") : e.source)};
                 for (auto& d : e.values) appendDatum(msg, d);
                 ctl.push_back(Ctl{at(e.at), nOut_ + 1, std::move(msg), !e.source.empty(), Ctl::Plain, std::string(), -1});
+                if (!e.source.empty() && !e.values.empty() && e.values[0].kind == sc::Datum::Num && rampsHere(p)) {
+                    auto& r = ramps[std::make_tuple((const void*)(p.depth ? p.top : nullptr), (const void*)p.origin, e.row, e.source)];
+                    r.name = e.source;
+                    r.pts.push_back({at(e.at), e.values[0].num});
+                }
             } else if (e.kind == sc::Kind::Patch) {
                 // a patch clip: its patch (a .moritz file) loaded now, run while the clip plays (loadbang at its start,
                 // its timers stopped at its end); it leaves the messages outlet too, as `patch name duration-ms args...`
@@ -1287,6 +1316,12 @@ private:
                     ctl.push_back(Ctl{cl.end, -1, {}, false, Ctl::ClipEnd, std::string(), k});
                 }
             }
+        }
+        ramps_.clear();
+        for (auto& kv : ramps) {
+            auto& r = kv.second;
+            std::stable_sort(r.pts.begin(), r.pts.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+            if (r.pts.size() > 1) ramps_.push_back(std::move(r));
         }
         for (auto& kv : curves) {
             auto& cv = kv.second;
@@ -1425,6 +1460,47 @@ private:
         if (firing_ && lap_ == firedLap_) from = std::max(from, firedPos_ + 1);   // what was just sent is not sent again
         cursor_ = (size_t)(std::lower_bound(ctl_.begin(), ctl_.end(), from, [](const Ctl& c, int64_t p) { return c.pos < p; }) - ctl_.begin());
         schedule();
+        ++rampGen_;
+        if (!ramps_.empty()) rampTick(rampGen_);
+    }
+    // the lanes that ramp: where the transport is inside a ramp (after a point, before the next of another value), the value
+    // there to its receive and out of the messages outlet; then the next tick, on the grid of kRampRate a second
+    void rampTick(uint64_t gen) {
+        if (gen != rampGen_ || ramps_.empty() || !t_ || !t_->playing() || !inPatch()) return;
+        int lap;
+        double pos;
+        t_->where(patch, lap, pos);
+        for (size_t k = 0; k < ramps_.size(); ++k) {
+            const auto& pts = ramps_[k].pts;
+            auto it = std::upper_bound(pts.begin(), pts.end(), pos, [](double q, const std::pair<int64_t, double>& p) { return q < (double)p.first; });
+            if (it == pts.begin() || it == pts.end()) continue;
+            auto a = *(it - 1), b = *it;
+            if (pos <= (double)a.first || a.second == b.second || b.first <= a.first) continue;
+            double v = a.second + (b.second - a.second) * (pos - (double)a.first) / (double)(b.first - a.first);
+            std::string name = ramps_[k].name;
+            patch->sendTo(name, Message{Atom((float)v)});
+            if (gen != rampGen_) return;               // what it reached changed the score or the transport: followed anew
+            outlet(nOut_ + 1, Message{Atom(name), Atom((float)v)});
+            if (gen != rampGen_) return;
+        }
+        double step = patch->root()->sampleRate.load() / timeline::kRampRate;
+        if (!(step >= 1)) step = 1;
+        double now = patch->logicalTime();
+        double b = (std::floor(pos / step + 1e-9) + 1) * step;
+        for (int guard = 0; guard < 8; ++guard) {
+            double t = t_->timeAt(std::floor(b + 1e-6), lap);
+            if (std::isnan(t) && t_->looping()) {               // past the loop's end: its start, the next pass
+                ++lap;
+                b = (double)t_->loopStart();
+                t = t_->timeAt(b, lap);
+            }
+            if (std::isnan(t)) return;
+            if (t > now) {
+                patch->scheduleAt(this, t, [this, gen] { rampTick(gen); });
+                return;
+            }
+            b += step;
+        }
     }
     void schedule() {
         bool looping = t_->looping();
