@@ -21,7 +21,7 @@
 #include <FL/Fl_PNG_Image.H>
 #include <FL/Fl_Text_Editor.H>
 #include <FL/fl_draw.H>
-#include <FL/platform.H>
+void fl_open_display();   // FL/platform.H (not included: it drags in X11's macros on Linux, None among them)
 
 #include <algorithm>
 #include <cmath>

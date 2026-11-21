@@ -22,7 +22,6 @@
 #include <FL/Fl_Text_Buffer.H>
 #include <FL/Fl_Text_Editor.H>
 #include <FL/fl_draw.H>
-#include <FL/platform.H>
 
 #include <algorithm>
 #include <cmath>

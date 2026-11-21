@@ -89,8 +89,9 @@ write (datasets-config) "dataset \"../x\" \"/a.db\"\n"
 check (contains? (try (dataset "x") catch e e) "not a dataset's name") "a registration with a strange name"
 write (datasets-config) "folder \"a \\\"quoted\\\" \\\\ name\"\n"
 check (ends-with? (datasets-folder) "a \"quoted\" \\ name") "the configuration: quotes and backslashes read back"
+; (on Windows a backslash in a folder's path is a separator: the folder comes back with a slash)
 datasets-folder! (concat dir "/we \"quote\" \\ it")
-check (ends-with? (datasets-folder) "we \"quote\" \\ it") "the configuration: quotes and backslashes written and read back"
+check (ends-with? (datasets-folder) (if (equal? (platform) "windows") "we \"quote\" / it" "we \"quote\" \\ it")) "the configuration: quotes and backslashes written and read back"
 datasets-folder! nil
 check (not (ends-with? (datasets-folder) "it")) "datasets-folder! nil: the default again"
 

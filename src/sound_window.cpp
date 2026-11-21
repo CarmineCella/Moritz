@@ -14,7 +14,7 @@
 
 #include <FL/Fl_Native_File_Chooser.H>
 #include <FL/filename.H>
-#include <FL/platform.H>
+void fl_open_display();   // FL/platform.H (not included: it drags in X11's macros on Linux, None among them)
 
 namespace moritz {
 
