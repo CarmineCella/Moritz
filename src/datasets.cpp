@@ -47,6 +47,7 @@ void DatasetTask::start(std::function<std::string(Job&)> work) {
             catch (const std::exception& e) { *err = e.what(); }
         },
         [this, file, err] {
+            job_.cancel();          // the job has ended: its thread joined now (the window lives as long as the program)
             setStage(err->empty() ? "done" : "failed");
             if (onDone) onDone(*file, *err);
         });
