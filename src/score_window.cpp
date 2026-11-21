@@ -371,7 +371,7 @@ ScoreWindow::ScoreWindow(std::shared_ptr<ScoreDoc> doc, ScoreView view, bool arr
         docToken_ = doc_->listen([this](unsigned what) {
             if (!drawer_) return;
             if (what & ScoreDoc::Selection) drawer_->selectionChanged();
-            if ((what & ScoreDoc::Content) && drawer_->tab() == Drawer::Tab::Track) drawer_->setRole(drawer_->role());
+            if (what & ScoreDoc::Content) drawer_->contentChanged();
         });
     }
     // the status line
@@ -790,6 +790,7 @@ bool ScoreWindow::saveAs() {
 
 bool ScoreWindow::confirmDiscard() {
     roll_->applyText();
+    if (drawer_ && !drawer_->confirmLeave()) return false;   // a patch or a sound edited in the drawer
     if (!confirmDiscardScoreDocument(doc_, this)) return false;
     for (auto& d : target_->documents())
         if (d != doc_ && !confirmDiscardScoreDocument(d, this)) return false;

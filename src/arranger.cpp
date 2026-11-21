@@ -328,11 +328,13 @@ void Drawer::showTab(Tab t) {
 
 void Drawer::setTrack(const std::string& track) {
     if (track == track_) return;
+    if (tab_ == Tab::Track && !confirmLeave()) return;
     track_ = track;
     if (tab_ == Tab::Track) rebuild();
 }
 
 void Drawer::setRole(const std::string& role) {
+    if (role != role_ && tab_ == Tab::Track && !confirmLeave()) return;
     role_ = role;
     if (tab_ == Tab::Track) rebuild();
     else showTab(Tab::Track);
@@ -348,7 +350,20 @@ void Drawer::selectionChanged() {
     if (tab_ == Tab::Clip) rebuild();
 }
 
+void Drawer::contentChanged() {
+    if (tab_ != Tab::Track) return;
+    Box* box = doc_->playerBox();
+    Patch* p = box ? mt::trackPatch(box, track_, role_) : nullptr;
+    if (p != shownPatch_ || (p && p->file != shownFile_)) rebuild();   // another patch, or none: shown again
+}
+
 bool Drawer::confirmLeave() {
+    if (dirtyPatch_ && canvas_ && canvas_->patch() && !canvas_->patch()->file.empty()) {   // a patch edited here
+        int a = askUser("Save the changes to the patch \"%s\"?", "Save", "Cancel", "Don't Save", baseName(canvas_->patch()->file).c_str());
+        if (a == 1) return false;
+        if (a == 0 && !saveTrackPatch()) return false;
+        dirtyPatch_ = false;
+    }
     if (!sound_ || !soundDoc_ || !soundDoc_->needsSaving()) return true;
     int a = askUser("Save the changes to the sound \"%s\"?", "Save", "Cancel", "Don't Save", baseName(soundDoc_->path()).c_str());
     if (a == 1) return false;
@@ -410,6 +425,8 @@ void Drawer::rebuild() {
             if (l == "Instrument") b->value(role_ == "instrument");
         }
         Patch* p = box ? mt::trackPatch(box, track_, role_) : nullptr;
+        shownPatch_ = p;
+        shownFile_ = p ? p->file : std::string();
         if (p) {
             editor_ = std::make_unique<DrawerEditor>(this);
             canvas_ = new Canvas(X, Y, W, H, editor_.get(), p);

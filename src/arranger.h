@@ -69,6 +69,7 @@ public:
     Tab tab() const { return tab_; }
     void showTab(Tab t);
     void selectionChanged();                     // the Clip tab shows the selected clip
+    void contentChanged();                       // the score changed: the Track tab follows when its patch did
     void setTrack(const std::string& track);     // the Track tab's track
     const std::string& track() const { return track_; }
     void setRole(const std::string& role);       // the Track tab shows the insert or the instrument
@@ -108,6 +109,8 @@ private:
     std::shared_ptr<SoundDoc> soundDoc_;
     std::unique_ptr<DrawerEditor> editor_;
     std::string shown_;                          // what the content shows (describe)
+    Patch* shownPatch_ = nullptr;
+    std::string shownFile_;
     bool dirtyPatch_ = false;
 };
 
