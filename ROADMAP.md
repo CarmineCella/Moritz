@@ -156,13 +156,27 @@ the editor's command table and undo rule), YIN, `descriptors~` on the shared ana
 - [ ] More examples for every orchestration mode and idea (mimetic, morphological, granular, queries,
       a sound file orchestrated over time, a score as target), and a tutorial on orchestration.
 
+### Examples
+
+Many more examples, each small and about one idea, in the folder of its topic:
+
+- [ ] **Scores and the roll**: a score written in Musil and played by the box; a score drawn by hand;
+      transformations (transpose, invert, retrograde, augment, quantize, humanize); scores inside scores;
+      microtones; a score driving synths through its notes outlet; a score driving a patch with messages.
+- [ ] **Timeline**: stems arranged; automation lanes driving several patches; sub-scores placed several
+      times (instances, Make Unique); a piece rendered to a file; sounds from the sound editor's regions.
+- [ ] **Sound editor**: more Process scripts and patches; markers and regions into a score and a coll.
+- [ ] **Orchestration**: one example per mode and idea (in the orchestration section above), as the modes
+      arrive.
+
 ### Tutorials
 
 The patches in `tutorials/` are numbered in the order they are taught; the code tutorial stays last.
 
-- [ ] **Orchestration**: a tutorial patch before the code one (with the orchestration features).
+- [ ] **Orchestration**: a tutorial patch before the code one, written once the orchestration
+      features are complete (queries, the morphological and granular modes, scores as output).
 - [ ] **Scores**: what a score is for and how it works (the score object, the transport, timeline and
-      roll, scores from Musil), before the code one.
+      roll, scores from Musil), before the code one, written once the roll and the timeline are together.
 
 ### Documents
 
