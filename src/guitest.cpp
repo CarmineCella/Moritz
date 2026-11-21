@@ -81,9 +81,9 @@
 #include "objects.h"
 #include "sound_editor.h"
 #include "sound_process.h"
+#include "timeline.h"
 
 #include <map>
-#include "timeline.h"
 
 #include <FL/Fl_Image_Surface.H>
 #include <FL/Fl_PNG_Image.H>
