@@ -88,7 +88,7 @@ the editor's command table and undo rule), YIN, `descriptors~` on the shared ana
 | --- | --- |
 | 0.12 | Sound editor; Orchidea in Moritz; the score (score, transport); the timeline and the roll in one score window; datasets; Musil in Moritz; examples and tutorials |
 | 0.13 | Orchestration's morphological and granular modes; Musil's assisted composition and the pieces (Grisey, Haas, Atmosphères) as patches; the multitrack mode, as in Reaper (layout B of mockup 8, with a mixer), with patch clips and track instruments and effects |
-| 0.14 (in progress) | Orchestration and the score: sample selection by query, the solutions of each segment in the roll, the timeline's ramps, rubber-band selection, track order, markers and sections; MusicXML and MIDI export of scores |
+| 0.14 | Orchestration and the score: sample selection by query, the solutions of each segment in the roll, the timeline's ramps, rubber-band selection, track order, markers and sections; MusicXML and MIDI export of scores |
 | then | Orchestration's playability; the multitrack's next items (below) |
 | then | Neural networks (WEFT): `mlp`, classifier, `autoencoder`/`vae` with a playable latent space, images as data (MNIST). WEFT is finished first in its own project, then ported |
 | then | Research: VAE on matching pursuit; a 2-D corpus map; a transformer on atom sequences; `concat~` |
@@ -217,12 +217,13 @@ the editor's command table and undo rule), YIN, `descriptors~` on the shared ana
       orchestra's `rest`, the score's `merge`), and `segmentation adaptive` in the mimetic mode.
 - [x] `orchidea` outputs a score (the shared C++ score) instead of a plot: a `score` box shows it as a roll,
       edits it and plays each note's sample.
-- [ ] **The solutions of each segment in the roll**, as Musil's roll has them: the score from orchidea
-      carries every segment's ranked solutions; the roll draws a boundary at each segment with the
-      solution chosen ("2/5") and a menu of the solutions of the segment under the cursor, by cost;
-      choosing one replaces that segment's notes as one undo step, in the box, the roll and a saved
-      .score alike (one function in Musil's C++, used by the roll, orchidea's `choose` and Musil's
-      `score-choose!`).
+- [x] **The solutions of each segment in the roll** (0.14), as Musil's roll has them: orchidea's score keeps every
+      segment's ranked solutions (musil/src/music/score_solutions.h); the roll draws a mark at each segment with the
+      solution chosen ("2/5") and a menu of its solutions by cost; choosing one replaces that segment's notes (the
+      held notes around it rebuilt by the connection's rule) as one undo step, in the box, the roll and a saved
+      .score alike; orchidea's `choose segment rank`, Musil's `score-choose!` and `score-choose-solution!`.
+- [ ] The solutions, next: the choices stored apart from the solutions (a lighter undo); the granular and
+      morphological runs' solutions in their score; the marks following a shifted score.
 - [ ] Playability checks.
 - [x] Examples as patches (examples/18-pieces), played through the score: Grisey's Partiels (a trombone's E1
       analysed with Musil's spectral tools, its partials given to the instruments cycle after cycle, Orchidea's

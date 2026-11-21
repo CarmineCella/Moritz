@@ -1,5 +1,32 @@
 # Changes
 
+## 0.14
+
+### Orchestration
+
+- **Sample selection by query** (`src/music/db_query.h`): `(db-select db query)` keeps the entries a small
+  language chooses: fields `instrument`, `family`, `technique`, `dynamics`, `pitch`, `string`, `mute`, `tag`,
+  `file` and the analysed moments; patterns (`pizz*`), regular expressions (`/sul_?pont/`, those that could
+  backtrack without end refused), ranges (`C4..G5`, `p..f`), lists (`Vn|Va`), `and`, `or`, `not` and
+  parentheses. A record gives a query per instrument (`'all` for every sound). `db-select-counts` says how many
+  sounds remain, per instrument; `orchestrate-mimetic`, `-granular` and `-morphological` take `'select`.
+- **The solutions of each segment kept in the score** (`src/music/score_solutions.h`): a score made by an
+  orchestration carries every segment's ranked solutions; `score-choose!` and `score-choose-solution!` replace
+  one segment's notes with another solution, the held notes around it rebuilt by the connection's rule
+  (`src/music/continuation.h`); `score-orchestrations` lists them. Moritz's roll and `orchidea` call the same code.
+
+### Scores
+
+- **`score-midi`** writes a score as a standard MIDI file: format 1, a track per part with its General MIDI
+  program, velocities from the dynamics, exact times; notes between semitones rounded or, with
+  `'microtones 'bend`, each on a free channel with its pitch bend.
+- **Markers**: `score-markers`, `score-markers!` and `score-section`, kept in the score's data and its file.
+
+### Files
+
+- `write` writes a file whole or not at all (a temporary file next to it, checked, then renamed); so do
+  `score-midi` and the score's own files.
+
 ## 0.13
 
 ### Orchestration
