@@ -196,14 +196,19 @@ the editor's command table and undo rule), YIN, `descriptors~` on the shared ana
 
 Many more examples, each small and about one idea, in the folder of its topic:
 
-- [ ] **Scores and the roll**: a score written in Musil and played by the box; a score drawn by hand;
-      transformations (transpose, invert, retrograde, augment, quantize, humanize); scores inside scores;
-      microtones; a score driving synths through its notes outlet; a score driving a patch with messages.
-- [ ] **Timeline**: stems arranged; automation lanes driving several patches; sub-scores placed several
-      times (instances, Make Unique); a piece rendered to a file; sounds from the sound editor's regions.
-- [ ] **Sound editor**: more Process scripts and patches; markers and regions into a score and a coll.
+- [x] **Scores and the roll** (examples/15-scores): a score written in Musil and played by the box; a score
+      drawn by hand; transformations (transpose, invert, retrograde, augment, quantize, humanize); scores inside
+      scores; microtones; a score driving synths through its notes outlet; a score driving a patch with
+      messages; a .score file written and read; the transport.
+- [x] **Timeline** (examples/16-timeline): stems arranged; automation lanes driving several patches; sub-scores
+      placed several times (instances, Make Unique); a piece rendered to a file; sounds from the sound editor's
+      regions.
+- [x] **Sound editor** (examples/14-sound-editor): more Process scripts and patches; markers and regions into a
+      score (regions.moritz in 16-timeline).
+- [ ] **Sound editor**: markers and regions into a coll, once `coll` exists.
 - [ ] **Orchestration**: one example per mode and idea (in the orchestration section above), as the modes
-      arrive.
+      arrive. The mimetic mode has its examples (examples/13-orchestration: static and dynamic, the
+      connections, memory, the search, the space of sounds, the output, the piece of four targets).
 
 ### Tutorials
 
