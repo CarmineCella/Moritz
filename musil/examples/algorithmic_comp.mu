@@ -62,8 +62,8 @@ print "5: a texture through six chords (winds), a texture pivoting around the la
 
 ; --- 6. walks, arpeggios, a polyrhythm, an ostinato: the language over fragments -------------------------------------------
 add-beats! s 82 (walk db (list 'Ob 'Hn 'Vc) 'mf 'ord (list "A4" "D#4" "G3") 3 (rhythm (list 0.5 0.5 0.5 1 0.5 0.5 1)))
-each (list 0 2 4) (function (k) (add-beats! s (+ 88 k) (arpeggio db 'Vn 'p 'ord (transpose-pitches (list "C4" "F#4" "A#4" "E5") k) 0.12 (if (odd? k) 'down 'up) 1)))
-var pr (polyrhythm (rhythm (list 1 1 1)) (rhythm (list 1 1)))                        ; 3 against 2, on a common cycle
+each (list 0 2 4) (function (k) (add-beats! s (+ 88 k) (arpeggio db 'Vn 'p 'ord (transpose-pitches (list "C4" "F#4" "A#4" "E5") k) 0.12 (if (== k 2) 'down 'up) 1)))       ; up, down, up (k is even: odd? never chose down)
+var pr (polyrhythm (tuplet 3 6) (tuplet 2 6))                                       ; 3 against 2 in six beats (1 1 1 against 1 1 was one pulse)
 add-beats! s 94 (notes db 'Ob 'mf 'ord (list "F5" "E5" "F#5") (head pr))
 add-beats! s 94 (notes db 'Hn 'mf 'ord (list "C#3" "G3") (last pr))
 var ost (notes db 'Vc 'pp 'ord (list "B3" "F3") (rhythm-from-pattern "x..x.x.." 0.25))
