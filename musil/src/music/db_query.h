@@ -216,7 +216,7 @@ struct parser {
     parser(const std::vector<token>& t, const options& o) : toks(t), opt(o) {}
 
     bool at_end() const { return pos >= toks.size(); }
-    std::string near() const { return at_end() ? "at the end" : "at '" + toks[pos].raw + "'"; }
+    std::string where_now() const { return at_end() ? "at the end" : "at '" + toks[pos].raw + "'"; }
 
     query expr() {
         if (++depth > kMaxDepth) throw query_error("the query is nested too deeply (at most " + std::to_string(kMaxDepth) + " levels)");
@@ -250,7 +250,7 @@ struct parser {
         if (t.k == token::open) {
             pos++;
             query q = expr();
-            if (at_end() || toks[pos].k != token::close) throw query_error("a ( without its ) " + near());
+            if (at_end() || toks[pos].k != token::close) throw query_error("a ( without its ) " + where_now());
             pos++;
             return q;
         }
@@ -280,7 +280,7 @@ struct parser {
         else throw query_error("'" + t.raw + "' is not a field (" + fields_known() + ")");
         const std::string fname = t.parts[0].second;
         if (at_end() || toks[pos].k != token::word || keyword(toks[pos], "and") || keyword(toks[pos], "or") || keyword(toks[pos], "not"))
-            throw query_error(fname + ": a value is missing " + near());
+            throw query_error(fname + ": a value is missing " + where_now());
         const token& v = toks[pos++];
         for (auto& part : v.parts) n->alts.push_back(value(n->f, fname, part.first, part.second));
         return n;
