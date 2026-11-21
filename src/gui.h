@@ -180,8 +180,8 @@ private:
     void updateScrollbars();
     static constexpr int kScrollW = 12;
     int sx_ = 0, sy_ = 0;
-    Fl_Scrollbar* hbar_;
-    Fl_Scrollbar* vbar_;
+    Fl_Scrollbar* hbar_ = nullptr;   // made in the constructor, after an event may already have come (see there)
+    Fl_Scrollbar* vbar_ = nullptr;
     PatchEditor* ed_;          // never null
     Patch* patch_;
     bool locked_ = false;

@@ -174,7 +174,6 @@ Canvas::Canvas(int x, int y, int w, int h, PatchEditor* editor, Patch* patch)
     editor_->selection_color(fl_rgb_color(60, 100, 170));
     editor_->when(FL_WHEN_ENTER_KEY_ALWAYS | FL_WHEN_RELEASE_ALWAYS);
     editor_->callback(editCb, this);
-    editor_->hide();
     hbar_ = new Fl_Scrollbar(x, y + h - kScrollW, w, kScrollW);
     hbar_->type(FL_HORIZONTAL);
     vbar_ = new Fl_Scrollbar(x + w - kScrollW, y, kScrollW, h);
@@ -192,6 +191,7 @@ Canvas::Canvas(int x, int y, int w, int h, PatchEditor* editor, Patch* patch)
         }, this);
     }
     end();
+    editor_->hide();      // last: hiding may send an event to the canvas at once (see handle)
 }
 
 Canvas::~Canvas() {
@@ -1195,7 +1195,9 @@ void Canvas::numberDrag(int dy) {
 int Canvas::handle(int e) {
     if (!patch_) return 0;                          // detached: the patch is gone
     // the scrollbars get their own clicks
-    if ((e == FL_PUSH || e == FL_MOVE || e == FL_ENTER) &&
+    // (hiding the box editor in the constructor can make FLTK send FL_ENTER at once, where the mouse is over the new
+    // canvas, before the scrollbars exist: X11 did so in the arranger's drawer)
+    if ((e == FL_PUSH || e == FL_MOVE || e == FL_ENTER) && hbar_ && vbar_ &&
         ((hbar_->visible() && Fl::event_inside(hbar_)) || (vbar_->visible() && Fl::event_inside(vbar_))))
         return Fl_Group::handle(e);
     if (e == FL_MOUSEWHEEL) {                    // wheel and trackpad scrolling

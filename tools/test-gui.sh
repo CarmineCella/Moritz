@@ -670,8 +670,9 @@ run --window-png none "act=mtopen:$T/mt/song.score" act=mtstate act=mtmixer "act
     act=mttab:track act=mtnewpatch act=mtdrawer act=mttab:clip act=mtselect:1 act=mtdrawer "act=mtbrowse:$T/mt" act=mtbrowser \
     act=mtbrowseopen:3 act=mtstate
 expect "the strips" "state: mixer strip audio 1 gain 0.0 pan C mute no solo no arm no out master live 0.0"
-expect "heard during the drag" "state: mixer live audio 1 -5.9"
-expect "kept at the release" "state: mixer strip audio 1 gain -5.9"
+# (about -6 dB: a pixel of the fader is a tenth of a dB, and the fader's length follows the system's fonts)
+if [ $status -eq 0 ] && grep -qE "state: mixer live audio 1 -(5\.[89]|6\.[01])" "$out"; then ok; else fail "heard during the drag"; fi
+if [ $status -eq 0 ] && grep -qE "state: mixer strip audio 1 gain -(5\.[89]|6\.[01])" "$out"; then ok; else fail "kept at the release"; fi
 plans=$(grep "state: arranger plans" "$out" | cut -d' ' -f4 | tr '\n' ' ')
 if [ $status -eq 0 ] && [ "$(echo $plans | cut -d' ' -f1)" = "$(echo $plans | cut -d' ' -f2)" ]; then ok
 else fail "a fader moved makes no plan (plans: $plans)"; fi
