@@ -111,6 +111,10 @@ the editor's command table and undo rule), YIN, `descriptors~` on the shared ana
 - [x] Musil's live functions in Moritz say why they are missing.
 - [ ] Musil's plots as a host service in Moritz (`show`, `save-png`), one renderer with `plot`.
 - [ ] Musil's examples run in Moritz's tests too (those that can).
+- [ ] Sound editor leftovers: a buffer~'s markers saved inside its patch, region edges dragged with the
+      mouse, To score straight into a score object.
+- [ ] Musil's golden tests now and then fail when ctest runs them in parallel with the examples (they
+      seem to share output files): give each its own files.
 
 ### 0.13 and 0.14
 
