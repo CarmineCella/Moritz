@@ -133,6 +133,11 @@ the editor's command table and undo rule), YIN, `descriptors~` on the shared ana
 - [ ] Roll and the active `score` object (mockups 5 and 2): editing in the box and in its window,
       piano roll, list, the score as text in sync; Transform; Generate (Musil, offline); `coll`.
 - [ ] A tempo map (today a score has one tempo); stretched sound clips played stretched.
+- [ ] Microtones in the roll: a choice of how they are shown and snapped, per score or per view: cents
+      (the number, as now), quarter tones, eighth tones (or any division of the semitone), drawn with
+      microtonal accidentals (quarter-tone sharps and flats, arrows for eighths) instead of the number;
+      notes snapped to the chosen grid when drawn or moved, with the exact cents kept when they come from
+      an analysis (Orchidea's partials).
 
 ### Orchestration
 
