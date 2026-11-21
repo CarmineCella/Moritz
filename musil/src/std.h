@@ -173,10 +173,26 @@ inline vptr fn_read(vlist& a, Interp& i) {
 }
 // (write path x) write x (printed) to a file, replacing it
 // (append-file path x) write x (printed) at the end of a file
+// (write path text) the file written whole or not at all: a temporary file next to it, the write and the close
+// checked, then renamed over it (a device or a pipe, not a regular file, is written directly)
 inline vptr fn_write(vlist& a, Interp& i) {
     const std::string& fn=i.writable(i.str(a[0]));
-    std::ofstream f(fn); if (!f) i.err("write: cannot open " + fn);
-    f << str_of(a[1]); return v_nil();
+    std::error_code ec;
+    if (fs::exists(fn, ec) && !fs::is_regular_file(fn, ec)) {
+        std::ofstream f(fn); if (!f) i.err("write: cannot open " + fn);
+        f << str_of(a[1]); f.flush(); if (!f) i.err("write: cannot write " + fn);
+        return v_nil();
+    }
+    std::string tmp = fn + ".tmp";
+    {
+        std::ofstream f(tmp, std::ios::trunc); if (!f) i.err("write: cannot open " + fn);
+        f << str_of(a[1]); f.flush();
+        bool ok = (bool)f; f.close();
+        if (!ok || f.fail()) { std::remove(tmp.c_str()); i.err("write: cannot write " + fn); }
+    }
+    fs::rename(tmp, fn, ec);
+    if (ec) { std::remove(tmp.c_str()); i.err("write: cannot write " + fn + ": " + ec.message()); }
+    return v_nil();
 }
 inline vptr fn_appendf(vlist& a, Interp& i) {
     const std::string& fn=i.writable(i.str(a[0]));

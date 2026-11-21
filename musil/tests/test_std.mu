@@ -192,6 +192,9 @@ check (== (exists? "/tmp/definitely/not/here") 0) "exists?: missing"
 check (contains? (error-of (function () (read "/tmp/definitely/not/here"))) "cannot open") "read: missing file"
 write path (vec 1 2 3)
 check (equal? (read path) "(1 2 3)") "write: non-strings are printed"
+check (== (exists? (concat path ".tmp")) 0) "write: no temporary file left"
+check (contains? (error-of (function () (write "/tmp/definitely/not/here/x.txt" "x"))) "cannot") "write: a missing folder"
+check (equal? (read path) "(1 2 3)") "write: a failed write leaves other files alone"
 
 ; --- higher-order (std.h: map, filter, reduce) ---
 check (equal? (map (list 1 2 3) square) (list 1 4 9)) "map: list"
