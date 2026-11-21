@@ -137,10 +137,11 @@ click **Open Anyway** in System Settings > Privacy & Security (or run
 
 Moritz opens on the **browser**, the place to start:
 
-- **Tutorials**: eleven patches that explain themselves as you play with
+- **Tutorials**: fourteen patches that explain themselves as you play with
   them: a first patch, numbers and messages, sound files, filters, the
   spectrum, grains, sound in space, separating sounds, listening machines,
-  atoms and types, programming with Musil.
+  atoms and types, the sound editor, scores (the transport, the roll and the
+  timeline), programming with Musil.
 - **Examples**, by category (the folders of `examples/`): first steps,
   synthesis, generative music, filters and effects, samples, spectral
   processing, space, atoms and types, analysis and MIR, learning, MIDI, code.
