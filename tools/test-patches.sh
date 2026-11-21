@@ -14,6 +14,17 @@ if [ -z "$MORITZ" ]; then
 fi
 ROOT=${2:-.}
 OUT=$(mktemp -d 2>/dev/null || mktemp -d -t moritz)
+# a home of their own, as test-musil.sh and test-gui.sh give theirs: the user's preferences and datasets are neither
+# seen nor changed, and the patches run on the bundled MicroSOL as on a fresh machine
+SCRATCH=$(mktemp -d 2>/dev/null || mktemp -d -t moritzhome)
+trap 'rm -rf "$SCRATCH"' EXIT
+HOME="$SCRATCH/home"
+USERPROFILE="$SCRATCH/home"
+XDG_CONFIG_HOME="$SCRATCH/home/.config"
+APPDATA="$SCRATCH/home/AppData/Roaming"
+LOCALAPPDATA="$SCRATCH/home/AppData/Local"
+export HOME USERPROFILE XDG_CONFIG_HOME APPDATA LOCALAPPDATA
+mkdir -p "$HOME"
 # every run of the program has a time limit where `timeout` exists (Linux, MSYS2; brew's coreutils on
 # macOS), so a hang fails with the patch's name instead of stopping the run
 LIMIT=

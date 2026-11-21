@@ -231,6 +231,9 @@
 #append-file
   (append-file path x)
   write x (printed) at the end of a file
+#write
+  (write path text)
+  the file written whole or not at all: a temporary file next to it, the write and the close
 #directory?
   (directory? path)
   is the path an existing directory?
@@ -1492,6 +1495,27 @@
   (or dir itself) under which one of the first 20 entries' files is found, whatever the folder is called; else the
   first folder next to it holding any sound; else dir (a relative dir is looked for as a file to read is: here, else
   next to the script)
+#db-select
+  (db-select db query)
+  the database with only the sounds a query chooses (music/db_query.h): query a string of
+  terms, a field and a value, joined by and, or, not and parentheses (two terms side by side: and). The fields:
+  instrument (instr), family (winds brass percussion keyboard plucked strings), technique (tech), dynamics (dyn),
+  pitch (names or MIDI numbers), midi, string (the tag 1c, 2c... of the file name), mute (what follows + in the
+  instrument's code; none), tag (any other tag of the file name), file (its name), centroid spread skewness
+  kurtosis (a database of moments), and any numeric field of the entries. A value: a pattern with * and ? (case
+  ignored), a regular expression between slashes (/sul_?pont/, searched), a range lo..hi (pitch C4..G5, pitch
+  60..72, dynamics p..f in the order ppp..fff, string 1..2; C4.. and ..G5 leave an end open), or several separated
+  by | (instrument Vn|Va). (db-select db "technique ord and dynamics p..f and not instrument Hn"),
+  (db-select db "(family strings and pitch ..C4) or family brass"). query may also be a record from instrument to
+  query, applied to that instrument's sounds only, 'all for every sound: (record (list 'all "dynamics mf..ff" 'Vn
+  "string 1..3")); nil or "" keeps every sound. => a database (db-load's record, its entries the chosen ones in
+  their order); a malformed query is an error that says what is wrong
+#db-select-counts
+  (db-select-counts db query [instruments])
+  how many sounds a query (as db-select takes it) keeps: => a record
+  ('kept 'total 'by (list (list instrument kept total) ...) in orchestral order, 'text "24 of 32 sounds: Ob 0 of 8,
+  Hn 8, Vn 8, Vc 8", 'silent the instruments left without a sound); instruments (a list) limits 'by, 'text and
+  'silent to them (an orchestra's: (orchestra-instruments orch))
 #dataset
   (dataset name)
   the feature file of a dataset, by name: "fullsol", "tinysol", "microsol", or the name of any
@@ -2162,6 +2186,12 @@
   the entries matching the given values; nil matches anything, a list matches
   any of its members: (db-query db 'Vn nil 'mf nil) every mf violin sound,
   (db-query db (list 'Vn 'Va) nil (list 'pp 'p) 'ord) quiet upper strings
+#db-selected
+  (db-selected db orch params who)
+  the database an orchestrator searches: db, or (db-select db (get params 'select))
+  when params have a 'select; unless 'quiet, prints how many sounds remain, in all and per
+  instrument of the orchestra orch, and which instruments are left without any; a selection
+  that leaves no sound of the orchestra is an error (who says whose)
 #db-grep
   (db-grep db pattern)
   the entries whose file name matches a regular expression: (db-grep db "Fl-ord-C.-pp")
@@ -2534,6 +2564,9 @@
   where the player's next booking begins); give 'start, the time in the piece this call begins
   at, so the bookings compare (orchestra-rest! clears the state)
   'solutions  how many realisations to make (default 1), each with its own random draws
+  'select     a query (db-select): only the sounds it chooses are played, "technique ord|pizz* and dynamics
+  p..f", or a record from instrument to query ('all for every one); how many remain is printed
+  (db-selected). Running often, select once instead: (db-select db query) is a database
   => an orchestration result with one segment; (best-connection result) is its fragment; (get result 'report)
   the run's report (granulation-report prints it): events due, events that wrote notes and the notes written (a
   paired group writes several a event), events skipped because every
@@ -2640,7 +2673,8 @@
   your own in place of the target's; 'decision ('pursuit, the greedy matching pursuit, or 'genetic: at each event
   Orchidea's search over the free players' sounds for the combination nearest the residual, one sound per player
   or a rest, the mimetic decision inside the morphological clock; its parameters in 'genetic, a record:
-  population 60, epochs 40, sparsity 0.1, patience 20, and the others of orchestrate-mimetic)
+  population 60, epochs 40, sparsity 0.1, patience 20, and the others of orchestrate-mimetic); 'select a query
+  (db-select): only the sounds it chooses are pursued
 #chordinterp-env
   (chordinterp-env chords rhythm)
   an env for 'chords that steps through chordinterp's chords over time: chords a
@@ -2688,7 +2722,12 @@
   instrument as target), 'positive and 'negative (0.5 and 10: the penalisations of a partial the
   solution has and the target lacks, and the reverse), 'regularization (0: > 0 sponsors sparse
   solutions)
-  the space    'styles 'dynamics 'others: lists of names; only sounds with one of them enter the search
+  the space    'select: a query (db-select), only the sounds it chooses enter the search: "instrument Vn|Va
+  and technique ord|pizz* and dynamics p..f", "(family strings and pitch ..C4) or family brass",
+  or a record from instrument to query ('all for every one); how many sounds remain, in all and
+  per instrument of the orchestra, is printed before the search (db-selected), and a selection
+  that leaves none is an error; 'styles 'dynamics 'others: lists of names, only sounds with one
+  of them enter the search
   the memory   'hysteresis (0: > 0 makes each segment's search lean, in timbre, towards the solutions chosen
   for the segments before, fading by that factor a segment back), 'dovetail (0: > 0 raises the cost
   of a candidate by that fraction of the pitches of the previous chosen solution it drops, on any

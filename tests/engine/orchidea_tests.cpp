@@ -168,6 +168,100 @@ TEST(orchidea_obeys_the_orchestra) {
     jobsSynchronous = sync;
 }
 
+// orchestra's select: a query for every sound and one per instrument (music/db_query.h, Musil's db-select); each
+// select says how many sounds remain, in all and per instrument of the players, and which players are left without
+// any; a malformed query is said and changes nothing; orchidea plays only what the selection allows, says what it
+// had in its report, and says before a run that the selection leaves nothing
+TEST(orchestra_select_chooses_the_sounds_and_says_how_many_remain) {
+    bool sync = jobsSynchronous;
+    jobsSynchronous = true;
+    OrchRig o;
+    o.orchestra({Atom("select"), Atom("family"), Atom("strings")});
+    CHECK(o.r.printedSomething("orchestra band: 16 of 32 sounds remain (select family strings): Ob 0 of 8, Hn 0 of 8, Vn 8, Vc 8"));
+    CHECK(o.r.printedSomething("orchestra band: no sound is left for Ob Hn: their players are silent"));
+    o.clear();
+    o.orchestra({Atom("select"), Atom("technique")});
+    CHECK(o.r.printedSomething("orchestra band: select: technique: a value is missing at the end (the selection is unchanged)"));
+    o.clear();
+    o.orchestra({Atom("select"), Atom("(technique"), Atom("ord")});
+    CHECK(o.r.printedSomething("a ( without its )"));
+    o.clear();
+    o.orchestra({Atom("select"), Atom("Xy"), Atom("pitch"), Atom("C4")});
+    CHECK(o.r.printedSomething("orchestra band: select: 'Xy' is neither a field"));
+    o.clear();
+    o.orchestra({Atom("select"), Atom("Vn"), Atom("pitch"), Atom("D4..")});       // the violins' own query, with the one for all
+    CHECK(o.r.printedSomething("orchestra band: 14 of 32 sounds remain (select family strings; Vn: pitch D4..): Ob 0 of 8, Hn 0 of 8, Vn 6 of 8, Vc 8"));
+    o.clear();
+    o.orchestra({Atom("info")});
+    CHECK(o.r.printedSomething("  14 of 32 sounds remain"));
+    o.send({Atom("partials"), Atom(0.f)});
+    o.send({Atom("population"), Atom(30.f)});
+    o.send({Atom("epochs"), Atom(10.f)});
+    o.send({Atom("sparsity"), Atom(0.f)});
+    o.send({Atom("run"), Atom("tgt")});
+    bool ok = !o.notes->got.empty();
+    for (auto& m : o.notes->got) {
+        std::string i = m[1].str();
+        ok = ok && (i == "Vc" || (i == "Vn" && musil::pitch_to_midi(m[2].str()) >= 62));
+    }
+    CHECK(ok);
+    o.clear();
+    o.send({Atom("report")});
+    CHECK(o.r.printedSomething("orchidea: the space: 14 of 32 sounds remain (select family strings; Vn: pitch D4..)"));
+    o.clear();
+    o.orchestra({Atom("select"), Atom("Vn")});                                    // the violins' query cleared
+    CHECK(o.r.printedSomething("orchestra band: 16 of 32 sounds remain (select family strings)"));
+    o.clear();
+    o.orchestra({Atom("select"), Atom("pitch"), Atom(60.f), Atom("or"), Atom("dynamics"), Atom("ff")});   // a number as an atom
+    CHECK(o.r.printedSomething("orchestra band: 4 of 32 sounds remain (select pitch 60 or dynamics ff): Ob 1 of 8, Hn 1 of 8, Vn 1 of 8, Vc 1 of 8"));
+    o.clear();
+    o.orchestra({Atom("select"), Atom("instrument"), Atom("Fl|Picc")});              // nothing the players play
+    CHECK(o.r.printedSomething("orchestra band: no sound is left to any player"));
+    o.clear();
+    o.send({Atom("run"), Atom("tgt")});
+    CHECK(o.r.printedSomething("orchidea: orchestra band leaves no sound to any player (select instrument Fl|Picc): every segment will be a rest"));
+    CHECK(o.notes->got.empty());
+    o.clear();
+    o.orchestra({Atom("select")});                                                // every sound again
+    CHECK(o.r.printedSomething("orchestra band: 32 of 32 sounds remain (no filter): Ob 8, Hn 8, Vn 8, Vc 8"));
+    jobsSynchronous = sync;
+}
+
+// the select of an orchestra and Musil's db-select choose the same sounds (one parser, one matcher): every entry of
+// MicroSOL against a handful of queries, Moritz's sample of an OrchDb entry and Musil's of a db-load record
+TEST(orchestra_select_matches_db_select) {
+    namespace dbq = musil::dbq;
+    const char* queries[] = {"technique ord and dynamics mf..ff", "instrument Vn|Vc and not pitch C4..D4", "family brass or tag 4c",
+                             "file /-C#4-/ or string 3", "(pitch ..D#4 and family winds) or not (instrument V* or instrument Ob)", "pitch C?4|E5"};
+    size_t expect[] = {32, 10, 10, 10, 12, 5};
+    std::vector<musil::db_record> recs;
+    musil::db_parse(kDb, kDb, [&](musil::db_record&& r) { recs.push_back(std::move(r)); });
+    CHECK(recs.size() == 32);
+    for (size_t q = 0; q < sizeof queries / sizeof *queries; ++q) {
+        dbq::query c = dbq::compile(queries[q], {});
+        size_t n = 0;
+        for (auto& r : recs) {
+            dbq::sample s;
+            s.instr = r.instr; s.tech = r.tech; s.pitch = r.pitch; s.dyn = r.dyn; s.other = r.other; s.file = r.file; s.midi = r.midi;
+            n += dbq::matches(c, s) ? 1 : 0;
+        }
+        CHECK(n == expect[q]);
+    }
+    // malformed queries never crash: each an error with a message
+    const char* bad[] = {"", "(", ")", "not", "pitch", "pitch ..", "pitch C4..X", "/x/ ord", "file /[/", "technique a||b", "technique |a", "dynamics p..q",
+                         "instrument a..b", "centroid 1", "file /a", "x y", "technique ord or", "and", "((((((((technique ord", "technique ord))"};
+    size_t errors = 0;
+    for (auto b : bad) {
+        try { dbq::compile(b, {}); }
+        catch (const dbq::query_error& e) { errors += std::string(e.what()).empty() ? 0 : 1; }
+    }
+    CHECK(errors == sizeof bad / sizeof *bad - 1);                               // "" is every sound, not an error
+    std::string deep(100, '(');
+    bool threw = false;
+    try { dbq::compile(deep + "technique ord" + std::string(100, ')'), {}); } catch (const dbq::query_error&) { threw = true; }
+    CHECK(threw);
+}
+
 // a filter that empties one segment makes it a rest (no notes, a message, a line in the report), the other segments
 // are orchestrated: the run is not lost (it failed with "empty search space" before)
 TEST(orchidea_an_empty_segment_is_a_rest) {

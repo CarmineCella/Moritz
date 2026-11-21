@@ -643,6 +643,25 @@ function match? (value want) {
     if (equal? (type want) "list") { return (any? want (function (w) (equal? (str value) (str w)))) }
     return (equal? (str value) (str want))
 }
+; (db-select db query) and (db-select-counts db query [instruments]) are C++ (music.h): the sounds a query chooses
+;                          ("technique pizz* and dynamics p..f", "instrument Vn|Va and pitch C4..G5", "not family
+;                          brass"), as a database; how many it keeps, in all and per instrument
+; (db-selected db orch params who)   the database an orchestrator searches: db, or (db-select db (get params 'select))
+;                          when params have a 'select; unless 'quiet, prints how many sounds remain, in all and per
+;                          instrument of the orchestra orch, and which instruments are left without any; a selection
+;                          that leaves no sound of the orchestra is an error (who says whose)
+function db-selected (db orch params who) {
+    if (not (and (equal? (type params) "list") (has? params 'select))) { return db }
+    var q (get params 'select)
+    var c (db-select-counts db q (orchestra-instruments orch))
+    var kept (reduce (get c 'by) (function (acc r) (+ acc (getidx r 1))) 0)
+    if (== kept 0) { error who ": the selection " (str q) " leaves no sound of the orchestra (" (get c 'text) ")" }
+    if (not (opt params 'quiet 0)) {
+        print (concat who ": the selection keeps " (get c 'text))
+        if (> (length (get c 'silent)) 0) { print (concat who ": no sound left for " (join (get c 'silent) " ") ": its players are silent") }
+    }
+    return (db-select db q)
+}
 ; (db-grep db pattern)     the entries whose file name matches a regular expression: (db-grep db "Fl-ord-C.-pp")
 function db-grep (db pattern) (filter (get db 'entries) (function (e) (regex-match? pattern (get e 'file))))
 ; (db-find db text)        the entries whose file name contains the text: (db-find db "Vn-ord-C5")
@@ -1311,12 +1330,16 @@ function orchestra-octaves (db orch) { var r (orchestra-range db orch)
 ;                   where the player's next booking begins); give 'start, the time in the piece this call begins
 ;                   at, so the bookings compare (orchestra-rest! clears the state)
 ;       'solutions  how many realisations to make (default 1), each with its own random draws
+;       'select     a query (db-select): only the sounds it chooses are played, "technique ord|pizz* and dynamics
+;                   p..f", or a record from instrument to query ('all for every one); how many remain is printed
+;                   (db-selected). Running often, select once instead: (db-select db query) is a database
 ;     => an orchestration result with one segment; (best-connection result) is its fragment; (get result 'report)
 ;     the run's report (granulation-report prints it): events due, events that wrote notes and the notes written (a
 ;     paired group writes several a event), events skipped because every
 ;     able player was busy (the saturation), events unplayable by the orchestra, dynamics substituted, and each
 ;     player's notes and busy fraction; 'reports one per solution
 function orchestrate-granular (db orch secs params) {
+    set db (db-selected db orch params "orchestrate-granular")
     var n (opt params 'solutions 1)
     var runs (map (vec->list (range n)) (function (k) (granulate db orch secs params)))
     var sols (map (zip (vec->list (range n)) runs) (function (p) (list (head p) (head (last p)))))
@@ -1450,8 +1473,10 @@ function pursuit-space (m) (sqrt (max m 0))
 ;     your own in place of the target's; 'decision ('pursuit, the greedy matching pursuit, or 'genetic: at each event
 ;     Orchidea's search over the free players' sounds for the combination nearest the residual, one sound per player
 ;     or a rest, the mimetic decision inside the morphological clock; its parameters in 'genetic, a record:
-;     population 60, epochs 40, sparsity 0.1, patience 20, and the others of orchestrate-mimetic)
+;     population 60, epochs 40, sparsity 0.1, patience 20, and the others of orchestrate-mimetic); 'select a query
+;     (db-select): only the sounds it chooses are pursued
 function orchestrate-morphological (db orch target params) {
+    set db (db-selected db orch params "orchestrate-morphological")
     db-index! db
     var n (opt params 'solutions 1)
     var secs (opt target 'seconds 0)
@@ -1601,7 +1626,12 @@ function note-of-entry (db e) (record (list 'kind 'note 'source (get e 'file) 'd
 ;                    instrument as target), 'positive and 'negative (0.5 and 10: the penalisations of a partial the
 ;                    solution has and the target lacks, and the reverse), 'regularization (0: > 0 sponsors sparse
 ;                    solutions)
-;       the space    'styles 'dynamics 'others: lists of names; only sounds with one of them enter the search
+;       the space    'select: a query (db-select), only the sounds it chooses enter the search: "instrument Vn|Va
+;                    and technique ord|pizz* and dynamics p..f", "(family strings and pitch ..C4) or family brass",
+;                    or a record from instrument to query ('all for every one); how many sounds remain, in all and
+;                    per instrument of the orchestra, is printed before the search (db-selected), and a selection
+;                    that leaves none is an error; 'styles 'dynamics 'others: lists of names, only sounds with one
+;                    of them enter the search
 ;       the memory   'hysteresis (0: > 0 makes each segment's search lean, in timbre, towards the solutions chosen
 ;                    for the segments before, fading by that factor a segment back), 'dovetail (0: > 0 raises the cost
 ;                    of a candidate by that fraction of the pitches of the previous chosen solution it drops, on any
@@ -1633,6 +1663,7 @@ function note-of-entry (db e) (record (list 'kind 'note 'source (get e 'file) 'd
 ;     Two solutions that sound the same sounds on other players of the same instrument (two horns with their
 ;     pitches swapped) are one: each solution listed sounds something else
 function orchestrate-mimetic (db orch x sr params) {
+    set db (db-selected db orch params "orchestrate-mimetic")
     var target (if (and (equal? (type x) "list") (has? x 'segments)) x (mimetic-target db x sr params))
     var players (map orch (function (p) (join (get p 'instrs) "|")))
     var seating (opt params 'seating 1)

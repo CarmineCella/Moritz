@@ -2407,6 +2407,8 @@ analyse makes a database out of a folder of sounds named as in the *SOL database
 
 Without players, the orchestra is Orchidea's default (two of each wind and brass, a bass tuba, two of each string), of what the database has. A player is an instrument code as the database names it (Fl, Ob, ClBb, Bn, Hn, TpC, Tbn, BTb, Vn, Va, Vc, Cb...); Fl|Picc is one player who doubles; Vn+Vc are two players paired, whom orchidea's granular mode makes sound together (a group). The players also keep what orchidea's granular runs that continue book of them (continue 1), so that the sections of a piece never ask a player for two notes at once; rest forgets it. Right-click the box for Info.
 
+select chooses the sounds the players may have by a query, in the language of Musil's db-select (one parser for both: the same query chooses the same sounds): select technique ord|pizz* and dynamics p..f and pitch C4..G5; select Vn string 1..2 for the violins only. Each select says in the Console how many sounds remain, in all and per instrument of the players, so that a selection that leaves a player, or the whole orchestra, without a sound is known before a run (orchidea says it again when it runs, and in its report).
+
 See the examples in examples/13-orchestration: sound-space (players, doublings, range, techniques, dynamics) and, for what orchidea does with the orchestra, static-dynamic, connections, memory, search and output; the granular ones (granular-envelopes, granular-styles, granular-methods, granular-sections) and the morphological ones (morphological, mimetic-morphological).
 
 | Argument | |
@@ -2424,13 +2426,15 @@ See the examples in examples/13-orchestration: sound-space (players, doublings, 
 | `range instrument lo hi` | only the instrument's sounds from lo to hi enter the search (pitch names, G3, or MIDI numbers, both included); range instrument: its whole range again |
 | `techniques name ...` | only sounds of these techniques (ord, pizz-lv..., as the file names say them) enter the search, for every instrument; techniques alone: every technique |
 | `dynamics name ...` | only sounds of these dynamics (pp, mf...) enter the search; dynamics alone: every dynamics. A segment a filter leaves no sound (nor a pitch of its partials) is a rest: orchidea says so, its report line says why, and the other segments are orchestrated |
+| `select query` | only the sounds a query chooses enter the search, the language of Musil's db-select (the same query chooses the same sounds): terms, a field and a value, joined by and, or, not and parentheses (two terms side by side: and). The fields: instrument, family (winds brass percussion keyboard plucked strings), technique, dynamics, pitch (names or MIDI numbers), midi, string (the tag 1c, 2c... of the file names), mute (what follows + in the instrument's code; none), tag (any other tag of the file names), file (its name), and centroid, spread, skewness, kurtosis for a database of moments. A value: a pattern with * and ? (pizz*; the case ignored), a regular expression between slashes (/sul_?pont/), a range (pitch C4..G5, pitch 60..72, dynamics p..f in the order ppp..fff, string 1..2; C4.. or ..G5 leaves an end open), or several separated by \| (instrument Vn\|Va). select technique ord\|pizz* and dynamics p..f and not family brass. Each select says in the Console how many sounds remain, in all and per instrument of the players, and which players are left without any; a malformed query is said and changes nothing. It holds with techniques, dynamics and range |
+| `select instrument query` | a query for that instrument's sounds only, with the one for all (select Vn string 1..2); select instrument: its query cleared; select alone: every sound again |
 | `rest` | forgets the players' bookings: the next granular run that continues starts a piece afresh (Musil's orchestra-rest!) |
-| `info` | prints the database (sounds, instruments, their ranges and techniques) and the players in the Console |
+| `info` | prints the database (sounds, instruments, their ranges and techniques), the players and how many sounds the filters leave them in the Console |
 | `stop` | cancels the reading |
 
 | Inlet | |
 | --- | --- |
-| 1 | read file.db or a dataset's name (fullsol, tinysol, microsol); analyse folder [type block hop ncoeff]; players Vn 2 Va Fl\|Picc Vn+Vc ...; add, remove, range, techniques, dynamics, rest, info, stop |
+| 1 | read file.db or a dataset's name (fullsol, tinysol, microsol); analyse folder [type block hop ncoeff]; players Vn 2 Va Fl\|Picc Vn+Vc ...; add, remove, range, techniques, dynamics, select [instrument] query, rest, info, stop |
 
 | Outlet | |
 | --- | --- |
@@ -2502,7 +2506,7 @@ In both modes solutions n makes n realisations of the process (choose 1 n takes 
 | `notes` | the notes again |
 | `score` | the solution as a score again (score token, out of the last outlet) |
 | `show segment` | prints the solutions of a segment with their costs and sounds (the chosen one starred) |
-| `report` | prints a line per segment: its cost, players, players holding on (the notes the chosen connection holds from the segment before: one longer note each), sounds in the search space, and the target's pitches no instrument of the orchestra has; a rest says why |
+| `report` | prints a line per segment: its cost, players, players holding on (the notes the chosen connection holds from the segment before: one longer note each), sounds in the search space, and the target's pitches no instrument of the orchestra has; a rest says why; before the segments, how many sounds the orchestra's filters (its select, techniques, dynamics, ranges) left each instrument |
 | `write file` | saves the notes as an Orchidea connection file (Musil's score-load reads it), in the patch's folder or in ~/Documents/Moritz (elsewhere: not written; its menu's Save... writes where you choose) |
 | `roll buffer` | writes the notes into a buffer~, a frame a note: onset (s), pitch (MIDI, with its cents), player, duration (s); plot in scatter mode draws it as a roll, a colour a player |
 | `density v` | granular: events a second (density 4 6; density at 0 4 6 at 10 0.5 1; density buffer curve: every granular parameter takes these forms) |

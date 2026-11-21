@@ -54,8 +54,73 @@ struct OrchSpec {
     std::vector<int> groups;                                      // each player's paired group ("Vn+Vc"), or -1
     std::map<std::string, std::pair<int, int>> ranges;            // instrument -> lowest and highest MIDI pitch allowed
     std::vector<std::string> styles, dynamics;                    // only these techniques and dynamics (empty: all)
+    musil::dbq::selection sel;                                    // select: the sounds a query chooses (Musil's db-select)
 };
 using SpecPtr = std::shared_ptr<const OrchSpec>;
+
+// a sound of the database as a query sees it (music/db_query.h; Musil's db_sample_of makes the same of an entry)
+musil::dbq::sample sampleOf(const OrchDb& db, size_t k) {
+    const orch::entry& e = db.entries[k];
+    musil::dbq::sample s;
+    s.instr = e.instr; s.tech = e.tech; s.pitch = e.pitch; s.dyn = e.dyn; s.other = e.other; s.file = db.files[k];
+    s.midi = e.midi;
+    if (db.type == "moments" && e.features.size() >= 4) {
+        s.has_moments = true;
+        for (int j = 0; j < 4; ++j) s.moments[j] = e.features[(size_t)j];
+    }
+    return s;
+}
+// does the orchestra let its players have sound k: the instrument's range, and the selection
+bool rangeAllows(const OrchSpec& s, const orch::entry& e) {
+    auto r = s.ranges.find(e.instr);
+    return r == s.ranges.end() || e.midi < 0 || (e.midi >= r->second.first && e.midi <= r->second.second);
+}
+bool inSelection(const OrchSpec& s, size_t k) { return s.sel.empty() || s.sel.matches(sampleOf(*s.db, k)); }
+bool listed(const std::vector<std::string>& l, const std::string& x) { return l.empty() || std::find(l.begin(), l.end(), x) != l.end(); }
+// the instruments the players play (Fl|Picc: both)
+std::vector<std::string> instrumentsOf(const OrchSpec& s) {
+    std::vector<std::string> out;
+    for (auto& p : s.players) {
+        std::vector<std::string> alts;
+        orch::tokenize(p, alts, '|');
+        for (auto& a : alts) if (std::find(out.begin(), out.end(), a) == out.end()) out.push_back(a);
+    }
+    return out;
+}
+// how many sounds the orchestra's filters leave (ranges, techniques, dynamics, selection), in all and per instrument
+musil::dbq::counts spaceCounts(const OrchSpec& s) {
+    musil::dbq::counts c;
+    for (size_t k = 0; k < s.db->entries.size(); ++k) {
+        const orch::entry& e = s.db->entries[k];
+        c.add(e.instr, rangeAllows(s, e) && listed(s.styles, e.tech) && listed(s.dynamics, e.dyn) && inSelection(s, k));
+    }
+    return c;
+}
+// what the orchestra's filters say, for the messages: "select dynamics p..f; Vn: string 1; techniques ord"
+std::string filtersText(const OrchSpec& s) {
+    std::string t = s.sel.empty() ? "" : "select " + s.sel.text();
+    auto add = [&](const char* what, const std::vector<std::string>& l) {
+        if (l.empty()) return;
+        t += (t.empty() ? "" : "; ") + std::string(what);
+        for (auto& x : l) t += " " + x;
+    };
+    add("techniques", s.styles);
+    add("dynamics", s.dynamics);
+    for (auto& r : s.ranges) t += (t.empty() ? "" : "; ") + ("range " + r.first + " " + musil::midi_to_pitch(r.second.first) + " " + musil::midi_to_pitch(r.second.second));
+    return t.empty() ? "no filter" : t;
+}
+// the space an orchestra leaves its players, said in a line: "14 of 32 sounds remain (select family strings): Ob 0 of
+// 8, Hn 0 of 8, Vn 6 of 8, Vc 8"; empty: every player's instrument is left without a sound
+std::string spaceText(const OrchSpec& s, bool& empty) {
+    auto c = spaceCounts(s);
+    auto ins = instrumentsOf(s);
+    auto silent = c.silent(ins);
+    empty = !ins.empty() && silent.size() == ins.size();
+    std::string t = c.text(ins);
+    size_t colon = t.find(':');
+    std::string head = colon == std::string::npos ? t : t.substr(0, colon), tail = colon == std::string::npos ? "" : t.substr(colon);
+    return head + " remain (" + filtersText(s) + ")" + tail;
+}
 
 // the players of an orchestra as the granulator keeps them between runs that carry on ('continue): their bookings,
 // last pitches and seats; one run at a time books them
@@ -137,6 +202,11 @@ int pitchOf(const Atom& a) {
 //   add instrument [n]           more players; remove instrument: every player of it
 //   range instrument lo hi       its pitches limited (names or MIDI numbers); range instrument: no limit
 //   techniques t...              only these techniques (ord, pizz-lv...); none: all. dynamics d...: the same
+//   select query                 only the sounds a query chooses (Musil's db-select, music/db_query.h): fields and
+//                                values joined by and, or, not, parentheses: select technique ord|pizz* and dynamics
+//                                p..f and pitch C4..G5; select instrument query: that instrument's sounds only
+//                                (select Vn string 1..2); select instrument: its query cleared; select: every sound.
+//                                Each says how many sounds remain, in all and per instrument of the players
 //   rest                         the players' bookings forgotten (orchidea's granular runs that continue start afresh)
 //   info, stop
 // Outlets: progress, bang when the database is ready, number of sounds, the players (a list).
@@ -162,6 +232,7 @@ public:
         s->ranges = ranges_;
         s->styles = styles_;
         s->dynamics = dynamics_;
+        s->sel = sel_;
         int group = 0;
         for (const auto& p : players()) {
             std::vector<std::string> parts;
@@ -216,6 +287,8 @@ public:
         } else if (h.is("dynamics")) {
             dynamics_.clear();
             for (size_t k = 1; k < m.size(); ++k) dynamics_.push_back(m[k].str());
+        } else if (h.is("select")) {
+            select(m);
         } else if (h.is("rest")) {
             carry_->players.clear();
             carry_->key.clear();
@@ -225,6 +298,78 @@ public:
     }
 
 private:
+    // select [instrument] query: the query compiled (a mistake is said and the selection kept as it was), then how
+    // many sounds remain
+    void select(const Message& m) {
+        std::string who = "orchestra " + name + ": select";
+        if (m.size() < 2) {
+            sel_ = {};
+            sayRemaining();
+            return;
+        }
+        std::string first = m[1].str();
+        bool whole = musil::dbq::starts_query(first);
+        if (!whole && db_ && !hasInstrument(first)) {
+            patch->print(who + ": '" + first + "' is neither a field (" + musil::dbq::fields_text(db_->type == "moments") +
+                         ") nor an instrument of the database (the selection is unchanged)");
+            return;
+        }
+        std::string text;
+        for (size_t k = whole ? 1 : 2; k < m.size(); ++k) text += (text.empty() ? "" : " ") + m[k].str();
+        musil::dbq::options o;
+        o.type = db_ ? db_->type : "";
+        musil::dbq::query q;
+        try {
+            q = musil::dbq::compile(text, o);
+        } catch (const std::exception& e) {
+            patch->print(who + (whole ? "" : " " + first) + ": " + e.what() + " (the selection is unchanged)");
+            return;
+        }
+        if (whole) { sel_.all = q; sel_.all_text = text; }
+        else if (!q) sel_.per.erase(first);
+        else sel_.per[first] = {q, text};
+        sayRemaining();
+    }
+    bool hasInstrument(const std::string& i) const {
+        for (auto& e : db_->entries) if (e.instr == i) return true;
+        return false;
+    }
+    // a database read: the queries compiled again for its features (centroid... needs a database of moments)
+    void recompileSelection() {
+        musil::dbq::options o;
+        o.type = db_->type;
+        auto again = [&](musil::dbq::query& q, const std::string& text) {
+            if (!q) return true;
+            try { q = musil::dbq::compile(text, o); return true; }
+            catch (const std::exception& e) { patch->print("orchestra " + name + ": select " + text + ": " + e.what() + ": dropped"); return false; }
+        };
+        if (!again(sel_.all, sel_.all_text)) { sel_.all = nullptr; sel_.all_text.clear(); }
+        for (auto it = sel_.per.begin(); it != sel_.per.end();) {
+            if (again(it->second.first, it->second.second)) ++it;
+            else it = sel_.per.erase(it);
+        }
+    }
+    // how many sounds the filters leave the players, said in the Console; a player left without any, and an orchestra
+    // left without any, said clearly
+    void sayRemaining() {
+        if (!db_) {
+            patch->print("orchestra " + name + ": the selection is " + sel_.text() + "; how many sounds remain is said once a database is read");
+            return;
+        }
+        SpecPtr s = spec();
+        bool empty = false;
+        patch->print("orchestra " + name + ": " + spaceText(*s, empty));
+        if (empty) {
+            patch->print("orchestra " + name + ": no sound is left to any player: every segment orchidea orchestrates will be a rest");
+            return;
+        }
+        auto silent = spaceCounts(*s).silent(instrumentsOf(*s));
+        if (!silent.empty()) {
+            std::string t;
+            for (auto& i : silent) t += " " + i;
+            patch->print("orchestra " + name + ": no sound is left for" + t + ": " + (silent.size() == 1 ? "its players are" : "their players are") + " silent");
+        }
+    }
     void addPlayers(const Message& m, size_t from) {
         for (size_t k = from; k < m.size(); ++k) {
             if (m[k].isFloat()) {                      // a count: the instrument before it, that many times in all
@@ -321,6 +466,10 @@ private:
             return;
         }
         db_ = got;
+        if (!sel_.empty()) {
+            recompileSelection();
+            sayRemaining();
+        }
         size_t missing = 0;
         for (char c : db_->present) missing += c ? 0 : 1;
         if (missing == db_->present.size() && missing > 0)
@@ -361,6 +510,8 @@ private:
         for (auto& x : players()) p += " " + x;
         if (explicit_.empty()) p += " (the default orchestra)";
         patch->print(p);
+        bool empty = false;
+        patch->print("  " + spaceText(*spec(), empty));
     }
 
     std::string file_;
@@ -368,6 +519,7 @@ private:
     std::vector<std::string> explicit_;
     std::map<std::string, std::pair<int, int>> ranges_;
     std::vector<std::string> styles_, dynamics_;
+    musil::dbq::selection sel_;
     std::vector<std::function<void()>> waiting_;
     CarryPtr carry_ = std::make_shared<CarryState>();
 };
@@ -399,6 +551,7 @@ struct OrchResult {
     bool seating = true;
     double hold = 1e9, sr = 44100;
     std::string settings;                      // what the search ran with (report says it)
+    std::string space;                         // how many sounds the orchestra's filters left (report says it)
 };
 
 // the chosen solutions as notes (orchestrate-mimetic, then connection: sorted by onset, held notes merged)
@@ -824,6 +977,9 @@ private:
         BufferBox* b = findBuffer(patch, target);
         if (!b || b->buf.frames <= 0) { patch->print("orchidea: no sound in buffer~ " + target); return; }
         if (!out.empty() && !findBuffer(patch, out)) { patch->print("orchidea: no buffer~ " + out); return; }
+        bool emptySpace = false;
+        std::string space = spaceText(*spec, emptySpace);
+        if (emptySpace) patch->print("orchidea: orchestra " + orchestra_ + " leaves no sound to any player (" + filtersText(*spec) + "): every segment will be a rest");
         auto x = std::make_shared<musil::varr>((size_t)b->buf.frames);
         {
             std::vector<float> mono = monoOf(b->buf);
@@ -842,6 +998,7 @@ private:
         settingsFor(spec->db->entries.size(), an, so);
         double ratio = ratio_;
         res->hold = so.hold;
+        res->space = space;
         {
             char b[300];
             std::snprintf(b, sizeof b, "segmentation %s, population %d, epochs %d, sparsity %g, partials %g, solutions %d, sustain %d, "
@@ -864,10 +1021,10 @@ private:
                         a.onsets = musil::morph::adaptive_onsets(xs, sr, (size_t)std::max(1, db.block), (size_t)std::max(1, db.hop), ratio, a.timegate);
                         a.segmentation = "list";
                     }
-                    std::vector<orch::entry> space;                     // the sounds the ranges allow
-                    for (auto& e : db.entries) {
-                        auto r = res->spec->ranges.find(e.instr);
-                        if (r != res->spec->ranges.end() && e.midi >= 0 && (e.midi < r->second.first || e.midi > r->second.second)) continue;
+                    std::vector<orch::entry> space;                     // the sounds the ranges and the selection allow
+                    for (size_t k = 0; k < db.entries.size(); ++k) {
+                        const auto& e = db.entries[k];
+                        if (!rangeAllows(*res->spec, e) || !inSelection(*res->spec, k)) continue;
                         space.push_back(e);
                     }
                     res->segments = orch::analyse(*x, sr, db.type, db.block, db.hop, db.ncoeff, a, [&job] { return !job.cancelled(); });
@@ -1073,6 +1230,7 @@ private:
                       r.segments.size() == 1 ? "segment" : "segments", r.cache_misses, r.cache_hits);
         patch->print(head);
         patch->print("orchidea: " + result_->settings);
+        if (!result_->space.empty()) patch->print("orchidea: the space: " + result_->space);
         std::vector<int> held = heldNow();                // what the connection chosen now holds (choose changes it)
         for (size_t k = 0; k < r.segments.size() && k < 40; ++k) {
             const auto& s = r.segments[k];
@@ -1148,6 +1306,11 @@ private:
         SpecPtr spec = o->spec();
         if (!spec) { patch->print("orchidea: orchestra " + orchestra_ + " has no database (read one)"); return; }
         if (spec->players.empty()) { patch->print("orchidea: orchestra " + orchestra_ + " has no player whose instrument the database has"); return; }
+        {
+            bool emptySpace = false;
+            spaceText(*spec, emptySpace);
+            if (emptySpace) patch->print("orchidea: orchestra " + orchestra_ + " leaves no sound to any player (" + filtersText(*spec) + "): nothing can be played");
+        }
         bool morph = mode_ == "morphological";
         double secs = 0, sr = 44100;
         auto x = std::make_shared<std::vector<double>>();
@@ -1233,12 +1396,8 @@ private:
                     for (size_t k = 0; k < db.entries.size(); ++k) {
                         const auto& e = db.entries[k];
                         if (!db.present[k]) continue;
-                        auto r = res->spec->ranges.find(e.instr);
-                        if (r != res->spec->ranges.end() && e.midi >= 0 && (e.midi < r->second.first || e.midi > r->second.second)) continue;
-                        const auto& st = res->spec->styles;
-                        if (!st.empty() && std::find(st.begin(), st.end(), e.tech) == st.end()) continue;
-                        const auto& dy = res->spec->dynamics;
-                        if (!dy.empty() && std::find(dy.begin(), dy.end(), e.dyn) == dy.end()) continue;
+                        if (!rangeAllows(*res->spec, e) || !listed(res->spec->styles, e.tech) || !listed(res->spec->dynamics, e.dyn)) continue;
+                        if (!inSelection(*res->spec, k)) continue;
                         avail[k] = 1;
                     }
                     gr::dbindex ix = gr::make_index(db.entries, avail);
