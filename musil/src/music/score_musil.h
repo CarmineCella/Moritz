@@ -21,6 +21,7 @@
 #include "score_text.h"
 #include "score_transform.h"
 #include "score_layout.h"
+#include "db_files.h"
 
 #ifdef OPAQUE      // Windows (wingdi.h) defines it; Musil has a value type of that name
 #undef OPAQUE
@@ -393,10 +394,31 @@ inline void hostToExtra(const std::shared_ptr<void>& host, score::Fields& extra)
         if (toDatum(p->l[1], d)) score::setField(extra, k->s, std::move(d));
     }
 }
+// a note of a database (music.mu's note: its record has 'db and 'entry) keeps its sample as data where it goes: sound,
+// the file on disk (found as db-path finds it), and sound-pitch, the sample's own pitch (the note's less its shift),
+// so that Moritz's score object, and a .score file, play the very sample Musil chose at the note's pitch
+inline void noteSound(const vptr& rec, score::Fields& extra) {
+    if (!rec || score::field(extra, "sound")) return;
+    auto get = [](const vptr& r, const char* k) -> vptr {
+        long h = hostFind(r, v_sym(k));
+        return h >= 0 ? r->l[(size_t)h]->l[1] : nullptr;
+    };
+    vptr db = get(rec, "db"), entry = get(rec, "entry");
+    if (!db || !entry || db->t != Value::LIST || entry->t != Value::LIST) return;
+    vptr file = get(entry, "file"), root = get(entry, "root"), midi = get(entry, "midi");
+    if (!root) root = get(db, "root");
+    if (!file || file->t != Value::STR || file->s.empty() || !root || root->t != Value::STR) return;
+    std::string path = db_locate(root->s, file->s);
+    if (path.empty()) path = root->s + (file->s[0] == '/' ? "" : "/") + file->s;
+    score::setField(extra, "sound", Datum::string(path));
+    if (midi && midi->t == Value::NUM && midi->num.size() == 1 && std::isfinite(midi->num[0]))
+        score::setField(extra, "sound-pitch", Datum::number(midi->num[0]));
+}
 // a copy of a score for elsewhere (a file, another program, another thread): its events and the scores in it copied,
-// what Musil keeps for itself left out (what is plain data among it becomes the extra fields). A chord becomes its
-// notes (the first keeps its id); an event whose sound only Musil holds (a buffer's vector, a synth's or a call's
-// function) is left out and counted in leftOut. The same score placed twice stays one score placed twice.
+// what Musil keeps for itself left out (what is plain data among it becomes the extra fields; a note's sample its
+// sound, noteSound). A chord becomes its notes (the first keeps its id); an event whose sound only Musil holds (a
+// buffer's vector, a synth's or a call's function) is left out and counted in leftOut. The same score placed twice
+// stays one score placed twice.
 inline std::shared_ptr<Score> detached(const Score& s, std::map<const Score*, std::shared_ptr<Score>>& done, size_t* leftOut, int depth = 0) {
     auto hit = done.find(&s);
     if (hit != done.end()) return hit->second;
@@ -427,6 +449,9 @@ inline std::shared_ptr<Score> detached(const Score& s, std::map<const Score*, st
                     x->pitch = mv->num[0];
                     long t = hostFind(n, v_sym("tech"));
                     if (t >= 0) x->tech = textOf(n->l[(size_t)t]->l[1]);
+                    long c = hostFind(n, v_sym("cents"));
+                    if (c >= 0 && n->l[(size_t)c]->l[1]->t == Value::NUM && n->l[(size_t)c]->l[1]->num.size() == 1) x->cents = n->l[(size_t)c]->l[1]->num[0];
+                    noteSound(n, x->extra);
                     x->id = first ? e->id : next++;
                     first = false;
                     evs.push_back(x);
@@ -436,6 +461,7 @@ inline std::shared_ptr<Score> detached(const Score& s, std::map<const Score*, st
         }
         auto x = std::make_shared<Event>(*e);
         hostToExtra(e->host, x->extra);
+        if (x->kind == Kind::Note) noteSound(hostRec(e->host), x->extra);
         x->host.reset();
         if (x->kind == Kind::Score && x->sub) x->sub = detached(*x->sub, done, leftOut, depth + 1);
         evs.push_back(x);

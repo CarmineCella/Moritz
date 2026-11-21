@@ -35,6 +35,15 @@
 - A database's index for the granulator is kept on the database (its `'granular` entry), built once from
   `db-index!`.
 
+### The score
+
+- **A note of a database keeps its sample where it goes**: a score given to another program (Moritz's
+  score object, which a code box sends it to) or written as a .score file carries, for each note made by
+  `note`, `chord` or an orchestration, the sample's file (`sound`) and its own pitch (`sound-pitch`), as
+  Moritz's orchidea writes its notes; Moritz's score object plays them at the note's pitch (before, the
+  sample was left with Musil and the box played nothing). A chord's notes keep their cents too. The
+  lookup of a database's files (`db_locate`) is in `src/music/db_files.h`.
+
 ### Signals
 
 - `frame-spectra`, `onset-strength`, `flux-peaks`, `peak-density`, `register-curve` and `loudness-curve`

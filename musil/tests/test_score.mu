@@ -284,6 +284,25 @@ score-add! sh (record (list 'kind 'note 'at 0 'dur 1 'midi 60 'instr "Fl" 'shift
 score-transpose! sh 2
 check (== (get (head (score-events sh)) 'shift) 2.5) "score-transpose!: a Musil note's sound shifted as much"
 
+; --- a database's note keeps its sample where it goes (a file, Moritz's score object): sound and sound-pitch ---
+var mdb (db-load "../../data/microsol/microsol.spectrum.db")
+var ms (score "samples" 44100)
+var mn (event ms 0 1 (note mdb 'Vn "A4" 'mf 'ord))
+event ms 1 1 (chord mdb 'Vc 'p 'ord (list "C4" "E4"))
+var mrows (score->coll ms)
+check (== (length mrows) 3) "a chord's notes, each a row"
+var md (score->data ms)
+var mnotes (filter (tail md) (function (f) (and (equal? (type f) "list") (equal? (head f) 'note))))
+function data-of (form key) { var hit (find-first form (function (f) (and (equal? (type f) "list") (== (length f) 3) (equal? (head f) 'data) (equal? (getidx f 1) key))))
+                              return (if (equal? (type hit) "nil") nil (getidx hit 2)) }
+check (== (length mnotes) 3) "score->data: the note and the chord's two"
+check (all? mnotes (function (f) (exists? (data-of f 'sound)))) "a note's sample: its file on disk, as sound"
+check (equal? (data-of (head mnotes) 'sound) (note-path mn)) "the very sample note chose"
+check (== (data-of (head mnotes) 'sound-pitch) (- 69 (get mn 'shift))) "sound-pitch: the sample's own pitch"
+check (equal? (data-of (getidx mnotes 1) 'sound) (note-path (head (get (getidx (score-events ms) 1) 'notes)))) "a chord's note: its own sample"
+var back (text->score (score->text ms))
+check (has? (head (score-events back)) 'sound) "read back: the sample kept as data"
+
 ; --- the layout of the roll (music/score_layout.h) ---
 check (== (instrument-rank 'Vn) 29) "instrument-rank: Vn"
 check (== (instrument-rank "Zz") 1002) "instrument-rank: an unknown one after, by length"
