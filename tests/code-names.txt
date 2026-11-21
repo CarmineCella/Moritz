@@ -117,6 +117,8 @@ db-gen
 db-index-size
 db-locate
 db-read
+db-select
+db-select-counts
 db-sounds-folder
 dc-block
 dc-block-r

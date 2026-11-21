@@ -20,6 +20,7 @@
 
 #include "orchidea.h"
 #include "score_layout.h"
+#include "db_query.h"
 #include "../rng.h"
 #include "../signals/morphology.h"
 
@@ -188,7 +189,7 @@ inline bool just_cents(double fundamental, double pitch, int n, double& cents) {
     if (std::fabs(c) < 50) { cents = std::round(c); return true; }
     return false;
 }
-inline const std::vector<std::string>& dynamics_scale() { static const std::vector<std::string> s = {"ppp", "pp", "p", "mp", "mf", "f", "ff", "fff"}; return s; }
+using dbq::dynamics_scale;                                // ppp pp p mp mf f ff fff (db_query.h: the order the queries' ranges use)
 // (level->dynamics x) (dynamics->level d) (level->gain x)
 inline std::string level_dynamics(double x) { return dynamics_scale()[(size_t)std::max(0.0, std::min(7.0, std::round(7 * x)))]; }
 inline double dynamics_level(const std::string& d) {
@@ -196,19 +197,8 @@ inline double dynamics_level(const std::string& d) {
     return it == s.end() ? 0.5 : (double)(it - s.begin()) / 7;
 }
 inline double level_gain(double x) { return 0.25 + 0.75 * std::max(0.0, std::min(1.0, x)); }
-// (instrument-family instr): winds brass percussion keyboard plucked strings, other
-inline std::string instrument_family(const std::string& instr) {
-    const auto& o = score::layout::orchestralOrder();
-    auto it = std::find(o.begin(), o.end(), instr);
-    if (it == o.end()) return "other";
-    long k = it - o.begin();
-    if (k < 17) return "winds";
-    if (k < 23) return "brass";
-    if (k < 25) return "percussion";
-    if (instr == "Hp" || instr == "Gtr") return "plucked";
-    if (k < 29) return "keyboard";
-    return "strings";
-}
+// (instrument-family instr): winds brass percussion keyboard plucked strings, other (db_query.h: a query's family)
+using dbq::instrument_family;
 // (balance-gain balance instr): a balance is a list of (name decibels) pairs, by instrument or family
 inline double balance_gain(const pval& balance, const std::string& instr) {
     if (balance.is_nil()) return 1;

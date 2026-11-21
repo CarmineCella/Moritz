@@ -70,6 +70,10 @@ inline vptr rec_get(const vptr& rec, const char* key) {
     return nullptr;
 }
 
+} // namespace musil
+#include "music/db_query.h"        // choosing samples by a query (db-select, the orchestrators' 'select, Moritz's orchestra)
+namespace musil {
+
 // --- the database file ---
 // The parsing is C++ of its own (db_parse), shared by db-read and by the programs that embed Musil's engines (Moritz's
 // orchestra object): the header, then one record per sound, its metadata read off the file name.
@@ -295,6 +299,99 @@ inline vptr mus_db_sounds_folder(vlist& a, Interp& i) {
     if (probes.empty()) return v_str(dir);
     std::string found = db_sounds_folder(here, probes);
     return v_str(found == here ? dir : found);
+}
+
+// --- choosing samples by a query (music/db_query.h) ---
+// an entry of a database as a query sees it: its name's fields, its MIDI pitch, the moments of a database of moments
+// (as floats, as Moritz's orchestra holds them, so that both choose the same sounds at a range's end) and its other
+// numeric fields
+inline dbq::sample db_sample_of(const vptr& e, bool moments) {
+    dbq::sample s;
+    auto field = [&](const char* key, const char* dflt) { vptr v = rec_get(e, key); return v ? str_of(v) : std::string(dflt); };
+    s.instr = field("instr", "N"); s.tech = field("tech", "N"); s.pitch = field("pitch", "N"); s.dyn = field("dyn", "N"); s.other = field("other", "N"); s.file = field("file", "");
+    if (vptr mv = rec_get(e, "midi")) if (mv->t == Value::NUM && mv->num.size() == 1 && std::isfinite(mv->num[0])) s.midi = (int)mv->num[0];
+    if (moments) if (vptr f = rec_get(e, "features")) if (f->t == Value::NUM && f->num.size() >= 4) { s.has_moments = true; for (int k = 0; k < 4; k++) s.moments[k] = (double)(float)f->num[(size_t)k]; }
+    s.number = [e](const std::string& key, double& v) { vptr x = rec_get(e, key.c_str()); if (x && x->t == Value::NUM && x->num.size() == 1) { v = x->num[0]; return true; } return false; };
+    return s;
+}
+// the selection a Musil value asks for: nil (every sound), a query (a string or a symbol), or a record from instrument
+// to query, 'all the query for every instrument: (record (list 'all "dynamics p..f" 'Vn "technique pizz*"))
+inline dbq::selection db_selection_of(Interp& i, const vptr& db, const vptr& q) {
+    vptr entries = rec_get(db, "entries");
+    if (!entries || entries->t != Value::LIST) i.bad("not a database (db-load makes one)");
+    dbq::options o; if (vptr t = rec_get(db, "type")) o.type = str_of(t);
+    o.numeric_field = [&](const std::string& name) {                // a numeric field of the entries (the first ones say)
+        size_t n = 0;
+        for (auto& e : entries->l) { if (n++ >= 64) break; vptr x = rec_get(e, name.c_str()); if (x && x->t == Value::NUM && x->num.size() == 1) return true; }
+        return false;
+    };
+    dbq::selection sel;
+    auto one = [&](const vptr& v, const std::string& whose) -> std::pair<dbq::query, std::string> {
+        if (!v || v->t == Value::NIL) return { nullptr, "" };
+        if (v->t != Value::STR && v->t != Value::SYM) i.bad("a query is a string (\"technique ord and dynamics p..f\")" + (whose.empty() ? std::string() : " (" + whose + ")"));
+        try { return { dbq::compile(v->s, o), v->s }; }
+        catch (const std::exception& e) { i.bad((whose.empty() ? std::string() : whose + ": ") + e.what()); }
+    };
+    if (!q || q->t == Value::NIL) return sel;
+    if (q->t == Value::STR || q->t == Value::SYM) { auto p = one(q, ""); sel.all = p.first; sel.all_text = p.second; return sel; }
+    if (q->t != Value::LIST) i.bad("the selection is a query (a string) or a record from instrument to query");
+    for (auto& kv : q->l) {
+        if (!kv || kv->t != Value::LIST || kv->l.size() != 2 || !kv->l[0] || (kv->l[0]->t != Value::SYM && kv->l[0]->t != Value::STR))
+            i.bad("the selection is a query (a string) or a record from instrument to query: (record (list 'all \"dynamics p..f\" 'Vn \"technique pizz*\"))");
+        std::string key = kv->l[0]->s; auto p = one(kv->l[1], key);
+        if (key == "all") { sel.all = p.first; sel.all_text = p.second; }
+        else if (p.first) sel.per[key] = p;
+    }
+    return sel;
+}
+// (db-select db query)     the database with only the sounds a query chooses (music/db_query.h): query a string of
+//   terms, a field and a value, joined by and, or, not and parentheses (two terms side by side: and). The fields:
+//   instrument (instr), family (winds brass percussion keyboard plucked strings), technique (tech), dynamics (dyn),
+//   pitch (names or MIDI numbers), midi, string (the tag 1c, 2c... of the file name), mute (what follows + in the
+//   instrument's code; none), tag (any other tag of the file name), file (its name), centroid spread skewness
+//   kurtosis (a database of moments), and any numeric field of the entries. A value: a pattern with * and ? (case
+//   ignored), a regular expression between slashes (/sul_?pont/, searched), a range lo..hi (pitch C4..G5, pitch
+//   60..72, dynamics p..f in the order ppp..fff, string 1..2; C4.. and ..G5 leave an end open), or several separated
+//   by | (instrument Vn|Va). (db-select db "technique ord and dynamics p..f and not instrument Hn"),
+//   (db-select db "(family strings and pitch ..C4) or family brass"). query may also be a record from instrument to
+//   query, applied to that instrument's sounds only, 'all for every sound: (record (list 'all "dynamics mf..ff" 'Vn
+//   "string 1..3")); nil or "" keeps every sound. => a database (db-load's record, its entries the chosen ones in
+//   their order); a malformed query is an error that says what is wrong
+inline vptr mus_db_select(vlist& a, Interp& i) {
+    vptr db = a[0]; if (!db || db->t != Value::LIST) i.bad("not a database (db-load makes one)");
+    dbq::selection sel = db_selection_of(i, db, a[1]);
+    vptr entries = rec_get(db, "entries"); vptr type = rec_get(db, "type");
+    bool moments = type && str_of(type) == "moments";
+    vlist kept; size_t n = 0;
+    for (auto& e : entries->l) { if (sel.empty() || sel.matches(db_sample_of(e, moments))) kept.push_back(e); if (++n % 4096 == 0) i.yield_check(); }
+    vlist out;                                                      // the database's other fields; its index is made anew
+    for (auto& kv : db->l) {
+        if (!kv || kv->t != Value::LIST || kv->l.size() != 2 || !kv->l[0]) continue;
+        std::string k = str_of(kv->l[0]);
+        if (k == "entries" || k == "index" || k == "granular") continue;
+        out.push_back(v_list({ kv->l[0], kv->l[1] }));
+    }
+    out.push_back(v_list({ v_sym("entries"), v_list(std::move(kept)) }));
+    return v_list(std::move(out));
+}
+// (db-select-counts db query [instruments])   how many sounds a query (as db-select takes it) keeps: => a record
+//   ('kept 'total 'by (list (list instrument kept total) ...) in orchestral order, 'text "24 of 32 sounds: Ob 0 of 8,
+//   Hn 8, Vn 8, Vc 8", 'silent the instruments left without a sound); instruments (a list) limits 'by, 'text and
+//   'silent to them (an orchestra's: (orchestra-instruments orch))
+inline vptr mus_db_select_counts(vlist& a, Interp& i) {
+    vptr db = a[0]; if (!db || db->t != Value::LIST) i.bad("not a database (db-load makes one)");
+    dbq::selection sel = db_selection_of(i, db, a[1]);
+    vptr entries = rec_get(db, "entries"); vptr type = rec_get(db, "type");
+    bool moments = type && str_of(type) == "moments";
+    std::vector<std::string> only;
+    if (a.size() > 2 && a[2]->t != Value::NIL) { if (a[2]->t != Value::LIST) i.bad("the instruments are a list"); for (auto& x : a[2]->l) only.push_back(str_of(x)); }
+    dbq::counts c; size_t n = 0;
+    for (auto& e : entries->l) { dbq::sample s = db_sample_of(e, moments); c.add(s.instr, sel.empty() || sel.matches(s)); if (++n % 4096 == 0) i.yield_check(); }
+    vlist by;
+    for (auto& r : c.rows(only)) by.push_back(v_list({ v_str(r.name), v_num((double)r.kept), v_num((double)r.total) }));
+    vlist silent; for (auto& s : c.silent(only)) silent.push_back(v_str(s));
+    return v_list({ v_list({ v_sym("kept"), v_num((double)c.kept) }), v_list({ v_sym("total"), v_num((double)c.total) }), v_list({ v_sym("by"), v_list(std::move(by)) }),
+                    v_list({ v_sym("text"), v_str(c.text(only)) }), v_list({ v_sym("silent"), v_list(std::move(silent)) }) });
 }
 
 } // namespace musil
@@ -1100,7 +1197,7 @@ inline void add_atoms_and_types(Interp& i) {
 
 inline void add_music(Interp& i) {
     i.def("pitch->midi", mus_pitch_to_midi, 1, 1); i.def("midi->pitch", mus_midi_to_pitch, 1, 1);
-    i.def("db-read", mus_db_read, 1, 1); i.def("db-gen", mus_db_gen, 6, 6); add_midi(i); granular_musil::add_granular(i); i.def("db-locate", mus_db_locate, 2, 2); i.def("db-index-size", mus_db_index_size, 1, 1);
+    i.def("db-read", mus_db_read, 1, 1); i.def("db-gen", mus_db_gen, 6, 6); add_midi(i); granular_musil::add_granular(i); i.def("db-locate", mus_db_locate, 2, 2); i.def("db-select", mus_db_select, 2, 2); i.def("db-select-counts", mus_db_select_counts, 2, 3); i.def("db-index-size", mus_db_index_size, 1, 1);
     i.def("orchidea-analyse", mus_orchidea_analyse, 7, 7); i.def("orchidea-search", mus_orchidea_search, 4, 4);
     i.def("mimetic-seating", mus_mimetic_seating, 1, 1); i.def("continuation-plan", mus_continuation_plan, 2, 2); i.def("db-sounds-folder", mus_db_sounds_folder, 2, 2);
     i.def("dataset", mus_dataset, 1, 1); i.def("dataset?", mus_dataset_p, 1, 1); i.def("datasets", mus_datasets, 0, 0);

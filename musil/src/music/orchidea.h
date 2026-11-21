@@ -103,7 +103,7 @@ inline void make_model(const std::vector<entry>& db, const std::vector<std::stri
         for (auto& s : others) if (e.other.find(s) != std::string::npos) { other_ok = true; break; }
         if (note_ok && style_ok && dyn_ok && other_ok) m.database.push_back(&e);
     }
-    if (m.database.empty()) throw std::runtime_error("empty search space: no sound passes the filters (the pitches found in the target, the styles, the dynamics)");
+    if (m.database.empty()) throw std::runtime_error("empty search space: no sound passes the filters (the pitches found in the target, the selection, the styles, the dynamics)");
     for (size_t k = 0; k < m.database.size(); k++) m.instruments[m.database[k]->instr].push_back((int)k);
     for (size_t k = 0; k < orchestra.size(); k++) {
         const std::string& player = orchestra[k];
