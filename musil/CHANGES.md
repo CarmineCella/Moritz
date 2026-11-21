@@ -1,5 +1,28 @@
 # Changes
 
+## 0.14a
+
+### Signals
+
+- **`harmonize`**: a voice with up to eight copies of itself at other pitches, by pitch-synchronous
+  granular synthesis (`src/signals/psola.h`): grains of one or two periods centred on pitch marks snapped
+  to the signal's peaks, placed at the period of the target pitch, read at the speed of `formant` (1 keeps
+  the formants). Modes: intervals, scale (the pitch snapped to a key and a scale, each voice some steps
+  of it), midi-chord (held notes, velocity as level) and midi-root. Per voice level, pan, formant and
+  vibrato; humanize, transpose, dry and wet. Each voice keeps the input's level; unvoiced sounds fade
+  the voices out (or to the dry voice). `harmonize-voices` gives each voice apart, `harmonize-f0` the
+  pitch followed. Offline; Moritz's `harmonize~` runs the same code in real time.
+- **A streaming YIN** (`StreamingYin` in `src/signals/pitch.h`): a 5 ms hop, an optional low-pass and
+  decimation, a level gate and a median of three, on the same YIN; `yin` itself is unchanged.
+- **The grain core** (`src/signals/grains.h`): the window table, the pool of grains and the
+  interpolated readers, shared by `nebula` and `harmonize`; nebula's output is unchanged to the bit
+  (a test keeps its checksums).
+
+### Music
+
+- One table of scales (`src/music/scales.h`), read by `scale-pitches` and by `harmonize`; `scale-steps`
+  and `scale-names`.
+
 ## 0.14
 
 ### Orchestration

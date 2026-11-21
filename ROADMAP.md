@@ -89,7 +89,7 @@ the editor's command table and undo rule), YIN, `descriptors~` on the shared ana
 | 0.12 | Sound editor; Orchidea in Moritz; the score (score, transport); the timeline and the roll in one score window; datasets; Musil in Moritz; examples and tutorials |
 | 0.13 | Orchestration's morphological and granular modes; Musil's assisted composition and the pieces (Grisey, Haas, Atmosphères) as patches; the multitrack mode, as in Reaper (layout B of mockup 8, with a mixer), with patch clips and track instruments and effects |
 | 0.14 | Orchestration and the score: sample selection by query, the solutions of each segment in the roll, the timeline's ramps, rubber-band selection, track order, markers and sections; MusicXML and MIDI export of scores |
-| 0.14a (in progress) | The harmonizer: `harmonize` in Musil (offline) and `harmonize~` in Moritz (real time), pitch-synchronous granular synthesis (from reVoice), one streaming YIN, a grain core shared with nebula~ |
+| 0.14a | The harmonizer: `harmonize` in Musil (offline) and `harmonize~` in Moritz (real time), pitch-synchronous granular synthesis (from reVoice), one streaming YIN, a grain core shared with nebula~ |
 | 0.15 | Neural networks from WEFT: a neural core in Musil (`nn-*`, `.mnet` models), `mlp`, `ddsp~` (a neural harmonic-plus-noise instrument; live from the past only, Musil keeps both models) with the Timbre space example, `vae` on lists, a transformer on matching-pursuit atoms (offline); examples/20-neural, tutorial 15 (the code tutorial last) |
 | then | Orchestration's playability; the multitrack's next items (below) |
 | then | Research: VAE on matching pursuit; a 2-D corpus map; a transformer on atom sequences; `concat~` |
