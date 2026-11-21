@@ -473,3 +473,107 @@ TEST(musil_score_structure) {
     outer->query(2.5, 2.6, [&](const sc::Event& e) { got.push_back(e); });
     CHECK(got.size() == 1);
 }
+
+// One transport for each top document: two patches open (extras of the root, as the windows' documents are) play and
+// stop on their own; a subpatch follows its document's; the root's own is another still
+TEST(transport_one_per_top_document) {
+    Rig r("(patch (obj b buffer~ imp 100))");
+    impulseBuffer(r, "b");
+    auto open = [&](const char* text) {
+        Patch* q = r.p.addExtra(std::make_unique<Patch>());
+        std::string err;
+        CHECK(q->load(text, err));
+        q->loadbangAll();
+        return q;
+    };
+    Patch* a = open("(patch (obj s score x 1) (obj o dac~ 1 2) (connect s 0 o 0) (obj tr transport 240 4 4)"
+                    " (obj sub p inner (patch (obj t2 transport))))");
+    Patch* b = open("(patch (obj s score y 1) (obj o dac~ 1 2) (connect s 0 o 1) (obj tr transport 240 4 4))");
+    auto sa = std::make_shared<sc::Score>("x", 44100), sb = std::make_shared<sc::Score>("y", 44100);
+    sa->insert(sound(0.25, 0.1, "imp"));
+    sb->insert(sound(0.5, 0.1, "imp"));
+    a->find("s")->message(0, {Atom("score"), Atom(shareScore(sa))});
+    b->find("s")->message(0, {Atom("score"), Atom(shareScore(sb))});
+    Patch* inner = a->find("sub") ? a->find("sub")->inner() : nullptr;
+    CHECK(inner && inner->topDocument() == a && a->topDocument() == a && b->topDocument() == b);
+    if (inner) CHECK(transportOf(inner) == transportOf(a));           // a subpatch: its document's
+    CHECK(transportOf(a) != transportOf(b) && transportOf(a) != transportOf(&r.p) && transportOf(b) != transportOf(&r.p));
+    a->find("tr")->message(0, {Atom("play")});                        // a's transport: only a plays
+    auto y = r.run(44100);
+    CHECK(transportOf(a)->playing() && !transportOf(b)->playing());
+    auto L = peaks(etest::channel(y, 2, 0)), R = peaks(etest::channel(y, 2, 1));
+    CHECK(L.size() == 1 && L[0] == 11025 && R.empty());
+    a->find("tr")->message(0, {Atom("stop")});
+    b->find("s")->message(0, {Atom("play")});                         // b's score: only b plays
+    y = r.run(44100);
+    L = peaks(etest::channel(y, 2, 0));
+    R = peaks(etest::channel(y, 2, 1));
+    CHECK(L.empty() && R.size() == 1 && R[0] == 22050);
+    CHECK(!transportOf(a)->playing());
+    r.p.removeExtra(a);
+    r.p.removeExtra(b);
+    r.p.collectGarbage(true);
+}
+
+// Play sent to a score box from the patch: from where the transport is; at the score's end or past it, from the start;
+// a play sent there stops at the score's end (the patch's clock started elsewhere goes on); a play while it plays the
+// score changes nothing; stop and play again goes on from where it stopped; looping, it goes on
+TEST(score_play_from_the_patch) {
+    Rig r(kPatch);
+    impulseBuffer(r, "b");
+    auto s = std::make_shared<sc::Score>("x", 44100);
+    s->insert(sound(0.25, 0.1, "imp"));
+    s->insert(note(0.5, 0.1, 60));                                    // the score ends at 0.6 s
+    give(r, "s", s);
+    auto t = transportOf(&r.p);
+    std::vector<long> snd, clk;
+    auto play = [&](long frames) {
+        auto y = r.run(frames);
+        snd = peaks(etest::channel(y, 2, 0));
+        clk = peaks(etest::channel(y, 2, 1));
+    };
+    r.box("s")->message(0, {Atom("play")});
+    play(44100);
+    CHECK(snd.size() == 1 && snd[0] == 11025 && clk.size() == 1 && clk[0] == 22050);
+    CHECK(!t->playing());                                             // stopped at its end, on its sample
+    int lap;
+    double pos;
+    t->where(&r.p, lap, pos);
+    CHECK(std::fabs(pos - 0.6 * 44100) < 1);
+    r.box("s")->message(0, {Atom("play")});                           // at the end: from the start, again
+    play(44100);
+    CHECK(snd.size() == 1 && snd[0] == 11025 && clk.size() == 1 && clk[0] == 22050 && !t->playing());
+    // the transport object starts the patch's clock (past the score's end: nothing, and it goes on)
+    r.box("tr")->message(0, {Atom("play")});
+    play(44100);
+    CHECK(snd.empty() && clk.empty() && t->playing());
+    r.box("s")->message(0, {Atom("play")});                           // running past the end: from the start, and stops
+    play(44100);
+    CHECK(snd.size() == 1 && snd[0] == 11025 && clk.size() == 1 && !t->playing());
+    // the transport object from the start: the score plays, the clock goes on past its end
+    r.box("tr")->message(0, {Atom("rewind")});
+    r.box("tr")->message(0, {Atom("play")});
+    play(44100);
+    CHECK(snd.size() == 1 && t->playing());
+    r.box("tr")->message(0, {Atom("stop")});
+    // play while it plays the score: nothing changes; stop, then play goes on from there
+    r.box("tr")->message(0, {Atom("rewind")});
+    r.box("s")->message(0, {Atom("play")});
+    play(4410);                                                       // 0.1 s
+    r.box("s")->message(0, {Atom("play")});
+    play(4410);                                                       // 0.2 s
+    r.box("s")->message(0, {Atom("stop")});
+    play(4410);
+    CHECK(snd.empty() && !t->playing());
+    r.box("s")->message(0, {Atom("play")});
+    play(44100);
+    CHECK(snd.size() == 1 && snd[0] == 2205 && clk.size() == 1 && clk[0] == 13230 && !t->playing());
+    // looping (bar 1, a second at 240 bpm): it goes on past the score's end, round the loop
+    r.box("tr")->message(0, {Atom("loop"), Atom(1.f), Atom(2.f)});
+    r.box("tr")->message(0, {Atom("rewind")});
+    r.box("s")->message(0, {Atom("play")});
+    play(2 * 44100);
+    CHECK(snd.size() == 2 && snd[0] == 11025 && snd[1] == 44100 + 11025 && t->playing());
+    r.box("tr")->message(0, {Atom("stop")});
+    CHECK(!r.printedSomething("score:"));
+}

@@ -1,7 +1,9 @@
 // Copyright (c) 2026 Carmine-Emanuele Cella. SPDX-License-Identifier: BSD-2-Clause
 // transport.h — the clock of a patch: where its scores are, whether they play, a tempo and a meter to count bars
-// and beats. One for the root patch and everything inside it (help patches too): the transport object shows and
-// drives it, the score object plays on it.
+// and beats. One for each top document (Patch::topDocument: a patch in a window of its own, a help patch, a score's
+// own player, the patch --render runs) and everything inside it (its subpatches and abstractions): the transport
+// object shows and drives it, the score object plays on it. Two documents open play and stop on their own: Play in
+// one, or a score's window playing its score, never starts the other.
 //
 // Positions are samples at the patch's rate (seconds in the score times the rate). A change (play, stop, locate,
 // loop) takes effect at the sample a message sent now lands on (Patch::stamp): the audio thread reads the clock
@@ -92,6 +94,9 @@ public:
         return anchorTime_ + ((double)(loopEnd_ - seg_.pos0) + (lap - 1) * (double)(loopEnd_ - loopStart_) + (pos - loopStart_)) / sr_;
     }
     bool looping() const { return loop_ && loopEnd_ > loopStart_ && seg_.pos0 < loopEnd_; }
+    // how many times it was started, stopped, located or looped (not its tempo or meter): who changed it last can tell
+    // whether anyone else has since
+    uint64_t changes() const { return changes_; }
     bool loopOn() const { return loop_; }
     int64_t loopStart() const { return loopStart_; }
     int64_t loopEnd() const { return loopEnd_; }
@@ -115,7 +120,7 @@ public:
     void setTempo(Patch* p, double b) { if (b > 0 && std::isfinite(b)) { bpm = b; notify(); } (void)p; }
     void setMeter(Patch* p, int n, int d) { num = std::max(1, n); den = std::max(1, d); notify(); (void)p; }
     // the device started or stopped, or the rate changed: the same position, anchored again on the sample count
-    void reanchor(Patch* p) { change(p, seg_.playing, nowPos(p)); }
+    void reanchor(Patch* p) { change(p, seg_.playing, nowPos(p), false); }
 
     // bars, beats (from 1) and ticks of a position in samples, at the tempo and meter
     void bbt(double pos, long& bar, int& beat, int& tick) const {
@@ -135,8 +140,9 @@ public:
     // ---- audio thread: the state now (never keep it past the callback)
     const TransportState* state() const { return state_.get(); }
 
-    explicit Transport(Patch* root) : root_(root) {
-        sr_ = root->sampleRate.load();
+    // top: the document it is the clock of (the state is handed to the audio thread through its root)
+    explicit Transport(Patch* top) : root_(top->root()) {
+        sr_ = root_->sampleRate.load();
         publish(0);
     }
 
@@ -146,6 +152,7 @@ private:
     double sr_ = 44100.0;
     TransportState::Seg seg_;          // the part in force (GUI side)
     double anchorTime_ = 0.0;          // the logical time of seg_.anchor
+    uint64_t changes_ = 0;
     bool loop_ = false;
     int64_t loopStart_ = 0, loopEnd_ = 0;
     Published<TransportState> state_;
@@ -154,7 +161,7 @@ private:
 
     double rate(Patch* p) const { (void)p; return sr_; }
     int64_t nowPos(Patch* p) const { int lap; double pos; where(p, lap, pos); return (int64_t)std::floor(pos + 1e-6); }
-    void change(Patch* p, bool playing, int64_t pos) {
+    void change(Patch* p, bool playing, int64_t pos, bool counts = true) {
         TransportState::Seg old = seg_;
         uint64_t at = p->stamp();
         sr_ = p->root()->sampleRate.load();
@@ -162,6 +169,7 @@ private:
         seg_.playing = playing;
         seg_.anchor = at;
         seg_.pos0 = std::max<int64_t>(0, pos);
+        if (counts) ++changes_;
         publish(at, &old);
         notify();
     }
@@ -201,11 +209,11 @@ std::shared_ptr<musil::score::Score> scoreOfBox(Box* b);
 bool replaceScoreOfBox(Box* b, std::shared_ptr<musil::score::Score> s);
 bool scoreBoxKeptInPatch(const Box* b);
 
-// the clock of the patch p is in (its root's), made on first use
+// the clock of the patch p is in (its top document's), made on first use
 inline std::shared_ptr<Transport> transportOf(Patch* p) {
-    Patch* r = p->root();
-    if (!r->transport) r->transport = std::make_shared<Transport>(r);
-    return r->transport;
+    Patch* d = p->topDocument();
+    if (!d->transport) d->transport = std::make_shared<Transport>(d);
+    return d->transport;
 }
 
 }  // namespace moritz

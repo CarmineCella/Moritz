@@ -560,6 +560,12 @@ Box* ScoreDoc::player(Patch* root) {
     return s;
 }
 
+Box* ScoreDoc::playerBox() const {
+    if (where_ == Where::Box)
+        if (Box* b = box()) return b;
+    return player_ ? player_->find("s") : nullptr;
+}
+
 // ---------------------------------------------------------------- following
 
 void ScoreDoc::adopt(std::shared_ptr<sc::Score> s, const std::string& why) {

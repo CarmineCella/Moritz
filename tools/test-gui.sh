@@ -584,6 +584,36 @@ expect "the G clef upright in the box" "state: box clef 0 ink yes above below up
 if [ $status -eq 0 ] && grep -q "state: box clef 1 ink yes upright" "$out" && grep -q "state: box clef 2 ink yes upright" "$out"; then ok
 else fail "the C and F clefs upright in the box"; fi
 
+# 42. the Play button clicked with the mouse (a click toggles its state before its callback: the icon once stayed Play
+#     while the score played), once, again, many times in a row: its state and its icon always the transport's; audio
+#     off, Play says so; the playhead past the score's end: from the start; at the end it stops by itself; a play sent
+#     to the score box from the patch with the window open: the button follows
+run "$G/score.moritz" --window-png none act=roll:s act=scpress act=scstate act=scpress act=scstate act=scpress:7 act=scstate \
+    act=scpress:7 act=scstate act=tlplayhead:9 act=scpress act=scstate act=wait:1.8 act=scstate act=send:s:play act=scstate
+expect "a click: Stop shown" "state: score button stop on status playing from 00:00.000, but audio is off"
+expect "again: Play shown" "state: score button play off status stopped"
+if [ $status -eq 0 ] && [ "$(grep -c "state: score button stop on" "$out")" = 4 ] && [ "$(grep -c "state: score button play off" "$out")" = 3 ] &&
+   [ "$(grep -c "state: score view roll playing yes transport yes button on" "$out")" = 4 ]; then ok
+else fail "the button pressed many times: always the transport's state"; fi
+expect "past the end: from the start" "state: score button stop on status playing from 00:00.000 (the playhead was at the end)"
+expect "at the end it stops" "state: score button play off status the end of the score"
+expect "played from the patch: the button follows" "state: score button stop on status the end of the score"
+
+# 43. two documents open, each its own transport: the score's window plays its box's patch only; Play of a score of its
+#     own (a file) and of a score placed inside it (its window) start neither document, each on its own player
+mkdir -p "$T/two/h"
+cp "$G/score.moritz" "$T/two/other.moritz"
+cp "$G/piece.score" "$G/gesture.score" "$T/two/h/"
+run "$G/score.moritz" "$T/two/other.moritz" --window-png none act=roll:s act=scpress act=transports
+expect "the score's patch plays" "state: transport score.moritz playing"
+expect "the other patch does not" "state: transport other.moritz stopped"
+run "$G/score.moritz" --window-png none "act=tlfile:$T/two/h/piece.score" act=scpress act=transports act=tldbl:2 act=scpress \
+    act=scstate act=transports
+expect "a file's score plays on its own" "state: transport score piece.score playing"
+expect "its placed score's window plays too" "state: transport score gesture.score playing"
+expect "the patch is left alone" "state: transport score.moritz stopped"
+expect "the placed score's button" "state: score button stop on"
+
 rm -rf "$T"
 echo "$count interface cases, $fails failed"
 [ $fails -eq 0 ]

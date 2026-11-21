@@ -137,6 +137,11 @@ the editor's command table and undo rule), YIN, `descriptors~` on the shared ana
       box opens in the view used last, its `@view` the first time (Roll by default); its menu's Open. Play always
       plays (from the playhead or the selection made after it, locating a transport already running), toggles
       to Stop, Space the same whatever is selected; a play started there stops at the score's end.
+- [x] One clock per top document: each patch open in a window (a help patch, a score's own player too) has its own
+      transport, which its subpatches, abstractions, transport objects and score boxes follow; playing a score
+      plays only its patch. Play from the end (or past it) starts from the start, the button's state and icon are
+      always the transport's, a score's play message stops at its end, a score's own player is made with its
+      window (not at Play).
 - [ ] The score's window, next: a keyboard shortcut for each view; the panels in an arranger window or a patch's
       dock (layouts B and C of mockup 8); the loop range set in the roll too (today in the timeline's ruler).
 - [ ] Timeline, next: patch clips that run while they play (loaded at their start, stopped at their end,
@@ -144,8 +149,7 @@ the editor's command table and undo rule), YIN, `descriptors~` on the shared ana
       mockup 4); automation that ramps between points; a placed score split or trimmed at its start; clip
       fades and gain dragged on the clip; rubber-band selection; track headers dragged to reorder; markers
       and sections; render in N channels, binaural and stems; the render of a score bound to a patch running
-      the patch too; one clock per top document; long files read from disk; Musil's score-render honouring
-      the tracks' strips and fades.
+      the patch too; long files read from disk; Musil's score-render honouring the tracks' strips and fades.
 - [x] The roll (mockup 5), first version: staves per row with proportional time, clefs (G, F and C drawn as
       shapes, in the box too), microtones, dynamics,
       scores placed inside drawn faint with their placement, the playhead, zoom and scroll, snap; select, move,

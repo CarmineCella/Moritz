@@ -25,7 +25,8 @@ and the signal processing, analysis and learning of *Musil*.
   (waveform and spectrogram, selection, cut and paste, fades, undo), and
   offline rendering of whole patches into sound.
 - **Scores and the timeline**: a `score` object plays notes, sounds,
-  messages and scores inside scores on the patch's transport; its timeline
+  messages and scores inside scores on the patch's transport (each patch
+  open has its own: playing one never starts another); its timeline
   arranges them on tracks with automation lanes, and renders them.
 - **Filters and effects**: resonant and state-variable filters, biquads
   designed and drawn on screen, delays, a reverb, zero-latency convolution
@@ -230,10 +231,13 @@ Moritz follows Max's conventions:
   box opens in the view used last for it, the first time in its `@view`
   (Roll unless it says `@view timeline`, `piano` or `list`). Play plays the
   score from the playhead (or from the start of what was selected after it),
-  whatever the transport was doing; pressed again, or Space whatever is
-  selected, it stops; a play started there stops at the score's end, the
-  playhead back where it started. File > Open Score... opens a .score file
-  the same way and File > New Score starts one.
+  whatever the transport was doing (at the end or past it: from the start);
+  pressed again, or Space whatever is selected, it stops, and the button
+  always shows what the transport does; a play started there stops at the
+  score's end, the playhead back where it started. It plays only the patch
+  the score's box is in: another patch open, with its own transport, does
+  not start. File > Open Score... opens a .score file the same way and File
+  > New Score starts one (each plays on a player of its own).
 - **Roll**: a `score` box draws its score as a roll, a staff a row with
   proportional time (rows in orchestral order, G, F and C clefs drawn as
   shapes, microtones and detuned notes with their cents, in the box too,

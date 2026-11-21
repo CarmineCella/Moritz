@@ -536,6 +536,171 @@ TEST(score_playback_always_plays) {
     CHECK(!t->playing());
 }
 
+// Every way Play was found doing nothing or the wrong thing: the playhead at or past the score's end (it played
+// silence: now from the start), past the loop (from its start), an empty score (said), a transport changed by another
+// since (the window leaves it alone: its timer once stopped the other's play at its own score's end), a score of its
+// own (a file, a new one: its player's clock, made before Play, never the patch's), a score placed inside another
+// (its own player: the parent's patch stays quiet), two windows of two documents (each its own transport), and the
+// button pressed again and again (the state always the transport's)
+TEST(score_playback_every_path) {
+    Rig r(kPatch);
+    impulse(r, "b");
+    auto d = ScoreDoc::ofBox(r.box("s"));
+    tl::addSound(*d, "imp", true, "A", 0.5, 0.5);                   // the score ends at 1 s
+    d->clearSelection();
+    ScorePlayback pb(d, &r.p);
+    auto t = transportOf(&r.p);
+    // at the end, and past it: from the start
+    for (double at : {1.0, 5.0}) {
+        pb.setPlayhead(at);
+        CHECK(pb.play() && pb.playing() && pb.playhead() == 0 && pb.message.find("at the end") != std::string::npos);
+        auto y = r.run(44100);
+        auto L = above(etest::channel(y, 2, 0), 0.5f);
+        CHECK(L.size() == 1 && L[0] == 22050);
+        pb.tick();
+        CHECK(!t->playing() && !pb.playing() && pb.playhead() == 0);
+    }
+    // past the loop: from the loop's start
+    pb.setLoopRange(0.25, 0.75);
+    pb.setLoop(true);
+    pb.setPlayhead(0.9);
+    CHECK(pb.play() && pb.playhead() == 0.25);
+    r.run(44100);
+    pb.tick();
+    CHECK(t->playing() && pb.playing());
+    pb.stop();
+    pb.setLoop(false);
+    // the transport changed by another since: not this play any more; the timer leaves it alone past the end
+    pb.setPlayhead(0);
+    CHECK(pb.play() && pb.startedHere());
+    t->locate(&r.p, 0.2);                                            // a transport object, another window
+    r.run(44100 * 3 / 2);
+    pb.tick();
+    CHECK(t->playing() && !pb.startedHere() && !pb.playing());
+    pb.setPlayhead(0.5);
+    CHECK(pb.play() && pb.playing() && std::fabs(pb.position() - 0.5) < 0.01);   // Play takes it over, from the playhead
+    r.run(44100);
+    pb.tick();
+    CHECK(!t->playing());
+    // pressed again and again, fast, while it plays and stopped: the button's state is always the transport's
+    pb.setPlayhead(0);
+    for (int k = 0; k < 41; ++k) {
+        pb.toggle();
+        CHECK(pb.playing() == (k % 2 == 0) && t->playing() == pb.playing());
+        r.run(64);
+    }
+    pb.stop();
+    // an empty score: said, nothing started
+    auto e = ScoreDoc::make("empty");
+    ScorePlayback pe(e, &r.p);
+    CHECK(!pe.play() && pe.message.find("empty") != std::string::npos && !pe.running() && !pe.playing());
+    // a score of its own: no clock before its player is made; then its player's, not the patch's
+    auto f = ScoreDoc::make("own");
+    tl::addSound(*f, "imp", true, "A", 0.25, 0.25);
+    ScorePlayback pf(f, &r.p);
+    CHECK(!pf.clock() && !pf.running() && !pf.playing() && pf.position() == 0);
+    pf.tick();
+    CHECK(f->player(&r.p));                                          // as the window makes it, when it opens
+    CHECK(pf.clock() && pf.clock() != &r.p && transportOf(pf.clock()) != t);
+    pb.setPlayhead(0);
+    CHECK(pb.play());                                                // two windows, two documents: on their own
+    CHECK(pf.play() && pf.running() && pb.running());
+    auto y = r.run(22050);
+    pf.stop();
+    CHECK(!pf.running() && pb.running() && t->playing());
+    auto L = above(etest::channel(y, 2, 0), 0.5f);
+    CHECK(L.size() == 1 && L[0] == 11025);                           // the file's (the box's comes at 0.5 s)
+    pb.stop();
+    // a score placed inside another (the box's score): its own player, the box's patch left quiet
+    auto sub = std::make_shared<sc::Score>("inner", 44100);
+    {
+        auto n = std::make_shared<sc::Event>();
+        n->kind = sc::Kind::Sound;
+        n->buffer = true;
+        n->source = "imp";
+        n->at = 0.1;
+        n->dur = 0.2;
+        sub->insert(n);
+        auto pl = std::make_shared<sc::Event>();
+        pl->kind = sc::Kind::Score;
+        pl->sub = sub;
+        pl->at = 0;
+        pl->dur = 1;
+        pl->row = "B";
+        auto ed = d->edit("Place");
+        uint64_t id = ed.insert(pl);
+        CHECK(ed.commit());
+        auto sd = ScoreDoc::ofPlacement(d, id);
+        CHECK(sd != nullptr);
+        if (sd) {
+            ScorePlayback ps(sd, &r.p);
+            CHECK(ps.play() && ps.running() && !t->playing() && ps.clock() != &r.p);
+            y = r.run(22050);
+            L = above(etest::channel(y, 2, 0), 0.5f);
+            CHECK(L.size() == 1 && L[0] == 4410);
+            ps.stop();
+        }
+    }
+    r.p.collectGarbage(true);
+}
+
+// How soon Play is heard: offline on the very sample of the play; in real time two of the device's buffers later, as
+// every timed event (the callback may have computed one buffer ahead, a GUI timer may fire one late), the same for a
+// score of its own (its player made when its window opens, not at Play)
+TEST(score_playback_latency) {
+    Rig r(kPatch);
+    impulse(r, "b");
+    auto d = ScoreDoc::ofBox(r.box("s"));
+    tl::addSound(*d, "imp", true, "A", 0, 0.5);                     // a sound at once
+    d->clearSelection();
+    ScorePlayback pb(d, &r.p);
+    r.run(1000);
+    CHECK(pb.play());
+    auto y = r.run(4410);
+    auto L = above(etest::channel(y, 2, 0), 0.5f);
+    CHECK(L.size() == 1 && L[0] == 0);                               // offline: the play's own sample
+    pb.stop();
+    // real time: buffers of 512 frames
+    const int P = 512, sr = 44100;
+    double wall = 0;
+    Rig q("");
+    q.p.offline = false;
+    q.p.clock = [&wall] { return wall; };
+    q.p.ioBufferFrames = P;
+    std::string err;
+    q.p.load(kPatch, err);
+    q.p.loadbangAll();
+    impulse(q, "b");
+    auto own = ScoreDoc::make("own");
+    tl::addSound(*own, "imp", true, "A", 0, 0.5);
+    CHECK(own->player(&q.p));                                         // made beforehand (the window's opening)
+    for (int which = 0; which < 2; ++which) {
+        auto dq = which == 0 ? ScoreDoc::ofBox(q.box("s")) : own;
+        if (which == 0) { tl::addSound(*dq, "imp", true, "A", 0, 0.5); dq->clearSelection(); }
+        ScorePlayback pq(dq, &q.p);
+        std::vector<float> out, buf((size_t)P * 3);
+        long S = 0;
+        auto block = [&] {
+            wall = (double)S / sr;
+            q.p.process(nullptr, 0, buf.data(), 3, P);
+            out.insert(out.end(), buf.begin(), buf.end());
+            S += P;
+            wall = (double)(S - 1) / sr;
+            q.p.runDue(wall);
+        };
+        for (int k = 0; k < 4; ++k) block();
+        long pressed = (long)out.size() / 3;
+        wall = (double)S / sr;                                        // Play, between two callbacks
+        CHECK(pq.play());
+        for (int k = 0; k < 8; ++k) block();
+        auto Lq = above(etest::channel(out, 3, 0), 0.5f);
+        CHECK(Lq.size() == 1 && Lq[0] - pressed == 2 * P);
+        pq.stop();
+        for (int k = 0; k < 2; ++k) block();
+    }
+    q.p.collectGarbage(true);
+}
+
 // The tracks' strips in playback: a muted track is silent, a soloed one alone sounds, gain scales, pan places;
 // a sound's fades are played
 TEST(timeline_tracks_play_with_their_strips) {
@@ -664,7 +829,8 @@ TEST(timeline_edited_while_audio_runs) {
     CHECK(!r.printedSomething("score:"));
 }
 
-// A score of its own (a file, a new one) plays on a score box of its own, beside the patches, removed with it
+// A score of its own (a file, a new one) plays on a score box of its own, beside the patches, on its own transport,
+// removed with it
 TEST(scoredoc_plays_without_a_patch) {
     Rig r("(patch (obj b buffer~ imp 100))");
     impulse(r, "b");
@@ -675,11 +841,17 @@ TEST(scoredoc_plays_without_a_patch) {
         Box* p = d->player(&r.p);
         CHECK(p && r.p.extras.size() == extras + 1 && scoreOfBox(p) == d->scorePtr());
         CHECK(d->player(&r.p) == p);
+        // its patch is a document of its own: the root's transport leaves it alone, its own plays it
+        CHECK(transportOf(p->patch) != transportOf(&r.p));
         transportOf(&r.p)->play(&r.p);
         auto y = r.run(44100);
+        CHECK(above(etest::channel(y, 2, 0), 0.5f).empty());
+        transportOf(&r.p)->stop(&r.p);
+        transportOf(p->patch)->play(p->patch);
+        y = r.run(44100);
         auto L = above(etest::channel(y, 2, 0), 0.5f);
         CHECK(L.size() == 1 && L[0] == 22050);
-        transportOf(&r.p)->stop(&r.p);
+        transportOf(p->patch)->stop(p->patch);
         tl::moveClips(*d, d->score().events().empty() ? std::vector<uint64_t>{} : std::vector<uint64_t>{d->score().events()[0]->id}, 0.25);
         CHECK(scoreOfBox(p)->events()[0]->at == 0.75);
     }

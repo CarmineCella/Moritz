@@ -152,6 +152,8 @@ public:
     // ---- playing it: the box that plays it (the bound box; otherwise a score box of its own, into dac~ 1 2, in a
     // patch run beside the others under root, made on first use and removed with the document)
     Box* player(Patch* root);
+    // the box that plays it now, without making one: the bound box, else its own player once made (nullptr: neither)
+    Box* playerBox() const;
 
     // a score kept in a patch was edited (the application marks the patch's document edited); may be empty
     static std::function<void(Patch*)> patchEdited;

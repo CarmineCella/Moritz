@@ -201,7 +201,7 @@ std::string escape(const std::string& t) {
 bool act(const std::string& a) {
     App& app = App::get();
     std::string verb = a.substr(0, a.find(':')), arg = a.find(':') == std::string::npos ? "" : a.substr(a.find(':') + 1);
-    if (verb == "timeline" || verb == "selected" || verb.rfind("tl", 0) == 0 || verb.rfind("sc", 0) == 0 ||
+    if (verb == "timeline" || verb == "selected" || verb == "transports" || verb.rfind("tl", 0) == 0 || verb.rfind("sc", 0) == 0 ||
         verb.rfind("roll", 0) == 0)
         return scoreTestAction(verb, arg);       // score_window.cpp
     if (verb == "draw") {

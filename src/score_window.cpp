@@ -81,15 +81,21 @@ ScorePlayback::~ScorePlayback() { doc_->unlisten(token_); }
 
 Patch* ScorePlayback::root() const { return root_ ? root_ : &App::get().host; }
 
+// the score's box (its own player for a score with none: a file, a new score, a score placed inside another, a box
+// gone), and so its clock: never another one, so the button shows what plays this score
 Patch* ScorePlayback::clock() const {
-    Box* b = doc_->box();
-    return b ? b->patch : root();
+    Box* b = doc_->playerBox();
+    return b ? b->patch : nullptr;
 }
 
-bool ScorePlayback::running() const { return transportOf(clock())->playing(); }
+bool ScorePlayback::running() const {
+    Patch* p = clock();
+    return p && transportOf(p)->playing();
+}
 
 double ScorePlayback::transportSeconds() const {
     Patch* p = clock();
+    if (!p) return playhead_;
     auto t = transportOf(p);
     int lap;
     double pos;
@@ -97,13 +103,23 @@ double ScorePlayback::transportSeconds() const {
     return t->seconds(pos);
 }
 
+bool ScorePlayback::ours() const {
+    Patch* p = clock();
+    return startedHere_ && p && transportOf(p)->changes() == changes_;
+}
+
+void ScorePlayback::claim() {
+    if (Patch* p = clock()) changes_ = transportOf(p)->changes();
+}
+
 bool ScorePlayback::playing() const {
-    auto t = transportOf(clock());
+    Patch* p = clock();
+    if (!p) return false;
+    auto t = transportOf(p);
     if (!t->playing()) return false;
+    if (ours()) return true;                              // its own play, until it ends (tick) or is stopped
     if (t->looping()) return true;
-    double end = doc_->score().duration();
-    if (startedHere_ && startAt_ >= end) return true;     // played from past its end: until it is stopped
-    return transportSeconds() < end + 0.05;               // the patch's clock past the score's end: not this score
+    return transportSeconds() < doc_->score().duration() + 0.05;   // the patch's clock past the score's end: not this score
 }
 
 double ScorePlayback::position() const { return playing() ? transportSeconds() : playhead_; }
@@ -122,22 +138,37 @@ void ScorePlayback::setPlayhead(double t) {
     playhead_ = std::max(0.0, t);
     selNewer_ = false;
     if (playing()) {
+        bool mine = ours();
         Patch* p = clock();
         transportOf(p)->locate(p, playhead_);
         startAt_ = playhead_;
+        if (mine) claim();
     }
 }
 
 bool ScorePlayback::play() {
-    Box* b = doc_->box() ? doc_->box() : doc_->player(root());
+    Box* b = doc_->player(root());                      // its box, or its own player (made the first time)
     if (!b) {
         message = "nothing can play this score now";
         return false;
     }
+    const sc::Score& s = doc_->score();
+    if (s.empty()) {
+        message = "the score is empty: nothing to play";
+        return false;
+    }
     Patch* p = b->patch;
     auto t = transportOf(p);
-    const sc::Score& s = doc_->score();
-    double from = startPoint();
+    double end = s.duration(), from = startPoint();
+    std::string where;
+    bool looped = loop_ && loopB_ > loopA_;
+    if (looped && from >= loopB_) {                     // past the loop: from its start
+        from = loopA_;
+        where = " (the loop's start)";
+    } else if (!looped && end > 0 && from >= end - 1e-9) {   // at or past the end: from the start (it would play nothing)
+        from = 0;
+        where = " (the playhead was at the end)";
+    }
     t->setTempo(p, s.bpm);                              // bars and beats as the score counts them
     t->setMeter(p, s.meterNum, s.meterDen);
     t->setLoop(p, loop_, loopA_, loopB_);
@@ -147,18 +178,20 @@ bool ScorePlayback::play() {
     startAt_ = from;
     startedHere_ = true;
     selNewer_ = false;
-    bool off = !root_ && !App::get().audio.running();
-    message = !off ? "playing from " + clockText(from)
-                   : "audio is off: turn it on (the Audio button, " + shortcutText(FL_COMMAND + '/') + ") to hear it";
+    claim();
+    bool off = !p->root()->offline && !App::get().audio.running();
+    message = "playing from " + clockText(from) + where;
+    if (off) message += ", but audio is off: turn it on (the Audio button, " + shortcutText(FL_COMMAND + '/') + ") to hear it";
     return true;
 }
 
 void ScorePlayback::stop() {
-    Patch* p = clock();
-    auto t = transportOf(p);
-    if (t->playing()) {
-        if (playing()) playhead_ = transportSeconds();
-        t->stop(p);
+    if (Patch* p = clock()) {
+        auto t = transportOf(p);
+        if (t->playing()) {
+            if (playing()) playhead_ = transportSeconds();
+            t->stop(p);
+        }
     }
     startedHere_ = false;
     message = "stopped";
@@ -172,8 +205,10 @@ void ScorePlayback::toggle() {
 void ScorePlayback::setLoop(bool on) {
     loop_ = on && loopB_ > loopA_;
     if (running()) {
+        bool mine = ours();
         Patch* p = clock();
         transportOf(p)->setLoop(p, loop_, loopA_, loopB_);
+        if (mine) claim();
     }
     message = on && !loop_ ? "drag in the ruler to say where the loop is" : loop_ ? "loop on" : "loop off";
 }
@@ -185,11 +220,13 @@ void ScorePlayback::setLoopRange(double a, double b) {
 
 void ScorePlayback::tick() {
     Patch* p = clock();
+    if (!p) { startedHere_ = false; return; }
     auto t = transportOf(p);
-    if (!t->playing()) { startedHere_ = false; return; }
-    if (!startedHere_ || t->looping()) return;
-    double end = doc_->score().duration();
-    if (startAt_ >= end) return;
+    // stopped, or started, located or stopped by another since (a transport object, another window of the patch): not
+    // this play any more, left alone
+    if (!t->playing() || !ours()) { startedHere_ = false; return; }
+    if (t->looping()) return;
+    double end = std::max(doc_->score().duration(), startAt_ + 0.05);
     if (transportSeconds() >= end) {                    // the score's end: a play started here stops, back to its start
         t->stop(p);
         startedHere_ = false;
@@ -203,6 +240,9 @@ void ScorePlayback::tick() {
 ScoreWindow::ScoreWindow(std::shared_ptr<ScoreDoc> doc, ScoreView view) : Fl_Double_Window(1320, 820), doc_(std::move(doc)) {
     color(kStatusBg);
     play_ = std::make_shared<ScorePlayback>(doc_);
+    // a score without a box plays on a player of its own: made now, not at the first Play (its patch compiled, its
+    // files decoded), so Play starts at once
+    if (!doc_->box()) doc_->player(&App::get().host);
     target_ = makeRollTarget(doc_);
 #ifndef __APPLE__
     menu_ = new Fl_Menu_Bar(0, 0, w(), kMenuH);
@@ -554,10 +594,13 @@ void ScoreWindow::refresh() {
         audioBtn_->copy_label(on ? "Audio On" : "Audio Off");
         audioBtn_->redraw();
     }
-    bool playing = play_->playing();                    // the button shows what the transport really does
-    if (playBtn_->value() != (playing ? 1 : 0)) {
+    // the button shows what the transport really does: its state and its icon each set from it (a click toggles the
+    // button's state itself before its callback, so the state alone can agree while the icon does not)
+    bool playing = play_->playing();
+    ToolButton::Icon icon = playing ? ToolButton::Stop : ToolButton::Play;
+    if (playBtn_->value() != (playing ? 1 : 0) || playBtn_->icon() != icon) {
         playBtn_->value(playing);
-        playBtn_->setIcon(playing ? ToolButton::Stop : ToolButton::Play);
+        playBtn_->setIcon(icon);
         playBtn_->redraw();
     }
     if (loopBtn_->value() != (play_->loop() ? 1 : 0)) {
@@ -796,9 +839,11 @@ bool confirmCloseScores() {
 //   act=scview:<timeline|roll|piano|list>   the window's view switcher (act=tlview, act=rollview the same;
 //                                    act=rolltimeline: Timeline)
 //   act=scplay                       the transport bar's Play button; act=scspace: the Space key (to the focused view)
+//   act=scpress[:n]                  the Play button clicked with the mouse n times in a row (1)
 //   act=scpatchplay:<seconds>        the patch's transport located there and started, as a transport object does
 //   act=sctick                       the window's timer once (the end of the score)
-//   act=scstate                      print: the view, whether the score plays, the transport, the button, the position
+//   act=scstate                      print: the view, whether the score plays, the transport, the button, the position;
+//                                    the button's icon and state, and the status line
 //   act=timeline                     print: the front window's timeline (title, tracks, rows and their heights, clips,
 //                                    undo, edited, selection, status, crumbs, windows)
 //   act=tlclick:<id>[:shift]         a click on a clip; act=tldbl:<id> a double-click
@@ -822,6 +867,7 @@ bool confirmCloseScores() {
 //   act=rolldynrow:<k>               the dynamics lane's row chooser set to its k-th item; print: its label, the row the
 //                                    lane shows, and whether the lane, drawn alone, paints over the chooser
 //   act=selected                     print: the selected boxes of every open document
+//   act=transports                   print: whether each open document's transport plays, and each score window's clock
 namespace {
 
 ScoreWindow* front() {
@@ -1030,6 +1076,14 @@ bool scoreTestAction(const std::string& verb, const std::string& arg) {
         }
         return true;
     }
+    if (verb == "transports") {                    // each open document's transport, and each score window's clock
+        for (auto* d : app.docs)
+            say("transport " + baseOf(d->path().empty() ? std::string("Untitled") : d->path()) + " " +
+                (transportOf(&d->patch)->playing() ? "playing" : "stopped"));
+        for (auto* sw : windows())
+            say("transport score " + sw->doc().title() + " " + (sw->playback().running() ? "playing" : "stopped"));
+        return true;
+    }
     ScoreWindow* w = front();
     if (!w && (verb == "timeline" || verb == "scstate")) { say(verb + " none"); return true; }
     if (!w) return false;
@@ -1055,6 +1109,16 @@ bool scoreTestAction(const std::string& verb, const std::string& arg) {
     }
     if (verb == "scplay") {
         w->playButton()->do_callback();
+        return true;
+    }
+    if (verb == "scpress") {                       // the Play button clicked with the mouse (its state toggled by the click)
+        Fl_Widget* b = w->playButton();
+        int n = arg.empty() ? 1 : std::max(1, std::atoi(arg.c_str()));
+        for (int k = 0; k < n; ++k) {
+            mouse(b, b->x() + b->w() / 2, b->y() + b->h() / 2, FL_PUSH, 0);
+            mouse(b, b->x() + b->w() / 2, b->y() + b->h() / 2, FL_RELEASE, 0);
+            Fl::check();
+        }
         return true;
     }
     if (verb == "scspace") {                       // Space, as the keyboard sends it: to the focused widget, then up
@@ -1089,6 +1153,8 @@ bool scoreTestAction(const std::string& verb, const std::string& arg) {
         say(std::string("score view ") + scoreViewName(w->view()) + " playing " + (pb.playing() ? "yes" : "no") + " transport " +
             (pb.running() ? "yes" : "no") + " button " + (w->playButton()->value() ? "on" : "off") + " position " +
             num(std::round(pb.position() * 10) / 10) + " playhead " + num(pb.playhead()));
+        say(std::string("score button ") + (w->playButton()->icon() == ToolButton::Stop ? "stop" : "play") + " " +
+            (w->playButton()->value() ? "on" : "off") + " status " + w->status());
         return true;
     }
     if (verb == "timeline") {

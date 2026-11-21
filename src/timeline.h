@@ -14,8 +14,9 @@
 // header, opens what it plays (its clips' source: a sound in the sound editor with the clip's region selected, a
 // patch, a score placed) or, for its automation lanes, the patch that receives them with those receives selected.
 //
-// Playing: through the host's ScorePlayback (score_window.h): the transport is the patches' (transport.h: one for
-// every open patch); the score plays on the box it is bound to, or on a box of its own (ScoreDoc::player). The
+// Playing: through the host's ScorePlayback (score_window.h): the transport is the one of the patch the score plays in
+// (transport.h: one for each top document); the score plays on the box it is bound to, or on a box of its own in a
+// patch of its own (ScoreDoc::player). The
 // playhead follows the transport (a timer).
 //
 // For a later multitrack mode the model is ready (a track is a row with its strip; inputs, streaming and track

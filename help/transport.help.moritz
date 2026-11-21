@@ -1,7 +1,7 @@
 ; transport.help.moritz - help for transport
 (patch
-  (obj title comment "transport [bpm] [num den]: the patch's clock, one for the whole patch" (pos 20 12))
-  (obj sub comment "Every transport object shows and drives the same clock; every score object plays on it." (pos 20 34))
+  (obj title comment "transport [bpm] [num den]: the patch's clock, one for the patch and its subpatches" (pos 20 12))
+  (obj sub comment "Every transport object in the patch shows and drives the same clock; every score object in it plays on it. Another patch open has its own." (pos 20 34))
   (obj sub2 comment "Bars and beats are counted at the tempo (beats a minute; a beat is 1/den) and the meter; scores are in seconds." (pos 20 52))
   (obj play message play (pos 20 85))
   (obj stop message stop (pos 70 85))

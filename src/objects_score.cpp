@@ -82,8 +82,9 @@ bool endsWith(const std::string& s, const char* e) {
 }
 
 // ---------------------------------------------------------------- transport
-// transport [bpm] [num den | num/den]: the patch's clock (one for the whole patch, its subpatches and help patches;
-// several transport objects show and drive the same one). Times in the scores are seconds; bars and beats are
+// transport [bpm] [num den | num/den]: the patch's clock (one for each top document: a patch's window, a help patch,
+// a score's own player; its subpatches and abstractions follow it, several transport objects in it show and drive the
+// same one, and another patch open has its own). Times in the scores are seconds; bars and beats are
 // counted at the tempo (beats a minute; a beat is 1/den) and meter.
 //   play, 1 / stop, 0        start (from where it is) and stop
 //   locate bar [beat [tick]] go to a bar (from 1; 480 ticks a beat); seek ms: to a time
@@ -223,7 +224,9 @@ struct ScorePlan {
 //   select all | none | id... | row name | time t0 t1      what the transformations below change (none: all of it)
 //   transpose n, invert [pitch], retrograde, augment k, diminish k, shift seconds, quantize [grid-seconds [strength]],
 //   humanize [ms [dB [seed]]], thin keep [seed], density v... [seed]   (music/score_transform.h, as Musil's)
-//   play, stop, locate bar [beat], seek ms   the transport's (the same for every score of the patch)
+//   play, stop, locate bar [beat], seek ms   the transport's (the same for every score of the patch); play at the
+//                               score's end or past it plays from the start, and a play sent here stops at the score's
+//                               end (unless the transport loops, or something else started, stopped or located it since)
 //   info                        rows events seconds, out of the info outlet
 //   score <token>               a score a code box (or orchidea) sent ((out k s) with s a Musil score)
 //   open [view]                 the score's window (timeline, roll, piano, list; none: the view used last)
@@ -310,7 +313,7 @@ public:
             bool given = m.size() > 1 && parseScoreView(m[1].str(), v);
             openScoreBox(this, given ? (int)v : -1);
         }
-        else if (h.is("play") || h.is("start")) { if (t_) t_->play(patch); }
+        else if (h.is("play") || h.is("start")) playHere();
         else if (h.is("stop")) { if (t_) t_->stop(patch); }
         else if (h.is("locate") && t_) t_->locate(patch, t_->secondsOf(argf(m, 1, 1.f), argf(m, 2, 1.f), argf(m, 3, 0.f)));
         else if (h.is("seek") && t_) t_->locate(patch, argf(m, 1, 0.f) / 1000.0);
@@ -442,6 +445,8 @@ private:
     size_t cursor_ = 0;
     bool ended_ = false;
     bool firing_ = false;
+    bool ownPlay_ = false;                       // the transport started by its play message (it stops at the end)
+    uint64_t ownChanges_ = 0;
     int64_t firedPos_ = -1;
     int firedLap_ = 0;
     size_t rows_ = 0;                            // the rows declared or used
@@ -580,6 +585,22 @@ private:
         for (auto it = c.selection.begin(); it != c.selection.end();) it = s->find(*it) ? std::next(it) : c.selection.erase(it);
         replace(s);
     }
+    // play: the transport from where it is, or from the start when it is at the score's end or past it (it would play
+    // nothing); already playing the score: nothing. A play started here stops at the score's end, unless the transport
+    // loops or anyone else started, stopped or located it since (then it is the patch's clock, and goes on)
+    void playHere() {
+        if (!t_) return;
+        int lap;
+        double pos;
+        t_->where(patch, lap, pos);
+        bool past = end_ > 0 && !t_->looping() && pos >= (double)end_ - 0.5;
+        if (t_->playing() && !past) return;
+        if (past) t_->locate(patch, 0);
+        t_->play(patch);
+        ownPlay_ = end_ > 0;
+        ownChanges_ = t_->changes();
+    }
+    bool ownPlay() const { return ownPlay_ && t_ && t_->playing() && t_->changes() == ownChanges_; }
     void edited() {
         rebuild();
         if (patch) patch->redraw();
@@ -757,7 +778,15 @@ private:
         }
         if (!looping && !ended_ && end_ > 0) {             // after the last event: its end, once
             double t = t_->timeAt((double)end_, 0);
-            if (!std::isnan(t)) patch->scheduleAt(this, t, [this] { ended_ = true; outlet(nOut_ + 2, {Atom("end")}); });
+            if (!std::isnan(t))
+                patch->scheduleAt(this, t, [this] {
+                    ended_ = true;
+                    if (ownPlay()) {                       // its own play: the transport stops on the end's sample
+                        ownPlay_ = false;
+                        t_->stop(patch);
+                    }
+                    outlet(nOut_ + 2, {Atom("end")});
+                });
         }
     }
     void fire() {

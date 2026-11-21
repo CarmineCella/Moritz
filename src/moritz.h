@@ -409,6 +409,10 @@ public:
     Box* owner = nullptr;        // the p / abstraction / pfft~ box holding this patch
     Patch* root() { Patch* p = this; while (p->parent) p = p->parent; return p; }
     const Patch* root() const { const Patch* p = this; while (p->parent) p = p->parent; return p; }
+    // The top document this patch belongs to: itself when no box holds it (the root, or a patch the root runs beside
+    // its own: a document's window, a help patch, a score's own player), else the one its subpatch, abstraction or
+    // pfft~ is in. Each has a clock of its own (transport.h), which everything inside it follows.
+    Patch* topDocument() { Patch* p = this; while (p->owner && p->parent) p = p->parent; return p; }
     // The buffer~ lock: the audio thread try_locks it for each callback; hold
     // it only to swap a buffer~'s storage, or to change one in place.
     std::mutex& mutex() { return root()->dspMutex; }
@@ -417,7 +421,8 @@ public:
 
     // Patches the root runs alongside its own boxes but never saves: open
     // help patches. Their parent is the root, so they share its audio
-    // output, scheduler and send/receive names.
+    // output, scheduler and send/receive names; each is a top document with
+    // a transport of its own (topDocument).
     std::vector<std::unique_ptr<Patch>> extras;
     Patch* addExtra(std::unique_ptr<Patch> p);
     void removeExtra(Patch* p);   // destroys it
@@ -557,7 +562,8 @@ public:
     uint64_t compiles = 0;                // root: how many times the graph was compiled (tests)
     void audioChanged() { forEachBox([](Box* b) { b->audioChanged(); }); }
 
-    // ---- the clock of transport and score (transport.h): one for the root and everything in it, made on first use
+    // ---- the clock of transport and score (transport.h): one for each top document and everything in it (its
+    // subpatches and abstractions), made on first use (transportOf)
     std::shared_ptr<Transport> transport;
 
     // ---- MIDI (GUI thread): input goes to every box; output to the root's hook

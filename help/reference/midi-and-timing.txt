@@ -128,10 +128,12 @@ see: notein makenote select kslider
 @ transport
 syntax: transport [bpm] [num den]
 The patch's clock: where its scores are and whether they play. There is one
-for the whole patch (its subpatches and the help patches open beside it): every
-transport object shows and drives the same clock, and every score object plays
-on it. Times in a score are seconds; bars and beats are counted at the tempo,
-in beats a minute (a beat is 1/den of a bar), and the meter.
+for each patch open in a window of its own (with its subpatches and
+abstractions; a help patch has its own, and so has a score opened from a file):
+every transport object in it shows and drives the same clock, and every score
+object in it plays on it, while another patch open plays and stops on its own.
+Times in a score are seconds; bars and beats are counted at the tempo, in beats
+a minute (a beat is 1/den of a bar), and the meter.
 
 A change takes effect on the sample a message sent now lands on, as every timed
 message in Moritz: a score's sounds start on their sample, and its notes leave
@@ -190,10 +192,16 @@ and the time shown. It opens in the view used last for the score; the first time
 in the box's @view (Roll when it has none). Play plays the score from the
 playhead, or from the start of what was selected after the playhead was placed,
 locating the transport first, whatever it was doing; pressed again (or Space,
-whatever is selected) it stops. A play started there stops at the score's end
-(unless it loops) and the playhead goes back where it started; a play started by
-the patch (play, a transport object) goes on as the patch's clock, and the window
-shows its score playing only while the transport is inside it.
+whatever is selected) it stops; the playhead at the score's end or past it, Play
+starts from the start (past the loop, from the loop's start). A play started
+there stops at the score's end (unless it loops) and the playhead goes back where
+it started; a play started by a transport object goes on as the patch's clock,
+and the window shows its score playing only while the transport is inside it. The
+button always shows what the transport does. Play starts the patch the score's
+box is in (a score of its own, from a file or placed inside another, plays on a
+player of its own): another patch open does not start. With the audio off, Play
+says so. In real time a play is heard two of the device's buffers after it is
+pressed, as every timed message.
 
 The Roll view: staves, a piano roll or a list of the events (each cell edited, the
 cents too), a lane of dynamics (its row chosen at its left), the score as Musil
@@ -258,7 +266,7 @@ msg humanize [ms [dB [seed]]]: onsets moved at random by up to ms (20), gains by
 msg thin keep [seed]: each event kept with probability keep
 msg density v...: each event kept with the probability the curve v... has at its onset
 msg open [view]: its window, in that view (timeline, roll, piano, list; none: the view used last)
-msg play: starts the transport (every score of the patch plays)
+msg play: starts the patch's transport (every score of the patch plays) from where it is, or from the start when it is at this score's end or past it; a play sent here stops at the score's end, unless the transport loops or something else started, stopped or moved it since
 msg stop: stops the transport
 msg locate bar [beat]: moves the transport
 msg seek ms: moves the transport to a time

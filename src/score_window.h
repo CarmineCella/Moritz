@@ -13,11 +13,14 @@
 //
 // Playing (ScorePlayback): Play plays the score from where the user last pointed (the playhead placed, or the start of
 // what was selected after it), locating the transport first, so it always plays, whatever the transport was doing;
-// pressed again (or Space, whatever is selected) it stops. A play started here stops at the score's end (unless it
-// loops) and the playhead goes back to where it started. The transport is the patch's (transport.h): a play started by
-// the patch (a transport object, a score's play message) goes on past the score's end, as the patch's clock, and the
-// window shows its score as playing only while the transport is inside it; either way Play starts it again from the
-// playhead. The button shows the real state.
+// pressed again (or Space, whatever is selected) it stops. At the score's end or past it, Play starts from the start
+// (past the loop: from its start); an empty score says so. A play started here stops at the score's end (unless it
+// loops, or another started, stopped or located the transport since: Transport::changes) and the playhead goes back to
+// where it started. The transport is the one of the patch the score's box is in (transport.h: one for each top
+// document; a score without a box plays on its own player, made when the window opens): a play started by a transport
+// object goes on past the score's end, as the patch's clock, and the window shows its score as playing only while the
+// transport is inside it; either way Play starts it again from the playhead. The button (its state and its icon) shows
+// the real state, set from the transport at every tick.
 #pragma once
 
 #include "score_doc.h"
@@ -47,7 +50,7 @@ bool parseScoreView(const std::string& s, ScoreView& v); // those names (and "pi
 // The transport as a score's views use it (GUI thread)
 class ScorePlayback {
 public:
-    // root: the patch a score of its own plays under (nullptr: the application's, every open patch's)
+    // root: the patch a score of its own plays under (nullptr: the application's), on a player of its own
     explicit ScorePlayback(std::shared_ptr<ScoreDoc> doc, Patch* root = nullptr);
     ~ScorePlayback();
     ScorePlayback(const ScorePlayback&) = delete;
@@ -75,8 +78,11 @@ public:
 private:
     double transportSeconds() const;
     Patch* root() const;
+    bool ours() const;                     // started here, and nobody started, stopped or located the transport since
+    void claim();                          // the transport's changes so far are this play's
     std::shared_ptr<ScoreDoc> doc_;
     Patch* root_ = nullptr;
+    uint64_t changes_ = 0;
     int token_ = 0;
     double playhead_ = 0, startAt_ = 0;
     bool loop_ = false, startedHere_ = false, selNewer_ = false;
