@@ -103,7 +103,7 @@ set-buffer! "out" (* in1 y) sr
 out 1 (length y)                          ; the number of samples, out of outlet 1
 ```
 
-Tutorial 14 goes from the Console to the code box; `examples/12-code` has
+Tutorial 15 goes from the Console to the code box; `examples/12-code` has
 sounds transformed, analysed and made by scripts, and Maple and SoundTypes
 from code; `help/code.help.moritz` sums it up. The Musil manual is in Help >
 Documents.
@@ -142,7 +142,8 @@ Moritz opens on the **browser**, the place to start:
   them: a first patch, numbers and messages, sound files, filters, the
   spectrum, grains, sound in space, separating sounds, listening machines,
   atoms and types, the sound editor, scores (the transport, the roll and the
-  timeline), programming with Musil.
+  timeline), orchestration (the mimetic, granular and morphological modes),
+  programming with Musil.
 - **Examples**, by category (the folders of `examples/`): first steps,
   synthesis, generative music, filters and effects, samples, spectral
   processing, space, atoms and types, analysis and MIR, learning, MIDI, code.

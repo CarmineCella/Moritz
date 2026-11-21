@@ -145,7 +145,7 @@
   (obj wr message "write ~/Documents/Moritz/t13tune.score" (pos 20 2060))
   (obj rd message "read ~/Documents/Moritz/t13tune.score" (pos 280 2060))
   (obj sd3 s t13cmd (pos 20 2090))
-  (obj next comment "Next: tutorial 14, programming with Musil. Examples: 15 scores and 16 timeline (Help > Browser); orchidea's scores in 13 orchestration." (pos 20 2130))
+  (obj next comment "Next: tutorial 14, orchestration (orchidea's scores), then 15, programming with Musil. Examples: 15 scores and 16 timeline (Help > Browser); 13 orchestration." (pos 20 2130))
   (connect play 0 tr 0)
   (connect stop 0 tr 0)
   (connect loc 0 tr 0)

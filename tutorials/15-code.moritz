@@ -1,49 +1,49 @@
-; 14-code.moritz - tutorial 14: programming with Musil, the scripting
+; 15-code.moritz - tutorial 15: programming with Musil, the scripting
 ; language of Moritz. Musil is a small language whose numbers are vectors, with
 ; libraries for signals, analysis, learning and music: you write it at the
 ; Console, in the code editor (File > New Code), or in a code box inside a
 ; patch, where its inlets and outlets, buffers and sends meet the patch. The
 ; Musil manual (Help > Documents) describes the language and every function.
 (patch
-  (obj title comment "Tutorial 14 · Programming with Musil: the Console, the code editor and the code box" (pos 20 12))
+  (obj title comment "Tutorial 15 · Programming with Musil: the Console, the code editor and the code box" (pos 20 12))
   (obj man link "Read more: the Musil manual (PDF), also in Help > Documents" ../musil/docs/musil_manual.pdf (pos 600 8))
   (obj s1 comment "1. The Console. Open it (Console, in the toolbar) and type into its bottom line, then Enter:  print (* 2 (range 0 5))  or  sin (/ pi 2)" (pos 20 40))
   (obj s1b comment "   Numbers are vectors: (* 2 (range 0 5)) doubles five numbers at once; a sound is a vector of samples. help range prints what range does." (pos 20 58))
   (obj s2 comment "2. Scripts. File > New Code opens the code editor: write, then Cmd-Enter runs the paragraph at the cursor. A script reaches the patches:" (pos 20 90))
-  (obj s2b comment "   try  var x (head (buffer \"t14drums\"))  then  set-buffer! \"t14out\" (reverse x)  and play t14out below. Save scripts as .mu files." (pos 20 108))
-  (obj b1 buffer~ t14drums drums.wav (pos 20 135))
-  (obj b2 buffer~ t14out (pos 190 135))
+  (obj s2b comment "   try  var x (head (buffer \"t15drums\"))  then  set-buffer! \"t15out\" (reverse x)  and play t15out below. Save scripts as .mu files." (pos 20 108))
+  (obj b1 buffer~ t15drums drums.wav (pos 20 135))
+  (obj b2 buffer~ t15out (pos 190 135))
   (obj s3 comment "3. The code box: the script lives in the patch. Move the slider: the box stretches the drums by a tenth of its value, then plays them. Double-click it to read." (pos 20 175))
   (obj sl slider 2 40 (pos 20 200))
   (obj c1 code (pos 20 235)
     (script
       "; in1: the factor (from the slider, a tenth of it). A phase vocoder stretches the drums,"
-      "; the pitch kept, then the result is normalised and written into t14out"
+      "; the pitch kept, then the result is normalised and written into t15out"
       "var f (if (equal? in1 nil) 1 (max 0.25 (/ in1 10)))"
-      "var x (head (buffer \"t14drums\"))"
-      "var sr (buffer-rate \"t14drums\")"
-      "set-buffer! \"t14out\" (* 0.9 (normalize-peak (pvoc-stretch x f))) sr"
+      "var x (head (buffer \"t15drums\"))"
+      "var sr (buffer-rate \"t15drums\")"
+      "set-buffer! \"t15out\" (* 0.9 (normalize-peak (pvoc-stretch x f))) sr"
       "out 1 f"))
   (obj nf flonum (pos 20 275))
-  (obj pl play~ t14out (pos 200 275))
+  (obj pl play~ t15out (pos 200 275))
   (obj pp message start (pos 300 240))
   (obj d dac~ (pos 200 310))
   (obj s4 comment "4. Musil knows music: a chord from a harmonic series, made as sound and printed as names. Click the button." (pos 20 355))
-  (obj b3 buffer~ t14chord (pos 20 380))
+  (obj b3 buffer~ t15chord (pos 20 380))
   (obj go button (pos 20 410))
   (obj c2 code (pos 20 440)
     (script
       "load \"music.mu\""
       "; a chord from the harmonic series of A1 (partials 5 to 9), each a sine with a slow swell,"
-      "; into t14chord: Musil knows pitches, scales and series (the music library)"
+      "; into t15chord: Musil knows pitches, scales and series (the music library)"
       "var sr 44100"
       "var notes (take (drop (harmonic-series \"A1\" 12) 4) 5)"
       "var y (zeros (* 4 sr))"
       "each notes (function (p) (add-at! y 0 (* (sine sr (midi->hz p) 4) (hann (* 4 sr)))))"
-      "set-buffer! \"t14chord\" (* 0.8 (normalize-peak y)) sr"
+      "set-buffer! \"t15chord\" (* 0.8 (normalize-peak y)) sr"
       "out 1 (map notes midi->pitch)"))
   (obj pr print chord (pos 20 480))
-  (obj pl2 play~ t14chord (pos 200 480))
+  (obj pl2 play~ t15chord (pos 200 480))
   (obj d2 dac~ (pos 200 515))
   (obj s5 comment "5. More: the examples in 12 code (process, analysis, texture, atoms, chords), Musil's own examples (musil/examples), and the manual." (pos 20 560))
   (obj s5b comment "   A code box reads files anywhere and writes them in its patch's folder; it does not run programs, use the network or wait; the Console and moritz --run have all of Musil." (pos 20 578))
