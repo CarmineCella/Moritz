@@ -1,0 +1,9 @@
+; cell.score - a drum cell of one bar at 100 bpm, three slices of stems_drums.wav: instances.moritz
+; places it again and again (Musil data: an edit of the cell in the timeline is saved here, and
+; every placement plays it)
+(score "cell"
+  (sr 44100) (bpm 100) (meter 4 4) (next-id 4)
+  (row kit)
+  (sound 0 0.6 "stems_drums.wav" (id 1) (to 0.6) (row kit))
+  (sound 0.6 0.6 "stems_drums.wav" (id 2) (from 0.6) (to 1.2) (row kit))
+  (sound 1.2 1.2 "stems_drums.wav" (id 3) (from 1.2) (to 2.4) (row kit) (gain 0.8)))

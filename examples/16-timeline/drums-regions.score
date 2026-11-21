@@ -1,0 +1,11 @@
+; drums-regions.score - the regions of drums.wav between its first onsets, as the sound editor's
+; Regions > To score... writes them: a sound event a region, at its place in the file, named (Musil
+; data; regions.moritz plays it and arranges the regions anew)
+(score "drums regions"
+  (sr 44100) (bpm 60) (meter 4 4) (next-id 6)
+  (row regions)
+  (sound 0 0.248 "drums.wav" (id 1) (from 0) (to 0.248) (row regions) (label "hit 1"))
+  (sound 0.248 0.142 "drums.wav" (id 2) (from 0.248) (to 0.39) (row regions) (label "hit 2"))
+  (sound 0.39 0.231 "drums.wav" (id 3) (from 0.39) (to 0.621) (row regions) (label "hit 3"))
+  (sound 0.621 0.113 "drums.wav" (id 4) (from 0.621) (to 0.734) (row regions) (label "hit 4"))
+  (sound 0.734 0.263 "drums.wav" (id 5) (from 0.734) (to 0.997) (row regions) (label "hit 5")))

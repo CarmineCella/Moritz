@@ -1,0 +1,60 @@
+; regions.moritz - sounds from the sound editor's regions, arranged: drums-regions.score (next to this
+; patch) holds five regions of drums.wav, as the sound editor's Regions > To score... writes them (a
+; sound event a region, with its name); the second score, kept in the patch, plays the same regions
+; in a new order, a two-bar beat made of five hits.
+; Try: 1. play: the regions as in the file (the first second), then the beat they make (from 2 s);
+; 2. right-click the beat, Open as Timeline: a clip a hit; Alt-drag one to copy it, drag its edges;
+; 3. make your own: double-click the buffer~ (the sound editor), Markers > From onsets, then
+; Regions > Between onsets, then To score... (save it next to this patch as my-regions.score), then
+; read my-regions.score into the first box; copy and paste its clips into the beat's timeline.
+(patch
+  (obj title comment "regions from the sound editor, written To score and arranged into a beat" (pos 20 12))
+  (obj sub comment "the first score is what To score writes; the second places the same regions anew" (pos 20 34))
+  (obj play message play (pos 20 70))
+  (obj stop message stop (pos 65 70))
+  (obj loc message "locate 1" (pos 110 70))
+  (obj tr transport 120 4 4 (pos 180 70))
+  (obj src buffer~ drumsrc drums.wav (pos 300 70))
+  (obj csrc comment "double-click: the sound editor (Markers, Regions, To score...)" (pos 430 71))
+  (obj rd message "read my-regions.score" (pos 20 105))
+  (obj rd0 message "read drums-regions.score" (pos 175 105))
+  (obj rg score regions drums-regions.score @size 600 110 (pos 20 135))
+  (obj cb comment "the beat: the same five regions in a new order, on the eighths (from 2 s)" (pos 20 260))
+  (obj bt score beat @size 600 130 (pos 20 280)
+    (script
+      "; the regions of drums-regions.score placed anew: (sound at dur file (from s) (to s))"
+      "(score \"beat\""
+      "  (sr 44100) (bpm 120) (meter 4 4) (next-id 1)"
+      "  (row beat)"
+      "  (sound 2 0.248 \"drums.wav\" (from 0) (to 0.248) (row beat) (label \"hit 1\")) (sound 2.25 0.231 \"drums.wav\" (from 0.39) (to 0.621) (row beat) (label \"hit 3\"))"
+      "  (sound 2.5 0.142 \"drums.wav\" (from 0.248) (to 0.39) (row beat) (label \"hit 2\")) (sound 2.75 0.231 \"drums.wav\" (from 0.39) (to 0.621) (row beat) (label \"hit 3\"))"
+      "  (sound 3 0.248 \"drums.wav\" (from 0) (to 0.248) (row beat) (label \"hit 1\")) (sound 3.25 0.248 \"drums.wav\" (from 0) (to 0.248) (row beat) (label \"hit 1\"))"
+      "  (sound 3.5 0.142 \"drums.wav\" (from 0.248) (to 0.39) (row beat) (label \"hit 2\")) (sound 3.75 0.113 \"drums.wav\" (from 0.621) (to 0.734) (row beat) (label \"hit 4\"))"
+      "  (sound 4 0.248 \"drums.wav\" (from 0) (to 0.248) (row beat) (label \"hit 1\")) (sound 4.25 0.231 \"drums.wav\" (from 0.39) (to 0.621) (row beat) (label \"hit 3\"))"
+      "  (sound 4.5 0.142 \"drums.wav\" (from 0.248) (to 0.39) (row beat) (label \"hit 2\")) (sound 4.75 0.231 \"drums.wav\" (from 0.39) (to 0.621) (row beat) (label \"hit 3\"))"
+      "  (sound 5 0.248 \"drums.wav\" (from 0) (to 0.248) (row beat) (label \"hit 1\")) (sound 5.25 0.25 \"drums.wav\" (from 0.734) (to 0.984) (row beat) (label \"hit 5\"))"
+      "  (sound 5.5 0.142 \"drums.wav\" (from 0.248) (to 0.39) (row beat) (label \"hit 2\")) (sound 5.75 0.113 \"drums.wav\" (from 0.621) (to 0.734) (row beat) (label \"hit 4\")))"))
+  (obj lb loadbang (pos 300 430))
+  (obj vol message "0.6 200" (pos 300 460))
+  (obj mute message "0 200" (pos 370 460))
+  (obj cv comment "volume" (pos 430 461))
+  (obj ramp line~ (pos 300 495))
+  (obj vl *~ (pos 20 530))
+  (obj vr *~ (pos 120 530))
+  (obj out dac~ (pos 20 570))
+  (connect play 0 tr 0)
+  (connect stop 0 tr 0)
+  (connect loc 0 tr 0)
+  (connect rd 0 rg 0)
+  (connect rd0 0 rg 0)
+  (connect lb 0 vol 0)
+  (connect vol 0 ramp 0)
+  (connect mute 0 ramp 0)
+  (connect rg 0 vl 0)
+  (connect rg 1 vr 0)
+  (connect bt 0 vl 0)
+  (connect bt 1 vr 0)
+  (connect ramp 0 vl 1)
+  (connect ramp 0 vr 1)
+  (connect vl 0 out 0)
+  (connect vr 0 out 1))

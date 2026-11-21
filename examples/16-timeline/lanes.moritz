@@ -1,0 +1,96 @@
+; lanes.moritz - several automation lanes driving several parts of a patch: a score's messages are
+; points on lanes (a lane a name), each sent at its time to the receive boxes of its name. Here the
+; mix of a song (stems_demo.wav) goes through a low-pass filter (lane cutoff, Hz), an echo (lane
+; echo, the feedback 0 to 0.8) and a panner (lane pan, 0 left to 1 right); each receive ramps to
+; the new value, since the lanes send their points, not the lines between them.
+; Try: 1. play and listen: the filter opens, the echo comes and goes, the sound wanders; 2. right-
+; click the score box, Open as Timeline: the track fx has two lanes, the track space one; drag a
+; point higher or later, click on a lane to add one; 3. a lane's range (the low and high values it
+; draws) is in the track's data in the roll's text: (data lanes (list (list cutoff 200 8000) ...)).
+(patch
+  (obj title comment "automation lanes: cutoff, echo and pan, each lane sent to the receive of its name" (pos 20 12))
+  (obj sub comment "play; right-click the score: Open as Timeline, drag the points of the lanes" (pos 20 34))
+  (obj play message play (pos 20 70))
+  (obj stop message stop (pos 65 70))
+  (obj loc message "locate 1" (pos 110 70))
+  (obj tr transport 100 4 4 (pos 180 70))
+  (obj sc score lanes @size 600 200 (pos 20 105)
+    (script
+      "; a song on one track, and two tracks of lanes: their messages are the points"
+      "(score \"lanes\""
+      "  (sr 44100) (bpm 100) (meter 4 4) (next-id 1)"
+      "  (row song)"
+      "  (row fx (data lanes (list (list cutoff 200 8000) (list echo 0 0.8))))"
+      "  (row space (data lanes (list (list pan 0 1))))"
+      "  (sound 0 19.2 \"stems_demo.wav\" (to 19.2) (row song))"
+      "  (msg 0 cutoff 300 (row fx)) (msg 4.8 cutoff 2000 (row fx)) (msg 9.6 cutoff 7000 (row fx)) (msg 14.4 cutoff 800 (row fx))"
+      "  (msg 0 echo 0 (row fx)) (msg 7.2 echo 0.7 (row fx)) (msg 12 echo 0.2 (row fx)) (msg 16.8 echo 0.8 (row fx))"
+      "  (msg 0 pan 0.5 (row space)) (msg 2.4 pan 0 (row space)) (msg 4.8 pan 1 (row space)) (msg 7.2 pan 0.2 (row space))"
+      "  (msg 9.6 pan 0.8 (row space)) (msg 14.4 pan 0.5 (row space)))"))
+  (obj rc r cutoff (pos 20 330))
+  (obj cr message "$1 600" (pos 20 360))
+  (obj cl line~ (pos 20 390))
+  (obj lp lores~ 300 0.3 (pos 20 430))
+  (obj re r echo (pos 200 330))
+  (obj er message "$1 300" (pos 200 360))
+  (obj el line~ (pos 200 390))
+  (obj din tapin~ 1000 (pos 200 470))
+  (obj dout tapout~ 450 (pos 200 500))
+  (obj fb *~ (pos 200 535))
+  (obj wet *~ 0.5 (pos 320 535))
+  (obj sum +~ (pos 20 570))
+  (obj rp r pan (pos 420 330))
+  (obj pt t f f (pos 420 360))
+  (obj pinv expr "1 - $f1" (pos 420 390))
+  (obj pl message "$1 400" (pos 420 420))
+  (obj pr message "$1 400" (pos 520 420))
+  (obj pll line~ (pos 420 450))
+  (obj prl line~ (pos 520 450))
+  (obj gl *~ (pos 20 610))
+  (obj gr *~ (pos 120 610))
+  (obj cpan comment "pan: left 1 - p, right p" (pos 600 451))
+  (obj lb loadbang (pos 300 650))
+  (obj vol message "0.45 200" (pos 300 680))
+  (obj mute message "0 200" (pos 370 680))
+  (obj cv comment "volume" (pos 430 681))
+  (obj ramp line~ (pos 300 715))
+  (obj vl *~ (pos 20 750))
+  (obj vr *~ (pos 120 750))
+  (obj out dac~ (pos 20 790))
+  (connect play 0 tr 0)
+  (connect stop 0 tr 0)
+  (connect loc 0 tr 0)
+  (connect rc 0 cr 0)
+  (connect cr 0 cl 0)
+  (connect cl 0 lp 1)
+  (connect sc 0 lp 0)
+  (connect sc 1 lp 0)
+  (connect re 0 er 0)
+  (connect er 0 el 0)
+  (connect lp 0 din 0)
+  (connect din 0 dout 0)
+  (connect dout 0 fb 0)
+  (connect el 0 fb 1)
+  (connect fb 0 din 0)
+  (connect fb 0 wet 0)
+  (connect lp 0 sum 0)
+  (connect wet 0 sum 1)
+  (connect rp 0 pt 0)
+  (connect pt 1 pr 0)
+  (connect pt 0 pinv 0)
+  (connect pinv 0 pl 0)
+  (connect pl 0 pll 0)
+  (connect pr 0 prl 0)
+  (connect sum 0 gl 0)
+  (connect sum 0 gr 0)
+  (connect pll 0 gl 1)
+  (connect prl 0 gr 1)
+  (connect lb 0 vol 0)
+  (connect vol 0 ramp 0)
+  (connect mute 0 ramp 0)
+  (connect gl 0 vl 0)
+  (connect gr 0 vr 0)
+  (connect ramp 0 vl 1)
+  (connect ramp 0 vr 1)
+  (connect vl 0 out 0)
+  (connect vr 0 out 1))
