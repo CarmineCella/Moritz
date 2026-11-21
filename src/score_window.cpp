@@ -22,6 +22,7 @@
 #include <FL/Fl_Native_File_Chooser.H>
 #include <FL/Fl_PNG_Image.H>
 #include <FL/Fl_Text_Editor.H>
+#include <FL/fl_ask.H>
 #include <FL/fl_draw.H>
 void fl_open_display();   // FL/platform.H (not included: it drags in X11's macros on Linux, None among them)
 
@@ -298,9 +299,15 @@ ScoreWindow::ScoreWindow(std::shared_ptr<ScoreDoc> doc, ScoreView view, bool arr
     bx += 44;
     if (arranger) {
         recordBtn_ = new ToolButton(bx, by, 34, bh, ToolButton::Record, "", true);
-        recordBtn_->tooltip("Record into the armed tracks from the playhead (R in a track's header arms it); again: Stop");
+        recordBtn_->tooltip("Record into the armed tracks from the playhead (R in a track's header arms it); again: Stop. "
+                            "Right-click: the count-in, punch in and out, the latency");
         recordBtn_->callback([](Fl_Widget*, void* d) {
             auto* sw = static_cast<W*>(d);
+            if (Fl::event_button() == FL_RIGHT_MOUSE) {
+                sw->recordBtn_->value(sw->recording());
+                sw->recordOptions();
+                return;
+            }
             sw->toggleRecord();
             sw->refresh();
         }, this);
@@ -681,6 +688,42 @@ void ScoreWindow::refresh() {
 }
 
 bool ScoreWindow::recording() const { return recorder_ && recorder_->recording(); }
+
+// the recording's options, kept with the session: a count-in, punch in and out at the loop's range, a latency offset
+void ScoreWindow::recordOptions() {
+    mt::SessionSettings v = mt::sessionSettings(doc_->score());
+    Fl_Menu_Item items[] = {{"No Count-in", 0, nullptr, nullptr, FL_MENU_RADIO | (v.countIn == 0 ? FL_MENU_VALUE : 0), 0, 0, 0, 0},
+                            {"Count-in: One Bar", 0, nullptr, nullptr, FL_MENU_RADIO | (v.countIn == 1 ? FL_MENU_VALUE : 0), 0, 0, 0, 0},
+                            {"Count-in: Two Bars", 0, nullptr, nullptr, FL_MENU_RADIO | FL_MENU_DIVIDER | (v.countIn == 2 ? FL_MENU_VALUE : 0), 0, 0, 0, 0},
+                            {"Punch In and Out at the Loop's Range", 0, nullptr, nullptr, FL_MENU_TOGGLE | (v.punch ? FL_MENU_VALUE : 0), 0, 0, 0, 0},
+                            {"Crossfade Overlapping Clips", 0, nullptr, nullptr, FL_MENU_TOGGLE | FL_MENU_DIVIDER | (v.crossfade ? FL_MENU_VALUE : 0), 0, 0, 0, 0},
+                            {"Latency Offset...", 0, nullptr, nullptr, 0, 0, 0, 0, 0},
+                            {nullptr, 0, nullptr, nullptr, 0, 0, 0, 0, 0}};
+    const Fl_Menu_Item* m = items[0].popup(recordBtn_->x(), recordBtn_->y() + recordBtn_->h());
+    if (!m) return;
+    long k = m - items;
+    std::string what;
+    if (k <= 2) { v.countIn = (int)k; what = "Count-in"; }
+    else if (k == 3) {
+        v.punch = !v.punch;
+        if (v.punch && !(play_->loopTo() > play_->loopFrom())) {
+            setStatus("punch in and out at the loop's range: drag in the ruler to set it first");
+            return;
+        }
+        v.punchIn = play_->loopFrom();
+        v.punchOut = play_->loopTo();
+        what = "Punch";
+    } else if (k == 4) { v.crossfade = !v.crossfade; what = "Crossfades"; }
+    else if (k == 5) {
+        const char* r = fl_input("Samples added to the device's latency (%d reported now): a take is moved that much earlier",
+                                 std::to_string(v.latency).c_str(), App::get().audio.latencyFrames());
+        if (!r) return;
+        v.latency = std::atoi(r);
+        what = "Latency Offset";
+    }
+    if (!mt::setSession(*doc_, v, what)) setStatus(doc_->message);
+    else setStatus(what + ": " + (k == 3 ? (v.punch ? "on" : "off") : k == 4 ? (v.crossfade ? "on" : "off") : "set"));
+}
 
 bool ScoreWindow::toggleRecord(int latency) {
     if (!recorder_) return false;
@@ -1411,7 +1454,8 @@ bool scoreTestAction(const std::string& verb, const std::string& arg) {
             {"unique", &TimelinePanel::makeUnique}, {"selectall", &TimelinePanel::selectAll},
             {"addtrack", &TimelinePanel::addTrack}, {"fit", &TimelinePanel::fit},
             {"play", &TimelinePanel::play},       {"stop", &TimelinePanel::stop},
-            {"render", &TimelinePanel::renderDialog}};
+            {"render", &TimelinePanel::renderDialog}, {"renderstems", &TimelinePanel::renderStems},
+            {"addbus", &TimelinePanel::addBus}};
         for (auto& o : ops)
             if (arg == o.first) {
                 (p->*o.second)();

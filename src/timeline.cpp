@@ -1353,8 +1353,8 @@ TimelinePanel::TimelinePanel(int X, int Y, int W, int H, std::shared_ptr<ScoreDo
     renderBtn_->labelsize(12);
     renderBtn_->labelfont(FL_HELVETICA_BOLD);
     renderBtn_->clear_visible_focus();
-    renderBtn_->tooltip("Render the score offline into a stereo WAV file");
-    renderBtn_->callback([](Fl_Widget*, void* d) { static_cast<P*>(d)->renderDialog(); }, this);
+    renderBtn_->tooltip("Render the score offline into a WAV file: stereo, with each track's stem, or in more channels");
+    renderBtn_->callback([](Fl_Widget*, void* d) { static_cast<P*>(d)->renderMenu(); }, this);
     bx += 84 + 8;
     auto* spacer = new Fl_Box(bx, Y, std::max(1, X + W - bx), kToolH);
     spacer->box(FL_NO_BOX);
@@ -1700,7 +1700,22 @@ void TimelinePanel::renameTrackDialog(const std::string& track) {
     after(true);
 }
 
-void TimelinePanel::renderDialog() {
+void TimelinePanel::renderDialog() { renderTo(2, false); }
+
+void TimelinePanel::renderMenu() {
+    if (render_.running()) { renderDialog(); return; }   // Stop
+    Fl_Menu_Item items[] = {{"Stereo Mix...", 0, nullptr, nullptr, 0, 0, 0, 0, 0},
+                            {"Stereo Mix and Stems (a File a Track)...", 0, nullptr, nullptr, 0, 0, 0, 0, 0},
+                            {"Four Channels...", 0, nullptr, nullptr, 0, 0, 0, 0, 0},
+                            {"Eight Channels...", 0, nullptr, nullptr, 0, 0, 0, 0, 0},
+                            {nullptr, 0, nullptr, nullptr, 0, 0, 0, 0, 0}};
+    const Fl_Menu_Item* m = items[0].popup(renderBtn_->x(), renderBtn_->y() + renderBtn_->h());
+    if (!m) return;
+    long k = m - items;
+    renderTo(k == 2 ? 4 : k == 3 ? 8 : 2, k == 1);
+}
+
+void TimelinePanel::renderTo(int channels, bool stems) {
     if (render_.running()) {
         render_.cancel();
         setStatus("render stopped");
@@ -1721,12 +1736,11 @@ void TimelinePanel::renderDialog() {
     if (!endsWith(lower(p), ".wav")) p += ".wav";
     std::string err;
     double sr = App::get().audio.running() ? App::get().audio.sampleRate() : 44100;
-    bool ok = render_.start(doc_->score(), doc_->folder(), p, 2, sr, [this](bool done, const std::string& m) {
+    bool ok = render_.start(doc_->score(), doc_->folder(), p, channels, sr, [this, stems](bool done, const std::string& m) {
         renderBtn_->copy_label("Render...");
-        setStatus(m);
+        setStatus(m + (done && stems ? " and a stem for each track beside it" : ""));
         App::get().log(m);
-        (void)done;
-    }, err);
+    }, err, stems);
     if (!ok) { setStatus("can't render: " + err); return; }
     if (render_.running()) renderBtn_->copy_label("Stop");
 }

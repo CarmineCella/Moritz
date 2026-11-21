@@ -224,7 +224,11 @@ public:
     void addLaneDialog();
     void tempoDialog();
     void renameTrackDialog(const std::string& track);
-    void renderDialog();
+    void renderDialog();                       // a stereo mix
+    // the mix in channels, and each track's output as a file of its own (stems): a file chosen, rendered offline
+    void renderTo(int channels, bool stems);
+    void renderStems() { renderTo(2, true); }
+    void renderMenu();                         // the Render button: stereo, stereo and stems, more channels
     bool addSoundFile(const std::string& path, const std::string& track, double at);   // a file dropped or chosen
     // a sub-score: its window; a patch: the patch; a sound: the sound editor, the clip's region selected
     void openClip(uint64_t id);

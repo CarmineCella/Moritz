@@ -681,6 +681,11 @@ expect "the clip's sound editor" "state: drawer clip sound drums.wav"
 expect "the browser" "state: browser song_media/|audio 1 insert.moritz|drums.wav|song.score|"
 expect "a double-click adds a sound" "state: arranger clips 2 recording no"
 
+# 48. Render > Stereo Mix and Stems: the mix and a file for each track beside it, offline
+run --window-png none "act=mtopen:$T/mt/song.score" "saveas=$T/mt/mix.wav" act=tlop:renderstems act=wait:3 act=timeline
+if [ $status -eq 0 ] && [ -s "$T/mt/mix.wav" ] && [ -s "$T/mt/mix-audio 1.wav" ] && [ -s "$T/mt/mix-audio 2.wav" ] &&
+   grep -q "a stem for each track beside it" "$out"; then ok; else fail "the mix and its stems rendered"; fi
+
 rm -rf "$T"
 echo "$count interface cases, $fails failed"
 [ $fails -eq 0 ]

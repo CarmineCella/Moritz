@@ -130,6 +130,7 @@ public:
     // (or Stop): the takes become clips. latency: the device's when < 0. false: not started (the status says why)
     bool toggleRecord(int latency = -1);
     bool recording() const;
+    void recordOptions();                  // the Record button's right-click: count-in, punch, latency offset
     mt::SessionRecorder* recorder() const { return recorder_.get(); }
 
 private:
