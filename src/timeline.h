@@ -28,6 +28,7 @@
 #include "score_doc.h"
 #include "sound_doc.h"
 #include "timeline_ops.h"
+#include "multitrack.h"
 
 #include <FL/Fl_Menu_Button.H>
 
@@ -48,13 +49,15 @@ public:
     void draw() override;
     int handle(int e) override;
     static constexpr int kHeadW = 184;     // the track headers
+    static constexpr int kSessionHeadW = 300;   // in a session (the arranger): input, volume, pan and a meter too
+    int headW() const;
     static constexpr int kRulerH = 26;
     static constexpr int kTrackH = 64;     // a track's height unless its row says another
     static constexpr int kLaneH = 38;      // a lane's
     static constexpr int kFoldedH = 20;    // folded to one line
     static constexpr int kMinH = 20, kMaxH = 400;
-    int laneX() const { return x() + kHeadW; }
-    int laneW() const { return std::max(1, w() - kHeadW); }
+    int laneX() const { return x() + headW(); }
+    int laneW() const { return std::max(1, w() - headW()); }
 
     // one row of the view: a track, or one of its lanes
     struct Row {
@@ -81,14 +84,22 @@ public:
     void release(int ex, int ey);
 
 private:
-    enum class Drag { None, Move, TrimL, TrimR, Point, Ruler, Loop, Height } drag_ = Drag::None;
+    enum class Drag { None, Move, TrimL, TrimR, Point, Ruler, Loop, Height, FadeIn, FadeOut, Gain, Volume, Pan } drag_ = Drag::None;
     void drawRuler();
     void drawHeader(const Row& r, int Y);
     void drawTrack(const Row& r, int Y);
     void drawLane(const Row& r, int Y);
     void drawClip(const sc::Event& e, int X, int Y, int W, int H, bool sel);
+    void drawSessionHeader(const Row& r, int Y, const sc::Strip& st);
+    void inputMenu(const std::string& track, int ex, int ey);
     void dropFiles(const std::string& text, int ex, int ey);
-    int headerButton(const Row& r, int ex, int ey) const;   // 1 mute, 2 solo, 0 none
+    int headerButton(const Row& r, int ex, int ey) const;   // 1 mute, 2 solo, 3 arm, 4 monitor (a session's), 0 none
+
+public:
+    // a session's header, its second line: the input's label, the volume's and the pan's travel (window x)
+    void sessionLine(const Row& r, int& ly, int& in0, int& in1, int& vol0, int& vol1, int& pan0, int& pan1) const;
+
+private:
     TimelinePanel* tp_;
     std::vector<Row> rows_;
     int contentH_ = 0;
@@ -114,6 +125,14 @@ public:
     bool trimmingLeft() const { return drag_ == Drag::TrimL; }
     bool movingPoint(uint64_t id) const { return dragging() && drag_ == Drag::Point && dragId_ == id; }
     bool sizing() const { return dragging() && drag_ == Drag::Height; }
+    // a clip's fades and gain dragged on it, a track's volume and pan in its header (drawn so until released)
+    double dragFade = 0, dragGain = 1, dragStrip = 0;
+    bool shaping(uint64_t id) const { return dragging() && dragId_ == id && (drag_ == Drag::FadeIn || drag_ == Drag::FadeOut || drag_ == Drag::Gain); }
+    bool fadingIn() const { return drag_ == Drag::FadeIn; }
+    bool fadingOut() const { return drag_ == Drag::FadeOut; }
+    bool strip(const std::string& track, bool pan) const {
+        return dragging() && dragTrack_ == track && drag_ == (pan ? Drag::Pan : Drag::Volume);
+    }
 };
 
 // The waveforms of the sounds clips show: decoded in the background (a file) or copied from a buffer~, kept by name
@@ -122,6 +141,7 @@ public:
     struct Entry {
         Sound sound;
         WaveSummary summary;
+        std::shared_ptr<mt::Peaks> peaks;  // a long file: its overview only (never decoded whole)
         bool failed = false;
         int version = -1;                  // a buffer~'s
     };
@@ -141,6 +161,10 @@ class TimelinePanel : public Fl_Group {
 public:
     // play: the host's transport for the document (nullptr: one of its own)
     TimelinePanel(int x, int y, int w, int h, std::shared_ptr<ScoreDoc> doc, std::shared_ptr<ScorePlayback> play = nullptr);
+    // a session (the arranger window): the headers show the input, arming, monitoring, volume, pan and a meter
+    bool session() const { return session_; }
+    void setSession(bool on);
+    int headW() const { return session_ ? TimelineView::kSessionHeadW : TimelineView::kHeadW; }
     ~TimelinePanel() override;
     ScoreDoc& doc() { return *doc_; }
     const std::shared_ptr<ScoreDoc>& docPtr() const { return doc_; }
@@ -193,6 +217,7 @@ public:
     void undo();
     void redo();
     void addTrack();
+    void addBus();
     void addSoundDialog();
     void addScoreDialog();
     void addPatchDialog();
@@ -230,7 +255,9 @@ public:
 private:
     friend class TimelineView;
     void layoutChildren();
-    void after(bool done);                     // an edit's result: the message
+public:
+    void after(bool done);                     // an edit's result: the message (the status line)
+private:
     void buildInspector();
     void showInspector();                      // the fields of the selection
     void applyField(int k);
@@ -238,6 +265,7 @@ private:
     static void tick(void* data);
     std::shared_ptr<ScoreDoc> doc_;
     std::shared_ptr<ScorePlayback> play_;
+    bool session_ = false;
     int token_ = 0;
     double t0_ = 0, pps_ = 60;
     int sy_ = 0;

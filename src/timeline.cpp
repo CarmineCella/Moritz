@@ -4,6 +4,7 @@
 // through timeline_ops.h, one undo step each. The transport is the host's (score_window.h).
 
 #include "timeline.h"
+#include "multitrack_ops.h"
 #include "score_window.h"
 #include "sound_editor.h"
 #include "transport.h"
@@ -174,8 +175,17 @@ void WaveCache::next() {
     if (!job_) job_ = std::make_unique<Job>();
     job_->start(
         [path, e](Job&) {
-            auto s = std::make_shared<SampleBuffer>();
             std::string err;
+            if (mt::fileSeconds(path) > mt::streamThreshold.load()) {   // long: its overview, cached next to it
+                auto pk = std::make_shared<mt::Peaks>();
+                if (!mt::loadPeaks(path, *pk)) {
+                    if (!mt::computePeaks(path, *pk, err)) { e->failed = true; return; }
+                    mt::savePeaks(path, *pk);            // (a folder not writable: computed again next time)
+                }
+                e->peaks = pk;
+                return;
+            }
+            auto s = std::make_shared<SampleBuffer>();
             if (!decodeAudioFile(path, *s, err)) { e->failed = true; return; }
             e->summary.build(*s);
             e->sound = s;
@@ -226,7 +236,7 @@ bool TimelineView::onName(const Row& r, int ex, int ey) const {
     std::string name = r.lane >= 0 ? r.laneName : r.track.empty() ? std::string("(no track)") : r.track;
     fl_font(r.lane >= 0 ? FL_HELVETICA : FL_HELVETICA_BOLD, r.lane >= 0 ? 11 : 12);
     int nx = x() + (r.lane >= 0 ? 16 : 12);
-    int nw = std::min((int)fl_width(name.c_str()) + 4, kHeadW - 64);
+    int nw = std::min((int)fl_width(name.c_str()) + 4, headW() - (tp_->session() ? 104 : 64));
     int base = Y + std::min(r.lane >= 0 ? 15 : 20, r.h - 5);
     return ex >= nx - 2 && ex < nx + nw && ey >= base - 14 && ey < base + 4;
 }
@@ -290,16 +300,69 @@ uint64_t TimelineView::pointAt(int ex, int ey) const {
     return 0;
 }
 
+int TimelineView::headW() const { return tp_->headW(); }
+
 int TimelineView::headerButton(const Row& r, int ex, int ey) const {
     if (r.lane >= 0) return 0;
     int Y = y() + kRulerH + r.y - tp_->scrollY();
-    int bx = x() + kHeadW - 50, by = Y + std::min(8, std::max(0, (r.h - 17) / 2));
-    if (ey >= by && ey < by + 16) {
-        if (ex >= bx && ex < bx + 20) return 1;
-        if (ex >= bx + 22 && ex < bx + 42) return 2;
+    int by = Y + std::min(8, std::max(0, (r.h - 17) / 2));
+    if (ey < by || ey >= by + 16) return 0;
+    if (tp_->session()) {
+        int bx = x() + headW() - 104;
+        for (int k = 0; k < 4; ++k)
+            if (ex >= bx + 22 * k && ex < bx + 22 * k + 20) return k + 1;
+        return 0;
     }
+    int bx = x() + headW() - 50;
+    if (ex >= bx && ex < bx + 20) return 1;
+    if (ex >= bx + 22 && ex < bx + 42) return 2;
     return 0;
 }
+
+void TimelineView::sessionLine(const Row& r, int& ly, int& in0, int& in1, int& vol0, int& vol1, int& pan0, int& pan1) const {
+    int Y = y() + kRulerH + r.y - tp_->scrollY();
+    ly = Y + 34;
+    in0 = x() + 12;
+    in1 = x() + 66;
+    vol0 = x() + 74;
+    vol1 = x() + 188;
+    pan0 = x() + 198;
+    pan1 = x() + headW() - 22;
+}
+
+namespace {
+constexpr double kVolTop = 12, kVolBottom = -60;
+int volX(double gain, int x0, int x1) {
+    double db = std::clamp(mt::gainToDb(gain), kVolBottom, kVolTop);
+    return x0 + (int)std::lround((db - kVolBottom) / (kVolTop - kVolBottom) * (x1 - x0));
+}
+double volAt(int px, int x0, int x1) {
+    double p = std::clamp((double)(px - x0) / std::max(1, x1 - x0), 0.0, 1.0);
+    return p <= 0 ? 0.0 : mt::dbToGain(kVolBottom + p * (kVolTop - kVolBottom));
+}
+int panX(double az, int x0, int x1) { return x0 + (int)std::lround((90 - std::clamp(az, -90.0, 90.0)) / 180 * (x1 - x0)); }
+double panAt(int px, int x0, int x1) {
+    double az = std::clamp(90 - 180.0 * (px - x0) / std::max(1, x1 - x0), -90.0, 90.0);
+    return std::fabs(az) < 3 ? 0.0 : az;
+}
+float fadeCurve(int shape, float x) {
+    switch (shape) {
+    case 1: return std::sin(x * 1.5707963f);
+    case 2: return x * x;
+    case 3: return std::sqrt(x);
+    default: return x;
+    }
+}
+int shapeOf(const sc::Fields& f, const char* key) {
+    const sc::Datum* d = sc::field(f, key);
+    if (!d || (d->kind != sc::Datum::Sym && d->kind != sc::Datum::Str)) return 0;
+    return d->s == "equal" || d->s == "equal-power" ? 1 : d->s == "slow" ? 2 : d->s == "fast" ? 3 : 0;
+}
+std::string inputText(const mt::RowSettings& rs) {
+    if (rs.input < 1) return "no input";
+    return "in " + std::to_string(rs.input) + (rs.inputCh == 2 ? "-" + std::to_string(rs.input + 1) : std::string());
+}
+}  // namespace
 
 // ---------------------------------------------------------------- the view: drawing
 
@@ -354,6 +417,7 @@ void TimelineView::drawRuler() {
 void TimelineView::drawHeader(const Row& r, int Y) {
     ScoreDoc& d = tp_->doc();
     bool cur = r.track == tp_->currentTrack();
+    const int kHeadW = headW();
     fl_push_clip(x(), Y, kHeadW, std::max(1, r.h - 1));
     fl_color(cur && r.lane < 0 ? kHeadSel : r.lane < 0 ? kHeadBg : fl_rgb_color(33, 34, 40));
     fl_rectf(x(), Y, kHeadW, r.h - 1);
@@ -380,9 +444,14 @@ void TimelineView::drawHeader(const Row& r, int Y) {
     fl_font(FL_HELVETICA_BOLD, 12);
     fl_color(kText);
     std::string name = r.track.empty() ? "(no track)" : r.track;
-    fl_push_clip(x() + 8, Y, kHeadW - 64, r.h);
+    fl_push_clip(x() + 8, Y, kHeadW - (tp_->session() ? 108 : 64), r.h);
     fl_draw(name.c_str(), x() + 12, Y + std::min(20, r.h - 5));
     fl_pop_clip();
+    if (tp_->session()) {
+        drawSessionHeader(r, Y, st);
+        fl_pop_clip();
+        return;
+    }
     fl_font(FL_HELVETICA, 10);
     fl_color(kDim);
     if (r.h >= 44) {
@@ -406,6 +475,70 @@ void TimelineView::drawHeader(const Row& r, int Y) {
     button(bx, "M", st.mute, fl_rgb_color(230, 170, 60));
     button(bx + 22, "S", st.solo, fl_rgb_color(110, 200, 120));
     fl_pop_clip();
+}
+
+// a session's header: M S R I, the input, the volume and the pan (dragged: heard at once), a meter
+void TimelineView::drawSessionHeader(const Row& r, int Y, const sc::Strip& st) {
+    ScoreDoc& d = tp_->doc();
+    mt::RowSettings rs = mt::settingsOf(d.score(), r.track);
+    int bx = x() + headW() - 104, by = Y + std::min(8, std::max(0, (r.h - 17) / 2));
+    auto button = [&](int k, const char* t, bool on, Fl_Color onC) {
+        int bxx = bx + 22 * k;
+        fl_color(on ? onC : fl_rgb_color(60, 63, 72));
+        fl_rectf(bxx, by, 20, 16);
+        fl_color(on ? FL_BLACK : kText);
+        fl_font(FL_HELVETICA_BOLD, 10);
+        fl_draw(t, bxx, by, 20, 16, FL_ALIGN_CENTER);
+    };
+    button(0, "M", st.mute, fl_rgb_color(230, 170, 60));
+    button(1, "S", st.solo, fl_rgb_color(110, 200, 120));
+    if (!rs.bus) {
+        button(2, "R", rs.arm, fl_rgb_color(230, 70, 70));
+        button(3, "I", rs.monitor, fl_rgb_color(90, 170, 240));
+    }
+    if (r.h >= 44) {
+        int ly, in0, in1, v0, v1, p0, p1;
+        sessionLine(r, ly, in0, in1, v0, v1, p0, p1);
+        fl_font(FL_HELVETICA, 10);
+        fl_color(rs.bus ? fl_rgb_color(190, 160, 240) : rs.arm ? fl_rgb_color(240, 120, 120) : kDim);
+        fl_draw(rs.bus ? "bus" : inputText(rs).c_str(), in0, ly + 4);
+        double g = strip(r.track, false) ? dragStrip : st.gain;
+        double az = strip(r.track, true) ? dragStrip : st.az;
+        fl_color(fl_rgb_color(70, 74, 84));
+        fl_xyline(v0, ly, v1);
+        fl_xyline(p0, ly, p1);
+        fl_yxline(volX(1.0, v0, v1), ly - 3, ly + 3);         // 0 dB
+        fl_yxline((p0 + p1) / 2, ly - 3, ly + 3);
+        fl_color(fl_rgb_color(210, 212, 220));
+        int vx = volX(g, v0, v1);
+        fl_rectf(vx - 3, ly - 5, 7, 11);
+        fl_color(kAccent);
+        int px = panX(az, p0, p1);
+        fl_rectf(px - 3, ly - 5, 7, 11);
+        if (r.h >= 58) {
+            fl_font(FL_HELVETICA, 9);
+            fl_color(kDim);
+            std::string t = mt::dbText(g) + " dB · " + azText(az);
+            if (!rs.insert.empty()) t += " · fx " + baseOf(rs.insert);
+            if (!rs.instrument.empty()) t += " · inst " + baseOf(rs.instrument);
+            if (!rs.out.empty()) t += " · → " + rs.out;
+            fl_draw(t.c_str(), x() + 12, ly + 18);
+        }
+    }
+    // the meter: the RMS of its output
+    if (Box* pb = d.playerBox())
+        if (mt::StripParams* p = mt::stripOf(pb, r.track)) {
+            float v = std::max(p->rms[0].load(std::memory_order_relaxed), p->rms[1].load(std::memory_order_relaxed));
+            int mx = x() + headW() - 9, top = Y + 4, bot = Y + r.h - 6;
+            fl_color(fl_rgb_color(18, 19, 22));
+            fl_rectf(mx, top, 5, bot - top);
+            double db = std::clamp(mt::gainToDb(v), -60.0, 6.0);
+            int my = bot - (int)std::lround((db + 60) / 66 * (bot - top));
+            if (v > 1e-5f) {
+                fl_color(v >= 1.f ? fl_rgb_color(240, 60, 60) : fl_rgb_color(70, 190, 110));
+                fl_rectf(mx, my, 5, bot - my);
+            }
+        }
 }
 
 void TimelineView::drawClip(const sc::Event& e, int X, int Y, int W, int H, bool sel) {
@@ -443,13 +576,34 @@ void TimelineView::drawClip(const sc::Event& e, int X, int Y, int W, int H, bool
         if (!wave) {
             fl_font(FL_HELVETICA, 9);
             fl_draw(e.buffer ? "no buffer~ of that name" : "reading…", X + 4, by + 12);
+        } else if (wave->peaks) {                          // a long file: its overview
+            const mt::Peaks& pk = *wave->peaks;
+            double pps = tp_->pixelsPerSecond();
+            int x0 = std::max(X + 1, x() + headW()), x1 = std::min(X + W - 1, x() + w());
+            for (int px = x0; px < x1; ++px) {
+                double src = e.from + (px - X) / pps;
+                if (e.to >= 0 && src >= e.to) break;
+                long a = (long)std::floor(src * pk.sr), b = (long)std::floor((src + 1 / pps) * pk.sr) + 1;
+                if (a >= pk.frames) break;
+                float lo = 0, hi = 0;
+                for (int ch = 0; ch < pk.channels; ++ch) {
+                    float l, h;
+                    pk.range(ch, a, b, l, h);
+                    lo = std::min(lo, l);
+                    hi = std::max(hi, h);
+                }
+                float g = (float)e.gain;
+                int y0 = mid - (int)std::lround(std::clamp(hi * g, -1.f, 1.f) * amp);
+                int y1 = mid - (int)std::lround(std::clamp(lo * g, -1.f, 1.f) * amp);
+                fl_yxline(px, y0, std::max(y0, y1));
+            }
         } else if (wave->failed || !wave->sound) {
             fl_font(FL_HELVETICA, 9);
             fl_draw("can't read the file", X + 4, by + 12);
         } else {
             const SampleBuffer& s = *wave->sound;
             double pps = tp_->pixelsPerSecond();
-            int x0 = std::max(X + 1, x() + kHeadW), x1 = std::min(X + W - 1, x() + w());
+            int x0 = std::max(X + 1, x() + headW()), x1 = std::min(X + W - 1, x() + w());
             for (int px = x0; px < x1; ++px) {
                 double src = e.from + (px - X) / pps;
                 long a = (long)std::floor(src * s.sr), b = (long)std::floor((src + 1 / pps) * s.sr) + 1;
@@ -468,11 +622,30 @@ void TimelineView::drawClip(const sc::Event& e, int X, int Y, int W, int H, bool
                 fl_yxline(px, y0, std::max(y0, y1));
             }
         }
-        // the fades
+        // the fades, in their shapes, and their handles (dragged: the fade's length; the band between them: the gain)
         double fi = sc::numField(e.extra, "fade-in", 0), fo = sc::numField(e.extra, "fade-out", 0);
+        int si = shapeOf(e.extra, "fade-in-shape"), so = shapeOf(e.extra, "fade-out-shape");
+        double pps = tp_->pixelsPerSecond();
         fl_color(fl_rgb_color(20, 20, 24));
-        if (fi > 0) fl_line(X, by + bh, X + (int)(fi * tp_->pixelsPerSecond()), by);
-        if (fo > 0) fl_line(X + W - (int)(fo * tp_->pixelsPerSecond()), by, X + W, by + bh);
+        auto curve = [&](int xa, int xb, int shape, bool in) {
+            int px = xa, py = in ? by + bh : by;
+            for (int k = 1; k <= 16; ++k) {
+                float t = k / 16.f;
+                int qx = xa + (int)std::lround((xb - xa) * t);
+                float g = fadeCurve(shape, in ? t : 1 - t);
+                int qy = by + bh - (int)std::lround(g * bh);
+                fl_line(px, py, qx, qy);
+                px = qx;
+                py = qy;
+            }
+        };
+        if (fi > 0) curve(X, X + (int)(fi * pps), si, true);
+        if (fo > 0) curve(X + W - (int)(fo * pps), X + W, so, false);
+        if (sel && W > 24) {
+            fl_color(fl_rgb_color(235, 235, 240));
+            fl_rectf(X + (int)(fi * pps) - 3, by, 6, 5);
+            fl_rectf(X + W - (int)(fo * pps) - 3, by, 6, 5);
+        }
         break;
     }
     case sc::Kind::Score: {
@@ -505,7 +678,7 @@ void TimelineView::drawClip(const sc::Event& e, int X, int Y, int W, int H, bool
     case sc::Kind::Patch:
         fl_font(FL_HELVETICA, 9);
         fl_color(fl_color_average(c, FL_WHITE, 0.4f));
-        fl_draw("runs while the clip plays (not yet)", X + 4, by + 12);
+        fl_draw("a patch run while the clip plays", X + 4, by + 12);
         break;
     default: break;
     }
@@ -536,6 +709,11 @@ void TimelineView::drawTrack(const Row& r, int Y) {
         if (end < vis0 || at > vis1) continue;
         sc::Event shown = e;
         if (trimming(e.id) && trimmingLeft() && e.kind == sc::Kind::Sound) shown.from = std::max(0.0, e.from + (at - e.at));
+        if (shaping(e.id)) {
+            if (fadingIn()) sc::setField(shown.extra, "fade-in", sc::Datum::number(dragFade));
+            else if (fadingOut()) sc::setField(shown.extra, "fade-out", sc::Datum::number(dragFade));
+            else shown.gain = dragGain;
+        }
         shown.at = at;
         shown.dur = end - at;
         int X, YY, W, H;
@@ -689,12 +867,46 @@ void TimelineView::press(int ex, int ey, int clicks, bool shift, bool right, boo
         tp_->setCurrentTrack(track);
         d.clearSelection();
         int b = headerButton(*r, ex, ey);
-        if (b) {
+        if (b == 1 || b == 2) {
             sc::Strip st = tl::stripOf(d.score(), track);
             if (b == 1) st.mute = !st.mute;
             else st.solo = !st.solo;
             tp_->after(tl::setStrip(d, track, st));
             return;
+        }
+        if (b == 3 || b == 4) {                          // arm, monitor
+            mt::RowSettings rs = mt::settingsOf(d.score(), track);
+            if (!rs.bus) tp_->after(b == 3 ? mt::setArm(d, track, !rs.arm) : mt::setMonitor(d, track, !rs.monitor));
+            return;
+        }
+        if (tp_->session() && r->lane < 0 && r->h >= 44 && !right) {
+            int ly, in0, in1, v0, v1, p0, p1;
+            sessionLine(*r, ly, in0, in1, v0, v1, p0, p1);
+            if (std::abs(ey - ly) <= 7) {
+                if (ex >= in0 && ex < in1) { inputMenu(track, ex, ey); return; }
+                if (ex >= v0 - 5 && ex <= v1 + 5) {
+                    sc::Strip st = tl::stripOf(d.score(), track);
+                    if (clicks) { st.gain = 1; tp_->after(tl::setStrip(d, track, st)); return; }
+                    drag_ = Drag::Volume;
+                    dragTrack_ = track;
+                    dragV_ = st.gain;
+                    dragStrip = st.gain;
+                    moved_ = true;
+                    dragTo(ex, ey);
+                    return;
+                }
+                if (ex >= p0 - 5 && ex <= p1 + 5) {
+                    sc::Strip st = tl::stripOf(d.score(), track);
+                    if (clicks) { st.az = 0; tp_->after(tl::setStrip(d, track, st)); return; }
+                    drag_ = Drag::Pan;
+                    dragTrack_ = track;
+                    dragV_ = st.az;
+                    dragStrip = st.az;
+                    moved_ = true;
+                    dragTo(ex, ey);
+                    return;
+                }
+            }
         }
         if (right) {
             if (r->lane >= 0) {
@@ -777,6 +989,18 @@ void TimelineView::press(int ex, int ey, int clicks, bool shift, bool right, boo
     dragId_ = c;
     dragAt_ = e->at;
     dragEnd_ = e->end();
+    if (e->kind == sc::Kind::Sound) {                    // the band under its head: its fades' handles and its gain
+        int X, Y, W, H;
+        if (clipRect(*e, X, Y, W, H) && H > 24 && ey >= Y + 15 && ey < Y + 22) {
+            double pps = tp_->pixelsPerSecond();
+            int fi = X + (int)(sc::numField(e->extra, "fade-in", 0) * pps), fo = X + W - (int)(sc::numField(e->extra, "fade-out", 0) * pps);
+            dragV_ = e->gain;
+            if (std::abs(ex - fi) <= 5) { drag_ = Drag::FadeIn; dragFade = sc::numField(e->extra, "fade-in", 0); }
+            else if (std::abs(ex - fo) <= 5) { drag_ = Drag::FadeOut; dragFade = sc::numField(e->extra, "fade-out", 0); }
+            else { drag_ = Drag::Gain; dragGain = e->gain; }
+            return;
+        }
+    }
     dragRow_ = tl::trackIndex(d.score(), e->row);
     dragEdge = zone < 0 ? dragAt_ : dragEnd_;
     drag_ = zone < 0 ? Drag::TrimL : zone > 0 ? Drag::TrimR : Drag::Move;
@@ -812,6 +1036,39 @@ void TimelineView::dragTo(int ex, int ey) {
     case Drag::Height:
         dragHeight = std::clamp((int)std::lround(dragV_) + (ey - pressY_), kMinH, kMaxH);
         break;
+    case Drag::FadeIn:
+    case Drag::FadeOut: {
+        auto e = d.score().find(dragId_);
+        if (!e) break;
+        double len = drag_ == Drag::FadeIn ? (ex - tp_->xOf(e->at)) / pps : (tp_->xOf(e->end()) - ex) / pps;
+        dragFade = std::clamp(len, 0.0, e->dur);
+        tp_->setStatus(std::string(drag_ == Drag::FadeIn ? "fade-in " : "fade-out ") + fmt(dragFade, "%.3f") + " s");
+        break;
+    }
+    case Drag::Gain:
+        dragGain = std::clamp(dragV_ * mt::dbToGain(-(ey - pressY_) * 0.25), 0.0, 16.0);
+        tp_->setStatus("clip gain " + mt::dbText(dragGain) + " dB");
+        break;
+    case Drag::Volume:
+    case Drag::Pan: {
+        const Row* r = nullptr;
+        for (auto& rr : rows_) if (rr.track == dragTrack_ && rr.lane < 0) r = &rr;
+        if (!r) break;
+        int ly, in0, in1, v0, v1, p0, p1;
+        sessionLine(*r, ly, in0, in1, v0, v1, p0, p1);
+        Box* pb = d.playerBox();
+        mt::StripParams* sp = pb ? mt::stripOf(pb, dragTrack_) : nullptr;
+        if (drag_ == Drag::Volume) {
+            dragStrip = volAt(ex, v0, v1);
+            if (sp) sp->gain.store((float)dragStrip, std::memory_order_relaxed);   // heard at once, no plan made
+            tp_->setStatus(dragTrack_ + ": " + mt::dbText(dragStrip) + " dB");
+        } else {
+            dragStrip = panAt(ex, p0, p1);
+            if (sp) sp->az.store((float)dragStrip, std::memory_order_relaxed);
+            tp_->setStatus(dragTrack_ + ": pan " + azText(dragStrip));
+        }
+        break;
+    }
     case Drag::Ruler:
         drag_ = Drag::Loop;
         [[fallthrough]];
@@ -852,11 +1109,57 @@ void TimelineView::release(int ex, int ey) {
         break;
     case Drag::Loop: tp_->setLoop(true); break;
     case Drag::Height: tp_->setHeight(dragTrack_, dragLane_, dragHeight, dragAlt_); break;
+    case Drag::FadeIn:
+    case Drag::FadeOut: {
+        auto e = d.score().find(dragId_);
+        if (!e) break;
+        double fi = sc::numField(e->extra, "fade-in", 0), fo = sc::numField(e->extra, "fade-out", 0);
+        if (was == Drag::FadeIn) fi = dragFade;
+        else fo = dragFade;
+        tp_->after(mt::setClipFades(d, dragId_, fi, fo));
+        break;
+    }
+    case Drag::Gain: tp_->after(mt::setClipGain(d, dragId_, dragGain)); break;
+    case Drag::Volume:
+    case Drag::Pan: {
+        sc::Strip st = tl::stripOf(d.score(), dragTrack_);
+        if (was == Drag::Volume) st.gain = dragStrip;
+        else st.az = dragStrip;
+        if (st.gain != tl::stripOf(d.score(), dragTrack_).gain || st.az != tl::stripOf(d.score(), dragTrack_).az)
+            tp_->after(tl::setStrip(d, dragTrack_, st));
+        break;
+    }
     default: break;
     }
     dragDt = 0;
     dragDTrack = 0;
     redraw();
+}
+
+// the device's inputs a track records from (a menu where its input is clicked)
+void TimelineView::inputMenu(const std::string& track, int ex, int ey) {
+    ScoreDoc& d = tp_->doc();
+    int n = App::get().audio.deviceInputs();
+    if (n <= 0) n = 8;
+    n = std::min(n, 32);
+    std::vector<std::string> labels{"No Input"};
+    std::vector<std::pair<int, int>> what{{0, 1}};
+    for (int k = 1; k <= n; ++k) { labels.push_back("In " + std::to_string(k)); what.push_back({k, 1}); }
+    for (int k = 1; k + 1 <= n; k += 2) {
+        labels.push_back("In " + std::to_string(k) + "-" + std::to_string(k + 1) + " (stereo)");
+        what.push_back({k, 2});
+    }
+    std::vector<Fl_Menu_Item> items(labels.size() + 1);
+    for (auto& it : items) it = Fl_Menu_Item{};
+    for (size_t k = 0; k < labels.size(); ++k) items[k].label(labels[k].c_str());
+    const Fl_Menu_Item* m = items[0].popup(ex, ey);
+    if (!m) return;
+    auto pick = what[(size_t)(m - &items[0])];
+    mt::RowSettings rs = mt::settingsOf(d.score(), track);
+    rs.input = pick.first;
+    rs.inputCh = pick.second;
+    if (rs.input == 0) rs.arm = false;
+    tp_->after(mt::setSettings(d, track, rs, "Input"));
 }
 
 void TimelineView::dropFiles(const std::string& text, int ex, int ey) {
@@ -1015,7 +1318,8 @@ TimelinePanel::TimelinePanel(int X, int Y, int W, int H, std::shared_ptr<ScoreDo
         void (TimelinePanel::*fn)();
         int flags;
     };
-    static const Item adds[] = {{"Track", &P::addTrack, FL_MENU_DIVIDER},
+    static const Item adds[] = {{"Track", &P::addTrack, 0},
+                                {"Bus", &P::addBus, FL_MENU_DIVIDER},
                                 {"Sound...", &P::addSoundDialog, 0},
                                 {"Sub-score...", &P::addScoreDialog, 0},
                                 {"Patch Clip...", &P::addPatchDialog, FL_MENU_DIVIDER},
@@ -1062,7 +1366,7 @@ TimelinePanel::TimelinePanel(int X, int Y, int W, int H, std::shared_ptr<ScoreDo
     vbar_ = new Fl_Scrollbar(X + viewW, midY, kScrollW, midH - kScrollW);
     vbar_->type(FL_VERTICAL);
     vbar_->callback([](Fl_Widget* w, void* d) { static_cast<P*>(d)->scrollYTo(static_cast<Fl_Scrollbar*>(w)->value()); }, this);
-    hbar_ = new Fl_Scrollbar(X + TimelineView::kHeadW, midY + midH - kScrollW, viewW - TimelineView::kHeadW, kScrollW);
+    hbar_ = new Fl_Scrollbar(X + headW(), midY + midH - kScrollW, viewW - headW(), kScrollW);
     hbar_->type(FL_HORIZONTAL);
     hbar_->callback([](Fl_Widget* w, void* d) {
         auto* p = static_cast<P*>(d);
@@ -1121,7 +1425,7 @@ void TimelinePanel::layoutChildren() {
     int viewW = std::max(300, W - kInspectorW - kScrollW);
     view_->resize(X, top, viewW, midH - kScrollW);
     vbar_->resize(X + viewW, top, kScrollW, midH - kScrollW);
-    hbar_->resize(X + TimelineView::kHeadW, top + midH - kScrollW, viewW - TimelineView::kHeadW + kScrollW, kScrollW);
+    hbar_->resize(X + headW(), top + midH - kScrollW, viewW - headW() + kScrollW, kScrollW);
     inspector_->resize(X + W - kInspectorW, top, kInspectorW, midH);
     showInspector();
     updateScrollbars();
@@ -1241,6 +1545,7 @@ void TimelinePanel::tick(void* data) {
         p->view_->redraw();
         p->refreshInfo();
     }
+    if (!now && p->session_ && p->visible_r() && App::get().audio.running()) p->view_->redraw();   // the meters
     if (now && p->visible_r()) {
         double ph = p->playhead();
         double shown = p->view_->laneW() / p->pps_;
@@ -1248,10 +1553,23 @@ void TimelinePanel::tick(void* data) {
         p->view_->redraw();
         p->refreshInfo();
     }
-    Fl::repeat_timeout(now ? 1.0 / 30 : 0.1, tick, data);
+    Fl::repeat_timeout(now || p->session_ ? 1.0 / 30 : 0.1, tick, data);
 }
 
 // ---- commands
+
+void TimelinePanel::setSession(bool on) {
+    session_ = on;
+    layoutChildren();
+    view_->layoutRows();
+    view_->redraw();
+}
+
+void TimelinePanel::addBus() {
+    std::string b = mt::addBus(*doc_);
+    if (!b.empty()) setCurrentTrack(b);
+    after(!b.empty());
+}
 
 void TimelinePanel::after(bool done) {
     (void)done;
@@ -1320,13 +1638,11 @@ void TimelinePanel::addTrack() {
 }
 
 bool TimelinePanel::addSoundFile(const std::string& path, const std::string& track, double at) {
-    auto s = std::make_shared<SampleBuffer>();
-    std::string err;
-    if (!decodeAudioFile(path, *s, err)) {
-        setStatus("can't read " + baseOf(path) + ": " + err);
+    double len = mt::fileSeconds(path);                  // from its header: a long file is not decoded here
+    if (!(len > 0)) {
+        setStatus("can't read " + baseOf(path) + " as a sound");
         return false;
     }
-    double len = s->sr > 0 ? s->frames / s->sr : 0;
     uint64_t id = tl::addSound(*doc_, path, false, track, at, len);
     after(id != 0);
     return id != 0;
