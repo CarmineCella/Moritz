@@ -86,8 +86,8 @@ the editor's command table and undo rule), YIN, `descriptors~` on the shared ana
 | 0.13 | Timeline (mockup 4), designed for a multitrack mode; patch clips and track instruments and effects |
 | 0.14 | Roll and the active score box (mockups 5, 2); Generate and Transform; coll |
 | then | Orchestration: queries, morphological and granular modes, the pieces as patches |
-| then | Multitrack mode, as in Reaper |
-| then | Neural networks (WEFT): `mlp`, classifier, `autoencoder`/`vae` with a playable latent space, images as data (MNIST) |
+| then | Neural networks (WEFT): `mlp`, classifier, `autoencoder`/`vae` with a playable latent space, images as data (MNIST). WEFT is finished first in its own project, then ported |
+| then | Multitrack mode, as in Reaper (layout B of mockup 8, with a mixer panel) |
 | then | Research: VAE on matching pursuit; a 2-D corpus map; a transformer on atom sequences; `concat~` |
 | then | Integration: export to Max, a documentation site, complete tutorials |
 | 1.0-rc | Stabilisation: fixes, performance, testing on real Windows machines; feature freeze |
@@ -135,6 +135,14 @@ the editor's command table and undo rule), YIN, `descriptors~` on the shared ana
       Ligeti's Atmosphères (Musil's haas.mu and atmospheres.mu), played through the score.
 - [ ] More examples for every orchestration mode and idea (mimetic, morphological, granular, queries,
       a sound file orchestrated over time, a score as target), and a tutorial on orchestration.
+
+### Tutorials
+
+The patches in `tutorials/` are numbered in the order they are taught; the code tutorial stays last.
+
+- [ ] **Orchestration**: a tutorial patch before the code one (with the orchestration features).
+- [ ] **Scores**: what a score is for and how it works (the score object, the transport, timeline and
+      roll, scores from Musil), before the code one.
 
 ### Documents
 
