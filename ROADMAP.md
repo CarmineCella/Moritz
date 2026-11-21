@@ -88,7 +88,8 @@ the editor's command table and undo rule), YIN, `descriptors~` on the shared ana
 | --- | --- |
 | 0.12 | Sound editor; Orchidea in Moritz; the score (score, transport); the timeline and the roll in one score window; datasets; Musil in Moritz; examples and tutorials |
 | 0.13 | Orchestration's morphological and granular modes; Musil's assisted composition and the pieces (Grisey, Haas, Atmosphères) as patches; the multitrack mode, as in Reaper (layout B of mockup 8, with a mixer), with patch clips and track instruments and effects |
-| then | Orchestration: sample queries, the solutions of each segment in the roll, playability; the multitrack's next items (below) |
+| 0.14 (in progress) | Orchestration and the score: sample selection by query, the solutions of each segment in the roll, the timeline's ramps, rubber-band selection, track order, markers and sections; MusicXML and MIDI export of scores |
+| then | Orchestration's playability; the multitrack's next items (below) |
 | then | Neural networks (WEFT): `mlp`, classifier, `autoencoder`/`vae` with a playable latent space, images as data (MNIST). WEFT is finished first in its own project, then ported |
 | then | Research: VAE on matching pursuit; a 2-D corpus map; a transformer on atom sequences; `concat~` |
 | then | Integration: export to Max, a documentation site, complete tutorials |
