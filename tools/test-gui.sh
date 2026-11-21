@@ -23,6 +23,9 @@ XDG_CONFIG_HOME="$T/home/.config"      # where FLTK keeps preferences on Linux (
 APPDATA="$T/home/AppData/Roaming"      # ... and on Windows
 LOCALAPPDATA="$T/home/AppData/Local"
 export HOME USERPROFILE XDG_CONFIG_HOME APPDATA LOCALAPPDATA
+# under -DMORITZ_SANITIZE=thread: the threads macOS starts inside the event loop are not reported (tsan-gui.supp)
+TSAN_OPTIONS="suppressions=$HERE/tools/tsan-gui.supp${TSAN_OPTIONS:+ $TSAN_OPTIONS}"
+export TSAN_OPTIONS
 mkdir -p "$HOME"
 fails=0
 count=0

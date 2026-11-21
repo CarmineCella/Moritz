@@ -1,0 +1,8 @@
+# ThreadSanitizer suppressions for the interface tests (tools/test-gui.sh sets TSAN_OPTIONS to read this file).
+#
+# On macOS a thread that AppKit starts while FLTK's event loop takes the next event (pthread_create called from
+# inside Fl_Darwin_System_Driver::wait, with no Moritz frame in between) sometimes ends unjoined just before the
+# test program exits, and TSan reports a "thread leak" for it: which case it hits changes from run to run. The
+# actions of a test run outside the event loop, so a thread Moritz starts for a test (a job, a script) is never
+# created from that frame: only the leak report of such system threads is left out here, nothing else.
+thread:Fl_Darwin_System_Driver::wait
