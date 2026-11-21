@@ -28,6 +28,8 @@
 #include "signals/mir.h"
 #include "signals/hpss.h"
 #include "signals/biquad.h"
+#include "signals/iir.h"
+#include "signals/morphology.h"
 #include "signals/envelope.h"
 #include "signals/denormal.h"
 #include "signals/edit.h"
@@ -90,23 +92,7 @@ inline vptr sig_osc(vlist& a, Interp& i) {
 }
 
 // (iir x b a) => y with a0 y[n] = sum b[k] x[n-k] - sum a[k>0] y[n-k]; a[0] need not be 1
-struct iir_state { std::vector<double> xs, ys; };   // the last nb inputs and na outputs, newest first
-inline void iir_run(const double* x, double* y, size_t n, const double* b, size_t nb, const double* a, size_t na, iir_state& st) {
-    dsp::DenormalGuard ftz;                                // the decaying tail: no denormals (x86)
-    if (st.xs.size() != nb) st.xs.assign(nb, 0.0);
-    if (st.ys.size() != na) st.ys.assign(na, 0.0);
-    for (size_t k = 0; k < n; k++) {
-        for (size_t j = nb - 1; j > 0; j--) st.xs[j] = st.xs[j - 1];
-        st.xs[0] = x[k];
-        double acc = 0;
-        for (size_t j = 0; j < nb; j++) acc += b[j] * st.xs[j];
-        for (size_t j = 1; j < na; j++) acc -= a[j] * st.ys[j];
-        double out = acc / a[0];
-        for (size_t j = na - 1; j > 0; j--) st.ys[j] = st.ys[j - 1];
-        st.ys[1 < na ? 1 : 0] = out; st.ys[0] = out;
-        y[k] = out;
-    }
-}
+// iir_state and iir_run are in signals/iir.h
 inline vptr sig_iir(vlist& a, Interp& i) {
     const varr& x = i.num(a[0]); const varr& b = i.num(a[1]); const varr& av = i.num(a[2]);
     if (av.size() == 0 || b.size() == 0) i.bad("b and a must not be empty");
@@ -952,6 +938,68 @@ inline vptr sig_spectral_flux(vlist& a, Interp& i) {
     if (p.size() == m.size()) prev.assign(std::begin(p), std::end(p));
     return v_num(mir::spectralFlux(cur, prev));
 }
+// --- morphology: a sound's descriptors as curves over time (signals/morphology.h, what a morphological orchestration
+// follows and the adaptive segmentation cuts at) ---
+inline std::vector<double> doubles_from(Interp& i, const vptr& v) { const varr& x = i.num(v); return std::vector<double>(std::begin(x), std::end(x)); }
+inline vptr vec_from(const std::vector<double>& v) { varr a(v.size()); for (size_t k = 0; k < v.size(); k++) a[k] = v[k]; return v_arr(std::move(a)); }
+inline size_t positive_size(Interp& i, const vptr& v, const char* what) {
+    double d = i.scalar(v);
+    if (!(d >= 1) || d > (double)(1 << 24)) i.bad(std::string(what) + " must be a whole number from 1");
+    return (size_t)d;
+}
+// (frame-spectra x block hop ncoeff)   the magnitude spectrum of every frame (a Hann window of block samples every hop,
+//   the first frame centred on the start), the first ncoeff bins: the same space as a database's spectrum features,
+//   one spectrum per frame instead of the average
+inline vptr sig_frame_spectra(vlist& a, Interp& i) {
+    size_t block = positive_size(i, a[1], "block"), hop = positive_size(i, a[2], "hop"), n = positive_size(i, a[3], "ncoeff");
+    morph::spectra f;
+    try { f = morph::frame_spectra(doubles_from(i, a[0]), block, hop, n); } catch (std::runtime_error& e) { i.bad(e.what()); }
+    vlist out; for (auto& m : f) out.push_back(vec_from(m));
+    return v_list(std::move(out));
+}
+// (onset-strength x n hop)   the spectral flux of every frame, as a vector (one value per hop)
+inline vptr sig_onset_strength(vlist& a, Interp& i) {
+    return vec_from(morph::onset_strength(doubles_from(i, a[0]), positive_size(i, a[1], "n"), positive_size(i, a[2], "hop")));
+}
+// (flux-peaks x sr n hop threshold width)   the times (seconds) of the peaks of the spectral flux (the rectified change
+//   of the magnitude spectrum, n and hop as onset-strength) that stand above threshold times the flux's moving median
+//   over width frames (odd): every noticeable spectral change, an attack or not, counted as the target's activity;
+//   threshold 2 keeps the attacks, 1.5 admits the ripples of a held sound too; peaks within 50 ms of the previous one
+//   count as one; => a vector
+inline vptr sig_flux_peaks(vlist& a, Interp& i) {
+    double sr = i.scalar(a[1]); if (!(sr > 0)) i.bad("the sample rate must be > 0");
+    std::vector<double> out;
+    try { out = morph::flux_peaks(doubles_from(i, a[0]), sr, positive_size(i, a[2], "n"), positive_size(i, a[3], "hop"), i.scalar(a[4]), i.index(a[5])); }
+    catch (std::runtime_error& e) { i.bad(e.what()); }
+    return vec_from(out);
+}
+// (peak-density times secs window hop)   how many of some times (a vector, seconds) fall a second around every instant:
+//   the count within window seconds centred on each hop-second step over secs seconds, divided by the window; => a
+//   vector, one value per step (a density in events a second)
+inline vptr sig_peak_density(vlist& a, Interp& i) {
+    double secs = i.scalar(a[1]), hop = i.scalar(a[3]);
+    if (!(hop > 0) || !(secs / hop < 1e8)) i.bad("hop must be > 0 (and secs / hop under 1e8)");
+    return vec_from(morph::peak_density(doubles_from(i, a[0]), secs, i.scalar(a[2]), hop));
+}
+// (register-curve spectra sr block)   where the sound sits: for each frame the centroid in MIDI pitch (the powers
+//   weighting the pitch of every bin above 30 Hz, so an octave is an octave), the spread around it in octaves, and the
+//   lowest strong partial in MIDI pitch (a tone's fundamental, more or less: where the register begins). A frame below
+//   -60 dB (its peak under 1/1000 of a full-scale sine's, block/4) keeps the values of the frame before (60, 1 and 48
+//   at the start), so quiet noise does not make the curves jump; smooth them with median-filter;
+//   => (list centroids spreads lows)
+inline vptr sig_register_curve(vlist& a, Interp& i) {
+    if (a[0]->t != Value::LIST || a[0]->l.empty()) i.bad("spectra: a list of vectors");
+    morph::spectra f; for (auto& m : a[0]->l) f.push_back(doubles_from(i, m));
+    morph::register_curves r;
+    try { r = morph::register_curve(f, i.scalar(a[1]), i.scalar(a[2])); } catch (std::runtime_error& e) { i.bad(e.what()); }
+    return v_list({ vec_from(r.centroid), vec_from(r.spread), vec_from(r.low) });
+}
+// (loudness-curve x sr hop)   the level of every hop in dB, roughly as the ear weighs it (the extreme bass and treble
+//   taken out); => a vector, one value per hop, -100 for silence
+inline vptr sig_loudness_curve(vlist& a, Interp& i) {
+    double sr = i.scalar(a[1]); if (!(sr > 0)) i.bad("the sample rate must be > 0");
+    return vec_from(morph::loudness_curve(doubles_from(i, a[0]), sr, positive_size(i, a[2], "hop")));
+}
 // (hfc amps)   high frequency content: the sum of amps^2 times the bin number over the sum of the bin numbers (mir.h,
 //   as descriptors~)
 inline vptr sig_hfc(vlist& a, Interp& i) {
@@ -1000,7 +1048,8 @@ inline void add_signals(Interp& i) {
     i.def("mel-spectrogram", sig_mel_spectrogram, 5, 5); i.def("key-scores", sig_key_scores, 1, 1); i.def("tempo-estimate-with", sig_tempo_estimate_with, 4, 4); i.def("mfcc-gram", sig_mfcc_gram, 6, 6);
     i.def("yin", sig_yin, 2, 5); i.def("yin-track", sig_yin_track, 4, 7); i.def("descriptors", sig_descriptors, 4, 7);
     i.def("spectral-moments", sig_spectral_moments, 2, 2); i.def("spectral-flatness", sig_spectral_flatness, 1, 1);
-    i.def("spectral-flux", sig_spectral_flux, 2, 2); i.def("hfc", sig_hfc, 1, 1); i.def("zcr", sig_zcr, 1, 1);
+    i.def("spectral-flux", sig_spectral_flux, 2, 2); i.def("frame-spectra", sig_frame_spectra, 4, 4); i.def("onset-strength", sig_onset_strength, 3, 3);
+    i.def("flux-peaks", sig_flux_peaks, 6, 6); i.def("peak-density", sig_peak_density, 4, 4); i.def("register-curve", sig_register_curve, 3, 3); i.def("loudness-curve", sig_loudness_curve, 3, 3); i.def("hfc", sig_hfc, 1, 1); i.def("zcr", sig_zcr, 1, 1);
     i.def("conv", sig_conv, 2, 2); i.def("conv-fast", sig_conv, 2, 2); i.def("ambi-gains", sig_ambi_gains, 3, 3); i.def("ambi-decoder", sig_ambi_decoder, 2, 2); i.def("binaural-level", sig_binaural_level, 2, 2); i.def("ambi-rotate", sig_ambi_rotate, 2, 2); i.def("hrir", sig_hrir, 3, 3); i.def("hrir-model", sig_hrir_model, 3, 3);
     i.def("fade-in", sig_fade_in, 2, 2); i.def("fade-out", sig_fade_out, 2, 2); i.def("normalize-peak", sig_normalize_peak, 1, 1);
     i.def("hrtf-load", sig_hrtf_load, 1, 1); i.def("hrtf-unload", sig_hrtf_unload, 0, 0); i.def("hrtf-loaded", sig_hrtf_loaded, 0, 0);

@@ -203,12 +203,12 @@ inline std::vector<double> nnls(const mat& G, const std::vector<double>& b) {
 //   options: a record (keys symbols or strings) with 'nonneg (1: only atoms with a positive projection, weights kept
 //   positive; the choice for magnitude spectra; with 'orthogonal the refit is a non-negative least squares,
 //   Lawson-Hanson) and 'orthogonal (1: orthogonal matching pursuit)
-inline vptr sci_mp(vlist& a, Interp& i) {
-    const varr& xv = i.num(a[0]); mat D = to_mat(i, a[1]); long iters = (long)i.scalar(a[2]); double threshold = i.scalar(a[3]);
-    bool nonneg = false, orth = false;
-    if (a.size() > 4 && a[4]->t == Value::LIST) for (auto& kv : a[4]->l) if (kv->t == Value::LIST && kv->l.size() == 2) { std::string k = str_of(kv->l[0]); bool v = kv->l[1]->t == Value::NUM && kv->l[1]->num[0] != 0; if (k == "nonneg") nonneg = v; if (k == "orthogonal") orth = v; }
-    size_t n = xv.size(), m = D.r; if (D.c != n) i.bad("mp: the atoms must have the length of the signal");
-    std::vector<double> x(std::begin(xv), std::end(xv)), r = x, norms(m, 0.0);
+// the pursuit itself (sci_mp's, and the morphological orchestration's in music/granular.h): x the signal, D the atoms
+// (one per row, as long as x); => the atoms chosen (in the order first chosen), their weights and the residual
+struct mp_result { std::vector<size_t> atoms; std::vector<double> weights, residual; double error = 0; };
+inline mp_result mp_run(const std::vector<double>& x, const mat& D, long iters, double threshold, bool nonneg, bool orth) {
+    size_t n = x.size(), m = D.r;
+    std::vector<double> r = x, norms(m, 0.0);
     for (size_t k = 0; k < m; k++) { double s = 0; for (size_t j = 0; j < n; j++) s += D(k, j) * D(k, j); norms[k] = std::sqrt(s); }
     double xnorm = 0; for (double v : x) xnorm += v * v; xnorm = std::sqrt(xnorm); if (xnorm <= 0) xnorm = 1;
     std::vector<size_t> atoms; std::vector<double> weights;
@@ -234,10 +234,20 @@ inline vptr sci_mp(vlist& a, Interp& i) {
             r = x; for (size_t u = 0; u < p; u++) for (size_t j = 0; j < n; j++) r[j] -= weights[u] * D(atoms[u], j);
         } else { for (size_t j = 0; j < n; j++) r[j] -= w * D((size_t)best, j); }
     }
-    varr res(n), approx(n); for (size_t j = 0; j < n; j++) { res[j] = r[j]; approx[j] = x[j] - r[j]; }
     double rnorm = 0; for (double v : r) rnorm += v * v; rnorm = std::sqrt(rnorm);
-    vlist al, wl; for (size_t k = 0; k < atoms.size(); k++) { al.push_back(v_num((double)atoms[k])); wl.push_back(v_num(weights[k])); }
-    return v_list({ v_list({ v_sym("atoms"), v_list(std::move(al)) }), v_list({ v_sym("weights"), v_list(std::move(wl)) }), v_list({ v_sym("residual"), v_arr(std::move(res)) }), v_list({ v_sym("error"), v_num(rnorm / xnorm) }), v_list({ v_sym("approx"), v_arr(std::move(approx)) }) });
+    mp_result out; out.atoms = std::move(atoms); out.weights = std::move(weights); out.residual = std::move(r); out.error = rnorm / xnorm;
+    return out;
+}
+inline vptr sci_mp(vlist& a, Interp& i) {
+    const varr& xv = i.num(a[0]); mat D = to_mat(i, a[1]); long iters = (long)i.scalar(a[2]); double threshold = i.scalar(a[3]);
+    bool nonneg = false, orth = false;
+    if (a.size() > 4 && a[4]->t == Value::LIST) for (auto& kv : a[4]->l) if (kv->t == Value::LIST && kv->l.size() == 2) { std::string k = str_of(kv->l[0]); bool v = kv->l[1]->t == Value::NUM && kv->l[1]->num[0] != 0; if (k == "nonneg") nonneg = v; if (k == "orthogonal") orth = v; }
+    size_t n = xv.size(); if (D.c != n) i.bad("mp: the atoms must have the length of the signal");
+    std::vector<double> x(std::begin(xv), std::end(xv));
+    mp_result f = mp_run(x, D, iters, threshold, nonneg, orth);
+    varr res(n), approx(n); for (size_t j = 0; j < n; j++) { res[j] = f.residual[j]; approx[j] = x[j] - f.residual[j]; }
+    vlist al, wl; for (size_t k = 0; k < f.atoms.size(); k++) { al.push_back(v_num((double)f.atoms[k])); wl.push_back(v_num(f.weights[k])); }
+    return v_list({ v_list({ v_sym("atoms"), v_list(std::move(al)) }), v_list({ v_sym("weights"), v_list(std::move(wl)) }), v_list({ v_sym("residual"), v_arr(std::move(res)) }), v_list({ v_sym("error"), v_num(f.error) }), v_list({ v_sym("approx"), v_arr(std::move(approx)) }) });
 }
 
 // --- statistics ---
@@ -245,12 +255,8 @@ inline vptr sci_mp(vlist& a, Interp& i) {
 inline vptr sci_median_filter(vlist& a, Interp& i) {
     const varr& v = i.num(a[0]); long order = i.index(a[1]);
     if (order < 1) i.bad("order must be >= 1");
-    long n = (long)v.size(), half = order / 2; varr out(n);
-    for (long k = 0; k < n; k++) {
-        long lo = std::max(0L, k - half), hi = std::min(n - 1, k + half);
-        std::vector<double> w(std::begin(v) + lo, std::begin(v) + hi + 1);
-        out[k] = median<double>(w.data(), (int)w.size());
-    }
+    long n = (long)v.size(); std::vector<double> m = median_filter(n ? &v[0] : nullptr, n, order);
+    varr out(n); for (long k = 0; k < n; k++) out[k] = m[(size_t)k];
     return v_arr(std::move(out));
 }
 // (eig-sym M) => (list eigenvalues eigenvectors) of a symmetric matrix by Jacobi rotations;

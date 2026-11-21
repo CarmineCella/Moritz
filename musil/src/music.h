@@ -17,6 +17,7 @@
 #include "core.h"
 #include "system.h"
 #include "signals.h"
+#include "scientific.h"
 #include "music/midi.h"
 #include "music/orchidea.h"
 #include "music/maple.h"
@@ -694,6 +695,9 @@ inline double seat_of(const std::string& instr) {
     return 0;
 }
 } // namespace orchidea
+} // namespace musil
+#include "music/granular_musil.h"      // the granulator and the morphological orchestration (after Orchidea's search)
+namespace musil {
 
 // (orchidea-analyse x sr type block hop ncoeff opts)   the target's segments for a mimetic orchestration: x a vector at
 //   sr (resampled to 44100 Hz, the databases' rate), cut at its onsets, each segment analysed into the features of the
@@ -1136,7 +1140,7 @@ inline void add_atoms_and_types(Interp& i) {
 
 inline void add_music(Interp& i) {
     i.def("pitch->midi", mus_pitch_to_midi, 1, 1); i.def("midi->pitch", mus_midi_to_pitch, 1, 1);
-    i.def("db-read", mus_db_read, 1, 1); i.def("db-gen", mus_db_gen, 6, 6); add_midi(i); i.def("db-locate", mus_db_locate, 2, 2); i.def("db-index-size", mus_db_index_size, 1, 1);
+    i.def("db-read", mus_db_read, 1, 1); i.def("db-gen", mus_db_gen, 6, 6); add_midi(i); granular_musil::add_granular(i); i.def("db-locate", mus_db_locate, 2, 2); i.def("db-index-size", mus_db_index_size, 1, 1);
     i.def("orchidea-analyse", mus_orchidea_analyse, 7, 7); i.def("orchidea-search", mus_orchidea_search, 4, 4);
     i.def("mimetic-seating", mus_mimetic_seating, 1, 1); i.def("continuation-plan", mus_continuation_plan, 2, 2); i.def("db-sounds-folder", mus_db_sounds_folder, 2, 2);
     i.def("dataset", mus_dataset, 1, 1); i.def("dataset?", mus_dataset_p, 1, 1); i.def("datasets", mus_datasets, 0, 0);

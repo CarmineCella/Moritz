@@ -42,7 +42,10 @@ assert-equal
 assert-near
 atan
 atan2
+atom-persistence
 autocorr
+balance-gain
+band-weight
 bandpass
 beat-sync
 beat-track
@@ -132,11 +135,16 @@ dist-matrix
 dist-p
 do
 dot
+draw-duration
+draw-in
 drop
+dynamics->level
 each
 eig-sym
 empty?
 ends-with?
+entry-f0
+env-at
 envelope-follow
 envelope-from-values
 equal?
@@ -171,6 +179,7 @@ foote-novelty
 for
 format
 frame-spectra
+frames-mean
 function
 gate-spectrum
 gather
@@ -181,6 +190,8 @@ get-cols
 get-rows
 getenv
 getidx
+granular-pitches
+granular-run
 group-by
 hadamard
 hall-cache
@@ -189,6 +200,7 @@ hall-rates
 hamming
 hann
 hann-fade
+harmonic-series
 has?
 head
 help
@@ -213,6 +225,7 @@ impulse
 inf
 input
 insert-at
+instrument-family
 instrument-rank
 interactive?
 interleave
@@ -220,6 +233,7 @@ interp1
 inv
 istft
 join
+just-cents
 key-estimate
 key-name
 key-names
@@ -238,6 +252,8 @@ last
 lcm
 length
 lerp
+level->dynamics
+level->gain
 linefit
 linreg-fit
 linreg-predict
@@ -278,6 +294,7 @@ maple-residual
 maple-save
 maple-snr
 maple-synth
+markov-learn
 mat-add
 mat-col
 mat-diag
@@ -325,6 +342,8 @@ minor-profile
 mix
 mkdir
 mod
+morphological-run
+moving-median
 moving-source
 mp
 ncols
@@ -352,6 +371,7 @@ novelty-peaks
 now
 nrows
 num
+numeric-range?
 odd?
 ones
 onset-refine
@@ -386,6 +406,7 @@ peak-eq
 phases
 phi
 pi
+pick-from
 pitch->midi
 platform
 pol->car
@@ -535,8 +556,15 @@ tail
 take
 tan
 tanh
+target-analyse-with
+target-dictionary
+target-envelopes
+target-frame
+target-level
+target-peaks
 tau
 tau-const
+technique-short?
 tempo-estimate
 tempo-estimate-with
 tempogram
@@ -553,6 +581,7 @@ udp-receive
 udp-send
 unique
 upper
+value-at
 values
 var
 vars

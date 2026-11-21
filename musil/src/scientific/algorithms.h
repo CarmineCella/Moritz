@@ -272,6 +272,21 @@ inline void kmeans_pp(const std::vector<std::vector<double>>& P, int k, int iter
     for (auto& l : labels) l = order[(size_t)l];
 }
 
+// ---------------------------------------------------------
+// median_filter(v, n, order)
+//   The running median of width order (order >= 1): each value the median of the order around it, the window
+//   shortened at the ends (Musil's median-filter; the flux's level in morphology.h's flux_peaks).
+// ---------------------------------------------------------
+inline std::vector<double> median_filter(const double* v, long n, long order) {
+    long half = order / 2; std::vector<double> out((size_t)std::max(0L, n));
+    for (long k = 0; k < n; k++) {
+        long lo = std::max(0L, k - half), hi = std::min(n - 1, k + half);
+        std::vector<double> w(v + lo, v + hi + 1);
+        out[(size_t)k] = median<double>(w.data(), (int)w.size());
+    }
+    return out;
+}
+
 #endif // ALGORITHMS_H
 
 // eof

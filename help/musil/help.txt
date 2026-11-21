@@ -1013,6 +1013,38 @@
   (spectral-flux amps previous)
   the rectified increase of the magnitudes from the previous frame (previous as long,
   or a number) (mir.h, as descriptors~ and onset~)
+#frame-spectra
+  (frame-spectra x block hop ncoeff)
+  the magnitude spectrum of every frame (a Hann window of block samples every hop,
+  the first frame centred on the start), the first ncoeff bins: the same space as a database's spectrum features,
+  one spectrum per frame instead of the average
+#onset-strength
+  (onset-strength x n hop)
+  the spectral flux of every frame, as a vector (one value per hop)
+#flux-peaks
+  (flux-peaks x sr n hop threshold width)
+  the times (seconds) of the peaks of the spectral flux (the rectified change
+  of the magnitude spectrum, n and hop as onset-strength) that stand above threshold times the flux's moving median
+  over width frames (odd): every noticeable spectral change, an attack or not, counted as the target's activity;
+  threshold 2 keeps the attacks, 1.5 admits the ripples of a held sound too; peaks within 50 ms of the previous one
+  count as one; => a vector
+#peak-density
+  (peak-density times secs window hop)
+  how many of some times (a vector, seconds) fall a second around every instant:
+  the count within window seconds centred on each hop-second step over secs seconds, divided by the window; => a
+  vector, one value per step (a density in events a second)
+#register-curve
+  (register-curve spectra sr block)
+  where the sound sits: for each frame the centroid in MIDI pitch (the powers
+  weighting the pitch of every bin above 30 Hz, so an octave is an octave), the spread around it in octaves, and the
+  lowest strong partial in MIDI pitch (a tone's fundamental, more or less: where the register begins). A frame below
+  -60 dB (its peak under 1/1000 of a full-scale sine's, block/4) keeps the values of the frame before (60, 1 and 48
+  at the start), so quiet noise does not make the curves jump; smooth them with median-filter;
+  => (list centroids spreads lows)
+#loudness-curve
+  (loudness-curve x sr hop)
+  the level of every hop in dB, roughly as the ear weighs it (the extreme bass and treble
+  taken out); => a vector, one value per hop, -100 for silence
 #hfc
   (hfc amps)
   high frequency content: the sum of amps^2 times the bin number over the sum of the bin numbers (mir.h,
@@ -1158,9 +1190,6 @@
   (spectral-morph a b t n hop)
   between two sounds of the same length: magnitudes interpolated
   linearly, phases taken from a below t = 0.5 and from b above
-#onset-strength
-  (onset-strength x n hop)
-  the spectral flux of every frame, as a vector (one value per hop)
 #onsets
   (onsets x sr n hop threshold)
   onset times in seconds, always starting with 0 (so the segments cover the
@@ -1267,11 +1296,6 @@
 #envelope-from-values
   (envelope-from-values v hop)
   piecewise-linear signal through successive values, hop samples apart
-#frame-spectra
-  (frame-spectra x block hop ncoeff)
-  the magnitude spectrum of every frame (a Hann window of block samples every
-  hop), the first ncoeff bins: the same space as a database's spectrum features, one
-  spectrum per frame instead of the average
 #spectral-similarity
   (spectral-similarity a b)
   the cosine similarity of two magnitude spectra on a log scale (1: alike; 0: unrelated)
@@ -1281,37 +1305,12 @@
   that stand above its moving median (twice it, at least 60 ms apart: a held
   sound's tremolo or vibrato ripples at the floor and does not count), counted in a
   window of window seconds, one value every hop samples; => (list times rates peaks)
-#flux-peaks
-  (flux-peaks x sr n hop threshold width)
-  the times (seconds) of the peaks of the spectral flux (the rectified change
-  of the magnitude spectrum, n and hop as onset-strength) that stand above threshold times the
-  flux's moving median over width frames (odd): every noticeable spectral change, an attack or
-  not, counted as the target's activity; threshold 2 keeps the attacks, 1.5 admits the ripples
-  of a held sound too; peaks within 50 ms of the previous one count as one; => a vector
-#peak-density
-  (peak-density times secs window hop)
-  how many of some times (a vector, seconds) fall a second around every instant:
-  the count within window seconds centred on each hop-second step over secs seconds, divided by
-  the window; => a vector, one value per step (a density in events a second)
 #polyphony-estimate
   (polyphony-estimate spectra)
   how many voices seem to sound in each frame: the spectral peaks above 15% of the
   frame's strongest, about three strong partials a voice (1..16); 0 for a frame below -60 dB
   (spectra of block/2 bins, as frame-spectra gives, a full-scale sine peaking near block/4).
   A rough estimate, not a transcription; smooth it with median-filter; => a vector, one per frame
-#register-curve
-  (register-curve spectra sr block)
-  where the sound sits: for each frame the centroid in MIDI pitch (the powers
-  weighting the pitch of every bin above 30 Hz, so an octave is an octave), the spread around
-  it in octaves, and the lowest strong partial in MIDI pitch (a tone's fundamental, more or
-  less: where the register begins). A frame below -60 dB (its peak under 1/1000 of a
-  full-scale sine's, block/4) keeps the values of the frame before (60, 1 and 48 at the
-  start), so quiet noise does not make the curves jump; smooth them with median-filter;
-  => (list centroids spreads lows)
-#loudness-curve
-  (loudness-curve x sr hop)
-  the level of every hop in dB, roughly as the ear weighs it (the extreme bass and treble
-  taken out); => a vector, one value per hop, -100 for silence
 #coherence-time
   (coherence-time spectra hop sr threshold)
   how long the sound keeps its spectrum from each frame on: the time until
@@ -1801,6 +1800,130 @@
   (staff-clef pitches)
   the clef of a row of these MIDI pitches: "bass" when their median is below C4, else "treble";
   "none" without pitches
+#granular-run
+  (granular-run db orch secs params table)
+  the granulator (granular.h) over secs seconds: db with its index (db-index!),
+  orch the players (orchestra), params as orchestrate-granular takes them ('method 'target and 'target for a
+  morphological orchestration), table the Markov method's (markov-table) or nil; => (list fragment report). What
+  orchestrate-granular and orchestrate-morphological run; with 'continue the players' records carry the state
+#morphological-run
+  (morphological-run db orch target params)
+  one realisation of a morphological orchestration (granular.h): the
+  granulator over the target's length, its envelopes read off the target (target-envelopes), the decision at every
+  event a pursuit against the target's spectrum; => (list fragment report). What orchestrate-morphological runs
+#target-analyse-with
+  (target-analyse-with x sr block hop opts)
+  what a morphological orchestration reads off a sound x (a vector at sr),
+  computed once: the frame spectra (block as the database's features), the attacks (the peaks of the spectral flux
+  against its moving median) and their density in events a second, the register (the centroid in MIDI pitch, the
+  spread around it in octaves, the lowest strong partial) and the loudness in dB, each a curve sampled every hop;
+  => a record ('sr 'block 'hop 'seconds 'times 'spectra 'fine 'fine-block 'attacks 'density 'centroid 'spread 'low
+  'loudness); 'fine holds the spectra of a long window ('fine-block, 8192: 5 Hz bins at 44.1 kHz) from which the peaks
+  are read. opts: 'threshold (2: a flux peak counts above this times the local median; 1.5 counts the ripples of a
+  held sound too), 'window (1 s: the span the density is counted over), 'fine
+#target-envelopes
+  (target-envelopes target opts)
+  the granulator's envelopes from a target's curves: 'density from the flux peaks a
+  second times 'density-scale (1: as the target; 2 twice as busy), at least 'min-density (0.5: a held sound is
+  re-attacked now and then), 'register from the centroid and the spread (centroid ± 'width times the spread, in
+  octaves, extended down to the lowest strong partial: a bass note lies under the centroid of its own spectrum),
+  'dynamics as a level from the loudness ('range dB); opts also 'step (seconds per breakpoint, 0.25)
+#target-frame
+  (target-frame target t)
+  the index of the target's frame at a time
+#target-level
+  (target-level target t range)
+  the loudness at t as a dynamics level 0..1: 1 at the target's loudest point, 0 at
+  range dB under it (40 by default)
+#target-peaks
+  (target-peaks target t n)
+  the frequencies (Hz) of the n strongest spectral peaks of the target at t (the fine frames
+  over the next 0.1 s averaged), above 30 Hz and a twentieth of the strongest, each refined by a parabola: the pitches
+  the notes may take, as the partials of a sound are the pitches an orchestra can double it with; => a vector
+#frames-mean
+  (frames-mean spectra k0 k1 n)
+  the frames k0..k1 of a list of spectra averaged, their first n bins
+#atom-persistence
+  (atom-persistence target features t persist max-length)
+  how long a sound goes on being part of the target from t:
+  the frames ahead in which the target still holds it (the projection of the frame on the sound's spectrum, in the
+  linear magnitudes, stays at least persist of its peak within the first 0.1 s: 0.5 is 6 dB down), in seconds up to
+  max-length; the length of a note whose sound the target keeps, short for one it drops
+#entry-f0
+  (entry-f0 e sr block)
+  the frequency a database entry actually sounds at: the peak of its average spectrum nearest
+  its nominal pitch (within a semitone, refined by a parabola); the nominal frequency when the spectrum has no peak
+  there. sr and block as the features were computed
+#target-dictionary
+  (target-dictionary db peaks players lo hi dyn styles)
+  the sounds a pursuit may draw on: for every player the
+  available sounds of its instruments whose pitch is one of the target's peaks (frequencies; within 60 cents) and
+  within lo..hi (MIDI), with the dynamics dyn (any when the instrument has not got it) and one of the styles (all when
+  nil); => a list of (list player entry)
+#granular-pitches
+  (granular-pitches db instr tech dyn)
+  the MIDI pitches an instrument was recorded at (on disk) with a technique (nil:
+  any) at a dynamics (nil: any), sorted; the database's index (db-index!) first: db-pitches-at
+#technique-short?
+  (technique-short? t)
+  does a technique name belong to those short by nature (pizz, stac, secco, col-legno-batt,
+  slap, key, bartok, snap, tongue-ram, sforz, attack)?
+#moving-median
+  (moving-median v n)
+  each value replaced by the median of the n around it
+#env-at
+  (env-at e t)
+  the value of an env at time t: an interpolated number or range, or a set chosen by the crossfade
+#value-at
+  (value-at v t)
+  an env at a time, or the value itself
+#draw-in
+  (draw-in range)
+  a random number in a range (a list: between its first and its last), or the value itself
+#pick-from
+  (pick-from set)
+  a random element of a set (or the value itself when it is not a list of alternatives)
+#numeric-range?
+  (numeric-range? v)
+  is v a list of two numbers?
+#draw-duration
+  (draw-duration range law)
+  a duration drawn in a range by a law: 'uniform, 'log (log-uniform), or an exponent
+#band-weight
+  (band-weight lo hi weight tilt m)
+  the weight of a pitch m in the band lo..hi (MIDI) under 'weight (1: the middle
+  more often, -1 the edges) and 'tilt (1: the top, -1 the bottom), what band-weigher's function gives
+#level->dynamics
+  (level->dynamics x)
+  a level 0..1 as the nearest label of ppp pp p mp mf f ff fff
+#dynamics->level
+  (dynamics->level d)
+  a label of ppp .. fff as a level 0..1 (0.5 for one it does not know)
+#level->gain
+  (level->gain x)
+  a level as a gain, 0.25 at ppp to 1 at fff (the sample carries the timbre of its dynamics, the gain
+  the finer steps between the recorded ones)
+#instrument-family
+  (instrument-family instr)
+  'winds 'brass 'percussion 'keyboard 'plucked or 'strings by the instrument code (the
+  orchestral order); 'other for a code it does not know. What a 'balance may be given by
+#balance-gain
+  (balance-gain balance instr)
+  the gain of an instrument under a 'balance: a record from instrument codes or families
+  to decibels, (record (list 'brass -6 'Hn -3)): the instrument's own entry, else its family's, else 0 dB; => a gain
+#harmonic-series
+  (harmonic-series fundamental n)
+  the first n partials of a fundamental (a pitch) as MIDI pitches, rounded
+#just-cents
+  (just-cents fundamental pitch n)
+  the cents a tempered pitch is away from the nearest of the first n partials of a
+  fundamental (a just overtone chord: the 7th partial -31, the 11th -49, the 13th +41, the 14th -31 cents); nil when
+  the pitch is not one of them (within a quarter tone)
+#markov-learn
+  (markov-learn lines)
+  the Markov method's table from melodic lines (lists of MIDI pitches in time order, one per
+  instrument): a record from each pitch to the pitches that followed it (repeated followers weigh more); markov-table
+  learns a score's lines so, Moritz's orchidea a line of pitches
 #event
   (event s 0 3.5 "bells.wav")
   a sound file (read when rendered, cached)
@@ -2210,14 +2333,6 @@
   (pitches-from-spectrum x sr n)
   the n strongest partials of a sound as MIDI pitches, low to high: a chord from a
   spectrum, the way spectral music builds one (a harmonic sound gives its harmonic series)
-#harmonic-series
-  (harmonic-series fundamental n)
-  the first n partials of a fundamental (a pitch) as MIDI pitches, rounded
-#just-cents
-  (just-cents fundamental pitch n)
-  the cents a tempered pitch is away from the nearest of the first n partials of a
-  fundamental (a just overtone chord: the 7th partial -31, the 11th -49, the 13th +41, the
-  14th -31 cents); nil when the pitch is not one of them (within a quarter tone)
 #rhythm-from-pattern
   (rhythm-from-pattern "x..x.x" step)
   a rhythm from a string: x an attack, . a continuation of the step, each step lasting step seconds
@@ -2329,25 +2444,9 @@
   a range (list lo hi) is interpolated, and a set (a list of symbols, pitches or chords) is
   crossfaded: nearer the earlier breakpoint the earlier set is drawn more often. Given as a
   flat list: (env (list 0 (list 1 2) 10 (list 0.1 0.2)))
-#env-at
-  (env-at e t)
-  the value at time t: an interpolated number or range, or a set chosen by the crossfade
-#draw-in
-  (draw-in range)
-  a random number in a range (or the number itself)
-#pick-from
-  (pick-from set)
-  a random element of a set (or the value itself when it is not a list of alternatives)
 #dynamics-level?
   (dynamics-level? v)
   is a dynamics parameter a level (a number or a range) rather than a set of labels?
-#level->dynamics
-  (level->dynamics x)
-  a level 0..1 as the nearest label of ppp pp p mp mf f ff fff; (dynamics->level d) the reverse
-#level->gain
-  (level->gain x)
-  a level as a gain, 0.25 at ppp to 1 at fff (the sample carries the timbre of its dynamics,
-  the gain the finer steps between the recorded ones)
 #orchestra
   (orchestra spec)
   the players: spec a list where a symbol is one player of that instrument, a string with
@@ -2367,15 +2466,6 @@
   the lowest and highest MIDI pitch any instrument of the orchestra was recorded at (on disk);
   (orchestra-octaves db orch) the same as octaves, the granulator's register unit: what to clip a
   band taken from a recording to, so that it asks nothing the orchestra cannot play
-#instrument-family
-  (instrument-family instr)
-  'winds 'brass 'percussion 'keyboard 'plucked or 'strings by the instrument code (the
-  orchestral order); 'other for a code it does not know. What a 'balance may be given by
-#balance-gain
-  (balance-gain balance instr)
-  the gain of an instrument under a 'balance: a record from instrument codes or families
-  to decibels, (record (list 'brass -6 'Hn -3)): the instrument's own entry, else its family's,
-  else 0 dB; => a linear gain
 #orchestrate-granular
   (orchestrate-granular db orch secs params)
   orchestration as granular synthesis: a stochastic process realised by
@@ -2442,12 +2532,9 @@
   paired group writes several a event), events skipped because every
   able player was busy (the saturation), events unplayable by the orchestra, dynamics substituted, and each
   player's notes and busy fraction; 'reports one per solution
-#value-at
-  (value-at v t)
-  an env at a time, or the value itself; (param-at params key t default) the same for a parameter
-#draw-duration
-  (draw-duration range law)
-  a duration drawn in a range by a law: 'uniform, 'log (log-uniform), or an exponent
+#param-at
+  (param-at params key t default)
+  a parameter's value at time t: value-at of the parameter, or of the default
 #pick-weighted
   (pick-weighted items f)
   a random element, each weighed by f (a non-negative number per element)
@@ -2455,6 +2542,11 @@
   (band-weigher lo hi weight tilt)
   the weight of a pitch in the band lo..hi (MIDI) under 'weight (middle vs edges) and
   'tilt (bottom vs top); => a function of the pitch
+#granulate
+  (granulate db orch secs params)
+  one realisation of the granulator, what orchestrate-granular makes 'solutions of:
+  => (list fragment report); the C++ of music/granular.h (granular-run), which Moritz's
+  orchidea runs too
 #granulation-report
   (granulation-report result)
   a granular orchestration's report printed: the events due and written, the saturation
@@ -2502,12 +2594,9 @@
   coarsely. (target-analyse-with x sr block hop opts) the same with options: 'threshold (2: a
   flux peak counts above this times the local median; 1.5 counts the ripples of a held sound
   too), 'window (1 s: the span the density is counted over), 'fine
-#moving-median
-  (moving-median v n)
-  each value replaced by the median of the n around it
-#target-frame
-  (target-frame target t)
-  the index of the frame at a time; (target-at target key t) a curve's value at a time
+#target-at
+  (target-at target key t)
+  a curve's value at a time (target-frame, C++, the index of the frame at a time)
 #target-spectrum
   (target-spectrum target k n)
   the spectrum of frame k, its first n bins (a database may keep fewer coefficients than the block gives)
@@ -2516,94 +2605,18 @@
   the target's spectrum at t as the pursuit sees it: the frames from t over the next look
   seconds averaged (0.1 s: the attack's smear evened out, the frequencies of what starts read
   from the sound settled), the first n bins
-#target-level
-  (target-level target t range)
-  the loudness at t as a dynamics level 0..1: 1 at the target's loudest point, 0 at
-  range dB under it (40 by default)
 #curve->env
   (curve->env times values step maker)
   an env from a curve: one breakpoint every step seconds (the values averaged over
   the step), each passed through maker (a number or a range out)
-#target-envelopes
-  (target-envelopes target opts)
-  the granulator's envelopes from a target's curves: 'density from the flux peaks a
-  second times 'density-scale (1: as the target; 2 twice as busy), at least 'min-density
-  (0.5: a held sound is re-attacked now and then), 'register
-  from the centroid and the spread (centroid ± 'width times the spread, in octaves, extended
-  down to the lowest strong partial: a bass note lies under the centroid of its own spectrum),
-  'dynamics as a level from the loudness (target-level, 'range dB); opts also 'step (seconds
-  per breakpoint, 0.25)
-#target-peaks
-  (target-peaks target t n)
-  the frequencies (Hz) of the n strongest spectral peaks of the target at t (the fine frames
-  over the next 0.1 s averaged), above 30 Hz and a twentieth of the strongest, each refined by
-  a parabola: the pitches the notes may take, as the partials of a sound are the pitches an
-  orchestra can double it with; => a vector
 #entry-atom
   (entry-atom e)
   a database entry's spectrum in the pursuit's space, kept on the entry once computed
-#entry-f0
-  (entry-f0 e sr block)
-  the frequency a database entry actually sounds at: the peak of its average spectrum nearest
-  its nominal pitch (within a semitone, refined by a parabola), kept on the entry; the nominal
-  frequency when the spectrum has no peak there. sr and block as the features were computed
-#target-dictionary
-  (target-dictionary db peaks players lo hi dyn styles)
-  the sounds a pursuit may draw on: for every player the
-  available sounds of its instruments whose pitch is one of the target's peaks (frequencies;
-  within 60 cents) and within lo..hi (MIDI), with the dynamics dyn (any when the instrument has
-  not got it) and one of the styles (all when nil); => a list of (list player entry)
-#db-by-midi!
-  (db-by-midi! slot)
-  an instrument's index slot grouped by MIDI pitch (built once): a record from the pitch (as a
-  string) to its entries
 #pursuit-space
   (pursuit-space m)
   a magnitude spectrum as the pursuit compares it: its square root, so that the quieter notes of
   a chord weigh against the loudest one (in the linear magnitudes one strong partial decides
   everything; in the log the noise between the partials does)
-#target-residual
-  (target-residual target t sounding n)
-  the target's spectrum at t (its first n bins, in the pursuit's space) less what
-  the sounding notes account for (their spectra refitted to the frame together, weights
-  non-negative); => (list residual frame)
-#atom-persistence
-  (atom-persistence target features t persist max-length)
-  how long a sound goes on being part of the target from t:
-  the frames ahead in which the target still holds it (the projection of the frame on the
-  sound's spectrum, in the linear magnitudes, stays at least persist of its peak within the
-  first 0.1 s: 0.5 is 6 dB down), in seconds up to max-length; the length of a note whose
-  sound the target keeps, short for one it drops
-#technique-short?
-  (technique-short? t)
-  does a technique name belong to the short ones?
-#target-notes
-  (target-notes db target t free sounding params)
-  the notes to start at time t on the free players: the target's spectrum
-  now less what still sounds (target-residual), pursued (mp, non-negative) over the players'
-  sounds at the target's peaks (target-dictionary: the register and the dynamics of the moment
-  narrow it); the best atom always makes a note, further ones ('voices at most) when each
-  accounts for 'min-gain of the residual; when the sounding notes leave less than 'floor of the
-  spectrum the pursuit is over the whole spectrum instead (a doubling). Each note lasts as long
-  as the target holds its sound (atom-persistence, 'persist, 'max-length), at least 'min-length,
-  and a short life takes a short technique of the same sound when there is one ('short); its
-  tuning is the nearest peak's, in cents; => a list of (list player note dur)
-#target-note-of
-  (target-note-of db target t e residual peaks level dyn params)
-  the note a morphological orchestration makes of a
-  database entry chosen at time t: as long as the target holds the sound (atom-persistence), a
-  short technique of the same sound when its life is short, at the target's level, tuned to the
-  nearest peak; => (list note life)
-#target-notes-genetic
-  (target-notes-genetic db target t free sounding params)
-  the same decision as target-notes, but made by Orchidea's
-  search instead of a greedy pursuit: at each event a genetic search over the free players'
-  sounds at the target's peaks (the dictionary of the moment) looks for the combination, one
-  sound per free player or a rest, whose summed spectrum is nearest the target's now, less what
-  still sounds (the residual): the mimetic decision inside the morphological clock, no
-  segmentation, the durations from persistence. 'genetic is a record of the search's
-  parameters (population 60, epochs 40, sparsity 0.1, and the others of orchestrate-mimetic);
-  => a list of (list player note dur)
 #orchestrate-morphological
   (orchestrate-morphological db orch target params)
   orchestration as granular synthesis whose process is read off a

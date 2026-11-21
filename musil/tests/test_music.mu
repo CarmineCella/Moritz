@@ -669,6 +669,37 @@ check (all? (map kd (function (x) (near? (getidx x 1) 0.2 1e-9))) identity) "orc
 var polyf (best-connection (orchestrate-granular db orch 4 (record (list 'density (list 20 20) 'duration (list 2 2) 'polyphony 2))))
 check (<= (max-of (map (vec->list (range 0 4 0.1)) (function (t) (active-at polyf t)))) 2) "granular: 'polyphony caps the players sounding at once"
 
+;  the granulator and the morphological orchestration are C++ (music/granular.h, shared with Moritz's orchidea): for a
+;  seed they write what the interpreted versions of 0.12 wrote (these signatures were theirs: count, the sum of the
+;  pitches, of the onsets, of the durations)
+function frag-sig (f) (list (length f) (sum (vec (map f (function (x) (get (last x) 'midi))))) (fixed (sum (vec (map f head))) 6) (fixed (sum (vec (map f (function (x) (getidx x 1))))) 6))
+seed 8
+check (equal? (frag-sig (best-connection (orchestrate-granular db orch 6 (record (list 'density (env (list 0 (list 4 6) 6 (list 1 2))) 'register (list 3 4) 'dynamics (env (list 0 (list 'pp) 6 (list 'ff)))))))) (list 26 1643 69.313436 17.587354)) "granular: the notes of 0.12's interpreted granulator for the seed"
+seed 9
+check (equal? (frag-sig (best-connection (orchestrate-granular db (orchestra (list 'Vn 'Vc 'Hn)) 8 (record (list 'method 'cluster 'inertia 0.5 'leap 3 'spread (list 0 0.03) 'density (list 3 5) 'register (list 3 5) 'duration (list 0.1 1) 'duration-law 'log))))) (list 30 1902 118.912162 11.219185)) "granular: ... the cluster method, inertia, leap, spread and the log law too"
+check (and (== (length (get tg 'attacks)) 8) (near? (sum (get tg 'centroid)) 13257.677534 1e-5) (near? (sum (get tg 'loudness)) -4240.131958 1e-5)) "target-analyse: the curves of 0.12's interpreted analysis"
+seed 6
+check (equal? (frag-sig (best-connection (orchestrate-morphological db orch tg (record (list))))) (list 8 501 7.114695 5.839043)) "orchestrate-morphological: the notes of 0.12's interpreted pursuit for the seed"
+seed 6
+check (equal? (frag-sig (best-connection (orchestrate-morphological db orch tg (record (list 'decision 'genetic 'genetic (record (list 'population 30 'epochs 10))))))) (list 8 501 7.114695 5.688889)) "orchestrate-morphological: ... and of its genetic decision"
+;  bad inputs and empty spaces: Musil errors, never a crash
+check (contains? (error-of (function () (granular-run 1 orch 2 (record (list)) nil))) "not a database") "granular-run: not a database"
+check (contains? (error-of (function () (granular-run (record (list 'entries (list))) orch 2 (record (list)) nil))) "db-index!") "granular-run: a database without its index"
+check (contains? (error-of (function () (orchestrate-granular db orch 2 (record (list 'register 4))))) "register") "orchestrate-granular: a register that is not a range"
+check (contains? (error-of (function () (orchestrate-granular db (list 1 2) 2 (record (list))))) "instruments") "orchestrate-granular: an orchestra that is not players"
+check (contains? (error-of (function () (orchestrate-granular db orch 2 (record (list 'density (list)))))) "empty range") "orchestrate-granular: an empty range"
+check (contains? (error-of (function () (orchestrate-morphological db orch (record (list 'sr 44100)) (record (list))))) "not a target") "orchestrate-morphological: not a target"
+check (contains? (error-of (function () (target-analyse tx 0 2048 1024))) "rate") "target-analyse: a rate of 0"
+check (contains? (error-of (function () (env-at (list) 1))) "envelope") "env-at: an empty envelope"
+check (== (length (best-connection (orchestrate-granular db (list) 2 (record (list 'density (list 4 4)))))) 0) "orchestrate-granular: no players, no notes"
+check (== (length (best-connection (orchestrate-granular db (orchestra (list 'Tba)) 2 (record (list 'density (list 4 4)))))) 0) "orchestrate-granular: an instrument the database has not got plays nothing (unplayable)"
+var silent (target-analyse (zeros 44100) 44100 (get db 'block) 1024)
+check (== (length (best-connection (orchestrate-morphological db orch silent (record (list))))) 0) "orchestrate-morphological: a silent target, no notes"
+check (== (length (best-connection (orchestrate-morphological db (orchestra (list 'Tba)) tg (record (list))))) 0) "orchestrate-morphological: an orchestra the database has nothing of, no notes"
+check (== (length (best-connection (orchestrate-granular db orch 0 (record (list))))) 0) "orchestrate-granular: no time, no notes"
+check (equal? (db-pitches-at db 'Vc 'ord 'ff) (list 60)) "db-pitches-at: the pitches at a technique and dynamics (C++ on the index)"
+check (equal? (band-weight 60 72 1 0 66) 1.01) "band-weight: the middle of the band with 'weight 1"
+
 ; --- several databases at once ---
 var both (db-merge (list db db))
 check (== (db-size both) 64) "db-merge: the entries of both"

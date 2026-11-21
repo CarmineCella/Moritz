@@ -219,15 +219,6 @@ function spectral-morph (a b t n hop) {
 }
 
 ; --- onsets ---------------------------------------------------------------------------
-; (onset-strength x n hop)   the spectral flux of every frame, as a vector (one value per hop)
-function onset-strength (x n hop) {
-    var mags (stft-magnitudes (stft x n hop))
-    var flux (list 0)
-    for (var k 1) (< k (length mags)) (var k (+ k 1)) {
-        push flux (spectral-flux (getidx mags k) (getidx mags (- k 1)))
-    }
-    return (vec flux)
-}
 ; (onsets x sr n hop threshold)   onset times in seconds, always starting with 0 (so the segments cover the
 ;                          sound from its beginning): then the peaks of the spectral flux (local maxima) above
 ;                          threshold x the flux's maximum, at least n samples apart from the previous onset, each
@@ -410,10 +401,8 @@ function envelope-follow (x n) {
 function envelope-from-values (v hop) (bpf (head v) (map (vec->list (drop v 1)) (function (e) (list hop e))))
 
 ; --- morphology: descriptors of a sound as curves over time (what a morphological orchestration follows) --------
-; (frame-spectra x block hop ncoeff)   the magnitude spectrum of every frame (a Hann window of block samples every
-;                          hop), the first ncoeff bins: the same space as a database's spectrum features, one
-;                          spectrum per frame instead of the average
-function frame-spectra (x block hop ncoeff) (map (stft (vec (zeros (/ block 2)) x) block hop) (function (f) (take (magnitudes f) ncoeff)))
+; frame-spectra, onset-strength, flux-peaks, peak-density, register-curve and loudness-curve are C++ (signals.h,
+; signals/morphology.h: the morphological orchestration of music.h computes with them)
 ; (spectral-similarity a b)   the cosine similarity of two magnitude spectra on a log scale (1: alike; 0: unrelated)
 function spectral-similarity (a b) {
     var la (log (+ 1 a))
@@ -434,33 +423,6 @@ function event-rate (x sr window hop) {
     var rates (map times (function (t) (/ (length (filter kept (function (o) (< (abs (- o t)) (/ window 2))))) window)))
     return (list times (vec rates) (vec kept))
 }
-; (flux-peaks x sr n hop threshold width)   the times (seconds) of the peaks of the spectral flux (the rectified change
-;                          of the magnitude spectrum, n and hop as onset-strength) that stand above threshold times the
-;                          flux's moving median over width frames (odd): every noticeable spectral change, an attack or
-;                          not, counted as the target's activity; threshold 2 keeps the attacks, 1.5 admits the ripples
-;                          of a held sound too; peaks within 50 ms of the previous one count as one; => a vector
-function flux-peaks (x sr n hop threshold width) {
-    var flux (onset-strength x n hop)
-    if (< (length flux) 3) { return (vec) }
-    var level (* threshold (+ (median-filter flux width) (* 0.01 (max flux))))
-    var out (list)
-    var last -1
-    each (filter (vec->list (local-maxima flux)) (function (k) (> (getidx flux k) (getidx level k)))) (function (k) {
-        var t (* k (/ hop sr))
-        if (>= (- t last) 0.05) { push out t
-                                  set last t }
-    })
-    return (vec out)
-}
-; (peak-density times secs window hop)   how many of some times (a vector, seconds) fall a second around every instant:
-;                          the count within window seconds centred on each hop-second step over secs seconds, divided by
-;                          the window; => a vector, one value per step (a density in events a second)
-function peak-density (times secs window hop) {
-    var steps (range (ceil (/ secs hop)))
-    var ts (vec->list times)
-    return (vec (map (vec->list steps) (function (k) { var t (* k hop)
-                                                      return (/ (length (filter ts (function (o) (< (abs (- o t)) (/ window 2))))) window) })))
-}
 ; (polyphony-estimate spectra)   how many voices seem to sound in each frame: the spectral peaks above 15% of the
 ;                          frame's strongest, about three strong partials a voice (1..16); 0 for a frame below -60 dB
 ;                          (spectra of block/2 bins, as frame-spectra gives, a full-scale sine peaking near block/4).
@@ -470,50 +432,6 @@ function polyphony-estimate (spectra) (vec (map spectra (function (m) {
     var peaks (filter (vec->list (local-maxima m)) (function (k) (> (getidx m k) (* 0.15 (max m)))))
     return (max 1 (min 16 (round (/ (length peaks) 3))))               ; about three strong partials per voice
 })))
-; (register-curve spectra sr block)   where the sound sits: for each frame the centroid in MIDI pitch (the powers
-;                          weighting the pitch of every bin above 30 Hz, so an octave is an octave), the spread around
-;                          it in octaves, and the lowest strong partial in MIDI pitch (a tone's fundamental, more or
-;                          less: where the register begins). A frame below -60 dB (its peak under 1/1000 of a
-;                          full-scale sine's, block/4) keeps the values of the frame before (60, 1 and 48 at the
-;                          start), so quiet noise does not make the curves jump; smooth them with median-filter;
-;                          => (list centroids spreads lows)
-function register-curve (spectra sr block) {
-    var n (length (head spectra))
-    var freqs (* (range n) (/ sr block))
-    var keep (> freqs 30)
-    var pitches (* keep (+ 69 (* 12 (log2 (/ (max freqs 30) 440)))))
-    var floor (* 1e-3 (/ block 4))
-    var c 60
-    var s 1
-    var low 48
-    var cs (list)
-    var ss (list)
-    var lows (list)
-    each spectra (function (m) {
-        var mx (max m)
-        if (> mx floor) {
-            var w (* (* m m) keep)
-            if (> (sum w) 1e-12) {
-                set c (/ (dot w pitches) (sum w))
-                set s (/ (sqrt (/ (dot w (* (- pitches c) (- pitches c))) (sum w))) 12)
-            }
-            var strong (filter (vec->list (local-maxima m)) (function (k) (and (> (getidx freqs k) 30) (> (getidx m k) (* 0.15 mx)))))
-            if (> (length strong) 0) { set low (getidx pitches (min-of strong)) }
-        }
-        push cs c
-        push ss s
-        push lows low
-    })
-    return (list (vec cs) (vec ss) (vec lows))
-}
-; (loudness-curve x sr hop)   the level of every hop in dB, roughly as the ear weighs it (the extreme bass and treble
-;                          taken out); => a vector, one value per hop, -100 for silence
-function loudness-curve (x sr hop) {
-    var w (lowpass (highpass x sr 150 0.7) sr (min 8000 (* 0.45 sr)) 0.7)
-    var n (ceil (/ (length w) hop))
-    return (vec (map (vec->list (range n)) (function (k) { var seg (slice w (* k hop) hop)
-                                                          return (if (== (length seg) 0) -100 (max -100 (amp->db (+ 1e-6 (rms seg))))) })))
-}
 ; (coherence-time spectra hop sr threshold)   how long the sound keeps its spectrum from each frame on: the time until
 ;                          the spectral-similarity with the frame falls under threshold (0.75 is reasonable), at most
 ;                          8 s; a sustained sound gives long times, a percussive one short; => a vector
