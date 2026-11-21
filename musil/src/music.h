@@ -478,6 +478,23 @@ inline vptr mus_dataset_install(vlist& a, Interp& i) {
     });
 }
 
+// --- continuations: a note that goes on where a note of the same sound ends becomes one longer note ----------------
+// spans in order of onset, each (at, dur, key): a span whose key is empty never merges; one whose key a span already
+// kept has and which starts within 30 ms of that span's end, and with which it would last no more than hold seconds,
+// lengthens it (to where it ends, never shorter). => the spans kept: (the index of the span that begins it, its length)
+struct span { double at = 0, dur = 0; std::string key; };
+inline std::vector<std::pair<size_t, double>> continuation_plan(const std::vector<span>& spans, double hold) {
+    std::vector<std::pair<size_t, double>> out; std::map<std::string, std::vector<size_t>> by_key;   // key -> the kept spans of that sound
+    for (size_t k = 0; k < spans.size(); k++) {
+        const span& x = spans[k]; long prev = -1;
+        if (!x.key.empty()) { auto it = by_key.find(x.key);
+            if (it != by_key.end()) for (size_t j : it->second) { double at = spans[out[j].first].at, d = out[j].second;
+                if (std::fabs(at + d - x.at) < 0.03 && x.at + x.dur - at <= hold) { prev = (long)j; break; } } }
+        if (prev < 0) { out.push_back({ k, x.dur }); if (!x.key.empty()) by_key[x.key].push_back(out.size() - 1); }
+        else { double at = spans[out[(size_t)prev].first].at; out[(size_t)prev].second = std::max(out[(size_t)prev].second, x.at + x.dur - at); }
+    }
+    return out;
+}
 // --- mimetic orchestration: Orchidea's search (music/orchidea.h) -------------------------------------------------
 // The analysis of the target and the driver of the search are C++ of their own (orchidea::analyse and
 // orchidea::search_segments), which orchidea-analyse and orchidea-search wrap and which programs embedding Musil's
@@ -553,6 +570,7 @@ struct segment_result {
     std::vector<int> players;                                    // the index in the orchestra of each of the solutions' slots
     std::vector<std::string> missing;                            // the target's pitches no sound of the orchestra covers
     int used = 0, held = 0; size_t space = 0;                    // players the chosen solution sounds, players holding on, sounds in the space
+    std::string rest;                                            // why the segment is a rest (no sound passes the filters); "" when searched
 };
 struct search_result {
     std::vector<segment_result> segments; std::vector<int> choices;   // the connection's solution per segment
@@ -572,17 +590,45 @@ inline void check_options(search_options& o) {
     if (o.connection != "closest" && o.connection != "best" && o.connection != "path") throw std::runtime_error("orchidea-search: connection is closest, best or path");
     if (o.octaves.empty()) o.octaves.push_back(0);
 }
+// what a connection holds: per segment, how many players of its chosen solution go on with the sound of the segment
+// before (the same player, instrument and pitch across the boundary, within hold seconds): the notes the connection
+// (connectionOf in Moritz, connection in music.mu) merges into longer ones, by the same rule (continuation_plan).
+// segs the segments' places, r the search's result, choices a solution per segment, entry_of the entry of a database
+// index (null: unknown)
+inline std::vector<int> held_counts(const std::vector<segment>& segs, const search_result& r, const std::vector<int>& choices,
+                                    const std::function<const entry*(int)>& entry_of, double hold) {
+    std::vector<span> spans; std::vector<size_t> seg_of;
+    for (size_t k = 0; k < r.segments.size() && k < segs.size() && k < choices.size(); k++) {
+        const segment_result& s = r.segments[k];
+        if (s.solutions.empty()) continue;
+        const auto& sol = s.solutions[(size_t)std::max(0, std::min(choices[k], (int)s.solutions.size() - 1))].second;
+        for (size_t j = 0; j < sol.size() && j < s.players.size(); j++) {
+            if (sol[j] < 0) continue;
+            const entry* e = entry_of(sol[j]); if (!e) continue;
+            spans.push_back({ segs[k].start, segs[k].length, e->instr + "|" + std::to_string(e->midi) + "|" + std::to_string(s.players[j]) });
+            seg_of.push_back(k);
+        }
+    }
+    std::vector<int> held(r.segments.size(), 0); std::vector<bool> begins(spans.size(), false);
+    for (auto& q : continuation_plan(spans, hold)) begins[q.first] = true;
+    for (size_t k = 0; k < spans.size(); k++) if (!begins[k]) held[seg_of[k]]++;
+    return held;
+}
 // Orchidea's search over the segments of a target, the driver of orchidea-search: segment by segment the genetic
 // search, then the choice for this segment (closest to the previous choice, or the best; the path is found at the end),
 // which the next segment's search remembers (hysteresis, dovetailing); a player whose pitch the target keeps holds its
-// sound on into the next segment ('sustain): it is not searched again. progress(segment, segments, epoch, epochs) runs
-// at every epoch: false stops the search (=> a result marked stopped). Throws std::runtime_error ("segment k: ...")
+// sound on into the next segment ('sustain): it is not searched again; with the path, chosen only at the end, each
+// solution of a segment offers instead its continuation into the next (add_continuations), which the path may take.
+// What the connection holds is counted at the end (held_counts). A segment whose search space is empty (no sound passes
+// the filters) is a rest, with the reason (segment_result::rest), and the search goes on. progress(segment, segments,
+// epoch, epochs) runs at every epoch: false stops the search (=> a result marked stopped). Throws std::runtime_error
 inline search_result search_segments(const std::vector<entry>& db, const std::vector<std::string>& orchestra, std::vector<segment> segments,
                                      search_options o, const std::function<bool(size_t, size_t, int, int)>& progress = {}) {
     check_options(o);
     if (orchestra.empty()) throw std::runtime_error("orchidea-search: an empty orchestra");
     if (segments.empty()) throw std::runtime_error("orchidea-search: no segments");
     params& p = o.p; const std::string& conn = o.connection;
+    const std::vector<segment> places = segments;                 // the segments as given (where the connection's notes are)
     bool widen = o.octaves.size() != 1 || o.octaves[0] != 0;
     if (widen) for (auto& g : segments) if (!g.notes.empty()) {
         std::map<std::string, int> wider;
@@ -590,40 +636,53 @@ inline search_result search_segments(const std::vector<entry>& db, const std::ve
         g.notes = wider;
     }
     genetic ga(p);
-    std::vector<model> models(segments.size());
-    std::vector<int> choices; std::vector<float> prev_forecast; std::vector<double> held_since(orchestra.size(), -1.0); std::vector<int> held_count;
+    std::vector<model> models(segments.size()); std::vector<std::string> rests(segments.size());
+    std::vector<int> choices; std::vector<float> prev_forecast; std::vector<double> held_since(orchestra.size(), -1.0);
     search_result r; bool stop = false;
     for (size_t k = 0; k < segments.size(); k++) {
-        try { make_model(db, orchestra, segments[k], o.styles, o.dynamics, o.others, models[k]); }
-        catch (std::exception& e) { throw std::runtime_error(std::string("segment ") + std::to_string(k + 1) + ": " + e.what()); }
-        int holding = 0;
-        if (o.sustain && k > 0 && conn != "path") holding = hold_on(models[k], models[k - 1], models[k - 1].solutions[(size_t)choices[k - 1]], o.hold, held_since);
-        held_count.push_back(holding);
+        model& m = models[k];
+        try { make_model(db, orchestra, segments[k], o.styles, o.dynamics, o.others, m); }
+        catch (std::exception& e) { rests[k] = e.what(); }
+        if (!rests[k].empty()) {                                     // a rest: no player sounds; the memory starts again after it
+            m.seg = &segments[k]; m.database.clear(); m.instruments.clear(); m.orchestra.clear(); m.slots.clear(); m.fixed.clear();
+            m.missing.clear(); m.curve.clear(); m.solutions.assign(1, solution{});
+            choices.push_back(0);
+            std::fill(held_since.begin(), held_since.end(), -1.0);
+            prev_forecast.clear(); ga.prev_pitches.clear();
+            if (progress && !progress(k, segments.size(), 0, 1)) { r.stopped = true; return r; }
+            continue;
+        }
+        bool after_rest = k > 0 && !rests[k - 1].empty();
+        if (o.sustain && k > 0 && !after_rest && conn != "path") hold_on(m, models[k - 1], models[k - 1].solutions[(size_t)choices[k - 1]], o.hold, held_since);
         size_t seg = k, nsegs = segments.size();
         ga.p.progress = [&, seg, nsegs](int epoch, int epochs) -> bool { if (progress && !progress(seg, nsegs, epoch, epochs)) { stop = true; return false; } return true; };
-        ga.search(models[k]);
+        ga.search(m);
         if (stop) { r.stopped = true; return r; }
-        if (models[k].solutions.empty()) throw std::runtime_error(std::string("segment ") + std::to_string(k + 1) + ": the search found no solution");
-        int choice = conn == "closest" ? closest_choice(models[k], prev_forecast, p) : 0;
+        if (m.solutions.empty()) throw std::runtime_error(std::string("segment ") + std::to_string(k + 1) + ": the search found no solution");
+        if (o.sustain && k > 0 && !after_rest && conn == "path") add_continuations(ga, m, models[k - 1]);
+        int choice = conn == "closest" ? closest_choice(m, prev_forecast, p) : 0;
         choices.push_back(choice);
-        const solution& chosen = models[k].solutions[(size_t)choice];
+        const solution& chosen = m.solutions[(size_t)choice];
         for (size_t j = 0; j < chosen.indices.size(); j++) {                 // when each player's present sound began (for the hold)
-            int slot = models[k].slots[j];
+            int slot = m.slots[j];
             if (chosen.indices[j] == -1) held_since[(size_t)slot] = -1;
-            else if (models[k].fixed[j] < 0 || held_since[(size_t)slot] < 0) held_since[(size_t)slot] = segments[k].start;
+            else if (m.fixed[j] < 0 || held_since[(size_t)slot] < 0) held_since[(size_t)slot] = segments[k].start;
         }
-        ga.remember(models[k], chosen);
-        prev_forecast.assign(models[k].seg->features.size(), 0.0f); additive_forecast(chosen, models[k].database, prev_forecast); standardise(prev_forecast);
+        ga.remember(m, chosen);
+        prev_forecast.assign(m.seg->features.size(), 0.0f); additive_forecast(chosen, m.database, prev_forecast); standardise(prev_forecast);
     }
     if (conn == "path") choices = shortest_path(models, p.movement);
     for (size_t k = 0; k < models.size(); k++) {
         model& m = models[k]; segment_result s;
-        for (auto& sol : m.solutions) { std::vector<int> idx; for (int j : sol.indices) idx.push_back(j == -1 ? -1 : m.database[(size_t)j]->index); s.solutions.push_back({ m.cost_of(sol), std::move(idx) }); }
-        s.curve = m.curve; s.players = m.slots; s.missing = m.missing; s.held = held_count[k]; s.space = m.database.size();
+        for (auto& sol : m.solutions) { std::vector<int> idx; for (int j : sol.indices) idx.push_back(j == -1 ? -1 : m.database[(size_t)j]->index); s.solutions.push_back({ rests[k].empty() ? m.cost_of(sol) : 0.0f, std::move(idx) }); }
+        s.curve = m.curve; s.players = m.slots; s.missing = m.missing; s.space = m.database.size(); s.rest = rests[k];
         const solution& chosen = m.solutions[(size_t)choices[k]]; for (int j : chosen.indices) if (j != -1) s.used++;
         r.segments.push_back(std::move(s));
     }
     r.choices = choices; r.cache_hits = ga.cache_hits; r.cache_misses = ga.cache_misses;
+    std::map<int, const entry*> by_index; for (auto& e : db) by_index.emplace(e.index, &e);
+    std::vector<int> held = held_counts(places, r, choices, [&](int idx) -> const entry* { auto it = by_index.find(idx); return it == by_index.end() ? nullptr : it->second; }, o.hold);
+    for (size_t k = 0; k < r.segments.size(); k++) r.segments[k].held = held[k];
     return r;
 }
 // where an instrument sits, as an azimuth in degrees (left positive): the seating Orchidea's mixes use (violins left,
@@ -678,10 +737,13 @@ inline vptr mus_orchidea_analyse(vlist& a, Interp& i) {
 //   => a record: 'segments a list, one per segment, each a record ('solutions (list (list cost (list index...)) ...),
 //   the best first, an index -1 for a silent player; 'curve the fitness per epoch; 'players the index in the
 //   orchestra of each of the solution's slots: the players that had sounds in the search space; 'missing the target's
-//   pitches no sound of the orchestra covers; 'used how many players the chosen solution sounds; 'held how many hold
-//   their sound on from the segment before ('sustain 1: a player whose pitch the target keeps is not searched again,
-//   for at most 'hold seconds); 'space the sounds in the search space), 'choices the connection's solution per
-//   segment, 'cache the fitness cache's hits and misses; 'patience (150) stops a search that stalls
+//   pitches no sound of the orchestra covers; 'used how many players the chosen solution sounds; 'held how many of
+//   them the connection holds on from the segment before (the same player, instrument and pitch, for at most 'hold
+//   seconds: the notes it merges); 'space the sounds in the search space; 'rest "" or why the segment is a rest, a
+//   solution with every player silent: no sound passed its filters), 'choices the connection's solution per segment,
+//   'cache the fitness cache's hits and misses; 'patience (150) stops a search that stalls. 'sustain 1 holds on: a
+//   player whose pitch the target keeps is not searched again (with 'connection "path", chosen at the end, each
+//   solution of a segment offers its continuation into the next instead, which the path may take)
 inline vptr mus_orchidea_search(vlist& a, Interp& i) {
     vptr entries = a[0]; if (entries->t != Value::LIST) i.bad("orchidea-search: entries must be a list");
     std::vector<orchidea::entry> db; db.reserve(entries->l.size());
@@ -736,7 +798,7 @@ inline vptr mus_orchidea_search(vlist& a, Interp& i) {
         vlist missing; for (auto& q : s.missing) missing.push_back(v_str(q));
         out_segments.push_back(v_list({ v_list({ v_sym("solutions"), v_list(std::move(sols)) }), v_list({ v_sym("curve"), v_arr(std::move(curve)) }), v_list({ v_sym("players"), v_list(std::move(slots)) }),
                                         v_list({ v_sym("missing"), v_list(std::move(missing)) }), v_list({ v_sym("used"), v_num(s.used) }), v_list({ v_sym("held"), v_num(s.held) }),
-                                        v_list({ v_sym("space"), v_num((double)s.space) }) }));
+                                        v_list({ v_sym("space"), v_num((double)s.space) }), v_list({ v_sym("rest"), v_str(s.rest) }) }));
     }
     vlist ch; for (int c : r.choices) ch.push_back(v_num(c));
     return v_list({ v_list({ v_sym("segments"), v_list(std::move(out_segments)) }), v_list({ v_sym("choices"), v_list(std::move(ch)) }),
@@ -746,23 +808,6 @@ inline vptr mus_orchidea_search(vlist& a, Interp& i) {
 //   mixes use (violins left, cellos right, the winds in the middle); 0 for one it does not know
 inline vptr mus_mimetic_seating(vlist& a, Interp& i) { return v_num(orchidea::seat_of(str_of(a[0]))); }
 
-// --- continuations: a note that goes on where a note of the same sound ends becomes one longer note ----------------
-// spans in order of onset, each (at, dur, key): a span whose key is empty never merges; one whose key a span already
-// kept has and which starts within 30 ms of that span's end, and with which it would last no more than hold seconds,
-// lengthens it (to where it ends, never shorter). => the spans kept: (the index of the span that begins it, its length)
-struct span { double at = 0, dur = 0; std::string key; };
-inline std::vector<std::pair<size_t, double>> continuation_plan(const std::vector<span>& spans, double hold) {
-    std::vector<std::pair<size_t, double>> out; std::map<std::string, std::vector<size_t>> by_key;   // key -> the kept spans of that sound
-    for (size_t k = 0; k < spans.size(); k++) {
-        const span& x = spans[k]; long prev = -1;
-        if (!x.key.empty()) { auto it = by_key.find(x.key);
-            if (it != by_key.end()) for (size_t j : it->second) { double at = spans[out[j].first].at, d = out[j].second;
-                if (std::fabs(at + d - x.at) < 0.03 && x.at + x.dur - at <= hold) { prev = (long)j; break; } } }
-        if (prev < 0) { out.push_back({ k, x.dur }); if (!x.key.empty()) by_key[x.key].push_back(out.size() - 1); }
-        else { double at = spans[out[(size_t)prev].first].at; out[(size_t)prev].second = std::max(out[(size_t)prev].second, x.at + x.dur - at); }
-    }
-    return out;
-}
 // (continuation-plan spans hold)   spans a list of (list at dur key), key a string or nil (never merged), in order of
 //   onset: => a list of (list k dur), one per note kept: k the index of the span that begins it, dur its length; a span
 //   that starts within 30 ms of the end of a kept span with the same key, and with which it lasts no more than hold

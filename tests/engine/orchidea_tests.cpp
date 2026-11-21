@@ -157,11 +157,96 @@ TEST(orchidea_obeys_the_orchestra) {
     }
     CHECK(ok);
     o.clear();
-    o.orchestra({Atom("techniques"), Atom("pizz")});          // no such technique in MicroSOL: a message, no notes
+    o.orchestra({Atom("techniques"), Atom("pizz")});          // no such technique in MicroSOL: a rest, said, no notes
     o.send({Atom("run"), Atom("tgt")});
     CHECK(o.notes->got.empty());
-    CHECK(o.r.printedSomething("orchidea: segment 1: empty search space"));
-    CHECK(o.done->got.empty());                                 // a run that failed does not bang done
+    CHECK(o.r.printedSomething("orchidea: segment 1 is a rest: empty search space"));
+    CHECK(o.done->got.size() == 1);                             // the run went on (a rest is a result)
+    o.clear();
+    o.send({Atom("report")});
+    CHECK(o.r.printedSomething("1: at 0.00 s, 6.19 s; a rest: empty search space"));
+    jobsSynchronous = sync;
+}
+
+// a filter that empties one segment makes it a rest (no notes, a message, a line in the report), the other segments
+// are orchestrated: the run is not lost (it failed with "empty search space" before)
+TEST(orchidea_an_empty_segment_is_a_rest) {
+    // six sounds, three segments; the second segment's partials are a pitch nobody plays (its pitch filter empties it)
+    musil::orchidea::search_options so;
+    so.p.pop_size = 20; so.p.max_epochs = 5; so.p.seed = 3;
+    std::vector<musil::orchidea::entry> db;
+    for (int k = 0; k < 6; ++k) {
+        musil::orchidea::entry e;
+        e.index = k; e.instr = k < 3 ? "Ob" : "Vc"; e.pitch = k % 3 == 0 ? "C4" : k % 3 == 1 ? "D4" : "E4"; e.midi = 60 + 2 * (k % 3);
+        e.features.assign(8, 0.f);
+        e.features[(size_t)k] = 1.f;
+        db.push_back(e);
+    }
+    std::vector<musil::orchidea::segment> segs(3);
+    for (size_t k = 0; k < 3; ++k) { segs[k].start = (double)k; segs[k].length = 1; segs[k].features.assign(8, 0.f); segs[k].features[k] = 1.f; }
+    segs[1].notes["G9"] = 0;                                   // no sound at G9: segment 2 is a rest
+    auto r = musil::orchidea::search_segments(db, {"Ob", "Vc"}, segs, so);
+    CHECK(r.segments.size() == 3 && r.choices.size() == 3);
+    CHECK(r.segments[0].rest.empty() && r.segments[2].rest.empty());
+    CHECK(r.segments[1].rest.find("empty search space") != std::string::npos);
+    CHECK(r.segments[1].solutions.size() == 1 && r.segments[1].used == 0);
+    CHECK(r.segments[0].used > 0 && r.segments[2].used > 0);
+    for (auto c : {"closest", "best", "path"}) {               // every connection goes through a rest
+        so.connection = c;
+        auto q = musil::orchidea::search_segments(db, {"Ob", "Vc"}, segs, so);
+        CHECK(q.choices.size() == 3 && q.segments[1].used == 0);
+    }
+}
+
+// a piano phrase on MicroSOL with the pitch filter on (partials 0.3, the segmentation at the flux's onsets): some
+// segments have no partial MicroSOL plays (a rest each, said), the others are orchestrated at the partials' cents
+// (the run failed with "empty search space" before, and the notes kept their cents of 0 from an earlier run)
+TEST(orchidea_microsol_with_the_pitch_filter) {
+    bool sync = jobsSynchronous;
+    jobsSynchronous = true;
+    OrchRig o("", "data/A_minor.wav");
+    o.send({Atom("segmentation"), Atom("flux")});
+    o.send({Atom("threshold"), Atom(.1f)});
+    o.send({Atom("partials"), Atom(.3f)});
+    o.send({Atom("population"), Atom(16.f)});
+    o.send({Atom("epochs"), Atom(3.f)});
+    o.send({Atom("run"), Atom("tgt")});
+    jobsSynchronous = sync;
+    CHECK(o.done->got.size() == 1 && !o.notes->got.empty());
+    CHECK(o.r.printedSomething("is a rest: empty search space"));
+    bool cents = false;
+    for (auto& m : o.notes->got) cents = cents || (m.size() == 10 && m[8].f != 0.f);
+    CHECK(cents);
+}
+
+// with the path connection and sustain (the dynamic defaults of a segmented target), notes are held across the
+// segments and the report says how many (it said 0 holding on, always, before)
+TEST(orchidea_path_and_sustain_hold_notes) {
+    bool sync = jobsSynchronous;
+    jobsSynchronous = true;
+    OrchRig o;
+    o.send({Atom("partials"), Atom(0.f)});
+    o.send({Atom("population"), Atom(30.f)});
+    o.send({Atom("epochs"), Atom(10.f)});
+    o.send({Atom("seed"), Atom(3.f)});
+    o.send({Atom("onsets"), Atom(0.f), Atom(500.f), Atom(1000.f), Atom(1500.f)});
+    o.send({Atom("connection"), Atom("path")});
+    o.send({Atom("sustain"), Atom(1.f)});
+    o.send({Atom("run"), Atom("tgt")});
+    CHECK(o.done->got.size() == 1 && !o.notes->got.empty());
+    bool longer = false;                                        // a note held across a boundary is one longer note
+    for (auto& m : o.notes->got) longer = longer || (m.size() == 10 && m[5].f < 1400.f && m[6].f > 501.f);
+    CHECK(longer);
+    o.clear();
+    o.send({Atom("report")});
+    int held = 0;
+    for (auto& line : o.r.printed) {
+        size_t p = line.find(" holding on");
+        if (p == std::string::npos) continue;
+        size_t q = line.rfind(' ', p - 1);
+        held += std::atoi(line.substr(q + 1, p - q - 1).c_str());
+    }
+    CHECK(held > 0);
     jobsSynchronous = sync;
 }
 

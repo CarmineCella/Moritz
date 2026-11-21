@@ -657,6 +657,7 @@ private:
                 if (!err->empty()) { patch->print("orchidea: " + *err); return false; }
                 result_ = res;
                 out_ = out;
+                sayRests();
                 if (!out.empty() && !mix->empty()) storeMix(*mix, *missing);
                 outputNotes();
                 outputScore();
@@ -804,6 +805,24 @@ private:
             patch->print(c + soundsOf(s.solutions[k].second));
         }
     }
+    // per segment, the notes the connection chosen now holds on from the segment before (Musil's held_counts: the
+    // notes connectionOf merges)
+    std::vector<int> heldNow() const {
+        const auto& entries = result_->spec->db->entries;
+        return orch::held_counts(result_->segments, result_->search, result_->choices, [&](int i) -> const orch::entry* {
+            return i >= 0 && (size_t)i < entries.size() ? &entries[(size_t)i] : nullptr;
+        }, result_->hold);
+    }
+    // the segments that are rests (no sound passed their filters), said after a run
+    void sayRests() {
+        const auto& segs = result_->search.segments;
+        int n = 0;
+        for (size_t k = 0; k < segs.size(); ++k) {
+            if (segs[k].rest.empty()) continue;
+            if (++n <= 3) patch->print("orchidea: segment " + std::to_string(k + 1) + " is a rest: " + segs[k].rest);
+        }
+        if (n > 3) patch->print("orchidea: " + std::to_string(n - 3) + " more segments are rests (report says which)");
+    }
     void report() {
         const auto& r = result_->search;
         char head[200];
@@ -811,13 +830,22 @@ private:
                       r.segments.size() == 1 ? "segment" : "segments", r.cache_misses, r.cache_hits);
         patch->print(head);
         patch->print("orchidea: " + result_->settings);
+        std::vector<int> held = heldNow();                // what the connection chosen now holds (choose changes it)
         for (size_t k = 0; k < r.segments.size() && k < 40; ++k) {
             const auto& s = r.segments[k];
             const auto& g = result_->segments[k];
-            float cost = s.solutions.empty() ? 0.f : s.solutions[(size_t)std::clamp(result_->choices[k], 0, (int)s.solutions.size() - 1)].first;
             char line[200];
+            if (!s.rest.empty()) {
+                std::snprintf(line, sizeof line, "  %d: at %.2f s, %.2f s; a rest: ", (int)k + 1, g.start, g.length);
+                patch->print(line + s.rest);
+                continue;
+            }
+            if (s.solutions.empty()) continue;
+            const auto& sol = s.solutions[(size_t)std::clamp(result_->choices[k], 0, (int)s.solutions.size() - 1)];
+            int used = 0;
+            for (int j : sol.second) used += j >= 0 ? 1 : 0;
             std::snprintf(line, sizeof line, "  %d: at %.2f s, %.2f s; cost %.1f; %d players, %d holding on; %zu sounds in the space", (int)k + 1, g.start,
-                          g.length, cost, s.used, s.held, s.space);
+                          g.length, sol.first, used, k < held.size() ? held[k] : 0, s.space);
             std::string t = line;
             if (!s.missing.empty()) {
                 t += "; not in the orchestra:";

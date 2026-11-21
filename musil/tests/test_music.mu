@@ -571,7 +571,30 @@ check (== (length (get msus 'report)) 4) "orchestrate-mimetic: a report, a recor
 check (all? (map (get msus 'report) (function (g) (and (has? g 'cost) (has? g 'used) (has? g 'held) (has? g 'missing) (has? g 'space)))) identity) "report: cost, players used, holding on, the pitches not in the orchestra, the space"
 check (> (sum (vec (map (get msus 'report) (function (g) (get g 'held))))) 0) "sustain: players whose pitch the target keeps hold their sound on into the next segment (no pitch filter: every pitch kept)"
 var msus0 (orchestrate-mimetic db morch mtx 44100 (put (put mprm 'segmentation (list 0 1 2 3)) 'sustain 0))
-check (== (sum (vec (map (get msus0 'report) (function (g) (get g 'held))))) 0) "sustain 0: nobody holds on"
+; what the report says is held is what the connection holds: the notes it merges into longer ones
+function merged-notes (r) (- (sum (vec (map (vec->list (range (length (get r 'segments)))) (function (k) (length (solution r k (getidx (get r 'choices) k))))))) (length (mimetic-connection r)))
+function held-said (r) (sum (vec (map (get r 'report) (function (g) (get g 'held)))))
+check (and (== (held-said msus) (merged-notes msus)) (== (held-said msus0) (merged-notes msus0))) "report: 'held counts the notes the connection holds on (merges), with sustain or without"
+; sustain with the path connection: the path is chosen at the end, so each solution of a segment offers its
+; continuation into the next (that segment's best with its players holding their sound); what is held is said
+var mps (orchestrate-mimetic db morch mtx 44100 (put (put (put mprm 'segmentation (list 0 1 2 3)) 'connection 'path) 'sustain 1))
+check (and (> (held-said mps) 0) (== (held-said mps) (merged-notes mps))) "sustain with 'path: notes are held, and the report says how many"
+function sounds-by-player (frag) (sort-list (map frag (function (x) (concat (str (get (last x) 'player)) ":" (get (last x) 'source)))))
+function holds-all? (prev next) (all? (map prev (function (q) (contains? next q))) identity)
+check (all? (map (vec->list (range 1 (length (get mps 'segments)))) (function (k)
+         (all? (map (solutions mps (- k 1)) (function (ps) (any? (solutions mps k) (function (ns) (holds-all? (sounds-by-player (last ps)) (sounds-by-player (last ns))))))) identity))) identity)
+      "sustain with 'path: every solution of a segment has its continuation among the next segment's (no pitch filter: every pitch goes on)"
+; two players of the same instrument with their sounds swapped sound the same: one solution
+var mdup (orchestrate-mimetic db (orchestra (list 'Hn 'Hn 'Hn 'Ob 'Ob)) mtx 44100 (put (put mprm 'solutions 20) 'epochs 10))
+function sound-keys (g) (map (get g 'solutions) (function (s) (join (sort-list (map (last s) (function (x) (get (last x) 'source)))) ",")))
+check (all? (map (get mdup 'segments) (function (g) (== (length (unique (sound-keys g))) (length (sound-keys g))))) identity) "orchestrate-mimetic: no two solutions sound the same sounds (swapped players are one solution)"
+; a segment no sound can play (a filter empties it) is a rest; the others are orchestrated
+var mrtg (mimetic-target db mtx 44100 (record (list 'segmentation (list 0 1 2) 'partials 0)))
+put! (getidx (get mrtg 'segments) 1) 'notes (list (list "C9" 0))
+var mrest (orchestrate-mimetic db morch mrtg 44100 mprm)
+check (and (== (length (get mrest 'segments)) 3) (not (equal? (get (getidx (get mrest 'report) 1) 'rest) "")) (equal? (get (head (get mrest 'report)) 'rest) "")) "a segment no sound passes the filters for is a rest, with the reason; the run goes on"
+check (and (== (length (solution mrest 1 0)) 0) (> (length (solution mrest 0 0)) 0) (> (length (solution mrest 2 0)) 0)) "a rest has no notes; the segments around it have theirs"
+check (== (length (mimetic-report mrest)) 3) "mimetic-report: a rest says why"
 check (> (head (get msus 'cache)) 0) "the fitness cache: chromosomes seen again are not evaluated again"
 var mpat (orchestrate-mimetic db morch mtx 44100 (put (put mprm 'epochs 200) 'patience 3))
 check (< (length (head (get mpat 'curves))) 200) "patience: a stalled search stops before its epochs are up"

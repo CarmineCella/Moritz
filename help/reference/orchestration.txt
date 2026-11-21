@@ -46,7 +46,7 @@ msg add instrument [n]: more players of an instrument
 msg remove instrument: every player of an instrument
 msg range instrument lo hi: only the instrument's sounds from lo to hi enter the search (pitch names, G3, or MIDI numbers, both included); range instrument: its whole range again
 msg techniques name ...: only sounds of these techniques (ord, pizz-lv..., as the file names say them) enter the search, for every instrument; techniques alone: every technique
-msg dynamics name ...: only sounds of these dynamics (pp, mf...) enter the search; dynamics alone: every dynamics. A filter that leaves a segment no sound makes the run fail with a message (empty search space)
+msg dynamics name ...: only sounds of these dynamics (pp, mf...) enter the search; dynamics alone: every dynamics. A segment a filter leaves no sound (nor a pitch of its partials) is a rest: orchidea says so, its report line says why, and the other segments are orchestrated
 msg info: prints the database (sounds, instruments, their ranges and techniques) and the players in the Console
 msg stop: cancels the reading
 see: orchidea buffer~
@@ -77,8 +77,10 @@ sample as its sound, so the score object plays it and its roll edits it). With
 an out buffer~, the chosen
 samples are summed into it in stereo, the players seated as in Orchidea's
 mixes, so that the orchestration is heard at once (scaled down when it
-would clip). The ten best solutions of each segment are kept: choose puts
-another in place, show lists them, report says what each segment found.
+would clip). The ten best solutions of each segment are kept, each sounding something
+else (two players of an instrument with their sounds swapped are one
+solution): choose puts another in place, show lists them, report says what
+each segment found. A segment where no sound passes the filters is a rest.
 Right-click the box for Report and Save the solution...
 
 A dynamic segmentation (flux or frames) uses Musil's dynamic settings, those
@@ -118,19 +120,19 @@ msg partials x: the target's partials above this share of the strongest give the
 msg window n: the window the partials are read with, a power of two (32768: large for a low target)
 msg pitches name ...: pitches every segment admits besides its partials'
 msg octaves n ...: the pitch filter widened by octaves (octaves 0 -1: the partials' pitches and the octave below)
-msg connection closest | best | path: how a solution is chosen per segment among the ones kept: closest to the one before in timbre (Orchidea's), the best of each alone, or the sequence with the least melodic movement (closest; path when dynamic). With path, sustain is not used: the path makes its own continuity
+msg connection closest | best | path: how a solution is chosen per segment among the ones kept: closest to the one before in timbre (Orchidea's), the best of each alone, or the sequence with the least melodic movement (closest; path when dynamic). With path and sustain, each solution of a segment offers its continuation into the next (the next segment's best with those players holding their sound), which the path takes where holding costs little
 msg solutions n: the best solutions kept per segment, among which the connection and choose pick (10; 5 when dynamic)
 msg hysteresis x: above 0, each segment leans in timbre towards the solutions chosen before: a timbre memory, an even colour (0)
 msg dovetail x: above 0, a solution that drops the pitches of the one before costs more: pivot notes between chords (0; 0.75 when dynamic)
 msg movement x: for connection path, the cost of a semitone a player moves (1)
-msg sustain 1/0: 1, a player whose pitch the target keeps holds its sound on into the next segment, one longer note, not searched again (1); needs a pitch filter (partials above 0), and is not used with connection path
+msg sustain 1/0: 1, a player whose pitch the target keeps holds its sound on into the next segment, one longer note, not searched again (1); with connection path, which is chosen once every segment is searched, each solution offers instead its continuation into the next segment, among that segment's solutions. Without a pitch filter (partials 0) the target keeps every pitch: a player holds until hold
 msg hold ms: a held note is never longer than this; the player starts it again (no limit; 4000 when dynamic); hold alone: no limit
 msg seating 1/0: 1, the mix seats the players as Orchidea's mixes do (violins left, cellos right); 0, all in the middle (1)
 msg choose segment n: solution n (from 1, best first) of a segment (from 1) in place of the one chosen: the notes and the mix again
 msg notes: the notes again
 msg score: the solution as a score again (score token, out of the last outlet)
 msg show segment: prints the solutions of a segment with their costs and sounds (the chosen one starred)
-msg report: prints a line per segment: its cost, players, players holding on, sounds in the search space, and the target's pitches no instrument of the orchestra has
+msg report: prints a line per segment: its cost, players, players holding on (the notes the chosen connection holds from the segment before: one longer note each), sounds in the search space, and the target's pitches no instrument of the orchestra has; a rest says why
 msg write file: saves the notes as an Orchidea connection file (Musil's score-load reads it)
 msg roll buffer: writes the notes into a buffer~, a frame a note: onset (s), pitch (MIDI, with its cents), player, duration (s); plot in scatter mode draws it as a roll, a colour a player
 msg stop: cancels the search

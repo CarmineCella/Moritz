@@ -14,6 +14,7 @@
 #pragma once
 #include <vector>
 #include <map>
+#include <set>
 #include <string>
 #include <random>
 #include "../rng.h"
@@ -277,12 +278,66 @@ struct genetic {
         std::map<std::vector<int>, solution> uniques; for (auto& s : best_pop) uniques[s.indices] = s;
         for (auto& kv : uniques) m.solutions.push_back(kv.second);
         evaluate_population(m.solutions, target, m.database, values);
-        std::sort(m.solutions.begin(), m.solutions.end()); std::reverse(m.solutions.begin(), m.solutions.end());
+        std::stable_sort(m.solutions.begin(), m.solutions.end(), best_first);
+        drop_same_sounds(m.solutions);
         if (p.max_solutions > 0 && m.solutions.size() > (size_t)p.max_solutions) m.solutions.resize((size_t)p.max_solutions);
         for (auto& s : m.solutions) s.durations.assign(s.indices.size(), m.seg->length);
         return max_fit;
     }
+    // the sounds a solution plays, whoever plays them: two horns with their pitches swapped sound the same
+    static std::vector<int> sounds_of(const solution& s) { std::vector<int> k; for (int j : s.indices) if (j != -1) k.push_back(j); std::sort(k.begin(), k.end()); return k; }
+    // the solutions, ranked, without those that sound what a better one sounds (the same sounds on other players of
+    // the same instrument): each listed solution is another sound
+    static void drop_same_sounds(std::vector<solution>& sols) {
+        std::set<std::vector<int>> seen; std::vector<solution> kept;
+        for (auto& s : sols) if (seen.insert(sounds_of(s)).second) kept.push_back(s);
+        sols.swap(kept);
+    }
 };
+
+// --- holding notes with the 'path connection ---
+// 'sustain holds a player's sound on by fixing it in every chromosome of the next segment's search, which needs the
+// previous segment's choice; the path is chosen only at the end, when every segment has been searched. So with the
+// path each solution of the previous segment offers its continuation instead: this segment's best solution with the
+// players of that solution whose pitch the target keeps holding their very sound (where this segment's space has it),
+// ranked among the solutions by its own fitness. A held note moves by no semitone, so the path takes the
+// continuation where holding costs little; the connection then makes the held note one longer note.
+// prev the previous segment's model (its solutions searched), m this one's (searched): its solutions grow by the
+// continuations that differ from all of them; a continuation that sounds what a solution sounds, on other players,
+// takes that solution's place (the same sounds, the held ones on their players)
+inline void add_continuations(genetic& ga, model& m, const model& prev) {
+    if (m.solutions.empty() || prev.solutions.empty()) return;
+    const solution best = m.solutions[0];
+    std::vector<solution> extra;
+    for (const solution& ps : prev.solutions) {
+        solution v; v.indices = best.indices; bool changed = false;
+        for (size_t k = 0; k < ps.indices.size() && k < prev.slots.size(); k++) {
+            if (ps.indices[k] == -1) continue;
+            const entry* e = prev.database[(size_t)ps.indices[k]];
+            if (!m.seg->notes.empty() && !m.seg->notes.count(e->pitch)) continue;     // the target dropped that pitch
+            for (size_t j = 0; j < m.slots.size(); j++) if (m.slots[j] == prev.slots[k]) {
+                for (size_t i = 0; i < m.database.size(); i++) if (m.database[i] == e) { if (v.indices[j] != (int)i) { v.indices[j] = (int)i; changed = true; } break; }
+            }
+        }
+        if (changed && !v.is_empty()) extra.push_back(std::move(v));
+    }
+    if (extra.empty()) return;
+    std::vector<float> values(m.seg->features.size(), 0.0f);
+    ga.evaluate_population(extra, m.seg->features, m.database, values);
+    std::vector<bool> placed(m.solutions.size(), false);           // a searched solution already given a continuation's players
+    for (auto& v : extra) {
+        bool known = false; std::vector<int> key = genetic::sounds_of(v);
+        for (size_t j = 0; j < m.solutions.size() && !known; j++) {
+            if (m.solutions[j].indices == v.indices) known = true;
+            else if (genetic::sounds_of(m.solutions[j]) == key) {
+                known = true;
+                if (j < placed.size() && !placed[j]) { m.solutions[j].indices = v.indices; placed[j] = true; }
+            }
+        }
+        if (!known) { v.durations.assign(v.indices.size(), m.seg->length); m.solutions.push_back(std::move(v)); }
+    }
+    std::stable_sort(m.solutions.begin(), m.solutions.end(), [](const solution& a, const solution& b) { return a.fitness > b.fitness; });
+}
 
 // --- the movement between two solutions of consecutive segments (the 'path connection) ---
 // each player that sounds in both: the interval it moves by, in semitones (0 when it keeps its pitch); a player

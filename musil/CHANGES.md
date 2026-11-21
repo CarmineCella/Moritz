@@ -23,6 +23,26 @@
   `score-orchestral-order` are builtins; `score-roll` and the plot's roll draw with them, as Moritz's
   roll does.
 
+### Orchestration
+
+- **`'sustain` holds notes with the `'path` connection.** The path is chosen once every segment is
+  searched, so a player cannot be fixed during the search as `'closest` and `'best` do; instead each
+  solution of a segment offers its continuation into the next (that segment's best with the players
+  whose pitch the target keeps holding their very sound), ranked among the solutions by its own cost.
+  A held note moves by no semitone, so the path takes the continuation where holding costs little,
+  and the connection merges the held notes into longer ones. Musil's dynamic settings
+  (`dynamic_orchidea.mu`, Moritz's orchidea for a segmented target) hold notes again.
+- **The report's `'held` says what the connection holds**: the notes it merges into longer ones (the
+  same player, instrument and pitch across a boundary, within `'hold`), for every connection; it said
+  0 with the path.
+- **No two solutions of a segment sound the same**: two players of an instrument with their sounds
+  swapped were two solutions (choosing the second sounded like the first); they are one now, so the
+  solutions kept are that many different sounds.
+- **A segment no sound passes the filters for is a rest** (its partials' pitches, the styles, the
+  dynamics): one silent solution, the reason in its report (`'rest`, which `mimetic-report` prints),
+  and the other segments are orchestrated; the whole run failed with "empty search space" before
+  (MicroSOL with `'partials 0.3`).
+
 ## 0.12
 
 ### The score

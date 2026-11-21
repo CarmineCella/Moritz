@@ -51,4 +51,39 @@
   (connect oi 2 c 0)
   (connect oi 3 c 1)
   (connect oi 1 cm 0)
-  (connect cm 0 c 0))
+  (connect cm 0 c 0)
+  (obj p2 comment "the path connection with sustain: each solution offers its continuation into the next segment, the path takes it, the notes held are merged" (pos 360 80))
+  (obj b3 buffer~ xmix2 (pos 360 20))
+  (obj m2 message "seed 5, population 16, epochs 4, partials 0.05, sparsity 0.001, solutions 10, sustain 1, hold, dovetail 0, connection path, onsets 0 400 800 1200, run xtgt xmix2" (pos 360 110))
+  (obj oi2 orchidea xband (pos 360 140))
+  (obj cm2 message compare (pos 360 175))
+  (obj c2 code 2 (pos 360 210)
+    (script
+      "var got (try got catch e (list))"
+      "if (not (equal? in1 \"compare\")) { push got in1 } {"
+      "    load \"music.mu\""
+      "    var db (db-load \"../../data/microsol/microsol.spectrum.db\")"
+      "    var sr (buffer-rate \"xtgt\")"
+      "    var r (orchestrate-mimetic db (orchestra (list 'Ob 'Ob 'Hn 'Hn 'Vn 'Vn 'Vc 'Vc)) (head (buffer \"xtgt\")) sr (record (list 'segmentation (list 0 0.4 0.8 1.2) 'seed 5 'population 16 'epochs 4 'partials 0.05 'connection 'path 'sustain 1 'quiet 1)))"
+      "    var f (mimetic-connection r)"
+      "    var bad (if (== (length f) (length got)) 0 1)"
+      "    each (zip f got) (function (p) {"
+      "        var n (last (head p))"
+      "        var g (last p)"
+      "        var same (and (equal? (str (getidx g 1)) (get n 'instr)) (equal? (str (getidx g 2)) (get n 'pitch)) (equal? (str (getidx g 3)) (get n 'dyn)) (equal? (str (getidx g 4)) (get n 'tech))"
+      "                      (< (abs (- (getidx g 5) (* 1000 (head (head p))))) 0.05) (< (abs (- (getidx g 6) (* 1000 (getidx (head p) 1)))) 0.05)"
+      "                      (== (getidx g 8) (get n 'cents)) (== (getidx g 9) (get n 'player)) (equal? (filename (str (getidx g 7))) (filename (note-path n))))"
+      "        if (not same) { set bad (+ bad 1) }"
+      "    })"
+      "    var cost (mean (vec (map (zip (get r 'segments) (get r 'choices)) (function (q) (head (getidx (get (head q) 'solutions) (last q)))))))"
+      "    var held (sum (vec (map (get r 'report) (function (g) (get g 'held)))))"
+      "    var merged (- (sum (vec (map (vec->list (range (length (get r 'segments)))) (function (k) (length (solution r k (getidx (get r 'choices) k))))))) (length f))"
+      "    print \"cross orchidea, path and sustain:\" (length got) \"notes,\" (length f) \"in Musil,\" bad \"differ;\" held \"held (\" merged \"merged); distance\" (fixed in2 3) (fixed cost 3)"
+      "    if (or (> bad 0) (== (length f) 0) (== held 0) (!= held merged) (> (abs (- in2 cost)) (* 1e-4 cost))) { print \"FAIL: the orchidea object and Musil's orchestrate-mimetic disagree with the path and sustain\" } { print \"PASS: the orchidea object and Musil's orchestrate-mimetic agree with the path and sustain\" }"
+      "}"))
+  (connect lb 0 m2 0)
+  (connect m2 0 oi2 0)
+  (connect oi2 2 c2 0)
+  (connect oi2 3 c2 1)
+  (connect oi2 1 cm2 0)
+  (connect cm2 0 c2 0))

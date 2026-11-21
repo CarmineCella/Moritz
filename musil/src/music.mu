@@ -2286,18 +2286,26 @@ function note-of-entry (db e) (record (list 'kind 'note 'source (get e 'file) 'd
 ;                    nearest, in timbre, to the one chosen for the segment before, Orchidea's; 'best: the best of
 ;                    each; 'path: the shortest path through the solutions, each costing its distance from its
 ;                    segment's best in percent plus 'movement (1) per semitone a player moves, or per player that
-;                    starts or stops: the least melodic movement, the continuity of lines; chosen at the end, so
-;                    'sustain is off with it), 'sustain (1: a player whose pitch the target keeps holds its very
-;                    sound on into the next segment, fixed in every chromosome, so the search fills only what
-;                    changed and a held chord comes out as long notes; 0: every segment searched afresh),
+;                    starts or stops: the least melodic movement, the continuity of lines; chosen at the end),
+;                    'sustain (1: a player whose pitch the target keeps holds its very sound on into the next
+;                    segment, fixed in every chromosome, so the search fills only what changed and a held chord
+;                    comes out as long notes; with 'path, which is chosen only once every segment is searched, each
+;                    solution of a segment offers instead its continuation into the next, the next segment's best
+;                    with those players holding their sound, ranked by its own cost, which the path takes where
+;                    holding costs little (a held note moves by no semitone); 0: every segment searched afresh),
 ;                    'patience (150: epochs without a better population before a search stops), 'seating (1: the notes
 ;                    placed as Orchidea's mixes seat the orchestra; 0: centred), 'seed, 'quiet (1: no progress)
 ;     => an orchestration result ('mimetic) whose segments hold the ranked solutions as (list cost fragment), each
 ;     fragment the notes at their time in the target (the very sounds chosen, at the target's cents, with 'player
 ;     the player's index); 'choices the connection's solution per segment, (mimetic-connection result) that
 ;     connection as a fragment, (best-connection result) the best of each; 'target the analysed target; 'curves
-;     the fitness per epoch of each segment. connect! places a connection in a score (a note continued across a
-;     boundary on the same player and pitch becomes one longer note)
+;     the fitness per epoch of each segment; 'report a record per segment (mimetic-report prints it), 'held the
+;     notes the chosen connection holds on from the segment before. connect! places a connection in a score (a note
+;     continued across a boundary on the same player and pitch becomes one longer note). A segment where no sound
+;     passes the filters (the pitches of its partials, the styles, the dynamics) is a rest, with no solution but
+;     silence and the reason in its report ('rest); the others are orchestrated
+;     Two solutions that sound the same sounds on other players of the same instrument (two horns with their
+;     pitches swapped) are one: each solution listed sounds something else
 function orchestrate-mimetic (db orch x sr params) {
     var target (if (and (equal? (type x) "list") (has? x 'segments)) x (mimetic-target db x sr params))
     var players (map orch (function (p) (join (get p 'instrs) "|")))
@@ -2328,7 +2336,7 @@ function orchestrate-mimetic (db orch x sr params) {
     })
     var out (orchestration 'mimetic params segs)
     put! out 'report (map (zip (get r 'segments) segs) (function (pair) (record (list 'at (get (last pair) 'at) 'dur (get (last pair) 'dur) 'cost (head (head (get (last pair) 'solutions)))
-                                                                             'used (opt (head pair) 'used 0) 'held (opt (head pair) 'held 0) 'missing (opt (head pair) 'missing (list)) 'space (opt (head pair) 'space 0)))))
+                                                                             'used (opt (head pair) 'used 0) 'held (opt (head pair) 'held 0) 'missing (opt (head pair) 'missing (list)) 'space (opt (head pair) 'space 0) 'rest (opt (head pair) 'rest "")))))
     put! out 'cache (opt r 'cache (list 0 0))
     put! out 'choices (get r 'choices)
     put! out 'hold (opt params 'hold 1e9)
@@ -2336,20 +2344,24 @@ function orchestrate-mimetic (db orch x sr params) {
     put! out 'players players
     put! out 'curves (map (get r 'segments) (function (m) (get m 'curve)))
     if (not (opt params 'quiet 0)) { var costs (map segs (function (g) (fixed (head (head (get g 'solutions))) 3)))
-                                     print "orchestrate-mimetic:" (length segs) (if (== (length segs) 1) "segment," "segments,") (sum (vec (map segs (function (g) (length (get g 'solutions)))))) "solutions in" (fixed (- (clock) t0) 1) "s; the best costs" (join (take costs (min 12 (length costs))) " ") (if (> (length costs) 12) "..." "") }
+                                     print "orchestrate-mimetic:" (length segs) (if (== (length segs) 1) "segment," "segments,") (sum (vec (map segs (function (g) (length (get g 'solutions)))))) "solutions in" (fixed (- (clock) t0) 1) "s; the best costs" (join (take costs (min 12 (length costs))) " ") (if (> (length costs) 12) "..." "")
+                                     var rests (length (filter (get out 'report) (function (g) (not (equal? (get g 'rest) "")))))
+                                     if (> rests 0) { print "orchestrate-mimetic:" rests (if (== rests 1) "segment is a rest:" "segments are rests:") "no sound passes the filters there (mimetic-report says which)" } }
     return out
 }
 ; (mimetic-report result)  a mimetic orchestration's report printed, a line per segment: its time, the cost of its best
 ;                          solution, the players the chosen solution sounds and those holding their sound on from the
-;                          segment before, the sounds in its search space, and the target's pitches no instrument of the
-;                          orchestra covers (where a segment sounds thin, this says why); => the report (result 'report)
+;                          segment before (the notes the connection holds), the sounds in its search space, and the
+;                          target's pitches no instrument of the orchestra covers (where a segment sounds thin, this
+;                          says why); a segment no sound could play is a rest, and says why; => the report (result 'report)
 function mimetic-report (result) {
     var rep (get result 'report)
     var c (opt result 'cache (list 0 0))
     print "mimetic:" (length rep) (if (== (length rep) 1) "segment;" "segments;") "the search evaluated" (last c) "combinations," (head c) "taken from the cache"
     each (zip (take rep (min 40 (length rep))) (vec->list (range (min 40 (length rep))))) (function (p) {
         var g (head p)
-        print "  " (+ 1 (last p)) ": at" (fixed (get g 'at) 2) "s," (fixed (get g 'dur) 2) "s; cost" (fixed (get g 'cost) 1) ";" (get g 'used) "players," (get g 'held) "holding on;" (get g 'space) "sounds in the space" (if (== (length (get g 'missing)) 0) "" (concat "; not in the orchestra: " (join (get g 'missing) " ")))
+        if (not (equal? (opt g 'rest "") "")) { print "  " (+ 1 (last p)) ": at" (fixed (get g 'at) 2) "s," (fixed (get g 'dur) 2) "s; a rest:" (get g 'rest) } {
+        print "  " (+ 1 (last p)) ": at" (fixed (get g 'at) 2) "s," (fixed (get g 'dur) 2) "s; cost" (fixed (get g 'cost) 1) ";" (get g 'used) "players," (get g 'held) "holding on;" (get g 'space) "sounds in the space" (if (== (length (get g 'missing)) 0) "" (concat "; not in the orchestra: " (join (get g 'missing) " "))) }
     })
     if (> (length rep) 40) { print "  ..." (- (length rep) 40) "more" }
     return rep
