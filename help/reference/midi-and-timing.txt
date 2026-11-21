@@ -151,7 +151,7 @@ msg bang: the position now
 see: score metro
 
 @ score
-syntax: score name [file.score] [channels] [@size w h]
+syntax: score name [file.score] [channels] [@size w h] [@view timeline|roll|piano|list]
 A score that plays itself on the patch's transport: notes, sounds, messages
 and other scores placed in time. It is Musil's score (the same C++ structure),
 read from a .score file, written by Musil's score-write or by a code box that
@@ -170,8 +170,8 @@ sound of its own (data sound "path", and sound-pitch, the sample's pitch: what
 orchidea sends) also plays its sample, faster or slower by its pitch against the
 sample's.
 
-The box draws its score as a roll: a staff a row (in orchestral order, a clef
-from its pitches), proportional time, a note a head and a line, its cents when it
+The box draws its score as a roll: a staff a row (in orchestral order, a G, F
+or C clef from its pitches, drawn as a shape), proportional time, a note a head and a line, its cents when it
 is detuned (a microtone, or orchidea's cents: always shown, in the box a small
 number by the head, or a tick above it when the box is too small); scores placed
 inside as faint blocks with their placement; sounds, patches and messages on
@@ -180,16 +180,28 @@ edited in place: click a note (Shift adds, a rectangle selects), drag it (later
 or earlier on the grid, higher or lower on the staff), drag its end to resize it,
 Alt-drag copies, Delete takes the selection out, the arrows nudge it (Shift: a
 bar, an octave), Alt+Up and Alt+Down detune it by a cent (Shift+Alt: ten cents),
-Q quantizes it. In edit mode the corner at its bottom right sizes it. A
-double-click (or its menu's Open Roll..., or open) opens the roll's window:
-staves, a piano roll or a list of the events (each cell edited, the cents too), a
-lane of dynamics, the score as Musil data (edited and kept in sync: nothing
-applied while it does not read), Select / Draw / Erase, snap, quantize, the
-Transform panel (transpose, invert, retrograde, augment, diminish, quantize,
-humanize, thin, density: Musil's score-transpose! and the others, the same
-functions), and the breadcrumb: a double-click on a score placed enters it (all
-its placements follow its edits), Esc goes up. Its Timeline button shows the
-same score as a timeline.
+Q quantizes it. In edit mode the corner at its bottom right sizes it.
+
+A double-click (or its menu's Open, or open) opens the score's window: one window
+for the score, whose views are switched at its top, in place: Timeline, Roll,
+Piano roll and List, with one transport bar (to start, Play, loop, the position),
+one breadcrumb and one status line; switching keeps the selection, the playhead
+and the time shown. It opens in the view used last for the score; the first time
+in the box's @view (Roll when it has none). Play plays the score from the
+playhead, or from the start of what was selected after the playhead was placed,
+locating the transport first, whatever it was doing; pressed again (or Space,
+whatever is selected) it stops. A play started there stops at the score's end
+(unless it loops) and the playhead goes back where it started; a play started by
+the patch (play, a transport object) goes on as the patch's clock, and the window
+shows its score playing only while the transport is inside it.
+
+The Roll view: staves, a piano roll or a list of the events (each cell edited, the
+cents too), a lane of dynamics (its row chosen at its left), the score as Musil
+data (edited and kept in sync: nothing applied while it does not read), Select /
+Draw / Erase, snap, quantize, the Transform panel (transpose, invert, retrograde,
+augment, diminish, quantize, humanize, thin, density: Musil's score-transpose! and
+the others, the same functions); a double-click on a score placed enters it (all
+its placements follow its edits), Esc goes up.
 
 Its rows are tracks. A track's mixer strip (gain, pan as an azimuth, mute and
 solo, kept on the row in the score) applies to the sounds, notes and patches on
@@ -198,16 +210,22 @@ soloed only the soloed ones sound. A sound's fade-in and fade-out are played. A
 message is also sent to the receive objects of its name, so an automation lane
 drives a patch's receive; messages are sent whatever the strip says.
 
-Its menu's Open as Timeline (or the roll's Timeline button) edits it as a
-timeline: tracks with their clips (sound regions drawn as waveforms, notes, scores
-placed inside, patch clips) and automation lanes, an inspector, the transport,
-snap to beats and bars, cut, copy, paste and undo, Render to a WAV file, and Roll
-and List buttons that come back to its roll. File > Open Score... and File > New
-Score open a .score file on its own the same way; a score placed inside another
-opens in its own timeline, with a breadcrumb to where it is.
+The Timeline view: tracks with their clips (sound regions drawn as waveforms,
+notes, scores placed inside, patch clips) and automation lanes, an inspector,
+snap to beats and bars, cut, copy, paste and undo, Render to a WAV file. Each
+track and lane is as high as its lower edge is dragged (a double-click there folds
+it to one line and back; Alt: every one), kept in the score. A click on a track's
+name opens what it plays (a sound clip's sound in the sound editor with the
+clip's region selected, a patch, a score placed) or, for its lanes, the patch that
+receives them with those receive objects selected (a lane's name: its own); a
+sound clip double-clicked opens its region too. File > Open Score... and File >
+New Score open a .score file on its own the same way; a score placed inside
+another opens in its own window, with a breadcrumb to where it is.
 
-The box's roll, the roll's window and the timeline are views of one score: an
-edit in one is in the others at once, with one undo history and one selection.
+A stereo sound on two outlets is balanced by its azimuth (the clip's and its
+track's), as a mono one is panned. The box's roll and its window's views are views
+of one score: an edit in one is in the others at once, with one undo history and
+one selection.
 Every edit plays at once. A score kept in the patch is saved with the patch: its
 edits mark the patch edited, and they are undone in the score's history (Edit >
 Undo with the box clicked last, or the roll's or the timeline's Undo), not as
@@ -215,11 +233,13 @@ steps of the patch; a message to the box (add, clear, read, a transformation, a
 score sent), the code view or the patch's Undo (which puts back the whole patch as
 it was before its step, its scores too) change the score from outside, and its
 history starts again from there. A score with a file of its own is written by
-Save in its roll or timeline (closing one with unsaved edits asks).
+Save in its window (closing it with unsaved edits asks). A score replaced whole
+(clear, read, a score sent) forgets the selection.
 arg name: the score's name
 arg file.score: a file next to the patch to read the score from (none: kept in the patch)
 arg channels: the signal outlets, 1 to 16 (2)
 arg @size w h: the box's size (360 by 150)
+arg @view v: the view its window opens in the first time: timeline, roll, piano or list (roll)
 msg read [file]: reads a .score file (its own again without a name)
 msg write [file]: writes it as a .score file, in the patch's folder or in ~/Documents/Moritz
 msg clear: no events
@@ -237,7 +257,7 @@ msg quantize [grid [strength]]: onsets and ends toward the grid in seconds (the 
 msg humanize [ms [dB [seed]]]: onsets moved at random by up to ms (20), gains by up to dB (1.5)
 msg thin keep [seed]: each event kept with probability keep
 msg density v...: each event kept with the probability the curve v... has at its onset
-msg open: the roll's window
+msg open [view]: its window, in that view (timeline, roll, piano, list; none: the view used last)
 msg play: starts the transport (every score of the patch plays)
 msg stop: stops the transport
 msg locate bar [beat]: moves the transport

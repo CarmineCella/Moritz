@@ -61,9 +61,10 @@ computing, shipped with Moritz and alone.
   `.mu` a program, `.moritz` a patch, `.score` a score (no data-only `.mu`). A score converts to and
   from a coll for its flat parts.
 - **`score` is an active object** (mockup 2): edited inside its box, driven by messages, played on the
-  transport, its events sent from its outlets; double-click opens it as timeline or roll.
+  transport, its events sent from its outlets; double-click opens its window.
 - **Each editor is written once, as a panel** (mockup 8), first in its own window, later in an
-  arranger window or a patch's dock.
+  arranger window or a patch's dock. A score has one window whose views (Timeline, Roll, Piano roll,
+  List) are switched in place, as a DAW's views of one clip, so that they are seen to be one score.
 
 ### Objects and teaching
 
@@ -126,11 +127,18 @@ the editor's command table and undo rule), YIN, `descriptors~` on the shared ana
       (waveform, move, trim, split, gain, fades), notes, sub-score instances (placement, Make Unique, their own
       timeline with a breadcrumb), patch clips shown, automation lanes sent to receives, the inspector, the
       clipboard, snap, files dropped from the Finder, Open/New Score, render to a stereo WAV.
-- [ ] Timeline, opening what a track holds: an automation lane (or a track header with lanes) opens the
-      patch that receives it with its receives highlighted; a sound clip opens the sound editor with the
-      clip's region selected; a click on a track's name opens what it plays or drives.
-- [ ] Timeline, track heights: each track and lane resized on its own by dragging its lower edge (kept
-      with the score), collapsed to one line and expanded, all at once with Alt.
+- [x] Timeline, opening what a track holds: a lane's name (or its header double-clicked) opens the patch that
+      receives it with those receives selected; a sound clip opens the sound editor with the clip's region
+      selected; a click on a track's name opens what it plays (its clip's source) or drives (its lanes' patch).
+- [x] Timeline, track heights: each track and lane resized on its own by dragging its lower edge (kept in the
+      score's rows, so saved), folded to one line and back by a double-click there, all at once with Alt.
+- [x] One window per score (mockup 8, layout A on panels): Timeline, Roll, Piano roll and List switched in place
+      (the selection, the playhead and the time shown kept), one transport bar, breadcrumb and status line; a
+      box opens in the view used last, its `@view` the first time (Roll by default); its menu's Open. Play always
+      plays (from the playhead or the selection made after it, locating a transport already running), toggles
+      to Stop, Space the same whatever is selected; a play started there stops at the score's end.
+- [ ] The score's window, next: a keyboard shortcut for each view; the panels in an arranger window or a patch's
+      dock (layouts B and C of mockup 8); the loop range set in the roll too (today in the timeline's ruler).
 - [ ] Timeline, next: patch clips that run while they play (loaded at their start, stopped at their end,
       their receives following the lanes) and track patches (instrument and insert effects, in a drawer as
       mockup 4); automation that ramps between points; a placed score split or trimmed at its start; clip
@@ -138,13 +146,14 @@ the editor's command table and undo rule), YIN, `descriptors~` on the shared ana
       and sections; render in N channels, binaural and stems; the render of a score bound to a patch running
       the patch too; one clock per top document; long files read from disk; Musil's score-render honouring
       the tracks' strips and fades.
-- [x] The roll (mockup 5), first version: staves per row with proportional time, clefs, microtones, dynamics,
+- [x] The roll (mockup 5), first version: staves per row with proportional time, clefs (G, F and C drawn as
+      shapes, in the box too), microtones, dynamics,
       scores placed inside drawn faint with their placement, the playhead, zoom and scroll, snap; select, move,
       resize, Alt-drag copy, Draw, Erase, Delete, quantize, the arrows; Roll, Piano roll and List views; the text
       view in sync both ways; the breadcrumb into scores placed inside; a lane of dynamics.
 - [x] The active `score` object (mockup 2): its roll drawn in the box, edited in place when locked (each edit an
       undo step of the score: Edit > Undo with the box clicked last), sized by its corner, a double-click opens the
-      roll; messages `add` (a note without its kind or duration), `select`, `transpose`, `invert`, `retrograde`,
+      window; messages `add` (a note without its kind or duration), `select`, `transpose`, `invert`, `retrograde`,
       `augment`, `diminish`, `shift`, `quantize`, `humanize`, `thin`, `density`, `open`.
 - [x] Transform (mockup 5, item 7): transpose, invert, retrograde, augment/diminish, quantize, humanize, thin,
       density, once in Musil's C++ (`music/score_transform.h`), Musil's builtins and the roll's buttons.
@@ -152,9 +161,7 @@ the editor's command table and undo rule), YIN, `descriptors~` on the shared ana
       of one document (one undo history, one selection, an edit in one shown in the others at once, saved alike: a
       score kept in a patch marks the patch edited and is undone in its own history, not the patch's; a .score file
       is saved by Save, closing asks); a score placed inside is the document of that placement, as in the
-      timeline (edited in the roll, its file saved too). The views switch from their toolbars (the timeline's
-      Timeline / Roll / List, the roll's Timeline button); a locked double-click on a score box opens its roll, its
-      menu has Open Roll... and Open as Timeline.
+      timeline (edited in the roll, its file saved too). The views are switched in the score's one window.
 - [x] The cents always shown (orchidea's detuning): by the note in the roll's window and in the box (a tick when
       the box is too small for the number), edited in the List and by Alt+Up and Alt+Down (Shift: ten), each an
       undo step.
@@ -162,7 +169,7 @@ the editor's command table and undo rule), YIN, `descriptors~` on the shared ana
 - [ ] The roll: rows changed by dragging a note to another staff; a lane of any parameter (automation, a
       receive name); the gain ramp and snap to a pitch field among the transformations; copy and paste of notes
       (the timeline's clipboard); instances made unique (the timeline's Make Unique); a cents tick's value on
-      hover; the roll and the timeline as panels of one window (mockup 8) instead of a window each.
+      hover; notation (bars and rhythms from Musil's quantizer: a Notation view once it exists).
 - [ ] The patch's Undo and the score's history: a step of the patch older than a score's edits puts the score
       back as it was then (its history starting again); keep the score's own edits out of the patch's snapshots.
 - [ ] Musil plays the sample a note of a .score file names (data sound), as Moritz's score object does.

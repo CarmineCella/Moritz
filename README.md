@@ -219,46 +219,62 @@ Moritz follows Max's conventions:
   saved back as a 24-bit WAV file with its markers beside it
   (`sound.wav.markers`), and closing it asks when it has edits. Samples
   copied in one editor paste into another (resampled when the rates differ).
+- **A score's window**: double-click a `score` box (or its menu's Open)
+  for its window, whose views, **Timeline**, **Roll**, **Piano roll** and
+  **List**, are switched at its top, in place, as the views of one clip in a
+  DAW: the same score, with one transport bar (to start, Play, loop, the
+  position), one breadcrumb and one status line, one selection and one undo
+  history; switching keeps the selection, the playhead and the time shown. A
+  box opens in the view used last for it, the first time in its `@view`
+  (Roll unless it says `@view timeline`, `piano` or `list`). Play plays the
+  score from the playhead (or from the start of what was selected after it),
+  whatever the transport was doing; pressed again, or Space whatever is
+  selected, it stops; a play started there stops at the score's end, the
+  playhead back where it started. File > Open Score... opens a .score file
+  the same way and File > New Score starts one.
 - **Roll**: a `score` box draws its score as a roll, a staff a row with
-  proportional time (rows in orchestral order, clefs, microtones and
-  detuned notes with their cents, in the box too, scores placed inside as
-  faint blocks with their placement), and is edited in place when the patch
-  is locked: click a note (Shift adds, a rectangle selects), drag it in time
-  and pitch, drag its end, Alt-drag copies, Delete, the arrows nudge, Alt+Up
-  and Alt+Down detune by a cent (Shift+Alt: ten), Q quantizes; Edit > Undo
-  takes the edits back (the box clicked last), and in edit mode its corner
-  sizes it. Double-click it (or its menu's Open Roll...) for the roll's
-  window: staves, a piano roll or a list of the events (each cell edited,
-  the cents too), Select / Draw / Erase on a grid, a lane of dynamics, the
-  Transform panel (transpose, invert, retrograde, augment, diminish,
-  quantize, humanize, thin, density: the same functions as Musil's
+  proportional time (rows in orchestral order, G, F and C clefs drawn as
+  shapes, microtones and detuned notes with their cents, in the box too,
+  scores placed inside as faint blocks with their placement), and is edited
+  in place when the patch is locked: click a note (Shift adds, a rectangle
+  selects), drag it in time and pitch, drag its end, Alt-drag copies,
+  Delete, the arrows nudge, Alt+Up and Alt+Down detune by a cent (Shift+Alt:
+  ten), Q quantizes; Edit > Undo takes the edits back (the box clicked
+  last), and in edit mode its corner sizes it. In its window: staves, a
+  piano roll or a list of the events (each cell edited, the cents too),
+  Select / Draw / Erase on a grid, a lane of dynamics (its row chosen at its
+  left), the Transform panel (transpose, invert, retrograde, augment,
+  diminish, quantize, humanize, thin, density: the same functions as Musil's
   `score-transpose!` and the others), the score as Musil data below, edited
-  and kept in sync, and a breadcrumb: a double-click enters a score placed
-  inside, Esc goes up. `orchidea` sends its solution to a `score` box, which
-  plays each note's sample and shows how far each is detuned.
-- **Timeline**: a `score` box's menu's Open as Timeline (or the roll's
-  Timeline button) shows its score as tracks, as in a DAW; File > Open
-  Score... opens a .score file the same way and File > New Score starts one.
-  The score's rows are tracks, each with a small mixer strip (M and S in its
-  header; gain and pan in the inspector) that the score's playback follows.
-  Clips are its events: sound regions drawn as waveforms (drag them, drag an
-  edge to trim, S splits at the playhead, fades and gain in the inspector),
-  notes, scores placed inside (an instance of the same score at each place:
-  start, length, stretch, transpose, gain; Make Unique copies one;
-  double-click opens it in its own timeline, with a breadcrumb) and patch
-  clips (double-click opens the patch; they run in a later version). A
-  track's automation lanes hold its messages: click to add a point, drag to
-  move it; each point is sent at its time to the receive of its name. Drop
-  sound files from the Finder, or use Add; cut, copy, paste, duplicate and
-  undo every edit; snap to beats or bars; Space plays from the playhead on
-  the transport (a ruler drag sets the loop). Render... writes the score to a
-  stereo WAV file, faster than real time. Its Roll and List buttons open the
-  roll of the same score.
-- **One score, several views**: the box's own roll, the roll's window and
-  the timeline show one document: an edit in one is in the others at once,
-  with one undo history and one selection. A score kept in a patch is saved
-  with the patch (its edits mark the patch edited; they are undone in the
-  score's history, not the patch's); a .score file with Save.
+  and kept in sync; a double-click enters a score placed inside (the
+  breadcrumb shows where), Esc goes up. `orchidea` sends its solution to a
+  `score` box, which plays each note's sample and shows how far each is
+  detuned.
+- **Timeline**: the score as tracks, as in a DAW. The score's rows are
+  tracks, each with a small mixer strip (M and S in its header; gain and pan
+  in the inspector) that the score's playback follows, as high as you drag
+  its lower edge (a double-click there folds it to one line and back; with
+  Alt every track and lane at once; saved with the score). A click on a
+  track's name opens what it plays (the sound editor on its clip's sound,
+  the region selected; its patch; its score) or, for its lanes, the patch
+  that receives them with those receives selected. Clips are its events:
+  sound regions drawn as waveforms (drag them, drag an edge to trim, S
+  splits at the playhead, fades and gain in the inspector; double-click: the
+  sound editor with the clip's region selected), notes, scores placed inside
+  (an instance of the same score at each place: start, length, stretch,
+  transpose, gain; Make Unique copies one; double-click opens it in its own
+  window, with a breadcrumb) and patch clips (double-click opens the patch;
+  they run in a later version). A track's automation lanes hold its
+  messages: click to add a point, drag to move it; each point is sent at its
+  time to the receive of its name. Drop sound files from the Finder, or use
+  Add; cut, copy, paste, duplicate and undo every edit; snap to beats or
+  bars; a ruler drag sets the loop. Render... writes the score to a stereo
+  WAV file, faster than real time.
+- **One score, several views**: the box's own roll and its window's views
+  show one document: an edit in one is in the others at once, with one undo
+  history and one selection. A score kept in a patch is saved with the
+  patch (its edits mark the patch edited; they are undone in the score's
+  history, not the patch's); a .score file with Save.
 - **Zoom**: Cmd+ and Cmd- (or the toolbar) zoom the patch; View > Interface
   makes the whole interface larger or smaller.
 - **Code view**: Cmd+T shows the patch as text beside the drawing. Edit
