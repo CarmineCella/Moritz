@@ -1,0 +1,26 @@
+; echo.moritz - an insert patch (a bus's, in session.score): what comes into the bus through inlet~ 1 and 2, out of
+; outlet~ 1 and 2. A send effect: only the echoes go out (the tracks' own sound goes to the master). Edit it in the
+; arranger's drawer (Track, Insert) while the session plays: the delays, the feedback.
+(patch
+  (obj title comment "insert: an echo on each side (only the echoes go out: a send effect)" (pos 20 12))
+  (obj il inlet~ 1 (pos 20 50))
+  (obj ir inlet~ 2 (pos 260 50))
+  (obj dl tapin~ 2000 (pos 20 100))
+  (obj dr tapin~ 2000 (pos 260 100))
+  (obj tl tapout~ 375 (pos 20 140))
+  (obj tr tapout~ 500 (pos 260 140))
+  (obj fl *~ 0.45 (pos 120 180))
+  (obj fr *~ 0.45 (pos 360 180))
+  (obj cf comment "feedback" (pos 120 210))
+  (obj ol outlet~ 1 (pos 20 240))
+  (obj or outlet~ 2 (pos 260 240))
+  (connect il 0 dl 0)
+  (connect ir 0 dr 0)
+  (connect dl 0 tl 0)
+  (connect dr 0 tr 0)
+  (connect tl 0 fl 0)
+  (connect tr 0 fr 0)
+  (connect fl 0 dl 0)
+  (connect fr 0 dr 0)
+  (connect tl 0 ol 0)
+  (connect tr 0 or 0))

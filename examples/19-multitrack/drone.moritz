@@ -1,0 +1,25 @@
+; drone.moritz - a patch clip (the texture track's, in session.score): loaded with the session, run while its clip plays
+; (from its start to its end, to the sample), its loadbang sent at the clip's start: here it fades the drone in. Its
+; outlet~s go into its track. Its receives follow automation lanes of the same name, as any patch's.
+(patch
+  (obj title comment "patch clip: filtered noise, faded in at the clip's start (loadbang)" (pos 20 12))
+  (obj n noise~ (pos 20 50))
+  (obj f lores~ 500 0.92 (pos 20 90))
+  (obj f2 lores~ 760 0.9 (pos 160 90))
+  (obj lb loadbang (pos 300 50))
+  (obj z message "0, 0.08 3000" (pos 300 90))
+  (obj l line~ (pos 300 130))
+  (obj a *~ (pos 20 170))
+  (obj b *~ (pos 160 170))
+  (obj ol outlet~ 1 (pos 20 220))
+  (obj or outlet~ 2 (pos 160 220))
+  (connect n 0 f 0)
+  (connect n 0 f2 0)
+  (connect lb 0 z 0)
+  (connect z 0 l 0)
+  (connect f 0 a 0)
+  (connect f2 0 b 0)
+  (connect l 0 a 1)
+  (connect l 0 b 1)
+  (connect a 0 ol 0)
+  (connect b 0 or 0))

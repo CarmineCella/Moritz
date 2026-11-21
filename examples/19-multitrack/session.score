@@ -1,0 +1,29 @@
+; session.score - a multitrack session: File > Open Session... (or File > Open Score...: its data says it is a session)
+; opens it in the arranger window. Four stems of one song (data/stems_*.wav, found in the data folder), a synth track
+; whose notes an instrument patch plays (synth.moritz), a texture made by a patch clip (drone.moritz: it runs while the
+; clip plays, its loadbang at the clip's start), and a bus, echo, with an insert patch (echo.moritz) that the chords
+; and the melody send to. The chords' fader follows a strip.gain lane (dB, ramped); the melody fades out (equal power).
+(score "session"
+  (sr 44100) (bpm 100) (meter 4 4) (next-id 20)
+  (data session 1) (data auto-crossfade 1)
+  (row drums (data gain 0.8))
+  (row bass (data gain 0.9) (data az -10))
+  (row chords (data az 40) (data sends (list "echo" 0.35)) (data lanes (list (list "strip.gain" -60 6))))
+  (row melody (data az -40) (data sends (list "echo" 0.5)))
+  (row synth (data instrument "synth.moritz") (data gain 0.5) (data az 20))
+  (row texture (data gain 0.7))
+  (row echo (data bus 1) (data insert "echo.moritz") (data gain 0.8))
+  (sound 4.8 14.4 "stems_drums.wav" (id 1) (from 4.8) (to 19.2) (row drums))
+  (sound 0 19.2 "stems_bass.wav" (id 2) (to 19.2) (row bass))
+  (sound 0 19.2 "stems_chords.wav" (id 3) (to 19.2) (row chords))
+  (sound 9.6 9.6 "stems_melody.wav" (id 4) (from 9.6) (to 19.2) (row melody) (data fade-out 2.4) (data fade-out-shape equal))
+  (note 2.4 0.3 synth 76 mf (id 5))
+  (note 3.0 0.3 synth 79 mf (id 6))
+  (note 3.6 0.6 synth 83 f (id 7))
+  (note 7.2 0.3 synth 76 mf (id 8))
+  (note 7.8 0.3 synth 79 mf (id 9))
+  (note 8.4 0.6 synth 84 f (id 10))
+  (patch 0 9.6 "drone.moritz" (args) (id 11) (row texture))
+  (msg 0 strip.gain -30 (id 12) (row chords))
+  (msg 4.8 strip.gain 0 (id 13) (row chords))
+  (msg 14.4 strip.gain -6 (id 14) (row chords)))

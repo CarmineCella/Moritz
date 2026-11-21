@@ -1,0 +1,32 @@
+; multitrack.moritz - a multitrack session (session.score) played by a score box: the same playback as the arranger's.
+; Each track is a channel: its clips, its patches (an insert, an instrument, patch clips), its strip (fader, pan, mute,
+; solo: the mixer's), its sends to buses (here echo, with its insert patch), then the master. Long files are read from
+; disk while they play; tracks run on several cores when there are enough of them.
+; Try: 1. play; 2. File > Open Session... and choose session.score: the arranger (a browser of files on the left, the
+; timeline, the drawer below with the mixer); play there too, move a fader (heard as it moves: no plan is made again),
+; mute the drums, solo the synth; 3. the drawer's Track tab with the echo bus current (click its name): its insert,
+; edited while it plays; 4. arm a track (R), choose its input, Record: the take goes into session_media/ next to the
+; session and becomes a clip, moved by the device's latency so that it lines up; 5. Render > Stereo Mix and Stems.
+(patch
+  (obj title comment "a multitrack session: tracks, buses, inserts, an instrument, a patch clip, strip lanes" (pos 20 12))
+  (obj sub comment "play; File > Open Session... session.score: the arranger, its mixer in the drawer" (pos 20 34))
+  (obj play message play (pos 20 70))
+  (obj stop message stop (pos 65 70))
+  (obj loc message "locate 1" (pos 110 70))
+  (obj l5 message "locate 5" (pos 180 70))
+  (obj tr transport 100 4 4 (pos 250 70))
+  (obj sc score session session.score 2 @size 640 240 @view timeline (pos 20 105))
+  (obj c1 comment "the score's own file: the arranger edits the same session (save it there, read it again here)" (pos 20 352))
+  (obj rd message read (pos 20 380))
+  (obj inf message info (pos 70 380))
+  (obj pr print session (pos 120 410))
+  (obj out dac~ (pos 20 450))
+  (connect play 0 tr 0)
+  (connect stop 0 tr 0)
+  (connect loc 0 tr 0)
+  (connect l5 0 tr 0)
+  (connect rd 0 sc 0)
+  (connect inf 0 sc 0)
+  (connect sc 4 pr 0)
+  (connect sc 0 out 0)
+  (connect sc 1 out 1))
