@@ -1,0 +1,210 @@
+; grisey-partiels.moritz - Partiels (1975), Gérard Grisey's piece for eighteen musicians, its
+; opening: the spectrum of a trombone's low E (41.2 Hz) orchestrated. Grisey looked at the sonogram
+; of the note and wrote its partials for the ensemble, each partial given to an instrument,
+; approximated to the quarter tone, entering as the partials enter in the trombone's attack (the low
+; ones at once, the high ones later) and held as the sound's resonance; the trombone and the double
+; bass strike the fundamental again at the start of each cycle, a breathing that comes back many
+; times, each time shorter and further from the harmonic spectrum, its end noisier, until the sound
+; is a noise: instrumental synthesis, the founding gesture of spectral music. Here a code box does
+; the same with Musil's tools: the target is the database's trombone nearest E1 brought to E1, or,
+; without one (MicroSOL), a trombone-like E1 made by additive synthesis (the buffer~ ptbn: listen to
+; it); its spectrum is read off a long window (magnitude-spectrum, spectral-peaks), each peak a
+; harmonic; each partial goes to an instrument whose register holds it, its dynamics from its
+; amplitude, its entry from its rank, its cents to the nearest quarter tone (shown in the roll);
+; each cycle stretches the partials a little more (inharmonicity) and gives the highest ones a noisy
+; technique where the database has one. Below, Orchidea's way for comparison: the same target
+; imitated by a search, one chord of samples. MicroSOL has four instruments around C4-G4: every
+; partial is one of its samples resampled, a sketch of the colour; with FullSOL (fullsol, then
+; compose) the partials are played by the instruments Grisey wrote for, recorded at their pitches.
+; Try: 1. play (three cycles, forty seconds); 2. nine: the opening's nine cycles, a minute and a
+; half; 3. double-click the score box: the Timeline, a track an instrument, the trombone's sound at
+; each cycle's start; the Roll: the partials as a chord spread in time, their cents; 4. listen to
+; the target (start), then orchestrate it with orchidea and listen to its chord; 5. double-click the
+; code box: the stretch (0.012 a cycle), the entries (0.06 a rank), the registers of the
+; instruments, Cmd-S, then compose.
+(patch
+  (obj title comment "Grisey, Partiels: a trombone's E1 analysed and its partials orchestrated, cycle after cycle" (pos 20 12))
+  (obj sub comment "compose (three cycles, or the opening's nine), then play; the Timeline shows each instrument, the Roll the partials and their cents" (pos 20 34))
+  (obj dmic message microsol (pos 20 62))
+  (obj dful message fullsol (pos 100 62))
+  (obj cds comment "the samples: MicroSOL (comes with Moritz: Ob Hn Vn Vc, C4-G4) or FullSOL (registered in Extras > Datasets...); then compose again" (pos 170 63))
+  (obj n3 message 3 (pos 150 97))
+  (obj n9 message 9 (pos 185 97))
+  (obj lb loadbang (pos 230 97))
+  (obj cctl comment "cycles: three (a preview, forty seconds) or the opening's nine (a minute and a half)" (pos 320 98))
+  (obj c code 2 1 (pos 20 132)
+    (script
+      "; Partiels (Grisey, 1975), its opening: the spectrum of a trombone's low E (41.2 Hz) orchestrated. The trombone's"
+      "; sound is analysed, its partials (their frequencies and amplitudes) given to the instruments, each partial to the"
+      "; one whose register holds it, entering as in the sound's attack (the low partials first, the high ones later),"
+      "; written to the nearest quarter tone (the cents shown in the roll); the cycle comes again and again, shorter each"
+      "; time and each time further from the harmonic spectrum (the partials stretched), its end noisier. The trombone (the"
+      "; target, in the buffer~ ptbn) and the double bass strike every cycle. in1 how many cycles (3: a preview), in2 the dataset"
+      "load \"music.mu\""
+      "var name (if (equal? in2 nil) \"microsol\" in2)     ; MicroSOL comes with Moritz: Ob Hn Vn Vc, C4-G4 (a sketch)"
+      "var db (db-load name)                             ; fullsol: FullSOL where you registered it (Extras > Datasets...)"
+      "var cycles (if (equal? in1 nil) 3 in1)"
+      "seed 7"
+      "var sr 44100"
+      "var f0 41.2                                       ; E1"
+      "var here (db-instruments-available db)"
+      "function have? (i) (contains? here (str i))"
+      ""
+      "; --- 1. the target: the database's trombone nearest E1, brought to E1; without one, a trombone-like E1 made by additive"
+      ";        synthesis (the partials in a brass envelope: strongest around 500 Hz, the high ones slower to speak) ----------"
+      "var secs 3"
+      "var n (* secs sr)"
+      "var t (/ (range n) sr)"
+      "function synth-trombone () {"
+      "    var y (zeros n)"
+      "    each (range 1 48) (function (k) {"
+      "        var f (* k f0)"
+      "        var a (* (exp (* -0.5 (pow (/ (log2 (/ f 400)) 1.4) 2))) (if (== k 1) 0.6 1))"
+      "        var tau (+ 0.01 (* 0.004 k))"
+      "        var env (* (- 1 (exp (* -1 (/ t tau)))) (exp (* -1 (/ t (/ 4 (+ 1 (* 0.04 k)))))))"
+      "        set y (+ y (* a env (sine sr f secs)))"
+      "    })"
+      "    return (* 0.8 (normalize-peak y))"
+      "}"
+      "var tbn (if (have? 'Tbn) (db-query db 'Tbn nil nil 'ord) (list))"
+      "var target nil"
+      "if (> (length tbn) 0) {"
+      "    var e (min-by tbn (function (e) (abs (- (get e 'midi) 28))))"
+      "    var w (load-sound (db-path db e))"
+      "    var x (head (getidx w 1))"
+      "    set target (take (resample (head (to-rate (list x) (head w) sr)) (pow 2 (/ (- 28 (get e 'midi)) 12))) n)"
+      "    print \"the target: the database's trombone\" (midi->pitch (get e 'midi)) \"brought to E1\""
+      "} {"
+      "    set target (synth-trombone)"
+      "    print \"the target: no trombone in the database, a trombone-like E1 made by additive synthesis\""
+      "}"
+      "set-buffer! \"ptbn\" target sr"
+      ""
+      "; --- 2. its spectrum: the partials read off a long window of the held sound (spectral-peaks), each a harmonic k ------"
+      "var block 32768"
+      "var seg (* (take (drop target (floor (* 0.4 sr))) block) (hann block))"
+      "var peaks (spectral-peaks (magnitude-spectrum seg) sr block 80)"
+      "var partials (list)"
+      "each (range (length (head peaks))) (function (j) {"
+      "    var f (getidx (head peaks) j)"
+      "    var k (round (/ f f0))"
+      "    if (and (>= k 1) (<= k 40) (< (abs (- f (* k f0))) (* 0.25 f0))) { push partials (list k f (getidx (last peaks) j)) }"
+      "})"
+      "set partials (sort-by (unique partials) head)"
+      "var top (max-of (map partials last))"
+      "set partials (sort-by (take (reverse (sort-by partials last)) 16) head)      ; the sixteen strongest: sixteen players"
+      "print \"the trombone and the double bass play the fundamental; the ensemble the sixteen strongest partials\""
+      "print (length partials) \"partials:\" (join (map partials (function (p) (concat (str (head p)) \":\" (fixed (* 20 (log10 (/ (last p) top))) 0) \"dB\"))) \" \")"
+      ""
+      "; --- 3. the orchestration: each partial to the instrument whose register holds it (the low ones to the brass and the"
+      ";        low strings, the middle to clarinets, horns and violas, the high to flutes, oboes and violins) ---------------"
+      "var bands (list (list (list 'Cb 'Tbn 'BTb 'Vc 'Bn) 28 55) (list (list 'Hn 'Vc 'Va 'ClBb 'Tbn 'Bn) 55 72)"
+      "                (list (list 'Fl 'Ob 'ClBb 'Vn 'Va 'TpC 'Hn) 72 88) (list (list 'Fl 'Picc 'Vn 'Ob) 88 120))"
+      "function players-for (m) {"
+      "    var b (find-first bands (function (b) (and (>= m (getidx b 1)) (< m (last b)))))"
+      "    var got (filter (if (equal? b nil) (list 'Vn) (head b)) have?)"
+      "    return (if (== (length got) 0) here got)"
+      "}"
+      "function quarter (c) (* 50 (round (/ c 50)))        ; the cents to the nearest quarter tone, as Grisey wrote them"
+      "var s (score \"partiels\" sr)"
+      "var at 0"
+      "var noisy (filter (list 'trem 'flatt 'sul-pont 'col-legno-tratt) (function (tq) (any? here (function (i) (contains? (db-techniques-of db i) (str tq))))))"
+      "each (range cycles) (function (c) {"
+      "    var len (max 5 (- 14 c))                                ; each cycle shorter"
+      "    var stretch (* 0.012 c)                                 ; each further from the harmonic spectrum"
+      "    ; the attack: the trombone (the target itself) and the double bass, fortissimo"
+      "    score-add! s (record (list 'kind 'buffer 'source \"ptbn\" 'at at 'dur (min secs len) 'gain 0.9))"
+      "    event-at s at 2 (note db (if (have? 'Cb) 'Cb 'Vc) \"E1\" 'ff 'ord) 0 0"
+      "    ; the resonance: the partials, the low ones at once, the high ones later, each held to near the cycle's end"
+      "    var used (list)"
+      "    each partials (function (p) {"
+      "        var k (head p)"
+      "        var hz (* f0 (pow k (+ 1 stretch)))"
+      "        var m (hz->midi hz)"
+      "        var pitch (round m)"
+      "        var cents (quarter (* 100 (- m pitch)))"
+      "        var cands (players-for pitch)"
+      "        var free (filter cands (function (i) (not (contains? used (str i)))))"
+      "        var instr (if (> (length free) 0) (head free) (getidx cands (mod k (length cands))))"
+      "        push used (str instr)"
+      "        if (== c 0) { print (concat \"  partial \" (str k) \": \" (midi->pitch pitch) (if (== cents 0) \"\" (concat \" \" (if (> cents 0) \"+\" \"\") (str cents) \" cents\")) \" on \" (str instr)) }"
+      "        var level (max 0.05 (min 1 (+ 1 (/ (* 20 (log10 (/ (last p) top))) 30))))"
+      "        var entry (+ at 0.1 (* 0.06 (pow k 1.1)))"
+      "        var end (- (+ at len) (* 0.5 (rand)))"
+      "        var tech (if (and (> c 0) (> (length noisy) 0) (> k (- 30 (* 4 c)))) (getidx noisy (mod k (length noisy))) 'ord)"
+      "        var e (event-at s entry (max 0.3 (- end entry)) (note-cents! (note db instr pitch (level->dynamics level) tech) cents) (* 30 (- (* 2 (rand)) 1)) 0)"
+      "        event-gain! e (* 0.5 (level->gain level))"
+      "    })"
+      "    print \"cycle\" (+ c 1) \": at\" (fixed at 1) \"s,\" (fixed len 1) \"s long, the partials stretched by\" (fixed (* 100 stretch) 1) \"%\""
+      "    set at (+ at len)"
+      "})"
+      "out 1 s"))
+  (obj cuc comment "the piece in Musil: the target, spectral-peaks, a partial an instrument, cycles stretched" (pos 110 133))
+  (obj sc score partiels 2 @size 700 240 @view timeline (pos 20 172))
+  (obj tr transport 60 4 4 (pos 750 172))
+  (obj sp message play (pos 750 207))
+  (obj ss message stop (pos 795 207))
+  (obj cpl comment "play / stop" (pos 845 208))
+  (obj ctg comment "the target: the trombone's E1" (pos 750 267))
+  (obj btg buffer~ ptbn (pos 750 289))
+  (obj ltg message start (pos 850 289))
+  (obj lts message stop (pos 900 289))
+  (obj ptg play~ ptbn (pos 850 319))
+  (obj co1 comment "Orchidea's way: the same target imitated by a search, all at once (orchidea," (pos 470 467))
+  (obj co2 comment "static): one chord of samples whose summed spectrum is nearest the trombone's," (pos 470 487))
+  (obj co3 comment "where Grisey built his from the partials one by one" (pos 470 507))
+  (obj band orchestra pband microsol (pos 470 532))
+  (obj pl message "players Ob 2 Hn 2 Vn 2 Vc 2" (pos 650 532))
+  (obj rdf message "read fullsol" (pos 870 532))
+  (obj orun message "partials 0, population 300, epochs 300, run ptbn pmix" (pos 470 567))
+  (obj corun comment "orchestrate (FullSOL: partials 0.3)" (pos 820 568))
+  (obj orc orchidea pband (pos 470 597))
+  (obj bmix buffer~ pmix (pos 570 597))
+  (obj lmx message start (pos 670 597))
+  (obj lms message stop (pos 720 597))
+  (obj clm comment "listen to its chord" (pos 770 598))
+  (obj pmx play~ pmix 2 (pos 670 627))
+  (obj so score partiels-orchidea 2 @size 360 110 (pos 470 662))
+  (obj cso comment "its chord as a score (seen here; heard in the mix)" (pos 470 777))
+  (obj sum +~ (pos 20 437))
+  (obj chall comment "the two channels summed, the volume ramped, then a hall (reverb~)" (pos 70 438))
+  (obj half *~ 0.3 (pos 20 467))
+  (obj lbv loadbang (pos 140 482))
+  (obj vol message "0.8 300" (pos 140 512))
+  (obj mute message "0 300" (pos 210 512))
+  (obj cvol comment "volume up, down" (pos 270 513))
+  (obj ramp line~ (pos 140 542))
+  (obj vca *~ (pos 20 577))
+  (obj rv reverb~ 0.3 2.8 (pos 20 607))
+  (obj dac dac~ (pos 20 642))
+  (connect dmic 0 c 1)
+  (connect dful 0 c 1)
+  (connect n3 0 c 0)
+  (connect n9 0 c 0)
+  (connect lb 0 n3 0)
+  (connect c 0 sc 0)
+  (connect sp 0 sc 0)
+  (connect ss 0 sc 0)
+  (connect ltg 0 ptg 0)
+  (connect lts 0 ptg 0)
+  (connect lb 0 pl 0)
+  (connect pl 0 band 0)
+  (connect rdf 0 band 0)
+  (connect orun 0 orc 0)
+  (connect lmx 0 pmx 0)
+  (connect lms 0 pmx 0)
+  (connect orc 4 so 0)
+  (connect sc 0 sum 0)
+  (connect sc 1 sum 1)
+  (connect sum 0 half 0)
+  (connect half 0 vca 0)
+  (connect lbv 0 vol 0)
+  (connect vol 0 ramp 0)
+  (connect mute 0 ramp 0)
+  (connect ramp 0 vca 1)
+  (connect vca 0 rv 0)
+  (connect rv 0 dac 0)
+  (connect rv 1 dac 1)
+  (connect ptg 0 sum 0)
+  (connect pmx 0 sum 0)
+  (connect pmx 1 sum 1))

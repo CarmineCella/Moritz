@@ -1,0 +1,157 @@
+; grisey-modulations.moritz - Modulations (1976-77), Gérard Grisey's piece for 33 musicians, with
+; the orchestral granulator, after Musil's modulations.mu and the analyses of Baillet and Leibowitz.
+; The piece is a slow drift whose only landmarks are the harmonic spectrum of E (41.2 Hz, the
+; trombone's low E, Partiels' too) and periodic durations; its sections last as long as the
+; intervals of that spectrum say (A 225 s, B 131.5, C 167, D 110, 82 and 65, E 210.6), and each is
+; one process: A opens with compact chords struck together, fortissimo, moving from inharmonicity to
+; harmonicity while the players come apart over a widening range, the rhythm goes from aperiodic to
+; periodic and the dynamics fall to ppp; two chord-objects alternate, an F series under its
+; inversion and their ring modulation; the orchestration goes from noisy, struck and synchronised to
+; quiet, harmonic and free. B, C and E repeat the inharmonic-to-harmonic motion with rising
+; dynamics; D1 to D3 go the other way. Each section is one granulator (method harmonic on E1, its
+; harmonicity, chords, register, density, durations, styles, dynamics and coupling as envelopes),
+; the players paired by family so that they can strike together. 0.05 is a preview (under a minute:
+; what the patch makes when it opens), 0.2 Musil's three minutes and a quarter, 1 the piece's
+; sixteen and a half. MicroSOL has four instruments around C4-G4: a sketch; with FullSOL (fullsol,
+; then compose) the styles are Grisey's.
+; Try: 1. play the preview; 2. 0.2: the sections long enough to hear each process; 3. double-click
+; the score box: the Timeline, the sections one after another; the Roll, the chords struck together
+; at the start of A coming apart; 4. double-click the code box: a section's envelopes, Cmd-S,
+; compose again.
+(patch
+  (obj title comment "Grisey, Modulations: sections from inharmonic to harmonic and back, struck together, then apart" (pos 20 12))
+  (obj sub comment "compose (a preview at 0.05, Musil's at 0.2, the piece at 1), then play" (pos 20 34))
+  (obj dmic message microsol (pos 20 62))
+  (obj dful message fullsol (pos 100 62))
+  (obj cds comment "the samples: MicroSOL (comes with Moritz: Ob Hn Vn Vc, C4-G4) or FullSOL (registered in Extras > Datasets...); then compose again" (pos 170 63))
+  (obj k05 message 0.05 (pos 150 97))
+  (obj k2 message 0.2 (pos 200 97))
+  (obj k1 message 1 (pos 245 97))
+  (obj lb loadbang (pos 295 97))
+  (obj cctl comment "the timescale" (pos 385 98))
+  (obj c code 2 1 (pos 20 132)
+    (script
+      "; Modulations (Grisey, 1976-77, for 33 musicians) with the orchestral granulator, from Musil's modulations.mu, after"
+      "; the analyses of Baillet and Leibowitz: a slow drift whose only landmarks are the harmonic spectrum of E (41.2 Hz,"
+      "; the trombone's low E) and periodic durations; sections whose lengths follow the intervals of that spectrum, each one"
+      "; process from inharmonic to harmonic (or back), from noisy, struck together and loud to quiet, harmonic and free."
+      "; in1 the timescale (0.05: a preview of under a minute; 0.2: Musil's, three minutes and a quarter; 1: the piece,"
+      "; sixteen and a half minutes), in2 the dataset"
+      "load \"music.mu\""
+      "var name (if (equal? in2 nil) \"microsol\" in2)     ; MicroSOL comes with Moritz: Ob Hn Vn Vc, C4-G4 (a sketch)"
+      "var db (db-load name)                             ; fullsol: FullSOL where you registered it (Extras > Datasets...)"
+      "var k (if (equal? in1 nil) 0.05 in1)"
+      "seed 7"
+      "var sr 44100"
+      ""
+      "; --- the orchestra: what the database has, the strings doubled; groups that can be struck together ---------------"
+      "var here (db-instruments-available db)"
+      "function have (L) (filter L (function (i) (contains? here (str i))))"
+      "var winds (have (list 'Picc 'Fl 'Ob 'EH 'ClBb 'BCl 'Bn))"
+      "var brass (have (list 'Hn 'TpC 'Tbn 'BTb))"
+      "var strings (have (list 'Vn 'Va 'Vc 'Cb))"
+      "var spec (list)"
+      "if (> (length winds) 0) { push spec winds }                      ; each family a paired group: it can strike its chord together"
+      "if (> (length brass) 0) { push spec brass }"
+      "each strings (function (i) (push spec (list i i)))               ; the strings in pairs"
+      "var orch (orchestra spec)"
+      "print (orchestra-size orch) \"players in\" (length spec) \"groups:\" (orchestra-instruments orch)"
+      "var styles (sort-list (unique (reduce (map here (function (i) (db-techniques-of db i))) concat-list (list))))"
+      "var noisy (filter styles (function (t) (any? (list \"trem\" \"flatt\" \"pizz\" \"col\" \"overpressure\" \"bartok\" \"harm\" \"sul\" \"aeolian\" \"slap\" \"key\") (function (w) (contains? (str t) w)))))"
+      "if (== (length noisy) 0) { set noisy styles }"
+      "print \"styles:\" (length styles) \"; noisy ones used for the inharmonic states:\" (take noisy (min 8 (length noisy)))"
+      ""
+      "; --- the spectra: E (41.2 Hz) as the reference; chord A (F series and its inversion), chord B (ring-modulated) ------"
+      "var e-spectrum (harmonic-series \"E1\" 16)                       ; partials 1..16 of E1"
+      "var e-high (drop e-spectrum 4)                                 ; partials 5..16, the audible chord"
+      "var f-series (harmonic-series \"F1\" 8)"
+      "var chord-a (unique (sort-list (concat-list (take f-series 6) (map (take f-series 6) (function (p) (- (* 2 (pitch->number \"F4\")) p))))))   ; F series below, inverted above"
+      "function ring (chord) (unique (sort-list (filter (map (zip (take chord (- (length chord) 1)) (tail chord)) (function (p) (round (hz->midi (+ (midi->hz (head p)) (midi->hz (last p))))))) (function (m) (and (> m 28) (< m 100))))))"
+      "var chord-b (ring chord-a)"
+      "print \"chord A:\" (map chord-a midi->pitch)"
+      "print \"chord B (ring modulated):\" (map chord-b midi->pitch)"
+      ""
+      "var s (score \"modulations\" sr)"
+      "var t 0"
+      "; a section: an inharmonic-to-harmonic (or the reverse) process on the E spectrum, with its own dynamics (levels"
+      "; 0..1, ppp to fff, interpolated) and density curves; `from` and `to` are harmonicity values, the chords alternate A and B while the harmonicity is low"
+      "; `hold` is the fraction of the section during which the coupling and the register stay as they start: the"
+      "; opening of A is compact chords struck together, and the players only come apart, over a widening range, as the"
+      "; harmony nears the E spectrum"
+      "function section (name secs h-from h-to dyn-from dyn-to dens-from dens-to dur-from dur-to sync-from sync-to reg-from reg-to hold) {"
+      "    var th (* hold secs)"
+      "    var params (record (list"
+      "        'method    'harmonic"
+      "        'fundamental \"E1\""
+      "        'harmonicity (env (list 0 h-from secs h-to))"
+      "        'chords    (env (list 0 (list chord-a chord-b) (* 0.5 secs) (list chord-a chord-b e-high) secs (list e-high)))"
+      "        'register  (env (list 0 reg-from th reg-from secs reg-to))"
+      "        'density   (env (list 0 dens-from secs dens-to))"
+      "        'duration  (env (list 0 dur-from secs dur-to))"
+      "        'styles    (env (list 0 (if (< h-from h-to) noisy (list 'ord)) secs (if (< h-from h-to) (list 'ord) noisy)))"
+      "        'dynamics  (env (list 0 dyn-from secs dyn-to))"
+      "        'coupling  (env (list 0 sync-from th sync-from secs sync-to))"
+      "        'spread    0.02                                                ; a chord struck together, scattered by up to 20 ms"
+      "        'inertia   0.7                                                 ; a player keeps its technique most of the time"
+      "        'continue  1                                                   ; one orchestra for the piece: the sections share the people"
+      "        'start     t))"
+      "    var r (orchestrate-granular db orch secs params)"
+      "    connect! s t r (list 0)"
+      "    print name \":\" (fixed secs 1) \"s,\" (length (best-connection r)) \"events; harmonicity\" h-from \"->\" h-to \", coupling\" sync-from \"->\" sync-to"
+      "    set t (+ t secs)"
+      "}"
+      "; A: the opening: compact chords (octaves 3-5, the chord-objects A and B) struck by everyone together, ffff, aperiodic;"
+      ";    for the first six tenths of the section nothing but the harmonicity and the dynamics move (inharmonic ->"
+      ";    harmonic, ffff -> ppp); then, as the harmony nears the E spectrum, the players come apart (coupling 1 -> 0),"
+      ";    the range opens to the spectrum's five octaves, the rhythm becomes periodic and the chords lengthen"
+      "section \"A\" (* 225 k) 0 1 1 0 (list 1 6) (list 2 2) (list 0.1 0.4) (list 2 4) 1 0 (list 3 5) (list 1 6) 0.6"
+      "; B: inharmonic -> harmonic again, quietly rising"
+      "section \"B\" (* 131.5 k) 0.1 0.9 0.15 0.6 (list 2 5) (list 3 3) (list 0.2 0.6) (list 1 2) 0.6 0.2 (list 2 6) (list 3 5) 0"
+      "; C: the long one, inharmonic -> harmonic, growing to fff"
+      "section \"C\" (* 167 k) 0 1 0.3 1 (list 1 3) (list 4 4) (list 0.3 1) (list 1.5 3) 0.3 0.8 (list 1 7) (list 2 6) 0"
+      "; D1, D2, D3: harmonic -> inharmonic, each shorter than the last, the dynamics easing"
+      "section \"D1\" (* 110 k) 1 0.3 0.85 0.6 (list 3 3) (list 2 6) (list 1 2) (list 0.2 0.5) 0.8 0.3 (list 2 6) (list 1 7) 0"
+      "section \"D2\" (* 82 k) 0.8 0.2 0.6 0.3 (list 3 3) (list 3 8) (list 0.8 1.5) (list 0.1 0.4) 0.5 0.2 (list 2 6) (list 1 7) 0"
+      "section \"D3\" (* 65 k) 0.6 0 0.3 0.15 (list 4 4) (list 4 10) (list 0.5 1) (list 0.05 0.2) 0.3 0 (list 2 6) (list 1 7) 0"
+      "; E: from an undefined harmony to the inharmonic end, ppp rising to fff, struck together again at the close"
+      "section \"E\" (* 210.6 k) 0.5 0 0 1 (list 2 4) (list 6 6) (list 1 3) (list 0.3 0.8) 0 1 (list 3 5) (list 1 7) 0"
+      "validation-print (score-validate s orch)"
+      "print (length (score-events s)) \"notes,\" (fixed (score-duration s) 0) \"s\""
+      "out 1 s"))
+  (obj cuc comment "the piece in Musil: seven granular sections on the spectrum of E1, continue" (pos 110 133))
+  (obj sc score modulations 2 @size 700 240 @view timeline (pos 20 172))
+  (obj tr transport 60 4 4 (pos 750 172))
+  (obj sp message play (pos 750 207))
+  (obj ss message stop (pos 795 207))
+  (obj cpl comment "play / stop" (pos 845 208))
+  (obj sum +~ (pos 20 437))
+  (obj chall comment "the two channels summed, the volume ramped, then a hall (reverb~)" (pos 70 438))
+  (obj half *~ 0.45 (pos 20 467))
+  (obj lbv loadbang (pos 140 482))
+  (obj vol message "0.8 300" (pos 140 512))
+  (obj mute message "0 300" (pos 210 512))
+  (obj cvol comment "volume up, down" (pos 270 513))
+  (obj ramp line~ (pos 140 542))
+  (obj vca *~ (pos 20 577))
+  (obj rv reverb~ 0.3 2.8 (pos 20 607))
+  (obj dac dac~ (pos 20 642))
+  (connect dmic 0 c 1)
+  (connect dful 0 c 1)
+  (connect k05 0 c 0)
+  (connect k2 0 c 0)
+  (connect k1 0 c 0)
+  (connect lb 0 k05 0)
+  (connect c 0 sc 0)
+  (connect sp 0 sc 0)
+  (connect ss 0 sc 0)
+  (connect sc 0 sum 0)
+  (connect sc 1 sum 1)
+  (connect sum 0 half 0)
+  (connect half 0 vca 0)
+  (connect lbv 0 vol 0)
+  (connect vol 0 ramp 0)
+  (connect mute 0 ramp 0)
+  (connect ramp 0 vca 1)
+  (connect vca 0 rv 0)
+  (connect rv 0 dac 0)
+  (connect rv 1 dac 1))

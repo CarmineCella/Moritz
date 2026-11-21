@@ -1,0 +1,181 @@
+; haas.moritz - the processes of Georg Friedrich Haas, after in vain (2000, for 24 players), with
+; the orchestral granulator, after Musil's haas.mu. Haas's material is not a theme but a tuning: the
+; music moves between the equal temperament of the piano and the just intonation of the overtone
+; series, and the passage from one to the other is the drama. The cascades: every player runs down a
+; chromatic scale, fast, and starts again at the top, all out of step (leap -2 -1, tilt), in waves;
+; into the dark: they thin out and slow down; the overtone chord: partials of C1 tuned justly (just
+; 1: the 7th partial 31 cents low, the 11th 49 low, the 13th 41 high; the roll shows the cents),
+; long notes swelling one after another, the harmonicity rising from a cloud around the partials to
+; the pure spectrum; the beating: the strings on one pitch, then a few, every other note a
+; quarter-tone or a sixth-tone away (cents set on the notes after the draw); the return: the
+; cascades again, slowing until they freeze; the last light: the overtone chord a fifth lower,
+; fading. One orchestra for the piece (continue), the doublings seated, the score validated. 0.25 is
+; a preview of a minute and a half (what the patch makes when it opens), 1 the five and a half
+; minutes; musicxml writes the parts (a quarter a second, 32nds at most, the cents to quarter tones)
+; to ~/Documents/Moritz/haas.musicxml. MicroSOL has four instruments around C4-G4: the bands are
+; clipped to what it has; with FullSOL (fullsol, then compose) the cascades span the orchestra.
+; Try: 1. play the preview; 2. double-click the score box: the Timeline, the Roll with the just
+; intonation's cents; Alt+Up on a note tunes it; 3. 1: the piece at its length; 4. musicxml: the
+; parts for Dorico; 5. double-click the code box: another fundamental for the overtone chord, other
+; waves, Cmd-S, compose again.
+(patch
+  (obj title comment "Haas, in vain: cascades, the overtone chord in just intonation, the beating, the return" (pos 20 12))
+  (obj sub comment "compose (a preview at 0.25, the piece at 1), then play; the Roll shows the just intonation's cents" (pos 20 34))
+  (obj dmic message microsol (pos 20 62))
+  (obj dful message fullsol (pos 100 62))
+  (obj cds comment "the samples: MicroSOL (comes with Moritz: Ob Hn Vn Vc, C4-G4) or FullSOL (registered in Extras > Datasets...); then compose again" (pos 170 63))
+  (obj k25 message 0.25 (pos 150 97))
+  (obj k1 message 1 (pos 200 97))
+  (obj mx message musicxml (pos 240 97))
+  (obj lb loadbang (pos 330 97))
+  (obj cctl comment "the timescale (0.25 a preview, 1 the piece); musicxml writes the parts" (pos 420 98))
+  (obj c code 2 1 (pos 20 132)
+    (script
+      "; the processes of Georg Friedrich Haas, after \"in vain\" (2000, for 24 players), with the orchestral granulator, from"
+      "; Musil's haas.mu: the cascades, the overtone chord in just intonation, the beating, the return, the last light. in1 the"
+      "; timescale (0.25: a preview of a minute and a half; 1: five and a half minutes), or musicxml (the score composed last"
+      "; written to ~/Documents/Moritz/haas.musicxml); in2 the dataset"
+      "load \"music.mu\""
+      "var write? (and (equal? in1 \"musicxml\") (defined? 'haas-score))"
+      "if (not write?) {"
+      "var name (if (equal? in2 nil) \"microsol\" in2)     ; MicroSOL comes with Moritz: Ob Hn Vn Vc, C4-G4 (a sketch)"
+      "var db (db-load name)                             ; fullsol: FullSOL where you registered it (Extras > Datasets...)"
+      "var k (if (or (equal? in1 nil) (equal? in1 \"musicxml\")) 0.25 in1)"
+      "seed 13"
+      "var sr 44100"
+      "; --- the ensemble: 22 players after in vain's, the flutes doubling piccolo (a seated ossia) -------------------------"
+      "var here (db-instruments-available db)"
+      "function have (L) (filter L (function (i) (contains? here (str i))))"
+      "function ossia-of (L) (join (map (have L) str) \"|\")"
+      "function players (spec n) (filter (map (vec->list (range n)) (function (j) spec)) (function (p) (not (equal? p \"\"))))"
+      "function some (L) (reduce (map L (function (p) (players (ossia-of (head p)) (last p)))) concat-list (list))"
+      "var wind-spec (some (list (list (list 'Fl 'Picc) 2) (list (list 'Ob) 1) (list (list 'ClBb) 2) (list (list 'Bn) 1)))"
+      "var brass-spec (some (list (list (list 'Hn) 2) (list (list 'TpC) 1) (list (list 'Tbn) 1) (list (list 'BTb) 1)))"
+      "var string-spec (some (list (list (list 'Vn) 5) (list (list 'Va) 2) (list (list 'Vc) 2) (list (list 'Cb) 2)))"
+      "var orch (orchestra (concat-list wind-spec (concat-list brass-spec string-spec)))"
+      "function of (L) (filter orch (function (p) (any? (get p 'instrs) (function (i) (contains? (map L str) i)))))"
+      "var winds (of (list 'Fl 'Picc 'Ob 'ClBb 'Bn))"
+      "var strings (of (list 'Vn 'Va 'Vc 'Cb))"
+      "var not-brass (concat-list winds strings)"
+      "var reach (orchestra-octaves db orch)"
+      "function band (lo hi) (list (max (head reach) (min (- (last reach) 0.5) lo)) (min (last reach) (max (+ (head reach) 0.5) hi)))"
+      "print (orchestra-size orch) \"players:\" (orchestra-instruments orch) \"; they reach octaves\" (fixed (head reach) 1) \"to\" (fixed (last reach) 1)"
+      "; waves: a dynamics envelope that swells and ebbs every period, its peaks following a curve"
+      "function waves (secs period lo peak-of) {"
+      "    var kv (list)"
+      "    var t 0"
+      "    var up 0"
+      "    while (<= t secs) { push kv t"
+      "                        push kv (if up (peak-of (/ t secs)) lo)"
+      "                        set up (not up)"
+      "                        set t (+ t (* 0.5 period)) }"
+      "    return (env kv)"
+      "}"
+      "function ramp (a b) (function (u) (+ a (* u (- b a))))"
+      "var s (score \"haas\" sr)"
+      "; a section: a granulator on some of the players, their bookings carried ('continue, 'start); => its notes"
+      "function section (name start secs who params) {"
+      "    put! params 'continue 1"
+      "    put! params 'start (* k start)"
+      "    put! params 'seat (* k 60)"
+      "    var r (orchestrate-granular db who (* k secs) params)"
+      "    print name \":\" (fixed (* k start) 0) \"-\" (fixed (* k (+ start secs)) 0) \"s,\" (get (get r 'report) 'notes) \"notes\""
+      "    return (best-connection r)"
+      "}"
+      "function lay (start f) (add! s (* k start) f)"
+      "function per-sec (d) (list (/ (head d) k) (/ (last d) k))"
+      "function secs-of (d) (list (* k (head d)) (* k (last d)))"
+      "; 1. the cascades (0-75 s): everyone but the brass, each a descending chromatic run in its own time, restarting at the"
+      ";    top; waves of eight seconds, rising from p to ff"
+      "lay 0 (section \"cascades\" 0 75 not-brass (record (list"
+      "    'method 'random  'coupling 0  'leap (list -2 -1)  'tilt 0.8"
+      "    'density (per-sec (list 50 80))  'duration (secs-of (list 0.12 0.2))  'register (band 3 6.5)"
+      "    'dynamics (waves (* k 75) (* k 8) 0.25 (ramp 0.5 0.9)))))"
+      "; 2. into the dark (65-95 s): the cascades thin out and slow down, the notes lengthen, the dynamics sink"
+      "lay 65 (section \"into the dark\" 65 30 not-brass (record (list"
+      "    'method 'random  'coupling 0  'leap (list -2 -1)  'tilt (env (list 0 0.8 (* k 30) 0))"
+      "    'density (env (list 0 (per-sec (list 60 60)) (* k 30) (per-sec (list 1 1))))"
+      "    'duration (env (list 0 (secs-of (list 0.15 0.2)) (* k 30) (secs-of (list 2 4))))"
+      "    'register (band 3 6.5)  'dynamics (env (list 0 0.6 (* k 30) 0.05)))))"
+      "; 3. the overtone chord (85-185 s): partials of C1 in just intonation (the 7th 31 cents low, the 11th 49 low, the"
+      ";    13th 41 high: the roll shows the cents), long notes swelling in waves of twelve seconds, the harmonicity rising"
+      ";    from a cloud around the partials to the pure spectrum"
+      "lay 85 (section \"overtone chord\" 85 100 orch (record (list"
+      "    'method 'harmonic  'fundamental \"C1\"  'just 1  'harmonicity (env (list 0 0.5 (* k 40) 1 (* k 100) 1))"
+      "    'coupling 0  'inertia 0.9  'tilt -0.4  'balance (record (list 'brass -4))"
+      "    'density (per-sec (list 1.5 3))  'duration (secs-of (list 6 12))  'register (band 1.5 5.5)"
+      "    'dynamics (waves (* k 100) (* k 12) 0.05 (function (u) (if (< u 0.8) (+ 0.5 (* 0.5 (sin (* 3.1416 u)))) (* 0.4 (- 1 u))))))))"
+      "; 4. the beating (180-245 s): the strings on one pitch, then a few, every other note a quarter-tone or a sixth-tone away"
+      "var chords (env (list 0 (list (list \"E4\")) (* k 25) (list (list \"E4\")) (* k 40) (list (list \"E4\" \"F4\")) (* k 65) (list (list \"D4\" \"E4\" \"F4\" \"F#4\"))))"
+      "var beating (section \"beating\" 180 65 strings (record (list"
+      "    'method 'random  'chords chords  'chord-weight 1  'coupling 0  'inertia 1"
+      "    'density (per-sec (list 2 4))  'duration (secs-of (list 4 8))  'register (band 3 5)"
+      "    'dynamics (waves (* k 65) (* k 6) 0.1 (ramp 0.4 0.7)))))"
+      "var detune (list 0 33 -33 50 0 -50 33 -33)                                    ; sixth-tones and quarter-tones, by turns"
+      "each (zip beating (vec->list (range (length beating)))) (function (p) (note-cents! (last (head p)) (getidx detune (mod (last p) (length detune)))))"
+      "lay 180 beating"
+      "; 5. the return (240-300 s): the cascades again, slowing until each run is a few long notes and the waterfall freezes"
+      "lay 240 (section \"return\" 240 60 orch (record (list"
+      "    'method 'random  'coupling 0  'leap (list -2 -1)  'tilt (env (list 0 0.8 (* k 60) 0))"
+      "    'density (env (list 0 (per-sec (list 60 60)) (* k 30) (per-sec (list 6 6)) (* k 60) (per-sec (list 0.5 0.5))))"
+      "    'duration (env (list 0 (secs-of (list 0.12 0.2)) (* k 30) (secs-of (list 0.5 1)) (* k 60) (secs-of (list 5 9))))"
+      "    'register (band 3 6.5)  'dynamics (waves (* k 60) (* k 8) 0.2 (ramp 0.8 0.1)))))"
+      "; 6. the last light (270-330 s): the overtone chord a fifth lower, pure, thinning and fading out"
+      "lay 270 (section \"last light\" 270 60 orch (record (list"
+      "    'method 'harmonic  'fundamental \"F0\"  'just 1  'harmonicity 1  'coupling 0  'inertia 1  'tilt -0.3"
+      "    'balance (record (list 'brass -4))"
+      "    'density (env (list 0 (per-sec (list 2 2)) (* k 60) (per-sec (list 0.3 0.3))))"
+      "    'duration (secs-of (list 8 14))  'register (band 1 5)"
+      "    'dynamics (env (list 0 0.3 (* k 30) 0.3 (* k 60) 0)))))"
+      "validation-print (score-validate s orch)"
+      "print (length (score-events s)) \"notes,\" (fixed (score-duration s) 0) \"s\""
+      "var haas-score s"
+      "}"
+      "if write? {"
+      "    ; the parts: a quarter a second in 4/4 (the bars are the clock), 32nds at most, tuplets; the cents to quarter tones"
+      "    var dir (concat (getenv \"HOME\") \"/Documents/Moritz\")"
+      "    if (not (exists? dir)) { mkdir dir }"
+      "    var x (score-copy haas-score)"
+      "    score-tempo! x 60"
+      "    score-meter! x 4 4"
+      "    notation-report (score-musicxml x (concat dir \"/haas.musicxml\") (record (list 'divisions (list 1 2 3 4 5 6 8))))"
+      "    print \"wrote\" (concat dir \"/haas.musicxml\") \": a part a player, a note's cents to the nearest quarter tone\""
+      "}"
+      "out 1 haas-score"))
+  (obj cuc comment "the piece in Musil: six granular sections, continue, just 1, cents set on the notes" (pos 110 133))
+  (obj sc score haas 2 @size 700 240 @view timeline (pos 20 172))
+  (obj tr transport 60 4 4 (pos 750 172))
+  (obj sp message play (pos 750 207))
+  (obj ss message stop (pos 795 207))
+  (obj cpl comment "play / stop" (pos 845 208))
+  (obj sum +~ (pos 20 437))
+  (obj chall comment "the two channels summed, the volume ramped, then a hall (reverb~)" (pos 70 438))
+  (obj half *~ 0.5 (pos 20 467))
+  (obj lbv loadbang (pos 140 482))
+  (obj vol message "0.8 300" (pos 140 512))
+  (obj mute message "0 300" (pos 210 512))
+  (obj cvol comment "volume up, down" (pos 270 513))
+  (obj ramp line~ (pos 140 542))
+  (obj vca *~ (pos 20 577))
+  (obj rv reverb~ 0.3 2.8 (pos 20 607))
+  (obj dac dac~ (pos 20 642))
+  (connect dmic 0 c 1)
+  (connect dful 0 c 1)
+  (connect k25 0 c 0)
+  (connect k1 0 c 0)
+  (connect mx 0 c 0)
+  (connect lb 0 k25 0)
+  (connect c 0 sc 0)
+  (connect sp 0 sc 0)
+  (connect ss 0 sc 0)
+  (connect sc 0 sum 0)
+  (connect sc 1 sum 1)
+  (connect sum 0 half 0)
+  (connect half 0 vca 0)
+  (connect lbv 0 vol 0)
+  (connect vol 0 ramp 0)
+  (connect mute 0 ramp 0)
+  (connect ramp 0 vca 1)
+  (connect vca 0 rv 0)
+  (connect rv 0 dac 0)
+  (connect rv 1 dac 1))

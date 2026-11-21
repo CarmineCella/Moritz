@@ -169,8 +169,10 @@ duration in ms, row, dynamics and technique (- for none); its messages as the
 name and the values. Edits while it plays (add, clear, a new score) take effect
 at once: what plays is made again off the audio thread. A note that carries a
 sound of its own (data sound "path", and sound-pitch, the sample's pitch: what
-orchidea sends) also plays its sample, faster or slower by its pitch against the
-sample's.
+orchidea sends, and what a note Musil took from a database carries) also plays
+its sample, faster or slower by its pitch against the sample's. Compositions
+written so in a code box: examples/17-composition; whole pieces:
+examples/18-pieces.
 
 The box draws its score as a roll: a staff a row (in orchestral order, a G, F
 or C clef from its pitches, drawn as a shape), proportional time, a note a head and a line, its cents when it

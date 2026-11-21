@@ -102,8 +102,10 @@ See the examples in examples/13-orchestration, one a feature: static-dynamic
 (segmentation none, flux, frames, onsets), connections (closest, best, path),
 memory (sustain, hold, dovetail, hysteresis), search (population, epochs,
 sparsity, seed, show, choose), sound-space (the orchestra's players and
-filters), output (score, notes, write, roll), and orchidea (four targets, a
-piano phrase orchestrated dynamically).
+filters), output (score, notes, write, roll), orchidea (four targets, a
+piano phrase orchestrated dynamically) and orchfest (the three modes on one
+target, one after the other in one score). Pieces made with the granular mode:
+examples/18-pieces (Grisey, Ligeti, Haas).
 
 A search of 300 individuals over 300 epochs on TinySOL takes well under a
 second for a static target; a segmented target takes that per segment.

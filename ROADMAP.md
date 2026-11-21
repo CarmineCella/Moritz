@@ -213,8 +213,13 @@ the editor's command table and undo rule), YIN, `descriptors~` on the shared ana
       .score alike (one function in Musil's C++, used by the roll, orchidea's `choose` and Musil's
       `score-choose!`).
 - [ ] Playability checks.
-- [ ] Examples as patches: Grisey (Partiels: an orchestral spectrum of a trombone note), Haas and
-      Ligeti's Atmosphères (Musil's haas.mu and atmospheres.mu), played through the score.
+- [x] Examples as patches (examples/18-pieces), played through the score: Grisey's Partiels (a trombone's E1
+      analysed with Musil's spectral tools, its partials given to the instruments cycle after cycle, Orchidea's
+      static imitation beside it), Ligeti's Atmosphères (the sections of the register diagram as granulators, or
+      one granulator from a recording's curves), Haas's in vain (the cascades, the overtone chord in just
+      intonation, the beating) and Grisey's Modulations; each a code box composing the piece in Musil, a preview
+      by default and the full length as a message; and orchfest (13-orchestration: the three modes on one
+      target in one score).
 - [ ] More examples for every orchestration mode and idea (mimetic, morphological, granular, queries,
       a sound file orchestrated over time, a score as target), and a tutorial on orchestration. Done:
       the mimetic, granular and morphological examples and the tutorial (tutorials/14-orchestration);
@@ -233,6 +238,14 @@ Many more examples, each small and about one idea, in the folder of its topic:
       regions.
 - [x] **Sound editor** (examples/14-sound-editor): more Process scripts and patches; markers and regions into a
       score (regions.moritz in 16-timeline).
+- [x] **Assisted composition** (examples/17-composition): Musil's composition examples as patches, each a code box
+      writing the score in Musil for a score box that shows and plays it (a note taken from a database keeps its
+      sample): a row and its forms, chords voiced and interpolated, micropolyphony, spectral pivots, textures,
+      rhythms (walks, arpeggios, polyrhythms, an ostinato), a Markov chain, random music, a random collage, a
+      chorale written by hand, scores in scores, notation (quantized for a part, MusicXML), temperament.
+- [x] **Pieces** (examples/18-pieces): Partiels, Atmosphères, in vain, Modulations (in the orchestration section).
+- [ ] **Assisted composition, next**: the Generate panel's algorithms as examples once it exists; Musil's
+      live examples once Musil's live functions play through Moritz's engine.
 - [ ] **Sound editor**: markers and regions into a coll, once `coll` exists.
 - [ ] **Orchestration**: one example per mode and idea (in the orchestration section above), as the modes
       arrive. The mimetic mode has its examples (examples/13-orchestration: static and dynamic, the
