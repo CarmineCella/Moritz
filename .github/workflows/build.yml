@@ -149,7 +149,7 @@ jobs:
       - name: Packages
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential cmake curl xvfb openbox libasound2-dev libx11-dev \
+          sudo apt-get install -y build-essential cmake curl xvfb libasound2-dev libx11-dev \
             libxext-dev libxft-dev libxinerama-dev libxcursor-dev libxrender-dev libxfixes-dev \
             libfontconfig1-dev
       - uses: actions/cache@v4
@@ -178,9 +178,7 @@ jobs:
         run: |
           skip='^(perf-|example-)'
           if [ "${{ matrix.sanitizer }}" = thread ]; then skip='^(perf-|example-|robust$|moritz-patches$)'; fi
-          # the interface tests run under a window manager (openbox), as on a Linux desktop: without one, a window
-          # just opened is not put in front, which no user sees
-          xvfb-run -a sh -c 'openbox & sleep 1; ctest --test-dir build -j2 --output-on-failure -E "$0"' "$skip"
+          xvfb-run -a ctest --test-dir build -j2 --output-on-failure -E "$skip"
 
   musil-alone:                     # Musil built from musil/ alone, with and without FLTK
     runs-on: ubuntu-22.04
