@@ -874,7 +874,7 @@ Double-click it (locked), or any object that names it, to open the sound editor:
 | Message | |
 | --- | --- |
 | `read file` | reads a sound file; the buffer takes its length, channels and sample rate |
-| `write file` | writes the buffer as a WAV file |
+| `write file` | writes the buffer as a WAV file, in the patch's folder or in ~/Documents/Moritz (elsewhere: not written; its menu's Save... writes where you choose) |
 | `size ms` | changes the length, keeping what fits and filling with silence |
 | `clear` | sets every sample to 0 |
 
@@ -1010,7 +1010,7 @@ Records its signal inlets to a 24-bit WAV file at the audio's sample rate. `open
 
 | Message | |
 | --- | --- |
-| `open file.wav` | the file to write, relative to the patch (it is overwritten) |
+| `open file.wav` | the file to write, relative to the patch (it is overwritten), in the patch's folder or in ~/Documents/Moritz (elsewhere: refused; its menu's Choose file... writes where you choose) |
 | `1 / 0` | 1 starts recording, 0 stops and closes the file |
 | `start` | starts recording |
 | `stop` | stops and closes the file |
@@ -2226,7 +2226,7 @@ The folder messages read every WAV, AIFF, FLAC and MP3 file of a folder (not its
 | `add buffer [frames ms hop \| onsets threshold max \| whole]` | adds atoms cut from a buffer~ (whole by default, 2000 ms at most), at the dictionary's sample rate |
 | `get k buffer` | writes atom k (from 0) of a dictionary of sounds into a buffer~, to listen to it |
 | `clear` | empties the dictionary |
-| `write file` | saves the dictionary (a .atoms file) |
+| `write file` | saves the dictionary (a .atoms file), in the patch's folder or in ~/Documents/Moritz (elsewhere: not written; its menu's Save... writes where you choose) |
 | `read file` | loads a dictionary saved with write |
 | `info` | prints its kind and size in the Console |
 | `stop` | cancels the job |
@@ -2311,7 +2311,7 @@ After an analysis the number of units of each level comes out as a list. Right-c
 | `labels buffer` | writes the type of every frame into a buffer~, one channel a level: plot it with colors types |
 | `transitions level buffer` | writes the probabilities of passing from type to type at a level into a buffer~ (a matrix) |
 | `play level type` | outputs the start and end (ms) of a unit of that type, chosen at random |
-| `write file` | writes the units as text, one a line: level start end type (seconds) |
+| `write file` | writes the units as text, one a line: level start end type (seconds), in the patch's folder or in ~/Documents/Moritz (elsewhere: not written; its menu's Save... writes where you choose) |
 | `info` | prints the units and types of each level in the Console |
 | `stop` | cancels the job |
 
@@ -2417,13 +2417,13 @@ See the examples in examples/13-orchestration: sound-space (players, doublings, 
 | Message | |
 | --- | --- |
 | `read file` | reads a database (a background job): a feature file, or a dataset's name (read fullsol); the sounds are looked for next to it |
-| `analyse folder [type block hop ncoeff]` | analyses every WAV under the folder into folder.spectrum.db next to it (a background job; spectrum 2048 256 1024 by default; logspec, specpeaks, specenv, mfcc 13, moments 4), then reads it |
+| `analyse folder [type block hop ncoeff]` | analyses every WAV under the folder into folder.spectrum.db next to it, when the patch may write there (its folder, ~/Documents/Moritz; the Datasets window analyses a folder anywhere) (a background job; spectrum 2048 256 1024 by default; logspec, specpeaks, specenv, mfcc 13, moments 4), then reads it |
 | `players instrument [n] ...` | the players, an instrument a player, a number after one making it that many players (players Vn 4 Va 2 Vc 2 Fl); A\|B is one player who doubles, playing either (Fl\|Picc); no instrument: the default orchestra |
 | `add instrument [n]` | more players of an instrument |
 | `remove instrument` | every player of an instrument |
 | `range instrument lo hi` | only the instrument's sounds from lo to hi enter the search (pitch names, G3, or MIDI numbers, both included); range instrument: its whole range again |
 | `techniques name ...` | only sounds of these techniques (ord, pizz-lv..., as the file names say them) enter the search, for every instrument; techniques alone: every technique |
-| `dynamics name ...` | only sounds of these dynamics (pp, mf...) enter the search; dynamics alone: every dynamics. A filter that leaves a segment no sound makes the run fail with a message (empty search space) |
+| `dynamics name ...` | only sounds of these dynamics (pp, mf...) enter the search; dynamics alone: every dynamics. A segment a filter leaves no sound (nor a pitch of its partials) is a rest: orchidea says so, its report line says why, and the other segments are orchestrated |
 | `info` | prints the database (sounds, instruments, their ranges and techniques) and the players in the Console |
 | `stop` | cancels the reading |
 
@@ -2446,7 +2446,7 @@ See also: `orchidea` `buffer~`
 
 Assisted orchestration, after Orchidea (Cella, Esling): a target sound in a buffer~ imitated by the players of an orchestra object. The target is cut into segments (one for a static target, or at its onsets), each analysed into the database's features and into the pitches of its partials; for each segment a genetic search finds the combinations of sounds, one per player or a rest, whose summed spectrum is nearest the target's, with an asymmetric distance (a partial the target lacks costs more than one it has and the solution lacks). The search runs as a background job, on Musil's engine: Musil's orchestrate-mimetic with the same target, database, orchestra and seed finds the same notes, on every system.
 
-When it is done, the solution comes out as one message a note: its number (from 1), instrument, pitch, dynamics, technique, onset and duration (ms), the sound's path, the cents the target's partial is away from the pitch, and the player (from 0), then the done outlet bangs (not after a run that failed with a message); a note the target holds across segments on the same player is one longer note. The distance (the mean cost of the chosen solutions) comes out on its outlet, and the solution as a score on the last (score token, for a score object: a row an instrument in orchestral order, a note a sound chosen, with its dynamics, technique, cents and place, and its sample as its sound, so the score object plays it and its roll edits it). With an out buffer~, the chosen samples are summed into it in stereo, the players seated as in Orchidea's mixes, so that the orchestration is heard at once (scaled down when it would clip). The ten best solutions of each segment are kept: choose puts another in place, show lists them, report says what each segment found. Right-click the box for Report and Save the solution...
+When it is done, the solution comes out as one message a note: its number (from 1), instrument, pitch, dynamics, technique, onset and duration (ms), the sound's path, the cents the target's partial is away from the pitch, and the player (from 0), then the done outlet bangs (not after a run that failed with a message); a note the target holds across segments on the same player is one longer note. The distance (the mean cost of the chosen solutions) comes out on its outlet, and the solution as a score on the last (score token, for a score object: a row an instrument in orchestral order, a note a sound chosen, with its dynamics, technique, cents and place, and its sample as its sound, so the score object plays it and its roll edits it). With an out buffer~, the chosen samples are summed into it in stereo, the players seated as in Orchidea's mixes, so that the orchestration is heard at once (scaled down when it would clip). The ten best solutions of each segment are kept, each sounding something else (two players of an instrument with their sounds swapped are one solution): choose puts another in place, show lists them, report says what each segment found. A segment where no sound passes the filters is a rest. Right-click the box for Report and Save the solution...
 
 A dynamic segmentation (flux or frames) uses Musil's dynamic settings, those of dynamic_orchidea.mu, for every setting no message has set: population 500, epochs 500, sparsity 0.01, partials 0.3 (0 when the database is tiny, as MicroSOL), solutions 5, sustain 1, hold 4000 ms, dovetail 0.75 (pivot notes), connection path (the least melodic movement). A static target (segmentation none) keeps the defaults below. report prints the settings a search ran with.
 
@@ -2480,20 +2480,20 @@ A search of 300 individuals over 300 epochs on TinySOL takes well under a second
 | `window n` | the window the partials are read with, a power of two (32768: large for a low target) |
 | `pitches name ...` | pitches every segment admits besides its partials' |
 | `octaves n ...` | the pitch filter widened by octaves (octaves 0 -1: the partials' pitches and the octave below) |
-| `connection closest \| best \| path` | how a solution is chosen per segment among the ones kept: closest to the one before in timbre (Orchidea's), the best of each alone, or the sequence with the least melodic movement (closest; path when dynamic). With path, sustain is not used: the path makes its own continuity |
+| `connection closest \| best \| path` | how a solution is chosen per segment among the ones kept: closest to the one before in timbre (Orchidea's), the best of each alone, or the sequence with the least melodic movement (closest; path when dynamic). With path and sustain, each solution of a segment offers its continuation into the next (the next segment's best with those players holding their sound), which the path takes where holding costs little |
 | `solutions n` | the best solutions kept per segment, among which the connection and choose pick (10; 5 when dynamic) |
 | `hysteresis x` | above 0, each segment leans in timbre towards the solutions chosen before: a timbre memory, an even colour (0) |
 | `dovetail x` | above 0, a solution that drops the pitches of the one before costs more: pivot notes between chords (0; 0.75 when dynamic) |
 | `movement x` | for connection path, the cost of a semitone a player moves (1) |
-| `sustain 1/0` | 1, a player whose pitch the target keeps holds its sound on into the next segment, one longer note, not searched again (1); needs a pitch filter (partials above 0), and is not used with connection path |
+| `sustain 1/0` | 1, a player whose pitch the target keeps holds its sound on into the next segment, one longer note, not searched again (1); with connection path, which is chosen once every segment is searched, each solution offers instead its continuation into the next segment, among that segment's solutions. Without a pitch filter (partials 0) the target keeps every pitch: a player holds until hold |
 | `hold ms` | a held note is never longer than this; the player starts it again (no limit; 4000 when dynamic); hold alone: no limit |
 | `seating 1/0` | 1, the mix seats the players as Orchidea's mixes do (violins left, cellos right); 0, all in the middle (1) |
 | `choose segment n` | solution n (from 1, best first) of a segment (from 1) in place of the one chosen: the notes and the mix again |
 | `notes` | the notes again |
 | `score` | the solution as a score again (score token, out of the last outlet) |
 | `show segment` | prints the solutions of a segment with their costs and sounds (the chosen one starred) |
-| `report` | prints a line per segment: its cost, players, players holding on, sounds in the search space, and the target's pitches no instrument of the orchestra has |
-| `write file` | saves the notes as an Orchidea connection file (Musil's score-load reads it) |
+| `report` | prints a line per segment: its cost, players, players holding on (the notes the chosen connection holds from the segment before: one longer note each), sounds in the search space, and the target's pitches no instrument of the orchestra has; a rest says why |
+| `write file` | saves the notes as an Orchidea connection file (Musil's score-load reads it), in the patch's folder or in ~/Documents/Moritz (elsewhere: not written; its menu's Save... writes where you choose) |
 | `roll buffer` | writes the notes into a buffer~, a frame a note: onset (s), pitch (MIDI, with its cents), player, duration (s); plot in scatter mode draws it as a roll, a colour a player |
 | `stop` | cancels the search |
 
@@ -2532,7 +2532,7 @@ k nearest neighbours: learns from examples (add x1 x2 ... -> y1 y2 ...), then an
 | `classify 0/1` | 1 outputs the most frequent output instead of the mean (0) |
 | `normalize 0/1` | 0 compares raw values instead of standardised ones (1) |
 | `clear` | forgets the examples |
-| `write file` | saves the examples as text, one a line (as add, without the word add) |
+| `write file` | saves the examples as text, one a line (as add, without the word add), in the patch's folder or in ~/Documents/Moritz (elsewhere: not written) |
 | `read file` | replaces the examples with those of a file |
 | `print` | prints the number of examples in the Console |
 
@@ -2562,7 +2562,7 @@ Groups the points added into k clusters: `train k` starts with k-means++ and run
 | `seed n` | the seed of the random starts (1) |
 | `normalize 0/1` | 0 clusters raw values instead of standardised ones (1) |
 | `clear` | forgets the points |
-| `write file` | saves the points as text, one a line |
+| `write file` | saves the points as text, one a line, in the patch's folder or in ~/Documents/Moritz (elsewhere: not written) |
 | `read file` | replaces the points with those of a file |
 | `print` | prints the number of points and of clusters in the Console |
 
@@ -2591,7 +2591,7 @@ Principal component analysis: `train` finds the directions of largest variance o
 | `explained` | outputs the share of the variance of each component |
 | `normalize 0/1` | 0 uses raw values instead of standardised ones (1) |
 | `clear` | forgets the points |
-| `write file` | saves the points as text, one a line |
+| `write file` | saves the points as text, one a line, in the patch's folder or in ~/Documents/Moritz (elsewhere: not written) |
 | `read file` | replaces the points with those of a file |
 | `print` | prints the number of points in the Console |
 
@@ -2618,7 +2618,7 @@ Standardises lists: `train` measures the mean and standard deviation of each val
 | `add x1 x2 ...` | adds a point |
 | `train` | measures the means and standard deviations |
 | `clear` | forgets the points |
-| `write file` | saves the points as text, one a line |
+| `write file` | saves the points as text, one a line, in the patch's folder or in ~/Documents/Moritz (elsewhere: not written) |
 | `read file` | replaces the points with those of a file |
 | `print` | prints the number of points in the Console |
 
@@ -2645,7 +2645,7 @@ Linear regression: `train` fits y = b0 + b1 x1 + b2 x2 ... to the examples added
 | `train` | fits the weights |
 | `weights` | outputs the weights, intercept first, output after output |
 | `clear` | forgets the examples |
-| `write file` | saves the examples as text, one a line |
+| `write file` | saves the examples as text, one a line, in the patch's folder or in ~/Documents/Moritz (elsewhere: not written) |
 | `read file` | replaces the examples with those of a file |
 | `print` | prints the number of examples in the Console |
 
@@ -4144,7 +4144,7 @@ Curves, bars, scatter plots and matrices (heat maps). It shows a buffer~, follow
 | `history n` | the points of a scrolling curve, the columns of a scrolling image (256) |
 | `clear` | removes the data, the buffer~, the marks and the cursor |
 | `open` | opens the window |
-| `export file.png [w h]` | writes the plot as a PNG, relative to the patch (900 500) |
+| `export file.png [w h]` | writes the plot as a PNG, relative to the patch (900 500), in the patch's folder or in ~/Documents/Moritz (elsewhere: not written; its menu's Save... writes where you choose) |
 
 | Inlet | |
 | --- | --- |
