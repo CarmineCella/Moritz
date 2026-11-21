@@ -522,7 +522,8 @@ expect "again: Stop" "state: score view roll playing no transport no button off"
 expect "the patch's clock past the score's end" "state: score view roll playing no transport yes button off"
 expect "Space from the selection's start" "state: score view roll playing yes transport yes button on position 1 playhead 1"
 expect "the end of the score" "state: score view roll playing no transport no button off position 1.4 playhead 1.4"
-if [ $status -eq 0 ] && [ "$(grep -c "state: score view roll playing yes transport yes button on position 0.5" "$out")" = 2 ]; then ok
+# (from the playhead where Stop left it: the position printed after a moment, so 0.5 or a little more)
+if [ $status -eq 0 ] && [ "$(grep -c "state: score view roll playing yes transport yes button on position 0\." "$out")" = 2 ]; then ok
 else fail "Play with the transport already running"; fi
 
 # 38. the dynamics lane's row chooser: a row chosen filters the lane, and the lane, drawn alone (as when only it is
