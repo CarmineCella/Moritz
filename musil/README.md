@@ -61,8 +61,10 @@ ctest --test-dir build -R '^embed$'           # Musil inside another program
 
 or on its own, from `musil/` alone: `cmake -S musil -B build-musil && cmake --build build-musil && ctest --test-dir build-musil`.
 
-The `musil` program finds its libraries in a `src` folder next to it (as in Moritz's downloads,
-`musil/musil` beside `musil/src`), in `MUSIL_PATH`, or in `~/.musil`.
+The `musil` program finds its libraries in `MUSIL_PATH`, then in a `src` folder next to it (as in
+Moritz's downloads, `musil/musil` beside `musil/src`), in `<prefix>/share/musil` when installed, in the
+sources when run from its build folder, and last in `~/.musil`. `~/.musil` holds your own data
+(`datasets.mu`); an install never writes there.
 
 On its own, from this folder, Musil still builds with CMake (it fetches FLTK):
 
@@ -71,7 +73,7 @@ cmake -B build -DCMAKE_BUILD_TYPE=Release        # configure (regenerates src/he
 cmake --build build -j                           # build musil
 ctest --test-dir build                           # tests: one per library, goldens, examples
 cmake --build build --target musil-docs          # help.txt, docs/generated/*.tex and docs/musil_manual.pdf (pdflatex)
-cmake --install build --prefix ~/.local          # musil -> bin, the .mu libraries and help.txt -> ~/.musil
+cmake --install build --prefix ~/.local          # musil -> bin, the .mu libraries and help.txt -> share/musil
 ```
 
 | option | default | effect |
@@ -120,8 +122,8 @@ The manual's "Programming practices" section says how to write Musil that reads 
 
 Nothing is loaded automatically: a program that wants the Musil halves of the
 libraries says `load "std.mu"` (or `load "system.mu"`, which loads std.mu itself),
-and `load` finds them in `~/.musil`, in `MUSIL_PATH`, or next to the file doing the
-loading. During development, `MUSIL_PATH=src` points at the source tree; the test
+and `load` finds them next to the file doing the loading, in `MUSIL_PATH`, beside the
+program (see above), or in `~/.musil`. During development, `MUSIL_PATH=src` points at the source tree; the test
 suite sets it for you.
 
 ## Libraries
@@ -199,7 +201,7 @@ var L (list 1 "two" 'three)    ; lists hold anything; 'x quotes a symbol or form
 (head L) (tail L) (last L) (length L) (push L 4) (pop L)
 var M (copy L)                 ; copy is shallow: a new list, same elements (nested lists/vectors stay shared)
 
-load "std.mu"                  ; the Musil half of the standard library, from ~/.musil or MUSIL_PATH
+load "std.mu"                  ; the Musil half of the standard library, found beside musil or in MUSIL_PATH
 (take (range 10) 3) (fmt-fixed pi 4) (lerp 0 10 0.5) (stdev (vec 1 2 3 4))
 
 var code '(+ 1 2)              ; code is data

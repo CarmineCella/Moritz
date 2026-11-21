@@ -14,7 +14,7 @@ together his research (sparkle, condec/pconv, Maple, SoundTypes, Orchidea, the s
 computer-assisted composition of Musil, WEFT) in a single, free, open-source system (BSD 2-Clause)
 for macOS, Linux and Windows.
 
-It is first a **teaching tool** (CNSM Paris): orchestration and AI for music are taught with it side
+It is first a **teaching tool**: orchestration and AI for music are taught with it side
 by side. Every object is short, readable C++ written from first principles, so students can open the
 box and see how a phase vocoder, k-means or attention works. The tools are introduced little by
 little through tutorials, not split into packages. A book bringing the pieces together, with Moritz
@@ -90,13 +90,14 @@ the editor's command table and undo rule), YIN, `descriptors~` on the shared ana
 | 0.13 | Orchestration's morphological and granular modes; Musil's assisted composition and the pieces (Grisey, Haas, Atmosphères) as patches; the multitrack mode, as in Reaper (layout B of mockup 8, with a mixer), with patch clips and track instruments and effects |
 | 0.14 | Orchestration and the score: sample selection by query, the solutions of each segment in the roll, the timeline's ramps, rubber-band selection, track order, markers and sections; MusicXML and MIDI export of scores |
 | 0.14a | The harmonizer: `harmonize` in Musil (offline) and `harmonize~` in Moritz (real time), pitch-synchronous granular synthesis (from reVoice), one streaming YIN, a grain core shared with nebula~ |
-| 0.14b (in progress) | Fixes from testing 0.14: tutorials 12-15 (a self-contained sound editor tutorial, the score transport clicked with the mouse, layouts without overlaps), MicroSOL/TinySOL/FullSOL in every example, a Tempo control in the score window, the collage's synths as patch clips, ~/.musil's permissions explained, one staff per performer (or per instrument), playability checks for every orchestration (rules from the database, the orchestra and a table from the treatises, reviewed by the author), a bridge between the score window and the arranger |
+| 0.14b (in progress) | Fixes from testing 0.14: tutorials 12-15 (a self-contained sound editor tutorial, the score transport clicked with the mouse, layouts without overlaps), MicroSOL/TinySOL/FullSOL in every example, a Tempo control in the score window, the collage's synths as patch clips, ~/.musil's permissions explained, one staff per performer (or per instrument), playability checks for every orchestration (rules from the database, the orchestra and a table from the treatises, reviewed by the author), a bridge between the score window and the arranger; `make install` puts Musil's libraries beside the program (<prefix>/share/musil), never in ~/.musil, and uninstall keeps the user's datasets |
 | 0.15 | Neural networks from WEFT: a neural core in Musil (`nn-*`, `.mnet` models), `mlp`, `ddsp~` (a neural harmonic-plus-noise instrument; live from the past only, Musil keeps both models) with the Timbre space example, `vae` on lists, a transformer on matching-pursuit atoms (offline); examples/20-neural, tutorial 15 (the code tutorial last) |
 | 0.16 | Assisted composition as objects, after bach and cage (chord, pitchset, harmonics, row, rhythm, markov, texture, score transforms), each example shown with objects and with code; the multitrack's next items (below) |
+| then | Concert: cue lists and scenes (states stored and recalled, chase to any cue, the timeline's markers as cues, later cues triggered by the performer), a performance mode (locked patches, no modal dialogs, Panic), everything preloaded, a concert file (device, rate, buffer, routing, first cue), CPU and dropout monitoring with a log, a safety limiter, the audio device reconnected, recovery after a crash, soak tests of many hours under the sanitizers, MIDI learn, OSC; tried on real pieces |
 | then | Research: VAE on matching pursuit; a 2-D corpus map; a transformer on atom sequences; `concat~` |
 | then | Integration: export to Max, a documentation site, complete tutorials |
 | 1.0-rc | Stabilisation: fixes, performance, testing on real Windows machines; feature freeze |
-| 1.0 | Pilot: classes at CNSM, evaluation, a system paper (ICMC, SMC or NIME) |
+| 1.0 | Pilot: classes, evaluation, a system paper (ICMC, SMC or NIME) |
 
 ## Open
 

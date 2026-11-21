@@ -27,8 +27,9 @@ endif()
 
 
 # --- Uninstall ------------------------------------------------------------------
-#   cmake --build build --target uninstall    removes <prefix>/bin/musil,
-#   <prefix>/include/musil/ and ~/.musil/ (plus whatever the last install's manifest lists, for an
+#   cmake --build build --target uninstall    removes <prefix>/bin/musil, <prefix>/share/musil/,
+#   <prefix>/include/musil/ and the libraries an older install copied into ~/.musil (never the user's
+#   datasets.mu there) (plus whatever the last install's manifest lists, for an
 #   install made with --prefix elsewhere). FLTK's own `uninstall` target is renamed when it is
 #   fetched (see the patch below), so `uninstall` is ours.
 if(WIN32)
@@ -48,6 +49,7 @@ endif()
 add_custom_target(uninstall
   COMMAND ${CMAKE_COMMAND} -DMANIFEST=${CMAKE_BINARY_DIR}/install_manifest.txt
                            -DPREFIX=${CMAKE_INSTALL_PREFIX} -DMUSIL_HOME=${MUSIL_HOME}
+                           "-DLIB_NAMES=std.mu,system.mu,music.mu,signals.mu,scientific.mu,plot.mu,live.mu,help.txt,hrtf_kemar.csv,hall_concertgebouw.wav"
                            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/uninstall.cmake
   COMMENT "Removing the installed files (${CMAKE_INSTALL_PREFIX}, ${MUSIL_HOME})")
 add_custom_target(musil-uninstall DEPENDS uninstall)
@@ -141,7 +143,8 @@ file(GLOB MUSIL_HEADERS ${CMAKE_CURRENT_SOURCE_DIR}/src/*.h)
 install(TARGETS musil RUNTIME DESTINATION bin)
 install(FILES ${MUSIL_HEADERS} DESTINATION include/musil)
 install(DIRECTORY src/system src/scientific src/signals src/music src/live DESTINATION include/musil FILES_MATCHING PATTERN "*.h")
-install(FILES ${MUSIL_LANG_FILES} DESTINATION ${MUSIL_HOME})
+install(FILES ${MUSIL_LANG_FILES} DESTINATION share/musil)   # beside bin/musil, found from there (cli/main.cpp);
+                                                               # ~/.musil holds the user's own data only (datasets.mu)
 
 # --- Tests: one per library, plus stress/smoke/load/golden/examples -----------
 if(MUSIL_TESTS)
@@ -152,6 +155,11 @@ if(MUSIL_TESTS)
   add_test(NAME libraries-found COMMAND ${CMAKE_COMMAND} -E env HOME=${CMAKE_CURRENT_BINARY_DIR}/no-home
            $<TARGET_FILE:musil> -e "load \"music.mu\"" -e "print (defined? \"play-score\")")
   set_tests_properties(libraries-found PROPERTIES PASS_REGULAR_EXPRESSION "^1")
+  if(NOT CMAKE_CROSSCOMPILING)
+    add_test(NAME install-uninstall COMMAND ${CMAKE_COMMAND} -DBUILD=${CMAKE_CURRENT_BINARY_DIR}
+             -DSRC=${CMAKE_CURRENT_SOURCE_DIR} -DWORK=${CMAKE_CURRENT_BINARY_DIR}/install-test
+             -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/install_test.cmake)
+  endif()
   add_test(NAME std     COMMAND musil ${T}/test_std.mu)
   add_test(NAME system  COMMAND musil ${T}/test_system.mu WORKING_DIRECTORY ${T})
   add_test(NAME scientific COMMAND musil ${T}/test_scientific.mu)

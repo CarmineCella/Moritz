@@ -96,6 +96,8 @@ int main(int argc, char** argv) {
     if (std::string d = program_dir(argc > 0 ? argv[0] : nullptr); !d.empty()) {     // after MUSIL_PATH, before ~/.musil
         std::error_code ec;
         if (std::filesystem::is_directory(d + "/src", ec)) I.load_path.push_back(d + "/src");
+        // installed: <prefix>/bin/musil with its libraries in <prefix>/share/musil
+        else if (std::filesystem::is_directory(d + "/../share/musil", ec)) I.load_path.push_back(d + "/../share/musil");
 #if defined(MUSIL_BUILD_BIN_DIR) && defined(MUSIL_SOURCE_LIBS)
         // the program in its build folder: the libraries of the sources it was built from, before ~/.musil
         else if (std::filesystem::equivalent(d, MUSIL_BUILD_BIN_DIR, ec) && std::filesystem::is_directory(MUSIL_SOURCE_LIBS, ec))

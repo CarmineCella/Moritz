@@ -422,7 +422,8 @@ cmake --install build                         # Moritz and Musil into the system
 
 `cmake --install` puts Moritz in `/Applications` (macOS), `<prefix>/lib/moritz`
 with `<prefix>/bin/moritz` (Linux) or `<prefix>/Moritz` (Windows), and Musil in
-`<prefix>/bin/musil` with its libraries in `~/.musil`. Musil also builds on its
+`<prefix>/bin/musil` with its libraries in `<prefix>/share/musil` (`~/.musil` keeps only your
+datasets; no install writes there, so `sudo` never makes it another user's). Musil also builds on its
 own, from `musil/` (`cmake -S musil -B build-musil`).
 `make notarize SIGN_ID="Developer ID Application: Name (TEAMID)"` signs and
 notarizes the Mac app for distribution.
