@@ -79,7 +79,7 @@ extern "C" __declspec(dllimport) void __stdcall GetCurrentThreadStackLimits(unsi
 #include <unistd.h>
 #endif
 
-#define MUSIL_VERSION "0.11"   // the one place the version is set: CMake, the deploy scripts and the manual read it here
+#define MUSIL_VERSION "0.12"   // the one place the version is set: CMake, the deploy scripts and the manual read it here
 
 namespace musil {
 namespace fs = std::filesystem;

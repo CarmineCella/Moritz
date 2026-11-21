@@ -82,16 +82,14 @@ Done: 0.5 foundations (Windows, CI, code view, Max import); 0.6-0.7 signal proce
 cross-synthesis, NMF, filter design, nebula~, ambisonics and binaural); 0.8 analysis and MIR; 0.9
 atoms and types (Maple, SoundTypes); 0.10 Musil in Moritz (the code box, one data folder); 0.10c
 safety; 0.11 the engine and editor rebuilt (timed events, one plan published to the audio thread,
-the editor's command table and undo rule), YIN, `descriptors~` on the shared analyses.
+the editor's command table and undo rule), YIN, `descriptors~` on the shared analyses; 0.12 the sound editor, Orchidea, scores with the timeline and the roll.
 
 | Version | Content |
 | --- | --- |
-| 0.12 | Sound editor; Orchidea in Moritz; the score foundation (score, transport); datasets; Musil in Moritz |
-| 0.13 | Timeline (mockup 4), designed for a multitrack mode; patch clips and track instruments and effects |
-| 0.14 | Roll and the active score box (mockups 5, 2); Generate and Transform; coll |
-| then | Orchestration: queries, morphological and granular modes, the pieces as patches |
+| 0.12 | Sound editor; Orchidea in Moritz; the score (score, transport); the timeline and the roll in one score window; datasets; Musil in Moritz; examples and tutorials |
+| then | Orchestration: queries, the morphological and granular modes, Musil's assisted composition and the pieces (Grisey, Haas, Atmosphères) as patches |
+| 0.13 | Multitrack mode, as in Reaper (layout B of mockup 8, with a mixer panel); patch clips and track instruments and effects |
 | then | Neural networks (WEFT): `mlp`, classifier, `autoencoder`/`vae` with a playable latent space, images as data (MNIST). WEFT is finished first in its own project, then ported |
-| then | Multitrack mode, as in Reaper (layout B of mockup 8, with a mixer panel) |
 | then | Research: VAE on matching pursuit; a 2-D corpus map; a transformer on atom sequences; `concat~` |
 | then | Integration: export to Max, a documentation site, complete tutorials |
 | 1.0-rc | Stabilisation: fixes, performance, testing on real Windows machines; feature freeze |

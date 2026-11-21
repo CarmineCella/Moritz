@@ -1,6 +1,6 @@
 # Changes
 
-## 0.13
+## 0.12
 
 ### The score
 
@@ -53,8 +53,6 @@
   dynamics): one silent solution, the reason in its report (`'rest`, which `mimetic-report` prints),
   and the other segments are orchestrated; the whole run failed with "empty search space" before
   (MicroSOL with `'partials 0.3`).
-
-## 0.12
 
 ### The score
 

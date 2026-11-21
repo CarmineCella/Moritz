@@ -3091,7 +3091,7 @@ A stereo sound on two outlets is balanced by its azimuth (the clip's and its tra
 | Message | |
 | --- | --- |
 | `read [file]` | reads a .score file (its own again without a name) |
-| `write [file]` | writes it as a .score file, in the patch's folder or in ~/Documents/Moritz |
+| `write [file]` | writes it as a .score file, in the patch's folder or in ~/Documents/Moritz; the scores it places and its sounds are named from the file's folder (relative when near, else absolute), so it reads back whole |
 | `clear` | no events |
 | `add note at dur row pitch [dyn [tech]]` | a note (at and dur in seconds; the pitch a MIDI number or a name, G5) |
 | `add at row pitch [dyn [tech]]` | a note a beat long (the kind and the duration may be left out) |
