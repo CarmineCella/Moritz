@@ -152,10 +152,14 @@ the editor's command table and undo rule), YIN, `descriptors~` on the shared ana
       instruments, in the arranger's drawer as mockup 4); clip fades (with shapes) and gain dragged on the clip;
       crossfades written into overlapping clips; render in N channels and stems; long files read from disk; lanes of
       the tracks' strips that ramp between their points (strip.gain, strip.pan, strip.mute, `strip.send.<bus>`).
-- [ ] Timeline, next: automation that ramps between points for any lane (the strip lanes do); a placed score split or
-      trimmed at its start; rubber-band selection; track headers dragged to reorder; markers and sections; render
-      binaural; the render of a score bound to a patch running the patch too; Musil's score-render honouring the
-      tracks' strips, sends, inserts and fades (a session played by Musil as by Moritz).
+- [x] Timeline (0.14): a lane ramps between its points or steps, for any lane (its mode in its header's menu; a
+      receive's lane sends the values on the way, 100 a second); rubber-band selection (Shift adds); track headers
+      dragged to reorder (the session's mixer follows); markers on the ruler (M at the playhead, renamed, dragged,
+      Alt+Left/Right to jump), a section double-clicked loops; markers saved in the .score, `score-markers`,
+      `score-markers!` and `score-section` in Musil.
+- [ ] Timeline, next: a placed score split or trimmed at its start; markers shown in the roll; a rubber band started
+      inside an empty lane; render binaural; the render of a score bound to a patch running the patch too; Musil's
+      score-render honouring the tracks' strips, sends, inserts and fades (a session played by Musil as by Moritz).
 - [x] The roll (mockup 5), first version: staves per row with proportional time, clefs (G, F and C drawn as
       shapes, in the box too), microtones, dynamics,
       scores placed inside drawn faint with their placement, the playhead, zoom and scroll, snap; select, move,
@@ -193,12 +197,15 @@ the editor's command table and undo rule), YIN, `descriptors~` on the shared ana
 
 ### Orchestration
 
-- [ ] **Sample selection by query**: one small language to choose a subset of a database's samples,
-      written once in Musil's C++ and used by `orchestra` and by Musil (`db-select`). Fields from the
-      database: instrument, family, technique (playing style), dynamics, pitch, string, mute and the
-      other tags in the file names, and the analysed features. Patterns (`pizz*`, `/sul_?pont/`),
-      ranges (`C4..G5`, `p..f` in the order of dynamics, `pitch 60..72`), lists (`Vn|Va`), and, or,
-      not; per instrument or for the whole orchestra. Shows how many samples remain before a run.
+- [x] **Sample selection by query** (0.14): one small language (musil/src/music/db_query.h) for a subset of a
+      database's samples: fields instrument, family, technique, dynamics, pitch, string, mute, tag, file and the
+      analysed moments; patterns (`pizz*`), regular expressions (`/sul_?pont/`), ranges (`C4..G5`, `p..f`), lists
+      (`Vn|Va`), and, or, not, parentheses. Musil's `db-select`, `db-select-counts` and the orchestrate functions'
+      `'select`; `orchestra`'s `select [instrument] query`, the samples left counted before a run.
+- [x] **MusicXML and MIDI export of scores** (0.14): File > Export MusicXML... and Export MIDI... in a score's window
+      and the score box's menu, the box's `export musicxml|midi [file] [bend]`; MusicXML by Musil's score-notate and
+      musicxml-text, MIDI by Musil's new `score-midi` (format 1, a track per part, General MIDI programs, microtones
+      rounded or bent); every file written whole or not at all (Musil's `write` too).
 - [x] Orchidea's morphological and granular modes, and the adaptive segmentation, in C++ (they were
       about 800 lines of music.mu), producing a score: `musil/src/music/granular.h` (the granulator, the
       target's analysis, the pursuit and the genetic decision) and `signals/morphology.h` (the curves, the
@@ -325,7 +332,7 @@ feature it describes:
 - [ ] Patches made from Musil: a `patch` library (make boxes and cables, open the patch, change the
       patch in front through the code view's path, with undo), as in mockup 13.
 - [ ] A local language model that edits patches from text prompts (see below).
-- [ ] MIDI and MusicXML export of scores, MusicXML import, notation; spectral painting in the sound
+- [ ] MusicXML import, notation; spectral painting in the sound
       editor; the patch dock (layout C).
 - [ ] Larger Maple dictionaries as downloads; a live oracle (`oracle~`, OMax-style); a graph view of
       the types; a separate cepstrum object.
