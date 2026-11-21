@@ -27,6 +27,8 @@
   (obj pp prepend set (pos 280 275))
   (obj pl message "the players" (pos 280 305))
   (obj c3 comment "orchidea hpband orchestrates a target with these players: see its help" (pos 20 345))
+  (obj ex1 comment "Examples (Help > Examples, Orchestration): sound-space (players, doublings such as Fl|Picc, range, techniques," (pos 20 370))
+  (obj ex2 comment "dynamics), and the others for orchidea: static-dynamic, connections, memory, search, output, orchidea." (pos 20 388))
   (connect rd 0 or 0)
   (connect p1 0 or 0)
   (connect p2 0 or 0)

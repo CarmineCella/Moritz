@@ -2407,6 +2407,8 @@ analyse makes a database out of a folder of sounds named as in the *SOL database
 
 Without players, the orchestra is Orchidea's default (two of each wind and brass, a bass tuba, two of each string), of what the database has. A player is an instrument code as the database names it (Fl, Ob, ClBb, Bn, Hn, TpC, Tbn, BTb, Vn, Va, Vc, Cb...); Fl|Picc is one player who doubles. Right-click the box for Info.
 
+See the examples in examples/13-orchestration: sound-space (players, doublings, range, techniques, dynamics) and, for what orchidea does with the orchestra, static-dynamic, connections, memory, search and output.
+
 | Argument | |
 | --- | --- |
 | `name` | the name orchidea uses (required) |
@@ -2416,12 +2418,12 @@ Without players, the orchestra is Orchidea's default (two of each wind and brass
 | --- | --- |
 | `read file` | reads a database (a background job): a feature file, or a dataset's name (read fullsol); the sounds are looked for next to it |
 | `analyse folder [type block hop ncoeff]` | analyses every WAV under the folder into folder.spectrum.db next to it (a background job; spectrum 2048 256 1024 by default; logspec, specpeaks, specenv, mfcc 13, moments 4), then reads it |
-| `players instrument [n] ...` | the players, an instrument a player, a number after one making it that many players (players Vn 4 Va 2 Vc 2 Fl); no instrument: the default orchestra |
+| `players instrument [n] ...` | the players, an instrument a player, a number after one making it that many players (players Vn 4 Va 2 Vc 2 Fl); A\|B is one player who doubles, playing either (Fl\|Picc); no instrument: the default orchestra |
 | `add instrument [n]` | more players of an instrument |
 | `remove instrument` | every player of an instrument |
-| `range instrument lo hi` | the instrument plays only from lo to hi (pitch names, G3, or MIDI numbers); range instrument: its whole range again |
-| `techniques name ...` | only sounds of these techniques (ord, pizz-lv...) enter the search; none: every technique |
-| `dynamics name ...` | only sounds of these dynamics (pp, mf...); none: every dynamics |
+| `range instrument lo hi` | only the instrument's sounds from lo to hi enter the search (pitch names, G3, or MIDI numbers, both included); range instrument: its whole range again |
+| `techniques name ...` | only sounds of these techniques (ord, pizz-lv..., as the file names say them) enter the search, for every instrument; techniques alone: every technique |
+| `dynamics name ...` | only sounds of these dynamics (pp, mf...) enter the search; dynamics alone: every dynamics. A filter that leaves a segment no sound makes the run fail with a message (empty search space) |
 | `info` | prints the database (sounds, instruments, their ranges and techniques) and the players in the Console |
 | `stop` | cancels the reading |
 
@@ -2446,6 +2448,10 @@ Assisted orchestration, after Orchidea (Cella, Esling): a target sound in a buff
 
 When it is done, the solution comes out as one message a note: its number (from 1), instrument, pitch, dynamics, technique, onset and duration (ms), the sound's path, the cents the target's partial is away from the pitch, and the player (from 0), then the done outlet bangs (not after a run that failed with a message); a note the target holds across segments on the same player is one longer note. The distance (the mean cost of the chosen solutions) comes out on its outlet, and the solution as a score on the last (score token, for a score object: a row an instrument in orchestral order, a note a sound chosen, with its dynamics, technique, cents and place, and its sample as its sound, so the score object plays it and its roll edits it). With an out buffer~, the chosen samples are summed into it in stereo, the players seated as in Orchidea's mixes, so that the orchestration is heard at once (scaled down when it would clip). The ten best solutions of each segment are kept: choose puts another in place, show lists them, report says what each segment found. Right-click the box for Report and Save the solution...
 
+A dynamic segmentation (flux or frames) uses Musil's dynamic settings, those of dynamic_orchidea.mu, for every setting no message has set: population 500, epochs 500, sparsity 0.01, partials 0.3 (0 when the database is tiny, as MicroSOL), solutions 5, sustain 1, hold 4000 ms, dovetail 0.75, connection path. A static target (segmentation none) keeps the defaults below.
+
+See the examples in examples/13-orchestration, one a feature: static-dynamic (segmentation none, flux, frames, onsets), connections (closest, best, path), memory (sustain, hold, dovetail, hysteresis), search (population, epochs, sparsity, seed, show, choose), sound-space (the orchestra's players and filters), output (score, notes, write, roll), and orchidea (four targets, a piano phrase orchestrated dynamically).
+
 A search of 300 individuals over 300 epochs on TinySOL takes well under a second for a static target; a segmented target takes that per segment.
 
 | Argument | |
@@ -2455,10 +2461,10 @@ A search of 300 individuals over 300 epochs on TinySOL takes well under a second
 | Message | |
 | --- | --- |
 | `run target [out]` | orchestrates the buffer~ target (mixed to mono); the sum of the chosen samples goes to the buffer~ out |
-| `population n` | individuals of the genetic search, 2 to 20000 (300) |
-| `epochs n` | generations at most, 1 to 100000 (300) |
+| `population n` | individuals of the genetic search, the combinations tried at each generation, 2 to 20000 (300; 500 when dynamic): more, nearer the target and slower |
+| `epochs n` | generations at most, 1 to 100000 (300; 500 when dynamic) |
 | `patience n` | generations without a better population before a search stops (150) |
-| `sparsity x` | how often a player is left out of a solution, 0 to 1 (0.001; 0.1 for a single instrument as target) |
+| `sparsity x` | how often a player is left out of a solution, 0 to 1 (0.001; 0.01 when dynamic; 0.1 for a single instrument as target): more, fewer players |
 | `seed n` | the random seed: the same seed gives the same orchestration (1) |
 | `pursuit k` | 0, a random first population; k, the first population drawn from the k sounds nearest the target per player (0) |
 | `crossover x` | the crossover rate (0.8) |
@@ -2470,17 +2476,17 @@ A search of 300 individuals over 300 epochs on TinySOL takes well under a second
 | `onsets ms ...` | the segments start at these times instead |
 | `threshold x` | the flux's peaks above this share of its largest count as onsets (2: none does) |
 | `timegate ms` | onsets at least this far apart (100) |
-| `partials x` | the target's partials above this share of the strongest give the pitches the sounds must have, 0 to 1 (0.2); 0, no pitch filter: every sound may serve (noisy targets) |
+| `partials x` | the target's partials above this share of the strongest give the pitches the sounds must have, 0 to 1 (0.2; 0.3 when dynamic, 0 with a tiny database); 0, no pitch filter: every sound may serve (noisy targets, MicroSOL) |
 | `window n` | the window the partials are read with, a power of two (32768: large for a low target) |
 | `pitches name ...` | pitches every segment admits besides its partials' |
 | `octaves n ...` | the pitch filter widened by octaves (octaves 0 -1: the partials' pitches and the octave below) |
-| `connection closest \| best \| path` | how a solution is chosen per segment: closest to the one before in timbre (Orchidea's), the best of each, or the path with the least melodic movement (closest) |
-| `solutions n` | the best solutions kept per segment (10) |
-| `hysteresis x` | above 0, each segment leans in timbre towards the solutions chosen before (0) |
-| `dovetail x` | above 0, a solution that drops the pitches of the one before costs more (0) |
+| `connection closest \| best \| path` | how a solution is chosen per segment among the ones kept: closest to the one before in timbre (Orchidea's), the best of each alone, or the sequence with the least melodic movement (closest; path when dynamic). With path, sustain is not used: the path makes its own continuity |
+| `solutions n` | the best solutions kept per segment, among which the connection and choose pick (10; 5 when dynamic) |
+| `hysteresis x` | above 0, each segment leans in timbre towards the solutions chosen before: a timbre memory, an even colour (0) |
+| `dovetail x` | above 0, a solution that drops the pitches of the one before costs more: pivot notes between chords (0; 0.75 when dynamic) |
 | `movement x` | for connection path, the cost of a semitone a player moves (1) |
-| `sustain 1/0` | 1, a player whose pitch the target keeps holds its sound on into the next segment (1) |
-| `hold ms` | a held note is never longer than this; the player starts it again (no limit) |
+| `sustain 1/0` | 1, a player whose pitch the target keeps holds its sound on into the next segment, one longer note, not searched again (1); needs a pitch filter (partials above 0), and is not used with connection path |
+| `hold ms` | a held note is never longer than this; the player starts it again (no limit; 4000 when dynamic); hold alone: no limit |
 | `seating 1/0` | 1, the mix seats the players as Orchidea's mixes do (violins left, cellos right); 0, all in the middle (1) |
 | `choose segment n` | solution n (from 1, best first) of a segment (from 1) in place of the one chosen: the notes and the mix again |
 | `notes` | the notes again |
