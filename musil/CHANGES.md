@@ -1,6 +1,6 @@
 # Changes
 
-## 0.13 (in progress)
+## 0.13
 
 ### Orchestration
 
