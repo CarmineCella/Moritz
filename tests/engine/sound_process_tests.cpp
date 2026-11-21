@@ -16,6 +16,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <chrono>
+#include <filesystem>
 #include <fstream>
 #include <thread>
 
@@ -504,6 +505,32 @@ TEST(sound_editor_sees_record_writes) {
     CHECK(!d.followBuffer());
 }
 
+
+// To score names the sound relative to the .score's folder (it wrote the absolute path: the score broke when its folder
+// moved): in the folder or below, one or two folders up; farther, absolute. The score read from a moved folder finds it
+TEST(regions_to_score_name_the_sound_relative_to_the_score) {
+    CHECK(soundPathForScore("/a/b/voice.wav", "/a/b/regions.score") == "voice.wav");
+    CHECK(soundPathForScore("/a/b/sounds/voice.wav", "/a/b/regions.score") == "sounds/voice.wav");
+    CHECK(soundPathForScore("/a/b/sounds/voice.wav", "/a/b/scores/regions.score") == "../sounds/voice.wav");
+    CHECK(soundPathForScore("/a/sounds/voice.wav", "/a/b/c/regions.score") == "../../sounds/voice.wav");
+    CHECK(soundPathForScore("/x/y/voice.wav", "/a/b/c/regions.score") == "/x/y/voice.wav");
+    const char* t = std::getenv("TMPDIR");
+    std::string base = std::string(t && *t ? t : "/tmp");
+    if (base.back() == '/') base.pop_back();
+    std::filesystem::path dir = std::filesystem::path(base) / "moritz-to-score", moved = std::filesystem::path(base) / "moritz-to-score-moved";
+    std::error_code ec;
+    std::filesystem::remove_all(dir, ec);
+    std::filesystem::remove_all(moved, ec);
+    std::filesystem::create_directories(dir / "sounds", ec);
+    { std::ofstream f(dir / "sounds" / "voice.wav"); f << "x"; }
+    std::string text = scoreText(someMarks(), 44100, soundPathForScore((dir / "sounds" / "voice.wav").string(), (dir / "r.score").string()), false, "r");
+    CHECK(text.find("\"sounds/voice.wav\"") != std::string::npos);
+    { std::ofstream f(dir / "r.score"); f << text; }
+    std::filesystem::rename(dir, moved, ec);
+    auto s = musil::score::readFile((moved / "r.score").string());
+    CHECK(s && !s->empty() && musil::score::resolveSource(s->events()[0]->source, musil::score::folderOf(s->path), {}) != "");
+    std::filesystem::remove_all(moved, ec);
+}
 
 TEST(regions_to_score_read_back_as_sound_events) {
     SoundMarks m = someMarks();

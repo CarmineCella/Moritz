@@ -1664,7 +1664,8 @@ bool SoundEditor::writeScore(const std::string& path, std::string& err) {
     }
     std::string name = d.boundToBuffer() ? d.bufferName() : baseName(d.path());
     if (size_t dot = name.find_last_of('.'); dot != std::string::npos && !d.boundToBuffer()) name.resize(dot);
-    std::string source = d.boundToBuffer() ? d.bufferName() : d.path();
+    // the file named relative to the score's folder (in it, below, or a folder or two up): the folder moves with it
+    std::string source = d.boundToBuffer() ? d.bufferName() : soundPathForScore(d.path(), path);
     return fileio::writeAtomic(path, scoreText(d.marks(), d.sr(), source, d.boundToBuffer(), name + " regions"), &err);
 }
 

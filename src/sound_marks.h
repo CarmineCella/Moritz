@@ -86,6 +86,11 @@ bool writeMarksFor(const std::string& soundPath, const SoundMarks& m, double sr,
 // its own time, playing that region of the sound (a file's path, or a buffer~'s name when buffer); the region's
 // name is the event's label, its type, energy and pitch its fields
 std::string scoreText(const SoundMarks& m, double sr, const std::string& source, bool buffer, const std::string& name);
+// a sound file's path as a .score at scorePath names it: relative to the score's folder when the sound is in it or in a
+// folder below (x.wav, sounds/x.wav), or one or two folders up (../sounds/x.wav: a project's scores and sounds side by
+// side), so that the folder moves with its score (the score object and Musil look next to the score first); else
+// absolute (another disk, far apart)
+std::string soundPathForScore(const std::string& sound, const std::string& scorePath);
 
 // ---- To coll: the regions as rows (a list of lists, Musil data), and the hook for the coll object
 struct CollRow {
