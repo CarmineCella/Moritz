@@ -434,7 +434,8 @@ void TimelineView::drawHeader(const Row& r, int Y) {
         if (r.h >= 32) {
             fl_font(FL_HELVETICA, 9);
             fl_color(kDim);
-            std::string sub = "receive " + r.laneName + " · " + fmt(r.lo) + "…" + fmt(r.hi);
+            bool strip = r.laneName.rfind("strip.", 0) == 0;
+            std::string sub = (strip ? std::string("the track's strip") : "receive " + r.laneName) + " · " + fmt(r.lo) + "…" + fmt(r.hi);
             fl_draw(sub.c_str(), x() + 16, Y + 28);
         }
         fl_pop_clip();
@@ -755,10 +756,15 @@ void TimelineView::drawLane(const Row& r, int Y) {
     }
     std::stable_sort(ps.begin(), ps.end(), [](const P& a, const P& b) { return a.t < b.t; });
     fl_color(fl_rgb_color(100, 160, 240));
-    // the values hold from one point to the next (each point is the message sent there)
+    // the values hold from one point to the next (each point is the message sent there); a lane of the track's strip
+    // (strip.gain, strip.pan, strip.send.<bus>) ramps from one to the next (played on the audio thread), and holds its
+    // first value before it
+    bool ramps = r.laneName.rfind("strip.", 0) == 0 && r.laneName != "strip.mute";
+    if (ramps && !ps.empty()) fl_xyline(laneX(), yOf(ps.front().v), tp_->xOf(ps.front().t));
     for (size_t k = 0; k < ps.size(); ++k) {
         int x0 = tp_->xOf(ps[k].t), y0 = yOf(ps[k].v);
         int x1 = k + 1 < ps.size() ? tp_->xOf(ps[k + 1].t) : laneX() + laneW();
+        if (ramps && k + 1 < ps.size()) { fl_line(x0, y0, x1, yOf(ps[k + 1].v)); continue; }
         fl_xyline(x0, y0, x1);
         if (k + 1 < ps.size()) fl_yxline(x1, y0, yOf(ps[k + 1].v));
     }
