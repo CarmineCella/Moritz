@@ -1,0 +1,106 @@
+; orchfest.moritz - the three orchestrators in one score, after Musil's orchfest.mu: the same
+; orchestra and the same target, the first eight seconds of a piano phrase in A minor, orchestrated
+; three ways one after the other. 0-8 s granular (mode granular): a process described by its
+; parameters, here the harmony of the phrase as chords and a density of events, the phrase as a
+; cloud that keeps its harmony but not its notes; 10-18 s morphological (mode morphological,
+; decision genetic): the phrase's shape drives the granulator (its density of attacks, register and
+; loudness) and at each event Orchidea's search picks the free players' sounds nearest what the
+; phrase still lacks; 20-28 s mimetic (Orchidea's): the phrase cut at its onsets, each segment
+; matched as a chord, a player whose pitch the phrase keeps holding it on (sustain), the previous
+; chord's pitches favoured (dovetail); 30 s the piano itself, to compare. The mimetic run's score is
+; the score box's (score), moved to 20 s (shift 20); the other two are merged into it, each placed
+; by its start; the piano is added as a sound. MicroSOL, which comes with Moritz, has four
+; instruments around C4-G4; with FullSOL (read fullsol) widen the granular register to 3 5 and set
+; partials 0.3 for the mimetic search.
+; Try: 1. orchestrate: the three runs one after the other (each done starts the next; some seconds);
+; 2. play: the cloud, the shape, the chords, then the piano; 3. double-click the score box: the
+; three sections and the piano on one timeline; the roll, the rows the players.
+(patch
+  (obj title comment "three orchestrators, one target, one score: granular, morphological, mimetic, then the piano" (pos 20 12))
+  (obj sub comment "orchestrate: the three runs one after the other (background jobs), then play the score" (pos 20 34))
+  (obj tp buffer~ ofpiano A_minor.wav (pos 20 65))
+  (obj tph buffer~ ofphrase (pos 200 65))
+  (obj lb loadbang (pos 330 65))
+  (obj cut code 1 1 (pos 420 65)
+    (script
+      "; the target: the first eight seconds of the buffer~ ofpiano, into ofphrase"
+      "var r (buffer-rate \"ofpiano\")"
+      "set-buffer! \"ofphrase\" (map (buffer \"ofpiano\") (function (c) (take c (floor (* 8 r))))) r"))
+  (obj ccut comment "the target: the phrase's first eight seconds" (pos 500 66))
+  (obj corch comment "the orchestra: MicroSOL, eight players (read fullsol for a real one)" (pos 20 100))
+  (obj band orchestra ofband microsol (pos 20 122))
+  (obj pl message "players Ob 2 Hn 2 Vn 2 Vc 2" (pos 200 122))
+  (obj rdf message "read fullsol" (pos 420 122))
+  (obj s1 comment "1. orchestrate: mimetic (its score is the box's, moved to 20 s), then granular at 0 and morphological at 10 (merged)" (pos 20 160))
+  (obj go message "; ofmim segmentation flux, threshold 0.1, timegate 100, partials 0, population 100, epochs 100, solutions 6, connection closest, sustain 1, hold 4000, dovetail 0.5, seed 2, run ofphrase" (pos 20 182))
+  (obj pg message "; ofgran mode granular, seed 2, start 0, coupling 0, chords A3 C4 E4 / D4 F4 A4 / E4 G#4 B4, chord-weight 1, density 6 10, duration 0.2 0.6, register 4 4.5, dynamics 0.5" (pos 20 232))
+  (obj pm message "; ofmor mode morphological, seed 2, start 10, decision genetic, density-scale 1.5" (pos 20 280))
+  (obj cset comment "the granular and the morphological runs, set when the patch opens" (pos 480 289))
+  (obj rm receive ofmim (pos 20 340))
+  (obj om orchidea ofband (pos 20 370))
+  (obj cm comment "mimetic" (pos 120 371))
+  (obj rg receive ofgran (pos 240 340))
+  (obj og orchidea ofband (pos 240 370))
+  (obj cg comment "granular" (pos 340 371))
+  (obj ro receive ofmor (pos 460 340))
+  (obj oo orchidea ofband (pos 460 370))
+  (obj co comment "morphological" (pos 560 371))
+  (obj tm t b b l (pos 20 405))
+  (obj sh message "shift 20" (pos 20 435))
+  (obj ng message "; ofgran run 8" (pos 100 435))
+  (obj mg message "merge $2" (pos 240 435))
+  (obj no message "; ofmor run ofphrase" (pos 330 435))
+  (obj mo message "merge $2" (pos 460 435))
+  (obj pia message "add sound 30 8 ../../data/A_minor.wav" (pos 560 435))
+  (obj cs comment "the piece: the three orchestrations and the piano;" (pos 690 575))
+  (obj cs2 comment "double-click it for the timeline or the roll" (pos 690 595))
+  (obj sc score orchfest 2 @size 640 200 (pos 20 492))
+  (obj tr transport 60 4 4 (pos 690 492))
+  (obj sp message play (pos 690 527))
+  (obj ss message stop (pos 735 527))
+  (obj cpl comment "2. play" (pos 785 528))
+  (obj sum +~ (pos 20 720))
+  (obj chall comment "the two channels summed, the volume ramped, then a hall (reverb~)" (pos 70 721))
+  (obj half *~ 0.25 (pos 20 750))
+  (obj lbv loadbang (pos 140 765))
+  (obj vol message "0.8 300" (pos 140 795))
+  (obj mute message "0 300" (pos 210 795))
+  (obj cvol comment "volume up, down" (pos 270 796))
+  (obj ramp line~ (pos 140 825))
+  (obj vca *~ (pos 20 860))
+  (obj rv reverb~ 0.3 2.5 (pos 20 890))
+  (obj dac dac~ (pos 20 925))
+  (connect lb 0 cut 0)
+  (connect lb 0 pl 0)
+  (connect pl 0 band 0)
+  (connect rdf 0 band 0)
+  (connect lb 0 pg 0)
+  (connect lb 0 pm 0)
+  (connect rm 0 om 0)
+  (connect rg 0 og 0)
+  (connect ro 0 oo 0)
+  (connect om 4 tm 0)
+  (connect tm 2 sc 0)
+  (connect tm 1 sh 0)
+  (connect tm 0 ng 0)
+  (connect sh 0 sc 0)
+  (connect og 4 mg 0)
+  (connect mg 0 sc 0)
+  (connect og 1 no 0)
+  (connect oo 4 mo 0)
+  (connect mo 0 sc 0)
+  (connect oo 1 pia 0)
+  (connect pia 0 sc 0)
+  (connect sp 0 sc 0)
+  (connect ss 0 sc 0)
+  (connect sc 0 sum 0)
+  (connect sc 1 sum 1)
+  (connect sum 0 half 0)
+  (connect half 0 vca 0)
+  (connect lbv 0 vol 0)
+  (connect vol 0 ramp 0)
+  (connect mute 0 ramp 0)
+  (connect ramp 0 vca 1)
+  (connect vca 0 rv 0)
+  (connect rv 0 dac 0)
+  (connect rv 1 dac 1))
