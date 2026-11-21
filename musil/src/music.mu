@@ -449,13 +449,9 @@ function score-schedule (s gain from) {
     return (list synths (+ t0 (- (score-duration s) from) 0.6) t0)
 }
 ; --- the roll --------------------------------------------------------------------------------
-var orchestral-order (list "Picc" "Fl" "AFl" "BFl" "Ob" "EH" "ClEb" "ClBb" "Cl" "BCl" "CbCl" "Bn" "CbBn" "SSax" "ASax" "TSax" "BSax"
-                           "Hn" "TpC" "Tp" "Tbn" "BTb" "Tba" "Timp" "Perc" "Hp" "Pno" "Acc" "Gtr" "Vn" "Va" "Vc" "Cb")
-; (instrument-rank instr) where an instrument code sits in the orchestral order (unknown ones after)
-function instrument-rank (instr) {
-    var k (find orchestral-order (str instr))
-    return (if (< k 0) (+ 1000 (length (str instr))) k)
-}
+; the instrument codes in the order of an orchestral score, and (instrument-rank instr) where one sits in it (unknown
+; ones after): builtins of music/score_layout.h, the rules Moritz's roll draws with too
+var orchestral-order (score-orchestral-order)
 ; (score-rows s)           the rows of the roll: one per instrument (orchestral order) for the notes, then one
 ;                          per kind: files, buffers, synths, calls; => (list (list label events) ...)
 function score-rows (s) {
@@ -490,7 +486,7 @@ function score-roll (s) {
     each rows (function (row) {
         var evs (last row)
         var pitched (filter evs (function (e) (has? e 'midi)))
-        var clef (if (== (length pitched) 0) "none" (if (< (median (vec (map pitched (function (e) (get e 'midi))))) 60) "bass" "treble"))
+        var clef (staff-clef (map pitched (function (e) (get e 'midi))))
         push row-specs (list (head row) clef)
         var lanes (if (equal? clef "none") (event-lanes evs) (map evs (function (e) 0)))
         var nlanes (+ 1 (max-of lanes))
@@ -2452,10 +2448,10 @@ function note-from-file (db file instr pitch dyn tech) {
 }
 
 ; --- transformations: new events, the score untouched, or in place ------------------------------------
-; (score-shift! s dt) (score-scale! s f)   every event moved by dt seconds; every onset and duration multiplied by f
-function score-shift! (s dt) (each (get s 'events) (function (e) (put! e 'at (max 0 (+ (get e 'at) dt)))))
-function score-scale! (s f) (each (get s 'events) (function (e) { put! e 'at (* f (get e 'at))
-                                                                   put! e 'dur (* f (get e 'dur)) }))
+; (score-shift! s dt [ids]) (score-scale! s f)   every event (or those of ids) moved by dt seconds; every onset and duration
+;                          multiplied by f; and the other transformations of a selection, builtins of music/score_transform.h
+;                          that Moritz's roll calls too: score-transpose! score-invert! score-retrograde! score-augment!
+;                          score-diminish! score-quantize-grid! score-humanize! score-thin! score-density!
 ; (score-select s f)       the events for which f holds
 function score-select (s f) (filter (get s 'events) f)
 ; (score-sort! s)          the events ordered by onset

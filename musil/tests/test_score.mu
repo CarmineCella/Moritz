@@ -182,6 +182,90 @@ check (and (== (length (score-events mm)) 2) (!= (get (head (score-events mm)) '
 event m 0.1 0 (record (list 'kind 'message 'source "tonic" 'values (list 62)))
 check (== (length (head (score-render m "mono"))) (+ 2000 (floor (* 0.6 8000)))) "score-render: a message makes no sound"
 
+; --- transformations of a selection (music/score_transform.h: the same as Moritz's roll and score object) ---
+function four () {
+    var x (coll->score "x" 44100 (list (list 'note 0 0.5 'Fl 72 'mf 'ord 1) (list 'note 0.5 0.25 'Fl 74 'p 'ord 1)
+                                       (list 'note 1 1 'Vc 48 'f 'pizz 1) (list 'note 2.25 0.75 'Vc 50 'mf 'ord 1)))
+    put! (score-find x 4) 'cents 25
+    return x
+}
+function pitches-of (x) (map (score-events x) (function (e) (get e 'midi)))
+function ats-of (x) (map (score-events x) (function (e) (get e 'at)))
+function durs-of (x) (map (score-events x) (function (e) (get e 'dur)))
+var t0 (score->text (four))
+var x (four)
+score-transpose! x 3
+check (equal? (pitches-of x) (list 75 77 51 53)) "score-transpose!: every note"
+score-transpose! x -3
+check (equal? (score->text x) t0) "score-transpose!: and back, the same score"
+score-transpose! x 12 (list 1 (score-find x 3))
+check (equal? (pitches-of x) (list 84 74 60 50)) "score-transpose!: the notes of a selection (ids and events)"
+set x (four)
+score-invert! x 60
+check (equal? (pitches-of x) (list 48 46 72 70)) "score-invert!: around C4"
+check (== (get (score-find x 4) 'cents) -25) "score-invert!: the cents mirrored too"
+score-invert! x 'C4
+check (equal? (score->text x) t0) "score-invert!: twice, the same score"
+set x (four)
+score-retrograde! x
+check (equal? (ats-of x) (list 2.5 2.25 1 0)) "score-retrograde!: backwards within the span"
+score-retrograde! x
+check (equal? (score->text x) t0) "score-retrograde!: twice, the same score"
+set x (four)
+score-retrograde! x (list 1 2)
+check (equal? (ats-of x) (list 0.25 0 1 2.25)) "score-retrograde!: a selection within its own span"
+set x (four)
+score-augment! x 2
+check (and (equal? (ats-of x) (list 0 1 2 4.5)) (equal? (durs-of x) (list 1 0.5 2 1.5))) "score-augment!: from the first onset"
+score-diminish! x 2
+check (equal? (score->text x) t0) "score-diminish!: back"
+set x (four)
+score-augment! x 2 (list 3 4)
+check (and (equal? (ats-of x) (list 0 0.5 1 3.5)) (equal? (durs-of x) (list 0.5 0.25 2 1.5))) "score-augment!: a selection, from its first onset"
+check (contains? (error-of (function () (score-augment! x 0))) "> 0") "score-augment!: a factor of 0 is refused"
+var q (coll->score "q" 44100 (list (list 'note 0.3 0.4 'Fl 72 'mf 'ord 1) (list 'note 1.1 0.65 'Fl 72 'mf 'ord 1) (list 'msg 0.7 'tonic 62)))
+score-quantize-grid! q 0.5 1
+check (and (equal? (ats-of q) (list 0.5 1 0.5)) (equal? (durs-of q) (list 0.5 1 0))) "score-quantize-grid!: onsets and ends on the grid, a message's onset"
+set q (coll->score "q" 44100 (list (list 'note 0.3 0.4 'Fl 72 'mf 'ord 1)))
+score-quantize-grid! q 0.5 0.5
+check (and (close? (head (ats-of q)) 0.4 1e-12) (close? (head (durs-of q)) 0.45 1e-12)) "score-quantize-grid!: half way"
+var h1 (four)
+var h2 (four)
+score-humanize! h1 0.01 1 7
+score-humanize! h2 0.01 1 7
+check (equal? (score->text h1) (score->text h2)) "score-humanize!: the same seed, the same score"
+check (not (equal? (score->text h1) t0)) "score-humanize!: something moved"
+check (< (max (abs (- (vec (ats-of h1)) (vec (ats-of (four)))))) 0.0100001) "score-humanize!: by no more than asked"
+set x (four)
+check (== (length (score-thin! x 1 3)) 0) "score-thin!: keep 1 keeps all"
+check (equal? (score-thin! x 0 3) (vec 1 2 3 4)) "score-thin!: keep 0, all taken out"
+check (== (length (score-events x)) 0) "score-thin!: the score is empty"
+var th1 (four)
+var th2 (four)
+check (equal? (score-thin! th1 0.5 11) (score-thin! th2 0.5 11)) "score-thin!: the same seed, the same events"
+set x (four)
+check (equal? (score-density! x (list 1 0) 5) (vec 4)) "score-density!: the second half of the span thinned out"
+set x (four)
+score-shift! x 1 (list 2)
+check (equal? (ats-of x) (list 0 1.5 1 2.25)) "score-shift!: a selection"
+score-shift! x -10
+check (equal? (ats-of x) (list 0 0 0 0)) "score-shift!: never before 0"
+set x (four)
+score-scale! x 0.5
+check (equal? (ats-of x) (list 0 0.25 0.5 1.125)) "score-scale!: onsets and durations"
+var sh (score "sh" 44100)
+score-add! sh (record (list 'kind 'note 'at 0 'dur 1 'midi 60 'instr "Fl" 'shift 0.5))
+score-transpose! sh 2
+check (== (get (head (score-events sh)) 'shift) 2.5) "score-transpose!: a Musil note's sound shifted as much"
+
+; --- the layout of the roll (music/score_layout.h) ---
+check (== (instrument-rank 'Vn) 29) "instrument-rank: Vn"
+check (== (instrument-rank "Zz") 1002) "instrument-rank: an unknown one after, by length"
+check (equal? (head orchestral-order) "Picc") "orchestral-order"
+check (equal? (staff-clef (list 40 50 70)) "bass") "staff-clef: a median below C4"
+check (equal? (staff-clef (list 59 61)) "treble") "staff-clef: a median at C4"
+check (equal? (staff-clef (list)) "none") "staff-clef: no pitches"
+
 each (ls tmp) (function (f) (remove (concat tmp "/" f)))
 remove tmp
 report "test_score"

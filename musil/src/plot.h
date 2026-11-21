@@ -19,6 +19,7 @@
 #pragma once
 #include "core.h"
 #include "live.h"
+#include "music/score_layout.h"
 #include <FL/Fl.H>
 #include <FL/Fl_Double_Window.H>
 #include <FL/Fl_Widget.H>
@@ -271,14 +272,14 @@ inline roll_geom roll_geometry(const figure& f, int ox, int oy, int w, int h, co
     g.rows = 1; for (auto& L : f.layers) if (L.kind == "roll") g.rows = std::max<int>(1, (int)L.rows.size());
     g.row_h = g.ph / g.rows * std::max(1.0, view.row_scale); g.top_rows = g.top - (int)(view.row_offset * g.row_h); return g;
 }
-// the diatonic step of a MIDI note (C4 = 60 -> 0 at C, counting letters), and whether it needs a sharp
-inline int roll_step(int midi, bool& sharp) { static const int step[12] = { 0, 0, 1, 1, 2, 3, 3, 4, 4, 5, 5, 6 }; static const bool sh[12] = { 0, 1, 0, 1, 0, 0, 1, 0, 1, 0, 1, 0 }; int pc = ((midi % 12) + 12) % 12; sharp = sh[pc]; return (midi / 12 - 1) * 7 + step[pc]; }
+// the diatonic step of a MIDI note and whether it needs a sharp (music/score_layout.h: Moritz's roll spells them the same)
+inline int roll_step(int midi, bool& sharp) { return score::layout::diatonicStep(midi, sharp); }
 // a row's staff: its five lines' vertical positions and the step of its bottom line (E4 for a treble clef, G2 for a bass one)
 struct staff_geom { double y_bottom, sp; int bottom_step; bool has_staff; };
 inline staff_geom roll_staff(const roll_geom& g, int r, const std::string& clef) {
     staff_geom st; st.has_staff = clef == "treble" || clef == "bass";
     double top = g.top_rows + r * g.row_h; st.sp = std::max(3.0, g.row_h / 12.0);     // twelve spaces of room: the staff, ledger lines each side, the dynamics below
-    st.y_bottom = top + g.row_h * 0.66; bool dummy; st.bottom_step = clef == "bass" ? roll_step(43, dummy) : roll_step(64, dummy);
+    st.y_bottom = top + g.row_h * 0.66; st.bottom_step = score::layout::bottomStep(clef);
     return st;
 }
 inline double roll_note_y(const staff_geom& st, int midi) { bool sh; int step = roll_step(midi, sh); return st.y_bottom - (step - st.bottom_step) * st.sp / 2; }

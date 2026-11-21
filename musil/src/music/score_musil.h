@@ -19,6 +19,8 @@
 #include "../core.h"
 #include "score.h"
 #include "score_text.h"
+#include "score_transform.h"
+#include "score_layout.h"
 
 #ifdef OPAQUE      // Windows (wingdi.h) defines it; Musil has a value type of that name
 #undef OPAQUE
@@ -639,6 +641,140 @@ inline vptr mus_score_bbt_sec(vlist& a, Interp& i) {
     return v_num(score::fromBBT(i.scalar(a[1]), i.scalar(a[2]), i.scalar(a[3]), s->bpm, s->meterNum));
 }
 
+// --- transformations (score_transform.h): the same functions Moritz's roll and score object call ---------------------------------------
+// the ids an optional argument names: a list of ids or of events of the score (none: every event)
+inline score::transform::Ids idsArg(Interp& i, vlist& a, size_t k) {
+    score::transform::Ids ids;
+    if (a.size() <= k) return ids;
+    const vptr& v = a[k];
+    if (isEvent(v)) { ids.push_back(eventOf(i, v)->id); return ids; }
+    if (v && v->t == Value::NUM) { for (double d : v->num) ids.push_back((uint64_t)std::max(0.0, d)); }
+    else for (auto& x : i.list(v)) {
+        if (isEvent(x)) ids.push_back(eventOf(i, x)->id);
+        else ids.push_back((uint64_t)std::max(0.0, i.scalar(x)));
+    }
+    if (ids.empty()) ids.push_back(0);            // an empty list selects nothing (id 0 is never an event's)
+    return ids;
+}
+// a pitch: a MIDI number or a name (C4, "F#3")
+inline double pitchArg(Interp& i, const vptr& v) {
+    if (v && (v->t == Value::STR || v->t == Value::SYM)) {
+        double p = score::pitchOfName(v->s);
+        if (p < 0) i.bad("not a pitch: " + v->s);
+        return p;
+    }
+    return i.scalar(v);
+}
+// a pitch transformation, with the sounds of Musil's notes shifted by as much as their pitches moved
+template <class F> inline void withShifts(Score& s, F f) {
+    std::map<uint64_t, double> before;
+    for (auto& e : s.events()) if (pitched(*e)) before[e->id] = e->pitch;
+    f();
+    for (auto& e : s.events()) {
+        auto it = before.find(e->id);
+        if (it == before.end() || e->pitch == it->second) continue;
+        vptr r = hostRec(e->host); long h = hostFind(r, v_sym("shift"));
+        if (h >= 0 && r->l[(size_t)h]->l[1]->t == Value::NUM) r->l[(size_t)h]->l[1] = v_num(r->l[(size_t)h]->l[1]->num[0] + e->pitch - it->second);
+    }
+}
+inline vptr idList(const score::transform::Ids& ids) {
+    varr v(ids.size());
+    for (size_t k = 0; k < ids.size(); k++) v[k] = (double)ids[k];
+    return v_arr(std::move(v));
+}
+// (score-transpose! s n [ids])   the notes (and the scores placed) n semitones higher; ids: a list of ids or events
+//                          (none: every event). => s
+inline vptr mus_score_transpose(vlist& a, Interp& i) {
+    auto s = S(i, a[0]); double n = i.scalar(a[1]); auto ids = idsArg(i, a, 2);
+    withShifts(*s, [&] { score::transform::transpose(*s, n, ids); });
+    return a[0];
+}
+// (score-invert! s axis [ids])   the notes mirrored around a pitch (a number or a name); twice gives them back. => s
+inline vptr mus_score_invert(vlist& a, Interp& i) {
+    auto s = S(i, a[0]); double axis = pitchArg(i, a[1]); auto ids = idsArg(i, a, 2);
+    withShifts(*s, [&] { score::transform::invert(*s, axis, ids); });
+    return a[0];
+}
+// (score-retrograde! s [ids])    the events backwards within their span (from the first onset to the last end). => s
+inline vptr mus_score_retrograde(vlist& a, Interp& i) {
+    auto s = S(i, a[0]);
+    score::transform::retrograde(*s, idsArg(i, a, 1));
+    return a[0];
+}
+// (score-augment! s k [ids]) (score-diminish! s k [ids])   onsets and durations stretched by k (divided by k) from the
+//                          first onset of the events. => s
+inline vptr mus_score_augment(vlist& a, Interp& i) {
+    auto s = S(i, a[0]); double k = i.scalar(a[1]); auto ids = idsArg(i, a, 2);
+    guarded(i, [&] { return score::transform::augment(*s, k, ids); });
+    return a[0];
+}
+inline vptr mus_score_diminish(vlist& a, Interp& i) {
+    auto s = S(i, a[0]); double k = i.scalar(a[1]); auto ids = idsArg(i, a, 2);
+    if (!(k > 0)) i.bad("the factor must be > 0");
+    guarded(i, [&] { return score::transform::augment(*s, 1 / k, ids); });
+    return a[0];
+}
+// (score-quantize-grid! s grid strength [ids])   onsets and ends moved toward the nearest multiple of grid seconds (strength 1:
+//                          onto it, 0.5: half way); an end that would reach its onset is a grid after it. => s
+inline vptr mus_score_quantize_grid(vlist& a, Interp& i) {
+    auto s = S(i, a[0]); double g = i.scalar(a[1]), k = i.scalar(a[2]); auto ids = idsArg(i, a, 3);
+    guarded(i, [&] { return score::transform::quantize(*s, g, k, ids); });
+    return a[0];
+}
+// (score-humanize! s seconds db seed [ids])   each onset moved at random by up to seconds either way, each gain by up to db
+//                          decibels; the same seed, the same result on every system. => s
+inline vptr mus_score_humanize(vlist& a, Interp& i) {
+    auto s = S(i, a[0]);
+    score::transform::humanize(*s, i.scalar(a[1]), i.scalar(a[2]), (uint32_t)(int64_t)i.scalar(a[3]), idsArg(i, a, 4));
+    return a[0];
+}
+// (score-thin! s keep seed [ids])   each event kept with probability keep, the others taken out. => the ids taken out
+inline vptr mus_score_thin(vlist& a, Interp& i) {
+    auto s = S(i, a[0]);
+    return idList(score::transform::thin(*s, i.scalar(a[1]), (uint32_t)(int64_t)i.scalar(a[2]), idsArg(i, a, 3)));
+}
+// (score-density! s curve seed [ids])   each event kept with the probability a curve (a vector or a list of values 0 to 1,
+//                          read along the events' span) has at its onset. => the ids taken out
+inline vptr mus_score_density(vlist& a, Interp& i) {
+    auto s = S(i, a[0]);
+    std::vector<double> curve;
+    if (a[1] && a[1]->t == Value::NUM) for (double d : a[1]->num) curve.push_back(d);
+    else for (auto& x : i.list(a[1])) curve.push_back(i.scalar(x));
+    uint32_t seed = (uint32_t)(int64_t)i.scalar(a[2]);
+    auto ids = idsArg(i, a, 3);
+    return idList(guarded(i, [&] { return score::transform::density(*s, curve, seed, ids); }));
+}
+// (score-shift! s dt [ids])     every onset moved by dt seconds (never before 0). => s
+inline vptr mus_score_shift(vlist& a, Interp& i) {
+    auto s = S(i, a[0]);
+    score::transform::shift(*s, i.scalar(a[1]), idsArg(i, a, 2));
+    return a[0];
+}
+// (score-scale! s f)            every onset and duration multiplied by f (> 0). => s
+inline vptr mus_score_scale(vlist& a, Interp& i) {
+    auto s = S(i, a[0]); double f = i.scalar(a[1]);
+    guarded(i, [&] { return score::transform::augment(*s, f, 0.0, {}); });
+    return a[0];
+}
+
+// --- layout (score_layout.h): the rules Moritz's roll draws with --------------------------------------------------------------------
+// (instrument-rank instr)  where an instrument code sits in the orchestral order (Picc Fl ... Vc Cb; unknown ones after)
+inline vptr mus_instrument_rank(vlist& a, Interp&) { return v_num(score::layout::instrumentRank(textOf(a[0]))); }
+// (score-orchestral-order) the instrument codes in the order of an orchestral score
+inline vptr mus_orchestral_order(vlist&, Interp&) {
+    vlist out;
+    for (auto& n : score::layout::orchestralOrder()) out.push_back(v_str(n));
+    return v_list(std::move(out));
+}
+// (staff-clef pitches)     the clef of a row of these MIDI pitches: "bass" when their median is below C4, else "treble";
+//                          "none" without pitches
+inline vptr mus_staff_clef(vlist& a, Interp& i) {
+    std::vector<double> p;
+    if (a[0] && a[0]->t == Value::NUM) for (double d : a[0]->num) p.push_back(d);
+    else for (auto& x : i.list(a[0])) p.push_back(i.scalar(x));
+    return v_str(score::layout::clefFor(p));
+}
+
 inline void add_score(Interp& i) {
     OpaqueRecord sr;
     sr.get = [](Interp& in, const vptr& v, const vptr& k, bool& f) { return scoreGet(in, scoreOf(in, v), k, f); };
@@ -661,6 +797,14 @@ inline void add_score(Interp& i) {
     i.def("score->coll", mus_score_coll, 1, 1); i.def("coll->score", mus_coll_score, 3, 3);
     i.def("score-pan-gains", mus_score_pan_gains, 2, 2);
     i.def("score-bbt", mus_score_bbt, 2, 2); i.def("score-bbt->sec", mus_score_bbt_sec, 4, 4);
+    i.def("score-transpose!", mus_score_transpose, 2, 3); i.def("score-invert!", mus_score_invert, 2, 3);
+    i.def("score-retrograde!", mus_score_retrograde, 1, 2); i.def("score-augment!", mus_score_augment, 2, 3);
+    i.def("score-diminish!", mus_score_diminish, 2, 3); i.def("score-quantize-grid!", mus_score_quantize_grid, 3, 4);
+    i.def("score-humanize!", mus_score_humanize, 4, 5); i.def("score-thin!", mus_score_thin, 3, 4);
+    i.def("score-density!", mus_score_density, 3, 4); i.def("score-shift!", mus_score_shift, 2, 3);
+    i.def("score-scale!", mus_score_scale, 2, 2);
+    i.def("instrument-rank", mus_instrument_rank, 1, 1); i.def("score-orchestral-order", mus_orchestral_order, 0, 0);
+    i.def("staff-clef", mus_staff_clef, 1, 1);
 }
 
 }  // namespace score_musil

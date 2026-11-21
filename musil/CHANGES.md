@@ -1,5 +1,25 @@
 # Changes
 
+## 0.13
+
+### The score
+
+- **Transformations of a selection are C++** (`src/music/score_transform.h`): pure functions on the
+  score, which Moritz's roll and score object call too, so a transformation gives the same score
+  everywhere. `score-transpose!`, `score-invert!` (around a pitch, a number or a name; twice gives
+  the score back), `score-retrograde!` (within the span of the events), `score-augment!` and
+  `score-diminish!` (from the first onset), `score-quantize-grid!` (onsets and ends toward a grid in
+  seconds, by a strength), `score-humanize!`, `score-thin!` and `score-density!` (seeded through the
+  portable random module: the same seed, the same result on every system). Each takes an optional
+  list of ids or events (none: every event). A Musil note transposed or inverted has its sound
+  shifted by as much.
+- `score-shift!` and `score-scale!` are those functions now (`score-shift!` takes ids too); the
+  results are the same.
+- **The roll's layout is C++** (`src/music/score_layout.h`): the orchestral order of the rows, the
+  clef of a row from its pitches, the steps of the staff. `instrument-rank`, `staff-clef` and
+  `score-orchestral-order` are builtins; `score-roll` and the plot's roll draw with them, as Moritz's
+  roll does.
+
 ## 0.12
 
 ### The score
