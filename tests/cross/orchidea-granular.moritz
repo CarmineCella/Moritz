@@ -1,0 +1,120 @@
+; orchidea-granular.moritz - cross-test: orchidea in its granular mode against Musil's orchestrate-granular
+; (tools/test-patches.sh): the same database, orchestra (an ossia, a paired group), parameters (envelopes of ranges
+; and of sets) and seed give the same notes (instrument, pitch, dynamics, technique, onset, duration, cents, player,
+; sound); then two sections that carry the orchestra's bookings on ('continue), the second starting at 2 s, against
+; two calls of orchestrate-granular on one orchestra; and the cluster method with leap, inertia and a spread
+(patch
+  (obj or orchestra xgband microsol/microsol.spectrum.db (pos 20 20))
+  (obj pl message "players Ob Hn Vn|Vc Vn+Vc" (pos 20 50))
+  (obj lb loadbang (pos 20 80))
+  (obj tb t b b b b (pos 120 80))
+  (obj m message "mode granular, seed 8, solutions 2, density at 0 4 6 at 6 1 2, register 3 4, dynamics at 0 pp at 6 ff, run 6" (pos 20 110))
+  (obj oi orchidea xgband (pos 20 140))
+  (obj cm message compare (pos 20 175))
+  (obj c code 2 (pos 20 210)
+    (script
+      "; every note of the object arrives here (in1), then compare"
+      "var got (try got catch e (list))"
+      "if (not (equal? in1 \"compare\")) { push got in1 } {"
+      "    load \"music.mu\""
+      "    var db (db-load \"../../data/microsol/microsol.spectrum.db\")"
+      "    seed 8"
+      "    var r (orchestrate-granular db (orchestra (list 'Ob 'Hn \"Vn|Vc\" (list 'Vn 'Vc))) 6 (record (list 'density (env (list 0 (list 4 6) 6 (list 1 2))) 'register (list 3 4) 'dynamics (env (list 0 (list 'pp) 6 (list 'ff))) 'solutions 2)))"
+      "    var f (best-connection r)"
+      "    var bad (if (== (length f) (length got)) 0 1)"
+      "    each (zip f got) (function (p) {"
+      "        var n (last (head p))"
+      "        var g (last p)"
+      "        var same (and (equal? (str (getidx g 1)) (get n 'instr)) (equal? (str (getidx g 2)) (get n 'pitch)) (equal? (str (getidx g 3)) (get n 'dyn)) (equal? (str (getidx g 4)) (get n 'tech))"
+      "                      (< (abs (- (getidx g 5) (* 1000 (head (head p))))) 0.05) (< (abs (- (getidx g 6) (* 1000 (getidx (head p) 1)))) 0.05)"
+      "                      (== (getidx g 8) (get n 'cents)) (== (getidx g 9) (get n 'player)) (equal? (filename (str (getidx g 7))) (filename (note-path n))))"
+      "        if (not same) { set bad (+ bad 1) }"
+      "    })"
+      "    print \"cross orchidea granular:\" (length got) \"notes,\" (length f) \"in Musil,\" bad \"differ; saturation\" (fixed in2 3) (fixed (get (get r 'report) 'saturation) 3)"
+      "    if (or (> bad 0) (== (length f) 0) (> (abs (- in2 (get (get r 'report) 'saturation))) 1e-6)) { print \"FAIL: the orchidea object in granular mode and Musil's orchestrate-granular disagree\" } { print \"PASS: the orchidea object in granular mode and Musil's orchestrate-granular agree\" }"
+      "}"))
+  (connect lb 0 tb 0)
+  (connect tb 3 pl 0)
+  (connect pl 0 or 0)
+  (connect tb 2 m 0)
+  (connect m 0 oi 0)
+  (connect oi 2 c 0)
+  (connect oi 3 c 1)
+  (connect oi 1 cm 0)
+  (connect cm 0 c 0)
+  (obj p2 comment "two sections on one orchestra, in any order of time: the second (from 0 s, 6 s long) carries the bookings of the first (from 3 s) on (continue 1), its notes cut where a booking of the first begins; the done of the first starts the second" (pos 400 20))
+  (obj or2 orchestra xgshared microsol/microsol.spectrum.db (pos 400 50))
+  (obj pl2 message "players Ob Hn Vn Vc" (pos 400 80))
+  (obj m2 message "mode granular, seed 4, continue 1, start 3, density 4, duration 2, register 4 4, run 4" (pos 400 110))
+  (obj oi2 orchidea xgshared (pos 400 140))
+  (obj m3 message "mode granular, seed 4, continue 1, start 0, density 4, duration 2, register 4 4, run 6" (pos 400 175))
+  (obj oi2b orchidea xgshared (pos 400 205))
+  (obj cm2 message compare (pos 560 205))
+  (obj c2 code 1 (pos 400 240)
+    (script
+      "var got (try got catch e (list))"
+      "if (not (equal? in1 \"compare\")) { push got in1 } {"
+      "    load \"music.mu\""
+      "    var db (db-load \"../../data/microsol/microsol.spectrum.db\")"
+      "    var shared (orchestra (list 'Ob 'Hn 'Vn 'Vc))"
+      "    seed 4"
+      "    var r1 (best-connection (orchestrate-granular db shared 4 (record (list 'continue 1 'start 3 'density 4 'duration 2 'register (list 4 4)))))"
+      "    seed 4"
+      "    var r2 (best-connection (orchestrate-granular db shared 6 (record (list 'continue 1 'start 0 'density 4 'duration 2 'register (list 4 4)))))"
+      "    var f (concat-list (map r1 (function (x) (list (+ 3 (head x)) (getidx x 1) (last x)))) r2)"
+      "    var bad (if (== (length f) (length got)) 0 1)"
+      "    each (zip f got) (function (p) {"
+      "        var n (last (head p))"
+      "        var g (last p)"
+      "        var same (and (equal? (str (getidx g 1)) (get n 'instr)) (equal? (str (getidx g 2)) (get n 'pitch)) (< (abs (- (getidx g 5) (* 1000 (head (head p))))) 0.05)"
+      "                      (< (abs (- (getidx g 6) (* 1000 (getidx (head p) 1)))) 0.05) (== (getidx g 9) (get n 'player)))"
+      "        if (not same) { set bad (+ bad 1) }"
+      "    })"
+      "    var cut (length (filter r2 (function (x) (< (getidx x 1) 2))))"
+      "    print \"cross orchidea granular, continue:\" (length got) \"notes,\" (length f) \"in Musil,\" bad \"differ;\" cut \"of the second section cut where a booking of the first goes on\""
+      "    if (or (> bad 0) (== (length r2) 0) (== cut 0) (not (get (score-validate (fragment->score \"both\" 44100 f) shared) 'ok))) { print \"FAIL: two sections that continue disagree with Musil's\" } { print \"PASS: two sections that continue agree with Musil's\" }"
+      "}"))
+  (connect tb 1 pl2 0)
+  (connect pl2 0 or2 0)
+  (connect tb 0 m2 0)
+  (connect m2 0 oi2 0)
+  (connect oi2 2 c2 0)
+  (connect oi2 1 m3 0)
+  (connect m3 0 oi2b 0)
+  (connect oi2b 2 c2 0)
+  (connect oi2b 1 cm2 0)
+  (connect cm2 0 c2 0)
+  (obj p3 comment "the cluster method, a leap, inertia, a spread and the log law" (pos 20 520))
+  (obj or3 orchestra xgcl microsol/microsol.spectrum.db (pos 20 550))
+  (obj pl3 message "players Vn Vc Hn" (pos 20 580))
+  (obj m4 message "mode granular, seed 9, method cluster, inertia 0.5, leap 3, spread 0 0.03, density 3 5, register 3 5, duration 0.1 1, duration-law log, run 8" (pos 20 610))
+  (obj oi3 orchidea xgcl (pos 20 640))
+  (obj cm3 message compare (pos 20 675))
+  (obj c3 code 1 (pos 20 710)
+    (script
+      "var got (try got catch e (list))"
+      "if (not (equal? in1 \"compare\")) { push got in1 } {"
+      "    load \"music.mu\""
+      "    var db (db-load \"../../data/microsol/microsol.spectrum.db\")"
+      "    seed 9"
+      "    var f (best-connection (orchestrate-granular db (orchestra (list 'Vn 'Vc 'Hn)) 8 (record (list 'method 'cluster 'inertia 0.5 'leap 3 'spread (list 0 0.03) 'density (list 3 5) 'register (list 3 5) 'duration (list 0.1 1) 'duration-law 'log))))"
+      "    var bad (if (== (length f) (length got)) 0 1)"
+      "    each (zip f got) (function (p) {"
+      "        var n (last (head p))"
+      "        var g (last p)"
+      "        var same (and (equal? (str (getidx g 1)) (get n 'instr)) (equal? (str (getidx g 2)) (get n 'pitch)) (equal? (str (getidx g 4)) (get n 'tech))"
+      "                      (< (abs (- (getidx g 5) (* 1000 (head (head p))))) 0.05) (< (abs (- (getidx g 6) (* 1000 (getidx (head p) 1)))) 0.05) (== (getidx g 9) (get n 'player)))"
+      "        if (not same) { set bad (+ bad 1) }"
+      "    })"
+      "    print \"cross orchidea granular, cluster:\" (length got) \"notes,\" (length f) \"in Musil,\" bad \"differ\""
+      "    if (or (> bad 0) (== (length f) 0)) { print \"FAIL: the cluster method disagrees with Musil's\" } { print \"PASS: the cluster method agrees with Musil's\" }"
+      "}"))
+  (obj tb3 t b b (pos 120 550))
+  (connect lb 0 tb3 0)
+  (connect tb3 1 pl3 0)
+  (connect pl3 0 or3 0)
+  (connect tb3 0 m4 0)
+  (connect m4 0 oi3 0)
+  (connect oi3 2 c3 0)
+  (connect oi3 1 cm3 0)
+  (connect cm3 0 c3 0))

@@ -281,4 +281,5 @@ msg locate bar [beat]: moves the transport
 msg seek ms: moves the transport to a time
 msg info: rows, events and seconds out of the info outlet
 msg score token: the score a code box (or orchidea) sent
+msg merge token: the events of another score added to this one, and its rows (in orchestral order): the sections of an orchestration, one after another
 see: transport code buffer~ receive orchidea

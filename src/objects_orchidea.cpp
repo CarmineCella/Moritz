@@ -1,13 +1,17 @@
 // Copyright (c) 2026 Carmine-Emanuele Cella. SPDX-License-Identifier: BSD-2-Clause
-// objects_orchidea.cpp — assisted orchestration, after Orchidea, on Musil's engine (musil/src/music/orchidea.h and
-// the C++ half of music.h): orchestra (a database of instrumental samples and the players) and orchidea (a target
-// sound orchestrated by a genetic search, as a background job).
+// objects_orchidea.cpp — assisted orchestration, after Orchidea, on Musil's engine (musil/src/music/orchidea.h,
+// music/granular.h and the C++ half of music.h): orchestra (a database of instrumental samples and the players) and
+// orchidea (a target sound orchestrated by a genetic search, the orchestra as a granulator, or the granulator driven by
+// a target sound, as background jobs).
 //
 // The analysis of the target (orchidea::analyse), the search (orchidea::search_segments), the database's file
 // (db_parse, db_sounds_folder, db_locate), the seating and the merging of held notes (continuation_plan) are Musil's
 // C++, the very code orchidea-analyse, orchidea-search and orchestrate-mimetic run: for the same target, database,
 // orchestra and seed the object and Musil find the same notes (tests/cross/orchidea.moritz). What is Moritz's own is
-// the plumbing: buffer~s in and out, the notes as messages, the sum of the chosen samples.
+// the plumbing: buffer~s in and out, the notes as messages, the sum of the chosen samples. The granular and
+// morphological modes run Musil's granulator (musil::granular::granulate, orchestrate_morphological), the very code of
+// orchestrate-granular and orchestrate-morphological: the same parameters and seed write the same notes
+// (tests/cross/orchidea-granular.moritz, orchidea-morphological.moritz).
 
 #include "musil_host.h"
 #include "datasets.h"
@@ -19,6 +23,7 @@
 #include "music/score_layout.h"
 
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <map>
@@ -27,6 +32,7 @@
 namespace moritz {
 
 namespace orch = musil::orchidea;
+namespace gr = musil::granular;
 
 namespace {
 
@@ -45,10 +51,20 @@ using DbPtr = std::shared_ptr<const OrchDb>;
 struct OrchSpec {
     DbPtr db;
     std::vector<std::string> players;                             // a player is an instrument, or "Fl|Picc" (a doubling)
+    std::vector<int> groups;                                      // each player's paired group ("Vn+Vc"), or -1
     std::map<std::string, std::pair<int, int>> ranges;            // instrument -> lowest and highest MIDI pitch allowed
     std::vector<std::string> styles, dynamics;                    // only these techniques and dynamics (empty: all)
 };
 using SpecPtr = std::shared_ptr<const OrchSpec>;
+
+// the players of an orchestra as the granulator keeps them between runs that carry on ('continue): their bookings,
+// last pitches and seats; one run at a time books them
+struct CarryState {
+    std::string key;                                              // the players they are (another orchestra: fresh ones)
+    std::vector<gr::player> players;
+    bool inFlight = false;
+};
+using CarryPtr = std::shared_ptr<CarryState>;
 
 // Orchidea's default orchestra (static_orchidea.mu): what the database has of it
 const char* const kDefaultOrchestra[] = {"Fl", "Fl", "Ob", "Ob", "ClBb", "ClBb", "Bn", "Bn", "Hn", "Hn", "TpC", "TpC",
@@ -115,11 +131,13 @@ int pitchOf(const Atom& a) {
 //   analyse folder [type block hop ncoeff]   Orchidea's dbgen: every WAV under the folder analysed (Musil's
 //                                db_generate; spectrum 2048 256 1024 by default) into <folder>.spectrum.db next to it
 //                                (never over an existing file), which is then read
-//   players Vn 2 Va Vc Fl|Picc   the players: an instrument a player, a number after one repeats it; no
-//                                instrument: Orchidea's default orchestra, of what the database has
+//   players Vn 2 Va Vc Fl|Picc Vn+Vc   the players: an instrument a player, a number after one repeats it, Fl|Picc a
+//                                player alternating (an ossia), Vn+Vc players paired (the granulator's groups, sounding
+//                                together); no instrument: Orchidea's default orchestra, of what the database has
 //   add instrument [n]           more players; remove instrument: every player of it
 //   range instrument lo hi       its pitches limited (names or MIDI numbers); range instrument: no limit
 //   techniques t...              only these techniques (ord, pizz-lv...); none: all. dynamics d...: the same
+//   rest                         the players' bookings forgotten (orchidea's granular runs that continue start afresh)
 //   info, stop
 // Outlets: progress, bang when the database is ready, number of sounds, the players (a list).
 class OrchestraBox : public OfflineBox {
@@ -141,12 +159,21 @@ public:
         if (!db_) return nullptr;
         auto s = std::make_shared<OrchSpec>();
         s->db = db_;
-        s->players = players();
         s->ranges = ranges_;
         s->styles = styles_;
         s->dynamics = dynamics_;
+        int group = 0;
+        for (const auto& p : players()) {
+            std::vector<std::string> parts;
+            orch::tokenize(p, parts, '+');
+            if (parts.size() < 2) { s->players.push_back(p); s->groups.push_back(-1); continue; }
+            for (auto& q : parts) { s->players.push_back(q); s->groups.push_back(group); }
+            group++;
+        }
         return s;
     }
+    // the players' state between granular runs that carry on (shared with the runs: one at a time books them)
+    CarryPtr carry() const { return carry_; }
     bool loading() const { return job_.running(); }
     // fn runs when the database being read is ready (at once when none is being read); dropped if this box goes first
     void whenReady(std::function<void()> fn) {
@@ -189,6 +216,9 @@ public:
         } else if (h.is("dynamics")) {
             dynamics_.clear();
             for (size_t k = 1; k < m.size(); ++k) dynamics_.push_back(m[k].str());
+        } else if (h.is("rest")) {
+            carry_->players.clear();
+            carry_->key.clear();
         } else if (h.is("info")) {
             info();
         }
@@ -339,6 +369,7 @@ private:
     std::map<std::string, std::pair<int, int>> ranges_;
     std::vector<std::string> styles_, dynamics_;
     std::vector<std::function<void()>> waiting_;
+    CarryPtr carry_ = std::make_shared<CarryState>();
 };
 
 OrchestraBox* findOrchestra(Patch* p, const std::string& name) {
@@ -350,10 +381,13 @@ OrchestraBox* findOrchestra(Patch* p, const std::string& name) {
     return found;
 }
 
-// a note of the solution, as orchestrate-mimetic and its connection make it
+// a note of the solution, as orchestrate-mimetic and its connection make it (and the granulator: the dynamics asked
+// for, which the sample may not have, its pitch and its gain)
 struct OrchNote {
-    double at = 0, dur = 0, az = 0;
+    double at = 0, dur = 0, az = 0, gain = 1;
     int entry = 0, player = 0, cents = 0;
+    int midi = -1;                             // -1: the sample's
+    std::string dyn;                           // "": the sample's
 };
 
 // what a run found, kept for choose, solutions, report and write
@@ -404,6 +438,126 @@ std::vector<OrchNote> connectionOf(const OrchResult& r) {
     return out;
 }
 
+// what a granular or morphological run found: a realisation per solution (granular.h's run_result: its notes, its
+// report, what it said), the one chosen
+struct GranResult {
+    SpecPtr spec;
+    std::string mode;                          // granular, morphological
+    std::vector<gr::run_result> runs;
+    int choice = 0;
+    double start = 0, sr = 44100, seconds = 0;
+    bool seating = true;
+    std::string settings;
+};
+// the chosen realisation's notes as orchestrate-granular's connection makes them (music.mu's connection: in time order,
+// a note continuing one of the same player, instrument and pitch merged into it), placed at the run's start
+std::vector<OrchNote> granularNotes(const GranResult& r) {
+    std::vector<OrchNote> out;
+    if (r.runs.empty()) return out;
+    const auto& run = r.runs[(size_t)std::clamp(r.choice, 0, (int)r.runs.size() - 1)];
+    for (auto& p : gr::connection_plan(run.notes, 1e9)) {
+        const gr::note& n = run.notes[p.first];
+        OrchNote o;
+        o.at = r.start + n.at;
+        o.dur = p.second;
+        o.entry = n.entry;
+        o.player = n.player;
+        o.cents = (int)std::lround(n.cents);
+        o.midi = n.midi;
+        o.dyn = n.dyn;
+        o.gain = n.gain;
+        o.az = r.seating ? orch::seat_of(n.instr) : 0;
+        out.push_back(o);
+    }
+    return out;
+}
+
+// a granular or morphological parameter given by a message (granular.h's pval): a number, two numbers (a range), names
+// (a set: styles ord pizz; one name for method, duration-law, decision, fundamental), chords separated by / (chords C4
+// E4 G4 / D4 F4 A4), a balance (balance brass -6 Hn -3), a density per group separated by / (group-density 1 2 / 8),
+// or an envelope of any of them: at time value at time value ... (density at 0 4 6 at 10 0.5 1)
+const std::set<std::string>& granularKeys() {
+    static const std::set<std::string> k = {"density", "register", "duration", "duration-law", "styles", "dynamics", "dynamics-strict",
+        "chords", "chord-weight", "method", "interval", "fundamental", "harmonicity", "just", "weight", "tilt", "leap", "inertia",
+        "seat", "spread", "polyphony", "coupling", "group-density", "balance", "steal", "voices", "min-gain", "floor", "persist",
+        "min-length", "max-length", "short", "width", "range", "density-scale", "min-density", "step", "decision"};
+    return k;
+}
+// a message's number as the decimal it was written as (0.1, not the float nearest it): the shortest decimal that gives
+// the float back, read as a double, so that the parameters are Musil's own (0.1 there is the double 0.1)
+double decimalOf(float f) {
+    if (!std::isfinite(f)) return f;
+    char buf[40];
+    for (int digits = 6; digits <= 9; ++digits) {
+        std::snprintf(buf, sizeof buf, "%.*g", digits, (double)f);
+        if ((float)std::strtod(buf, nullptr) == f) return std::strtod(buf, nullptr);
+    }
+    return f;
+}
+bool parseValue(const std::string& key, const Message& m, size_t a, size_t b, gr::pval& out, std::string& err) {
+    if (a >= b) { err = key + ": a value"; return false; }
+    auto atomVal = [](const Atom& x) { return x.isFloat() ? gr::pval::number(decimalOf(x.f)) : gr::pval::text(x.str()); };
+    auto groups = [&](std::vector<std::pair<size_t, size_t>>& g) {
+        size_t from = a;
+        for (size_t k = a; k <= b; ++k)
+            if (k == b || m[k].is("/")) { if (k > from) g.push_back({from, k}); from = k + 1; }
+    };
+    if (key == "chords") {
+        std::vector<std::pair<size_t, size_t>> g; groups(g);
+        out = gr::pval::of({});
+        for (auto& r : g) { gr::pval c = gr::pval::of({}); for (size_t k = r.first; k < r.second; ++k) c.list.push_back(atomVal(m[k])); out.list.push_back(c); }
+        if (out.list.empty()) { err = "chords: pitches, chords separated by /"; return false; }
+        return true;
+    }
+    if (key == "group-density") {
+        std::vector<std::pair<size_t, size_t>> g; groups(g);
+        out = gr::pval::of({});
+        for (auto& r : g) {
+            gr::pval v;
+            if (!parseValue("density", m, r.first, r.second, v, err)) return false;
+            out.list.push_back(v);
+        }
+        return true;
+    }
+    if (key == "balance") {
+        out = gr::pval::of({});
+        for (size_t k = a; k + 1 < b; k += 2) {
+            if (!m[k + 1].isFloat()) { err = "balance: names and decibels (balance brass -6 Hn -3)"; return false; }
+            out.list.push_back(gr::pval::of({gr::pval::text(m[k].str()), gr::pval::number(decimalOf(m[k + 1].f))}));
+        }
+        if ((b - a) % 2) { err = "balance: names and decibels (balance brass -6 Hn -3)"; return false; }
+        return true;
+    }
+    bool numbers = true;
+    for (size_t k = a; k < b; ++k) numbers = numbers && m[k].isFloat() && std::isfinite(m[k].f);
+    if (numbers) {
+        if (b - a == 1) out = gr::pval::number(decimalOf(m[a].f));
+        else { out = gr::pval::of({}); for (size_t k = a; k < b; ++k) out.list.push_back(gr::pval::number(decimalOf(m[k].f))); }
+        return true;
+    }
+    if (key == "method" || key == "duration-law" || key == "decision" || key == "fundamental") { out = atomVal(m[a]); return true; }
+    out = gr::pval::of({});
+    for (size_t k = a; k < b; ++k) out.list.push_back(atomVal(m[k]));
+    return true;
+}
+bool parseParam(const std::string& key, const Message& m, gr::pval& out, std::string& err) {
+    if (m.size() > 1 && m[1].is("at")) {                 // an envelope: at t value at t value ...
+        out = gr::pval::of({});
+        size_t k = 1;
+        while (k < m.size()) {
+            if (!m[k].is("at") || k + 2 >= m.size() + 0 || !m[k + 1].isFloat()) { err = key + ": at time value at time value ..."; return false; }
+            size_t e = k + 2;
+            while (e < m.size() && !m[e].is("at")) ++e;
+            gr::pval v;
+            if (!parseValue(key, m, k + 2, e, v, err)) return false;
+            out.list.push_back(gr::pval::of({gr::pval::number(decimalOf(m[k + 1].f)), v}));
+            k = e;
+        }
+        return true;
+    }
+    return parseValue(key, m, 1, m.size(), out, err);
+}
+
 // the notes summed into stereo at sr, as music.mu's score-render places them (note-sound, fit-duration, pan-azimuth):
 // each sound resampled to sr and by its cents, cut to its duration with a fade of 20 ms; => left, right
 std::vector<std::vector<float>> mixOf(const std::vector<OrchNote>& notes, const OrchDb& db, double sr, Job& job, size_t& missing) {
@@ -425,7 +579,8 @@ std::vector<std::vector<float>> mixOf(const std::vector<OrchNote>& notes, const 
             if (!db.present[(size_t)n.entry] || !decodeAudioFile(path, *w, err)) w->frames = 0;
         }
         if (w->frames <= 0 || w->sr <= 0) { ++missing; continue; }
-        double shift = n.cents / 100.0, need = 0.2 + n.dur, ratio = std::pow(2.0, -shift / 12.0);
+        int moved = n.midi >= 0 && db.entries[(size_t)n.entry].midi >= 0 ? n.midi - db.entries[(size_t)n.entry].midi : 0;
+        double shift = moved + n.cents / 100.0, need = 0.2 + n.dur, ratio = std::pow(2.0, -shift / 12.0);
         size_t srcLen = (size_t)std::min<double>((double)w->frames, std::ceil(std::ceil(need) * w->sr / ratio));
         std::vector<musil::varr> chans;
         for (int c = 0; c < w->channels; ++c) {
@@ -454,6 +609,7 @@ std::vector<std::vector<float>> mixOf(const std::vector<OrchNote>& notes, const 
             placed.push_back(mono * std::sqrt(0.5 * (1 - p)));
             placed.push_back(mono * std::sqrt(0.5 * (1 + p)));
         }
+        if (n.gain != 1) for (auto& c : placed) c *= n.gain;
         size_t start = (size_t)std::floor(n.at * sr);
         for (size_t c = 0; c < 2; ++c)
             for (size_t f = 0; f < placed[c].size() && start + f < total; ++f) out[c][start + f] += placed[c][f];
@@ -478,10 +634,34 @@ std::vector<std::vector<float>> mixOf(const std::vector<OrchNote>& notes, const 
 //   connection closest|best|path, solutions n (10), hysteresis x, dovetail x, movement x, sustain 1/0, hold ms
 //   seating 1/0, choose segment n, notes, score, show segment, report, write file, roll buffer (a frame a note: onset
 //   s, pitch with cents, player, duration s: plot scatter draws it), stop
+// mode mimetic|granular|morphological: what run does (mimetic, the search above, by default)
+//   granular: run seconds [out]  the orchestra as a granulator (Musil's orchestrate-granular): a stochastic process
+//                                over seconds whose parameters may change over time, each event a note a player can
+//                                play as recorded; the parameters are messages, each a number, a range (two
+//                                numbers), a set of names, or an envelope (at t value at t value ...) or a buffer~'s
+//                                curve (density buffer name: its frames over the run, two channels a range):
+//                                density, register (octaves), duration, duration-law uniform|log|x, styles, dynamics
+//                                (labels, or a level 0..1), dynamics-strict, chords (C4 E4 / D4 F4), chord-weight,
+//                                method random|cluster|pivots|chordinterp|markov|harmonic, interval, fundamental,
+//                                harmonicity, just, markov C4 D4 E4 ... (the line it learns), weight, tilt, leap,
+//                                inertia, seat, spread, polyphony, coupling, group-density, balance brass -6 ...;
+//                                continue 1 (the orchestra's players carry their bookings from run to run, one run at
+//                                a time: the sections of a piece; its rest message clears them), start s (where this
+//                                run sits in the piece: its notes are placed there)
+//   morphological: run target [out]   the granulator driven by a target sound (orchestrate-morphological): its density,
+//                                register and dynamics read off the buffer~ target (hop n, 1024; attack-threshold x, 2;
+//                                fine n, 8192), at every event the free players' sounds at the target's peaks pursued
+//                                against its spectrum less what sounds: voices, min-gain, floor, persist, min-length,
+//                                max-length, short, width, range, density-scale, min-density, step, styles, decision
+//                                pursuit|genetic (population, epochs, sparsity... then Orchidea's search at every event),
+//                                and any granular parameter in place of the target's
+//   in these modes solutions n (1) makes n realisations, choose 1 n takes one, seed n (1) the draws
 // Outlets: progress, done, the notes (k instrument pitch dynamics technique onset duration path cents player; ms),
-// the distance (the mean cost of the chosen solutions), and the solution as a score (score <token>, for a score box:
-// a row an instrument in orchestral order, each note with its dynamics, technique, cents, place and its sample as its
-// sound, so the score box plays it and its roll edits it), after each run and choose, and for score.
+// the distance (the mean cost of the chosen solutions; for a granular or morphological run its saturation: the
+// fraction of the events due skipped because every able player was busy), and the solution as a score (score <token>,
+// for a score box: a row an instrument in orchestral order, each note with its dynamics, technique, cents, gain,
+// place and its sample as its sound, so the score box plays it and its roll edits it), after each run and choose, and
+// for score.
 class OrchideaBox : public OfflineBox {
     std::set<std::string> given_;                         // the settings a message chose
 
@@ -492,6 +672,7 @@ public:
     ~OrchideaBox() override {
         *alive_ = false;
         job_.cancel();
+        releaseCarry();
     }
 
     std::vector<std::string> menuItems() override { return {"Report", "Save the solution..."}; }
@@ -505,13 +686,20 @@ public:
         const Atom& h = m[0];
         auto num = [&](float def) { float v = argf(m, 1, def); return std::isfinite(v) ? v : def; };   // NaN, inf: the default
         auto& p = opts_.p;
-        if (h.is("stop")) { job_.cancel(); return; }
-        if (h.is("run") && m.size() > 1) { start(m[1].str(), argstr(m, 2)); return; }
+        if (h.is("stop")) { job_.cancel(); releaseCarry(); return; }
+        if (h.is("run") && m.size() > 1) {
+            if (mode_ == "mimetic") start(m[1].str(), argstr(m, 2));
+            else startGranular(m[1], argstr(m, 2));
+            return;
+        }
         given_.insert(h.str());                           // set by a message: the dynamic defaults leave it alone
         if (h.is("population")) p.pop_size = clampInt(num(300), 2, 20000);
         else if (h.is("epochs")) p.max_epochs = clampInt(num(300), 1, 100000);
         else if (h.is("sparsity")) p.sparsity = std::clamp((double)num(.001f), 0.0, 1.0);
-        else if (h.is("seed")) p.seed = (unsigned)(uint64_t)(int64_t)std::clamp((double)num(1), -9e18, 9e18);   // as Musil's seed_of: (seed 7) there is seed 7 here
+        else if (h.is("seed")) {
+            seed64_ = (uint64_t)(int64_t)std::clamp((double)num(1), -9e18, 9e18);   // as Musil's seed_of: (seed 7) there is seed 7 here
+            p.seed = (unsigned)seed64_;
+        }
         else if (h.is("pursuit")) p.pursuit = clampInt(num(0), 0, 100000);
         else if (h.is("crossover")) p.xover_rate = std::clamp((double)num(.8f), 1e-6, 1.0);
         else if (h.is("mutation")) p.mutation_rate = std::clamp((double)num(.01f), 1e-6, 1.0);
@@ -555,11 +743,36 @@ public:
         else if (h.is("choose") && m.size() > 2) choose(clampInt(argf(m, 1, 1), -1, 1 << 20) - 1, clampInt(argf(m, 2, 1), -1, 1 << 20) - 1);
         else if (h.is("notes")) { if (ready()) outputNotes(); }
         else if (h.is("score")) { if (ready()) outputScore(); }
+        else if (h.is("show") && granularLast_) { if (ready()) printRealisations(); }
         else if (h.is("show")) { if (ready()) printSolutions(std::clamp(clampInt(argf(m, 1, 1), 0, 1 << 20) - 1, 0, (int)result_->segments.size() - 1)); }
         else if (h.is("report")) { if (ready()) report(); }
         else if (h.is("write") && m.size() > 1) { if (ready()) write(patch->resolvePath(m[1].str()), false); }
         else if (h.is("roll") && m.size() > 1) { if (ready()) roll(m[1].str()); }
-        else patch->print("orchidea: unknown message " + h.str());
+        else if (h.is("mode")) {
+            std::string md = argstr(m, 1, "mimetic");
+            if (md == "mimetic" || md == "granular" || md == "morphological") mode_ = md;
+            else patch->print("orchidea: mode is mimetic, granular or morphological");
+        } else if (h.is("start")) start_ = std::clamp(decimalOf(num(0)), 0.0, 1e7);
+        else if (h.is("continue")) continue_ = num(1) != 0;
+        else if (h.is("hop")) hop_ = clampInt(num(1024), 16, 1 << 16);
+        else if (h.is("fine")) { int n = 64; while (n < clampInt(num(8192), 64, 1 << 18)) n <<= 1; fine_ = n; }
+        else if (h.is("attack-threshold")) attackThreshold_ = std::clamp((double)num(2), 0.0, 1e6);
+        else if (h.is("markov")) {
+            std::vector<std::vector<double>> lines(1);
+            for (size_t k = 1; k < m.size(); ++k) {
+                if (m[k].is("/")) { lines.emplace_back(); continue; }
+                int mi = pitchOf(m[k]);
+                if (mi >= 0) lines.back().push_back(mi);
+            }
+            markov_ = gr::markov_learn(lines);
+        } else if (granularKeys().count(h.s)) {
+            curves_.erase(h.s);
+            if (m.size() == 1) { gp_.m.erase(h.s); return; }        // the default again
+            if (m.size() == 3 && m[1].is("buffer")) { curves_[h.s] = m[2].str(); return; }
+            gr::pval v; std::string err;
+            if (!parseParam(h.s, m, v, err)) { patch->print("orchidea: " + err); return; }
+            gp_.set(h.s, v);
+        } else patch->print("orchidea: unknown message " + h.str());
     }
 
     // A target cut into segments (flux, frames, onsets) is searched with Musil's dynamic settings
@@ -583,10 +796,16 @@ public:
 
 private:
     bool ready() {
-        if (result_) return true;
+        if (granularLast_ ? (bool)gres_ : (bool)result_) return true;
         patch->print("orchidea: nothing orchestrated yet (run target)");
         return false;
     }
+    // the notes of the last run (mimetic, granular or morphological), the database they come from
+    std::vector<OrchNote> notesNow() const { return granularLast_ ? granularNotes(*gres_) : connectionOf(*result_); }
+    const OrchDb& dbNow() const { return granularLast_ ? *gres_->spec->db : *result_->spec->db; }
+    double srNow() const { return granularLast_ ? gres_->sr : result_->sr; }
+    static int midiOf(const OrchNote& n, const orch::entry& e) { return n.midi >= 0 ? n.midi : e.midi; }
+    static const std::string& dynOf(const OrchNote& n, const orch::entry& e) { return n.dyn.empty() ? e.dyn : n.dyn; }
     // run target [out]: waits for the orchestra when its database is still being read
     void start(const std::string& target, const std::string& out) {
         if (busy()) return;
@@ -660,6 +879,7 @@ private:
             [this, res, err, mix, missing, out] {
                 if (!err->empty()) { patch->print("orchidea: " + *err); return false; }
                 result_ = res;
+                granularLast_ = false;
                 out_ = out;
                 sayRests();
                 if (!out.empty() && !mix->empty()) storeMix(*mix, *missing);
@@ -671,6 +891,7 @@ private:
     // choose segment n: solution n of a segment in place of the one chosen; the notes again, the mix again
     void choose(int seg, int n) {
         if (!ready() || busy()) return;
+        if (granularLast_) { chooseGranular(seg, n); return; }
         if (seg < 0 || seg >= (int)result_->search.segments.size()) { patch->print("orchidea: no segment " + std::to_string(seg + 1)); return; }
         int ns = (int)result_->search.segments[(size_t)seg].solutions.size();
         if (n < 0 || n >= ns) { patch->print("orchidea: segment " + std::to_string(seg + 1) + " has " + std::to_string(ns) + " solutions"); return; }
@@ -714,36 +935,42 @@ private:
             patch->print(msg);
         }
         if (missing > 0) patch->print("orchidea: " + std::to_string(missing) + " notes left out of the mix (their sounds are not on disk)");
-        storeBuffer(patch, out_, mix, result_->sr);
+        storeBuffer(patch, out_, mix, srNow());
     }
     // the notes into a buffer~, a frame a note: onset (s), pitch (MIDI, with its cents), player, duration (s): plot in
     // scatter mode draws it as a roll, the players in colours
     void roll(const std::string& name) {
-        auto notes = connectionOf(*result_);
+        auto notes = notesNow();
         std::vector<std::vector<float>> ch(4);
         for (auto& n : notes) {
-            const orch::entry& e = result_->spec->db->entries[(size_t)n.entry];
+            const orch::entry& e = dbNow().entries[(size_t)n.entry];
             ch[0].push_back((float)n.at);
-            ch[1].push_back(e.midi >= 0 ? (float)(e.midi + n.cents / 100.0) : 0.f);
+            ch[1].push_back(midiOf(n, e) >= 0 ? (float)(midiOf(n, e) + n.cents / 100.0) : 0.f);
             ch[2].push_back((float)n.player);
             ch[3].push_back((float)n.dur);
         }
         storeBuffer(patch, name, ch, 1.0);
     }
     void outputNotes() {
-        auto notes = connectionOf(*result_);
-        const OrchDb& db = *result_->spec->db;
-        double cost = 0;
-        size_t ns = result_->search.segments.size();
-        for (size_t k = 0; k < ns; ++k) {
-            const auto& s = result_->search.segments[k];
-            if (!s.solutions.empty()) cost += s.solutions[(size_t)std::clamp(result_->choices[k], 0, (int)s.solutions.size() - 1)].first;
+        auto notes = notesNow();
+        const OrchDb& db = dbNow();
+        if (granularLast_) {
+            const auto& r = gres_->runs[(size_t)std::clamp(gres_->choice, 0, (int)gres_->runs.size() - 1)].rep;
+            outletFloat(3, (float)r.saturation);
+        } else {
+            double cost = 0;
+            size_t ns = result_->search.segments.size();
+            for (size_t k = 0; k < ns; ++k) {
+                const auto& s = result_->search.segments[k];
+                if (!s.solutions.empty()) cost += s.solutions[(size_t)std::clamp(result_->choices[k], 0, (int)s.solutions.size() - 1)].first;
+            }
+            outletFloat(3, ns ? (float)(cost / (double)ns) : 0.f);
         }
-        outletFloat(3, ns ? (float)(cost / (double)ns) : 0.f);
         for (size_t k = 0; k < notes.size(); ++k) {
             const auto& n = notes[k];
             const orch::entry& e = db.entries[(size_t)n.entry];
-            outlet(2, {Atom((float)(k + 1)), Atom(e.instr), Atom(e.pitch), Atom(e.dyn), Atom(e.tech), Atom((float)(n.at * 1000.0)),
+            std::string pitch = midiOf(n, e) >= 0 ? musil::midi_to_pitch(midiOf(n, e)) : e.pitch;
+            outlet(2, {Atom((float)(k + 1)), Atom(e.instr), Atom(pitch), Atom(dynOf(n, e)), Atom(e.tech), Atom((float)(n.at * 1000.0)),
                        Atom((float)(n.dur * 1000.0)), Atom(db.paths[(size_t)n.entry]), Atom((float)n.cents), Atom((float)n.player)});
         }
     }
@@ -754,10 +981,11 @@ public:
     // player (data player)
     std::shared_ptr<musil::score::Score> solutionScore() const {
         namespace sc = musil::score;
-        auto s = std::make_shared<sc::Score>("orchidea", result_ ? result_->sr : 44100);
-        if (!result_) return s;
-        const OrchDb& db = *result_->spec->db;
-        auto notes = connectionOf(*result_);
+        bool have = granularLast_ ? (bool)gres_ : (bool)result_;
+        auto s = std::make_shared<sc::Score>("orchidea", have ? srNow() : 44100);
+        if (!have) return s;
+        const OrchDb& db = dbNow();
+        auto notes = notesNow();
         std::map<std::string, std::vector<double>> pitches;
         for (auto& n : notes) {
             const orch::entry& e = db.entries[(size_t)n.entry];
@@ -766,13 +994,14 @@ public:
             ev->at = n.at;
             ev->dur = n.dur;
             ev->row = e.instr;
-            ev->pitch = e.midi >= 0 ? e.midi : 60;
+            ev->pitch = midiOf(n, e) >= 0 ? midiOf(n, e) : 60;
             ev->cents = n.cents;
-            ev->dyn = e.dyn;
+            ev->dyn = dynOf(n, e);
             ev->tech = e.tech;
             ev->az = n.az;
+            ev->gain = n.gain;
             sc::setField(ev->extra, "sound", sc::Datum::string(db.paths[(size_t)n.entry]));
-            sc::setField(ev->extra, "sound-pitch", sc::Datum::number(ev->pitch));
+            sc::setField(ev->extra, "sound-pitch", sc::Datum::number(e.midi >= 0 ? e.midi : ev->pitch));
             sc::setField(ev->extra, "player", sc::Datum::number(n.player));
             s->insert(ev);
             pitches[e.instr].push_back(ev->pitch);
@@ -828,6 +1057,7 @@ private:
         if (n > 3) patch->print("orchidea: " + std::to_string(n - 3) + " more segments are rests (report says which)");
     }
     void report() {
+        if (granularLast_) { reportGranular(); return; }
         const auto& r = result_->search;
         char head[200];
         std::snprintf(head, sizeof head, "orchidea: %d %s; the search evaluated %zu combinations, %zu taken from the cache", (int)r.segments.size(),
@@ -865,8 +1095,8 @@ private:
     void write(const std::string& path, bool chosen) {
         std::string why;
         if (!chosen && !patchMayWrite(patch, path, why)) { patch->print("orchidea: " + why); return; }
-        auto notes = connectionOf(*result_);
-        const OrchDb& db = *result_->spec->db;
+        auto notes = notesNow();
+        const OrchDb& db = dbNow();
         std::string text = "[ orchestra";
         std::vector<std::string> seen;
         for (auto& n : notes) {
@@ -883,7 +1113,8 @@ private:
                 const auto& n = notes[k];
                 const orch::entry& e = db.entries[(size_t)n.entry];
                 std::snprintf(buf, sizeof buf, "%.2f", 1000 * n.dur);
-                text += std::string("\t\t[ note ") + buf + " " + e.instr + " " + e.tech + " " + e.pitch + " " + e.dyn + " " + e.other + " " +
+                std::string pitch = midiOf(n, e) >= 0 ? musil::midi_to_pitch(midiOf(n, e)) : e.pitch;
+                text += std::string("\t\t[ note ") + buf + " " + e.instr + " " + e.tech + " " + pitch + " " + dynOf(n, e) + " " + e.other + " " +
                         db.files[(size_t)n.entry] + " " + std::to_string(n.cents) + " ]\n";
             }
             text += "\t]\n]\n";
@@ -891,6 +1122,233 @@ private:
         std::string err;
         if (!fileio::writeAtomic(path, text, &err)) patch->print("orchidea: " + err);
     }
+
+    // ---- the granular and morphological modes
+    // run seconds [out] (granular) or run target [out] (morphological): Musil's granulator on a job, its realisations
+    // one after another with one generator (as orchestrate-granular makes its 'solutions)
+    void startGranular(const Atom& what, const std::string& out) {
+        if (busy()) return;
+        OrchestraBox* o = findOrchestra(patch, orchestra_);
+        if (!o) { patch->print("orchidea: no orchestra " + orchestra_); return; }
+        if (o->loading()) {
+            auto alive = alive_;
+            Atom w = what;
+            o->whenReady([this, alive, w, out] { if (*alive) startGranular(w, out); });
+            return;
+        }
+        SpecPtr spec = o->spec();
+        if (!spec) { patch->print("orchidea: orchestra " + orchestra_ + " has no database (read one)"); return; }
+        if (spec->players.empty()) { patch->print("orchidea: orchestra " + orchestra_ + " has no player whose instrument the database has"); return; }
+        bool morph = mode_ == "morphological";
+        double secs = 0, sr = 44100;
+        auto x = std::make_shared<std::vector<double>>();
+        if (morph) {
+            BufferBox* b = findBuffer(patch, what.str());
+            if (!b || b->buf.frames <= 0) { patch->print("orchidea: no sound in buffer~ " + what.str()); return; }
+            std::vector<float> mono = monoOf(b->buf);
+            x->assign(mono.begin(), mono.end());
+            sr = b->buf.sr > 0 ? b->buf.sr : 44100;
+            secs = (double)x->size() / sr;
+        } else {
+            if (!what.isFloat() || !(what.f > 0) || what.f > 3600) { patch->print("orchidea: run seconds (granular: up to 3600)"); return; }
+            secs = decimalOf(what.f);
+        }
+        if (!out.empty() && !findBuffer(patch, out)) { patch->print("orchidea: no buffer~ " + out); return; }
+        gr::params p = gp_;
+        for (auto& c : curves_) {                     // a buffer~'s curve over the run: at most 1000 breakpoints
+            BufferBox* b = findBuffer(patch, c.second);
+            if (!b || b->buf.frames <= 0) { patch->print("orchidea: " + c.first + ": no curve in buffer~ " + c.second); return; }
+            long n = b->buf.frames, step = std::max(1L, (n + 999) / 1000);
+            gr::pval env = gr::pval::of({});
+            for (long f = 0; f < n; f += step) {
+                double t = n > 1 ? secs * (double)f / (double)(n - 1) : 0;
+                gr::pval v = b->buf.channels > 1 ? gr::pval::range(b->buf.at(f, 0), b->buf.at(f, 1)) : gr::pval::number(b->buf.at(f, 0));
+                env.list.push_back(gr::pval::of({gr::pval::number(t), v}));
+            }
+            if (env.list.size() == 1) p.set(c.first, env.list[0].list[1]);
+            else p.set(c.first, env);
+        }
+        if (continue_) { p.set("continue", gr::pval::number(1)); p.set("start", gr::pval::number(start_)); }
+        if (morph && p.opt("decision", gr::pval::none()).str() == "genetic") {
+            gr::pval g = gr::pval::of({});
+            const auto& q = opts_.p;
+            auto add = [&](const char* k, double v) { if (given_.count(k)) g.list.push_back(gr::pval::of({gr::pval::text(k), gr::pval::number(v)})); };
+            add("population", q.pop_size); add("epochs", q.max_epochs); add("sparsity", q.sparsity); add("mutation", q.mutation_rate);
+            add("positive", q.positive); add("negative", q.negative); add("pursuit", q.pursuit); add("patience", q.patience);
+            p.set("genetic", g);
+        }
+        // the players: this run's own, or the orchestra's carried on (one run books them at a time)
+        CarryPtr cs = o->carry();
+        std::string key;
+        for (size_t k = 0; k < spec->players.size(); ++k) key += spec->players[k] + "/" + std::to_string(spec->groups[k]) + " ";
+        auto players = std::make_shared<std::vector<gr::player>>();
+        if (continue_) {
+            if (cs->inFlight) { patch->print("orchidea: another run is booking orchestra " + orchestra_ + "'s players (continue): run this one when it is done"); return; }
+            if (cs->key == key) *players = cs->players;
+        }
+        if (players->empty())
+            for (size_t k = 0; k < spec->players.size(); ++k) {
+                gr::player q;
+                q.instrs = gr::ossia(spec->players[k]);
+                q.group = spec->groups[k];
+                players->push_back(q);
+            }
+        int n = given_.count("solutions") ? std::max(1, opts_.p.max_solutions) : 1;
+        auto res = std::make_shared<GranResult>();
+        res->spec = spec;
+        res->mode = mode_;
+        res->start = start_;
+        res->sr = sr;
+        res->seconds = secs;
+        res->seating = seating_;
+        {
+            std::string t;
+            for (auto& kv : p.m) if (kv.first != "continue" && kv.first != "start") t += (t.empty() ? "" : ", ") + kv.first + " " + kv.second.str();
+            res->settings = mode_ + (morph ? "" : " over " + gr::num_text(secs) + " s") + ", " + std::to_string(n) + (n == 1 ? " realisation" : " realisations") +
+                            (continue_ ? ", continuing from " + gr::num_text(start_) + " s" : "") + (t.empty() ? "" : "; " + t);
+        }
+        if (continue_) { cs->inFlight = true; carryHeld_ = cs; carryKey_ = key; }
+        auto err = std::make_shared<std::string>();
+        auto mix = std::make_shared<std::vector<std::vector<float>>>();
+        auto missing = std::make_shared<size_t>(0);
+        bool render = !out.empty();
+        uint64_t seed = seed64_;
+        int hop = hop_, fine = fine_;
+        double thr = attackThreshold_;
+        auto markov = std::make_shared<gr::markov_table>(markov_);
+        runJob(
+            [x, sr, secs, res, err, mix, missing, render, seed, hop, fine, thr, markov, players, p, n, morph](Job& job) {
+                try {
+                    const OrchDb& db = *res->spec->db;
+                    std::vector<char> avail(db.entries.size(), 0);         // the sounds the orchestra allows
+                    for (size_t k = 0; k < db.entries.size(); ++k) {
+                        const auto& e = db.entries[k];
+                        if (!db.present[k]) continue;
+                        auto r = res->spec->ranges.find(e.instr);
+                        if (r != res->spec->ranges.end() && e.midi >= 0 && (e.midi < r->second.first || e.midi > r->second.second)) continue;
+                        const auto& st = res->spec->styles;
+                        if (!st.empty() && std::find(st.begin(), st.end(), e.tech) == st.end()) continue;
+                        const auto& dy = res->spec->dynamics;
+                        if (!dy.empty() && std::find(dy.begin(), dy.end(), e.dyn) == dy.end()) continue;
+                        avail[k] = 1;
+                    }
+                    gr::dbindex ix = gr::make_index(db.entries, avail);
+                    gr::target tg;
+                    if (morph) {
+                        gr::analysis_options ao;
+                        ao.threshold = thr;
+                        ao.fine = fine;
+                        tg = gr::analyse(*x, sr, db.block > 1 ? db.block : 2048, hop, ao);
+                        if (job.cancelled()) return;
+                    }
+                    double base = morph ? .1 : 0, share = (render ? .8 : .9) - base;
+                    gr::rng_t g(seed);
+                    for (int k = 0; k < n; ++k) {
+                        gr::run_hooks hooks;
+                        hooks.progress = [&job, base, share, k, n](double f) {
+                            job.progress((float)(base + share * ((double)k + std::clamp(f, 0.0, 1.0)) / n));
+                            return !job.cancelled();
+                        };
+                        gr::run_result r = morph ? gr::orchestrate_morphological(ix, *players, tg, p, g, hooks)
+                                                 : gr::granulate(ix, *players, secs, p, nullptr, markov->empty() ? nullptr : markov.get(), g, hooks);
+                        if (r.stopped || job.cancelled()) return;
+                        res->runs.push_back(std::move(r));
+                    }
+                    if (render) *mix = mixOf(granularNotes(*res), db, sr, job, *missing);
+                } catch (const std::exception& e) {
+                    *err = e.what();
+                }
+            },
+            [this, res, err, mix, missing, out, players] {
+                bool ok = err->empty() && !res->runs.empty();
+                if (ok && carryHeld_) { carryHeld_->players = *players; carryHeld_->key = carryKey_; }
+                releaseCarry();
+                if (!ok) { patch->print("orchidea: " + (err->empty() ? std::string("nothing orchestrated") : *err)); return false; }
+                gres_ = res;
+                granularLast_ = true;
+                out_ = out;
+                std::vector<std::string> said;
+                for (auto& r : res->runs)
+                    for (auto& m : r.messages)
+                        if (std::find(said.begin(), said.end(), m) == said.end()) { said.push_back(m); patch->print("orchidea: " + m); }
+                if (!out.empty() && !mix->empty()) storeMix(*mix, *missing);
+                outputNotes();
+                outputScore();
+                return true;
+            });
+    }
+    // the orchestra's players booked by this box's run, released when it ends, is stopped, or the box goes
+    void releaseCarry() {
+        if (carryHeld_) carryHeld_->inFlight = false;
+        carryHeld_.reset();
+    }
+    void chooseGranular(int seg, int n) {
+        int ns = (int)gres_->runs.size();
+        if (seg != 0) { patch->print("orchidea: a " + gres_->mode + " orchestration has one segment (choose 1 n)"); return; }
+        if (n < 0 || n >= ns) { patch->print("orchidea: there are " + std::to_string(ns) + " realisations"); return; }
+        auto res = std::make_shared<GranResult>(*gres_);
+        res->choice = n;
+        if (out_.empty() || !findBuffer(patch, out_)) {
+            gres_ = res;
+            outputNotes();
+            outputScore();
+            outletBang(1);
+            return;
+        }
+        auto mix = std::make_shared<std::vector<std::vector<float>>>();
+        auto missing = std::make_shared<size_t>(0);
+        runJob([res, mix, missing](Job& job) { *mix = mixOf(granularNotes(*res), *res->spec->db, res->sr, job, *missing); },
+               [this, res, mix, missing] {
+                   gres_ = res;
+                   if (!mix->empty()) storeMix(*mix, *missing);
+                   outputNotes();
+                   outputScore();
+                   return true;
+               });
+    }
+    void printRealisations() {
+        patch->print("orchidea: " + gres_->mode + ", " + std::to_string(gres_->runs.size()) + " realisations");
+        for (size_t k = 0; k < gres_->runs.size(); ++k) {
+            const auto& r = gres_->runs[k].rep;
+            char line[160];
+            std::snprintf(line, sizeof line, "  %d%s: %d notes, %d events of %d due, saturation %.0f%%", (int)k + 1, (int)k == gres_->choice ? "*" : "",
+                          r.notes, r.events, r.due, 100 * r.saturation);
+            patch->print(line);
+        }
+    }
+    // as Musil's granulation-report: the events due and written, the saturation, the unplayable, the dynamics
+    // substituted, every player's notes and busy fraction
+    void reportGranular() {
+        const auto& r = gres_->runs[(size_t)std::clamp(gres_->choice, 0, (int)gres_->runs.size() - 1)].rep;
+        char line[300];
+        std::snprintf(line, sizeof line, "orchidea: %s: %d events due, %d played, %d notes written in %.1f s; %d skipped, every able player busy (saturation %.0f%%); "
+                      "%d unplayable; %d at another dynamics than asked", gres_->mode.c_str(), r.due, r.events, r.notes, r.seconds, r.skipped_busy,
+                      100 * r.saturation, r.skipped_unplayable, r.substituted);
+        patch->print(line);
+        patch->print("orchidea: " + gres_->settings);
+        for (auto& u : r.unplayables)
+            patch->print("  unplayable: " + u.styles.str() + (u.strict ? " at " + u.dyn : "") + " in octaves " + u.reg.str() + " (first at " + gr::num_text(std::round(u.at * 10) / 10) + " s)");
+        for (size_t k = 0; k < r.players.size() && k < 200; ++k) {
+            const auto& q = r.players[k];
+            std::string ins;
+            for (auto& i : q.instrs) ins += (ins.empty() ? "" : "|") + i;
+            std::snprintf(line, sizeof line, ": %d notes, busy %.0f%%", q.notes, 100 * q.busy);
+            patch->print("  " + ins + (q.seat.empty() ? "" : " (seated: " + q.seat + ")") + line);
+        }
+    }
+
+    std::string mode_ = "mimetic";
+    gr::params gp_;                                       // the granular and morphological parameters given
+    std::map<std::string, std::string> curves_;           // a parameter read from a buffer~'s curve at the run
+    gr::markov_table markov_;
+    double start_ = 0, attackThreshold_ = 2;
+    bool continue_ = false;
+    uint64_t seed64_ = 1;
+    int hop_ = 1024, fine_ = 8192;
+    std::shared_ptr<const GranResult> gres_;
+    bool granularLast_ = false;                           // the last run was granular or morphological
+    CarryPtr carryHeld_;
+    std::string carryKey_;
 
     std::string orchestra_, out_;
     orch::analysis_options an_ = [] { orch::analysis_options a; a.segmentation = "none"; return a; }();

@@ -1,0 +1,74 @@
+; orchidea-morphological.moritz - cross-test: orchidea in its morphological mode against Musil's
+; orchestrate-morphological (tools/test-patches.sh): the same target, database, orchestra and seed give the same notes
+; (instrument, pitch, dynamics, technique, onset, duration, cents, player, sound): the pursuit at every event, then the
+; genetic decision (Orchidea's search at every event) with parameters of the pursuit changed
+(patch
+  (obj b1 buffer~ xmtgt gong_c_sharp.wav (pos 20 20))
+  (obj b2 buffer~ xmvc microsol/microsol/Strings/Vc/Vc-ord-E4-mf-1c.wav (pos 200 20))
+  (obj or orchestra xmband microsol/microsol.spectrum.db (pos 20 50))
+  (obj pl message "players Ob Hn Vn|Vc Vn Vc" (pos 20 80))
+  (obj lb loadbang (pos 20 110))
+  (obj tb t b b b (pos 120 110))
+  (obj m message "mode morphological, seed 6, min-density 3, voices 3, run xmtgt" (pos 20 140))
+  (obj oi orchidea xmband (pos 20 170))
+  (obj cm message compare (pos 20 205))
+  (obj c code 1 (pos 20 240)
+    (script
+      "; every note of the object arrives here, then compare"
+      "var got (try got catch e (list))"
+      "if (not (equal? in1 \"compare\")) { push got in1 } {"
+      "    load \"music.mu\""
+      "    var db (db-load \"../../data/microsol/microsol.spectrum.db\")"
+      "    var tg (target-analyse (head (buffer \"xmtgt\")) (buffer-rate \"xmtgt\") (get db 'block) 1024)"
+      "    seed 6"
+      "    var f (best-connection (orchestrate-morphological db (orchestra (list 'Ob 'Hn \"Vn|Vc\" 'Vn 'Vc)) tg (record (list (quote min-density) 3 (quote voices) 3))))"
+      "    var bad (if (== (length f) (length got)) 0 1)"
+      "    each (zip f got) (function (p) {"
+      "        var n (last (head p))"
+      "        var g (last p)"
+      "        var same (and (equal? (str (getidx g 1)) (get n 'instr)) (equal? (str (getidx g 2)) (get n 'pitch)) (equal? (str (getidx g 3)) (get n 'dyn)) (equal? (str (getidx g 4)) (get n 'tech))"
+      "                      (< (abs (- (getidx g 5) (* 1000 (head (head p))))) 0.05) (< (abs (- (getidx g 6) (* 1000 (getidx (head p) 1)))) 0.05)"
+      "                      (== (getidx g 8) (get n 'cents)) (== (getidx g 9) (get n 'player)) (equal? (filename (str (getidx g 7))) (filename (note-path n))))"
+      "        if (not same) { set bad (+ bad 1) }"
+      "    })"
+      "    print \"cross orchidea morphological:\" (length got) \"notes,\" (length f) \"in Musil,\" bad \"differ\""
+      "    if (or (> bad 0) (== (length f) 0)) { print \"FAIL: the orchidea object in morphological mode and Musil's orchestrate-morphological disagree\" } { print \"PASS: the orchidea object in morphological mode and Musil's orchestrate-morphological agree\" }"
+      "}"))
+  (connect lb 0 tb 0)
+  (connect tb 2 pl 0)
+  (connect pl 0 or 0)
+  (connect tb 1 m 0)
+  (connect m 0 oi 0)
+  (connect oi 2 c 0)
+  (connect oi 1 cm 0)
+  (connect cm 0 c 0)
+  (obj p2 comment "the genetic decision, three voices, a density twice the target's, short notes kept longer" (pos 400 140))
+  (obj m2 message "mode morphological, seed 7, decision genetic, population 30, epochs 10, voices 3, density-scale 2, persist 0.25, run xmvc" (pos 400 170))
+  (obj oi2 orchidea xmband (pos 400 200))
+  (obj cm2 message compare (pos 400 235))
+  (obj c2 code 1 (pos 400 270)
+    (script
+      "var got (try got catch e (list))"
+      "if (not (equal? in1 \"compare\")) { push got in1 } {"
+      "    load \"music.mu\""
+      "    var db (db-load \"../../data/microsol/microsol.spectrum.db\")"
+      "    var tg (target-analyse (head (buffer \"xmvc\")) (buffer-rate \"xmvc\") (get db 'block) 1024)"
+      "    seed 7"
+      "    var f (best-connection (orchestrate-morphological db (orchestra (list 'Ob 'Hn \"Vn|Vc\" 'Vn 'Vc)) tg (record (list 'decision 'genetic 'genetic (record (list 'population 30 'epochs 10)) 'voices 3 'density-scale 2 'persist 0.25))))"
+      "    var bad (if (== (length f) (length got)) 0 1)"
+      "    each (zip f got) (function (p) {"
+      "        var n (last (head p))"
+      "        var g (last p)"
+      "        var same (and (equal? (str (getidx g 1)) (get n 'instr)) (equal? (str (getidx g 2)) (get n 'pitch)) (equal? (str (getidx g 3)) (get n 'dyn)) (equal? (str (getidx g 4)) (get n 'tech))"
+      "                      (< (abs (- (getidx g 5) (* 1000 (head (head p))))) 0.05) (< (abs (- (getidx g 6) (* 1000 (getidx (head p) 1)))) 0.05)"
+      "                      (== (getidx g 8) (get n 'cents)) (== (getidx g 9) (get n 'player)))"
+      "        if (not same) { set bad (+ bad 1) }"
+      "    })"
+      "    print \"cross orchidea morphological, genetic:\" (length got) \"notes,\" (length f) \"in Musil,\" bad \"differ\""
+      "    if (or (> bad 0) (== (length f) 0)) { print \"FAIL: the genetic decision disagrees with Musil's\" } { print \"PASS: the genetic decision agrees with Musil's\" }"
+      "}"))
+  (connect tb 0 m2 0)
+  (connect m2 0 oi2 0)
+  (connect oi2 2 c2 0)
+  (connect oi2 1 cm2 0)
+  (connect cm2 0 c2 0))

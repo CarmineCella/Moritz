@@ -134,16 +134,18 @@ const std::map<std::string, PortDocs>& docs() {
                   "components k, iterations n, size n, seed n, stop"},
                  {"progress, 0 to 1", "bang: done (dest has one part, or one source, per channel)"}}},
         {"orchestra", {{"read file.db or a dataset's name (fullsol, tinysol, microsol); analyse folder [type block hop ncoeff]; "
-                        "players Vn 2 Va ...; add, remove, range, techniques, dynamics, info, stop"},
+                        "players Vn 2 Va Fl|Picc Vn+Vc ...; add, remove, range, techniques, dynamics, rest, info, stop"},
                        {"progress of reading (or analysing), 0 to 1", "bang: the database is read",
                         "the number of sounds in the database",
                         "the players, a list of instruments (Fl|Picc: one player who doubles); bang: none"}}},
-        {"orchidea", {{"run target [out]: buffer~ names; population, epochs, seed, segmentation, partials... ; "
-                       "choose segment n, notes, score, show, report, write file, roll buffer, stop"},
+        {"orchidea", {{"mode mimetic|granular|morphological; run target [out] (run seconds [out]: granular); population, epochs, seed, "
+                       "segmentation, partials... ; density, register, styles, dynamics, method... (granular); choose segment n, notes, "
+                       "score, show, report, write file, roll buffer, stop"},
                       {"progress of the search, 0 to 1", "bang: done (the notes are out)",
                        "a note a message: number, instrument, pitch, dynamics, technique, onset (ms), duration (ms), "
                        "the sound's path, cents off the target's partial, player",
-                       "the distance: the mean cost of the chosen solutions (lower is nearer the target)",
+                       "the distance: the mean cost of the chosen solutions (lower is nearer the target); granular and morphological: "
+                       "the saturation (the share of the events due skipped, every able player busy)",
                        "the solution as a score (score token): into a score object, which shows it as a roll and plays it"}}},
         {"specenv~", {{"amplitudes (inside pfft~: one frame); iterations n", "order (cepstral coefficients: the resolution)"},
                       {"spectral envelope", "fine structure: the amplitudes divided by the envelope"}}},
@@ -239,7 +241,7 @@ const std::map<std::string, PortDocs>& docs() {
         {"metro", {{"1 or bang starts, 0 or stop stops", "interval (ms)"}, {"bang every interval"}}},
         {"transport", {{"play, stop, locate bar [beat], seek ms, loop bar1 bar2, tempo bpm, meter n d, bang"},
                        {"bar (from 1)", "beat (from 1)", "position in ms", "1 when it starts, 0 when it stops"}}},
-        {"score", {{"read/write file.score, clear, add note|sound|msg ..., play, stop, locate bar, info"}, {}}},
+        {"score", {{"read/write file.score, clear, add note|sound|msg ..., score token, merge token, play, stop, locate bar, info"}, {}}},
         {"delay", {{"bang starts (or restarts), stop cancels; a number sets the time and starts", "delay time (ms)"},
                    {"bang after the delay"}}},
         {"line", {{"target [time [grain]]: ramp to target", "ramp time (ms)", "grain: ms between outputs"},

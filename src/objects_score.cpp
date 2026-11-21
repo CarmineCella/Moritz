@@ -17,6 +17,7 @@
 #include "zoom.h"
 
 #include "music/score.h"
+#include "music/score_layout.h"
 #include "music/score_text.h"
 
 #include <FL/Fl.H>
@@ -326,6 +327,24 @@ public:
             if (!s) { patch->print("score: no score " + m[1].str() + " (a code box sends one with (out k s))"); return; }
             dropSelection();
             replace(s->clone());
+        }
+        else if (h.is("merge") && m.size() > 1) {      // another score's events added (an orchestration's sections)
+            auto s = sharedScore(m[1].str());
+            if (!s) { patch->print("score: no score " + m[1].str() + " (a code box sends one with (out k s))"); return; }
+            auto c = score_->clone();
+            for (auto& r : s->rows) {                    // a row it has not: before the first one after it in orchestral order
+                if (std::any_of(c->rows.begin(), c->rows.end(), [&](const auto& q) { return q.name == r.name; })) continue;
+                int rank = sc::layout::instrumentRank(r.name);
+                auto at = std::find_if(c->rows.begin(), c->rows.end(), [&](const auto& q) { return sc::layout::instrumentRank(q.name) > rank; });
+                c->rows.insert(at, r);
+            }
+            for (auto& e : s->events()) {
+                auto x = std::make_shared<sc::Event>(*e);
+                x->id = 0;
+                c->insert(x);
+            }
+            dropSelection();
+            replace(c);
         }
         else patch->print("score: unknown message " + h.str());
     }
