@@ -177,6 +177,7 @@ struct ScorePlan {
         float gain = 1.f;
         int file = -1, buf = -1;         // a decoded file, or a buffer~ by name
         int gains = 0;                   // where its channel gains start in `gains`
+        int64_t fadeIn = 0, fadeOut = 0; // its fades (the clip's fade-in and fade-out), samples
     };
     std::vector<Voice> voices;
     std::vector<float> gains;            // per voice: one per outlet (a mono source's placement)
@@ -190,7 +191,9 @@ struct ScorePlan {
 // patch's transport. Without a file it is kept in the patch. Outlets: one signal for each channel (2 by default:
 // its sounds, placed at their azimuths), then notes (pitch velocity duration-ms row dynamics technique; - for none),
 // then messages (name values...; a patch event as patch name duration-ms args...), then info (end when it plays past
-// its last event; the summary for info).
+// its last event; the summary for info). A message is also sent to the receive objects of its name (automation lanes
+// drive a patch's receives). The rows are tracks: their mixer strips (gain, az, mute, solo: score.h's Mixer) apply to
+// the sounds, notes and patches on them; a sound's fade-in and fade-out are played.
 //   read [file], write [file]   a .score file (Musil data, read without running anything); write: in the patch's
 //                               folder or ~/Documents/Moritz
 //   clear                       no events
@@ -284,12 +287,16 @@ public:
         score_ = std::move(s);
         edited();
     }
+    // what an editor binds to (score_doc.h): the score now, and whether it is kept in the patch (no file of its own)
+    std::shared_ptr<sc::Score> current() const { return score_; }
+    bool keptInPatch() const { return file_.empty(); }
 
 private:
     struct Ctl {
         int64_t pos;
         int outlet;
         Message msg;
+        bool send = false;                       // a message: to the receives of its name too
     };
     int nOut_ = 2;
     std::string name_, file_;
@@ -387,6 +394,7 @@ private:
         std::vector<sc::Placed> flat;
         try { sc::flatten(*score_, flat); }
         catch (const std::exception& e) { patch->print(std::string("score: ") + e.what()); flat.clear(); }
+        const sc::Mixer mixer(*score_);           // the tracks' strips: each event plays on the row that placed it
         std::vector<Ctl> ctl;
         std::map<std::string, int> files, bufs;
         end_ = 0;
@@ -394,6 +402,9 @@ private:
         for (auto& p : flat) {
             const sc::Event& e = p.ev;
             end_ = std::max(end_, at(e.end()));
+            const std::string& track = p.top ? p.top->row : e.row;
+            if (e.kind != sc::Kind::Message && !mixer.sounds(track)) continue;   // muted, or another track soloed
+            const sc::Strip strip = mixer.of(track);
             if (e.kind == sc::Kind::Sound) {
                 ScorePlan::Voice v;
                 v.start = at(e.at);
@@ -401,7 +412,9 @@ private:
                 if (v.len <= 0) continue;
                 v.from = e.from;
                 v.to = e.to;
-                v.gain = (float)e.gain;
+                v.gain = (float)(e.gain * strip.gain);
+                v.fadeIn = std::clamp<int64_t>(at(sc::numField(e.extra, "fade-in", 0)), 0, v.len);
+                v.fadeOut = std::clamp<int64_t>(at(sc::numField(e.extra, "fade-out", 0)), 0, v.len);
                 if (e.buffer) {
                     auto it = bufs.find(e.source);
                     if (it == bufs.end()) {
@@ -429,13 +442,13 @@ private:
                 }
                 v.gains = (int)plan->gains.size();
                 double g[16];
-                sc::panGains(e.az, nOut_, g);
+                sc::panGains(e.az + strip.az, nOut_, g);
                 for (int c = 0; c < nOut_; ++c) plan->gains.push_back((float)g[c]);
                 plan->maxLen = std::max(plan->maxLen, v.len);
                 plan->voices.push_back(v);
             } else if (e.kind == sc::Kind::Note) {
                 if (e.variant == "chord") continue;
-                int vel = (int)std::lround(sc::velocityOf(e.dyn) * e.gain);
+                int vel = (int)std::lround(sc::velocityOf(e.dyn) * e.gain * strip.gain);
                 Message msg{Atom((float)e.sounding()), Atom((float)std::clamp(vel, 1, 127)), Atom((float)(e.dur * 1000.0)),
                             Atom(e.row.empty() ? std::string("-") : e.row), Atom(e.dyn.empty() ? std::string("-") : e.dyn),
                             Atom(e.tech.empty() ? std::string("-") : e.tech)};
@@ -443,8 +456,10 @@ private:
             } else if (e.kind == sc::Kind::Message) {
                 Message msg{Atom(e.source.empty() ? std::string("-") : e.source)};
                 for (auto& d : e.values) appendDatum(msg, d);
-                ctl.push_back({at(e.at), nOut_ + 1, std::move(msg)});
+                ctl.push_back({at(e.at), nOut_ + 1, std::move(msg), !e.source.empty()});
             } else if (e.kind == sc::Kind::Patch) {
+                // patch clips do not run yet: they leave the messages outlet as `patch name duration-ms args...`
+                // (the hook where a patch clip will be loaded and run while it lasts)
                 Message msg{Atom("patch"), Atom(e.source), Atom((float)(e.dur * 1000.0))};
                 for (auto& d : e.values) appendDatum(msg, d);
                 ctl.push_back({at(e.at), nOut_ + 1, std::move(msg)});
@@ -510,6 +525,7 @@ private:
         firedPos_ = p;
         firedLap_ = lap_;
         for (auto& c : due) {
+            if (c.send) patch->sendTo(c.msg[0].str(), Message(c.msg.begin() + 1, c.msg.end()));   // the lanes' receives
             outlet(c.outlet, c.msg);
             if (score_ != keep || score_->version() != version || !t_->playing()) { firing_ = false; return; }   // rebuild() or the transport took over
         }
@@ -551,8 +567,8 @@ void ScoreBox::dsp(int n) {
             double first = std::floor(v.from * src->sr);
             double last = v.to >= 0 ? std::min((double)src->frames, std::floor(v.to * src->sr)) : (double)src->frames;
             double avail = (last - first) / rate;                // samples of the source after its start
-            int64_t fade = 0;
-            if (avail > (double)v.len) fade = std::max<int64_t>(1, std::min<int64_t>((int64_t)std::floor(0.02 * sr), v.len / 4));
+            int64_t fade = v.fadeOut;
+            if (avail > (double)v.len) fade = std::max(fade, std::max<int64_t>(1, std::min<int64_t>((int64_t)std::floor(0.02 * sr), v.len / 4)));
             int64_t k0 = std::max<int64_t>(0, pos - v.start), k1 = std::min<int64_t>(v.len, p1 - v.start);
             const float* g = &plan->gains[(size_t)v.gains];
             bool direct = src->channels == nOut_;
@@ -562,6 +578,7 @@ void ScoreBox::dsp(int n) {
                 if (sp >= last) break;
                 float amp = v.gain;
                 if (fade && k >= v.len - fade) amp *= (float)(v.len - 1 - k) / (float)fade;
+                if (k < v.fadeIn) amp *= (float)k / (float)v.fadeIn;
                 int o = i + (int)(v.start + k - pos);
                 if (direct) {
                     for (int c = 0; c < nOut_; ++c) if (out[c]) out[c][o] += amp * src->interp(sp, c);
@@ -578,6 +595,23 @@ void ScoreBox::dsp(int n) {
 }
 
 }  // namespace
+
+// ---------------------------------------------------------------- what editors use (transport.h)
+bool isScoreBox(const Box* b) { return dynamic_cast<const ScoreBox*>(b) != nullptr; }
+std::shared_ptr<sc::Score> scoreOfBox(Box* b) {
+    auto* s = dynamic_cast<ScoreBox*>(b);
+    return s ? s->current() : nullptr;
+}
+bool replaceScoreOfBox(Box* b, std::shared_ptr<sc::Score> score) {
+    auto* s = dynamic_cast<ScoreBox*>(b);
+    if (!s || !score) return false;
+    s->replace(std::move(score));
+    return true;
+}
+bool scoreBoxKeptInPatch(const Box* b) {
+    auto* s = dynamic_cast<const ScoreBox*>(b);
+    return s && s->keptInPatch();
+}
 
 void registerScoreObjects(ClassTable& t) {
     t.insert(t.end(), {

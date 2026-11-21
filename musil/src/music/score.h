@@ -23,7 +23,8 @@
 // The fields a kind does not use are left at their defaults. Anything else an event or a score carries is
 // in extra (persisted: a number, a string, a symbol or a list of them) or in host (a host's own payload:
 // Musil keeps the functions, vectors and databases of its events there; never written, never shared
-// between hosts).
+// between hosts). A sound's fades are in its extra: fade-in and fade-out, in seconds (Moritz plays them).
+// A row is a track too: its mixer strip (gain, az, mute, solo) is in the row's extra (Strip, Mixer below).
 //
 // Time. Seconds, exactly as written. A beat is 1/den of a bar of num beats, at bpm beats a minute
 // (beats(), bars()), as in Musil's notation. Placements compose: a note at time t inside a score placed at
@@ -338,6 +339,8 @@ struct Placed {
     double transpose = 0;
     int depth = 0;
     const Score* origin = nullptr;   // the score it comes from (its file's folder is where its sources are)
+    const Event* top = nullptr;      // the event of the flattened score it comes from: itself, or the score event
+                                     // that placed it (its row is the track it plays on)
 };
 // the events of s with those of the scores inside at their place, in the order of s; a score placed is cut to
 // its event's window (an inner event starting at or after the window is left out, one ending after it is
@@ -346,7 +349,7 @@ inline void flatten(const Score& s, std::vector<Placed>& out, int depth = 0) {
     if (depth > kMaxDepth) throw Error("score: scores nested more than " + std::to_string(kMaxDepth) + " deep");
     for (auto& ep : s.events()) {
         const Event& e = *ep;
-        if (e.kind != Kind::Score) { out.push_back({e, 0, depth, &s}); continue; }
+        if (e.kind != Kind::Score) { out.push_back({e, 0, depth, &s, &e}); continue; }
         if (!e.sub) continue;
         std::vector<Placed> inner;
         flatten(*e.sub, inner, depth + 1);
@@ -361,10 +364,64 @@ inline void flatten(const Score& s, std::vector<Placed>& out, int depth = 0) {
             q.ev.el = std::max(-90.0, std::min(90.0, q.ev.el + e.el));
             if (q.ev.kind == Kind::Note) q.ev.pitch += e.transpose;
             q.transpose += e.transpose;
+            q.top = &e;
             out.push_back(std::move(q));
         }
     }
 }
+
+// --- tracks: the mixer strip of a row ----------------------------------------------------------------------------------
+// A row's extra may hold its strip: gain (linear), az (degrees, added to the azimuths of its events), mute and solo
+// (0 or 1). A host's playback reads it with Mixer: a muted row is silent; when any row is soloed, only the soloed rows
+// sound. Notes, sounds and patches follow the strip; messages (automation, control) are sent whatever it says.
+// Events of a placed score play on the row of the event that placed them (Placed::top).
+struct Strip {
+    double gain = 1, az = 0;
+    bool mute = false, solo = false;
+};
+inline double numField(const Fields& f, const std::string& key, double def) {
+    const Datum* d = field(f, key);
+    return d && d->kind == Datum::Num && std::isfinite(d->num) ? d->num : def;
+}
+inline Strip stripOf(const Row& r) {
+    Strip s;
+    s.gain = std::max(0.0, numField(r.extra, "gain", 1));
+    s.az = numField(r.extra, "az", 0);
+    s.mute = numField(r.extra, "mute", 0) != 0;
+    s.solo = numField(r.extra, "solo", 0) != 0;
+    return s;
+}
+// the strip written into a row's extra (a value at its default is left out)
+inline void setStrip(Row& r, const Strip& s) {
+    auto put = [&](const char* k, double v, double def) {
+        if (v == def) eraseField(r.extra, k);
+        else setField(r.extra, k, Datum::number(v));
+    };
+    put("gain", s.gain, 1);
+    put("az", s.az, 0);
+    put("mute", s.mute ? 1 : 0, 0);
+    put("solo", s.solo ? 1 : 0, 0);
+}
+struct Mixer {
+    explicit Mixer(const Score& s) {
+        for (auto& r : s.rows) {
+            Strip st = stripOf(r);
+            strips[r.name] = st;
+            anySolo = anySolo || st.solo;
+        }
+    }
+    // the strip of a row (the default one for a row the score does not declare)
+    Strip of(const std::string& row) const {
+        auto it = strips.find(row);
+        return it == strips.end() ? Strip{} : it->second;
+    }
+    bool sounds(const std::string& row) const {
+        Strip st = of(row);
+        return !st.mute && (!anySolo || st.solo);
+    }
+    std::unordered_map<std::string, Strip> strips;
+    bool anySolo = false;
+};
 
 // --- bars and beats -----------------------------------------------------------------------------------------------
 // A position as bars, beats (both from 1) and ticks (kTicks a beat), from seconds at a tempo and meter.

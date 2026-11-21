@@ -189,6 +189,14 @@ private:
 std::string shareScore(std::shared_ptr<const musil::score::Score> s);
 std::shared_ptr<const musil::score::Score> sharedScore(const std::string& token);
 
+// A score box, for the editors (score_doc.h): the score it holds now, the same object it plays; replaceScoreOfBox
+// hands it a score (or the same one, edited in place) and it plays that at once (ScoreBox::replace, GUI thread);
+// a score kept in the patch has no file of its own (it is saved inside the patch).
+bool isScoreBox(const Box* b);
+std::shared_ptr<musil::score::Score> scoreOfBox(Box* b);
+bool replaceScoreOfBox(Box* b, std::shared_ptr<musil::score::Score> s);
+bool scoreBoxKeptInPatch(const Box* b);
+
 // the clock of the patch p is in (its root's), made on first use
 inline std::shared_ptr<Transport> transportOf(Patch* p) {
     Patch* r = p->root();
