@@ -140,17 +140,28 @@ the editor's command table and undo rule), YIN, `descriptors~` on the shared ana
       resize, Alt-drag copy, Draw, Erase, Delete, quantize, the arrows; Roll, Piano roll and List views; the text
       view in sync both ways; the breadcrumb into scores placed inside; a lane of dynamics.
 - [x] The active `score` object (mockup 2): its roll drawn in the box, edited in place when locked (each edit an
-      undo step of the patch), sized by its corner, a double-click opens the roll; messages `add` (a note without
-      its kind or duration), `select`, `transpose`, `invert`, `retrograde`, `augment`, `diminish`, `shift`,
-      `quantize`, `humanize`, `thin`, `density`, `open`.
+      undo step of the score: Edit > Undo with the box clicked last), sized by its corner, a double-click opens the
+      roll; messages `add` (a note without its kind or duration), `select`, `transpose`, `invert`, `retrograde`,
+      `augment`, `diminish`, `shift`, `quantize`, `humanize`, `thin`, `density`, `open`.
 - [x] Transform (mockup 5, item 7): transpose, invert, retrograde, augment/diminish, quantize, humanize, thin,
       density, once in Musil's C++ (`music/score_transform.h`), Musil's builtins and the roll's buttons.
-- [ ] The roll on the score document (ScoreDoc) when it lands: its undo and listeners in place of the roll's own
-      target (roll_edit.h says how); a .score file edited in the roll saved with the patch, closing asks.
+- [x] The roll on the score document (ScoreDoc): the box's own roll, the roll's window and the timeline are views
+      of one document (one undo history, one selection, an edit in one shown in the others at once, saved alike: a
+      score kept in a patch marks the patch edited and is undone in its own history, not the patch's; a .score file
+      is saved by Save, closing asks); a score placed inside is the document of that placement, as in the
+      timeline (edited in the roll, its file saved too). The views switch from their toolbars (the timeline's
+      Timeline / Roll / List, the roll's Timeline button); a locked double-click on a score box opens its roll, its
+      menu has Open Roll... and Open as Timeline.
+- [x] The cents always shown (orchidea's detuning): by the note in the roll's window and in the box (a tick when
+      the box is too small for the number), edited in the List and by Alt+Up and Alt+Down (Shift: ten), each an
+      undo step.
 - [ ] Generate panel (mockup 5, item 6): Musil's algorithms into the selection, offline, with Preview and Again.
 - [ ] The roll: rows changed by dragging a note to another staff; a lane of any parameter (automation, a
-      receive name); the gain ramp and snap to a pitch field among the transformations; copy and paste of notes;
-      a score placed by file edited in its own roll (today read-only in the parent's); instances made unique.
+      receive name); the gain ramp and snap to a pitch field among the transformations; copy and paste of notes
+      (the timeline's clipboard); instances made unique (the timeline's Make Unique); a cents tick's value on
+      hover; the roll and the timeline as panels of one window (mockup 8) instead of a window each.
+- [ ] The patch's Undo and the score's history: a step of the patch older than a score's edits puts the score
+      back as it was then (its history starting again); keep the score's own edits out of the patch's snapshots.
 - [ ] Musil plays the sample a note of a .score file names (data sound), as Moritz's score object does.
 - [ ] `coll` (mockup 9).
 - [ ] A tempo map (today a score has one tempo); stretched sound clips played stretched.

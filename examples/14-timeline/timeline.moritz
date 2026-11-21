@@ -1,10 +1,11 @@
 ; timeline.moritz - a score of four stems (piece.score, next to this patch) played on the transport, and an
 ; automation lane of the score that drives this patch's receive "cutoff": the mix goes through a low-pass filter
-; whose cutoff follows the lane. Double-click the score box (locked) to open it as a timeline: move, trim and split
-; the clips, mute or solo a track, draw points on the lane, then Save writes piece.score again.
+; whose cutoff follows the lane. Right-click the score box: Open as Timeline (a double-click opens its roll, the
+; same score, whose Timeline button does the same): move, trim and split the clips, mute or solo a track, draw points
+; on the lane, then Save writes piece.score again.
 (patch
   (obj title comment "timeline: a score seen as tracks, its automation lane driving the patch" (pos 20 12))
-  (obj tip comment "double-click the score to open its timeline (or right-click it: Open as Timeline)" (pos 20 34))
+  (obj tip comment "right-click the score: Open as Timeline (double-click it: its roll, the same score; its Timeline button)" (pos 20 34))
   (obj play message play (pos 20 70))
   (obj stop message stop (pos 65 70))
   (obj loc message "locate 1" (pos 110 70))

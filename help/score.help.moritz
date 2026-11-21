@@ -30,7 +30,7 @@
       "  (sr 44100) (bpm 120) (meter 4 4) (next-id 9)"
       "  (row Cl treble)"
       "  (note 0 0.45 Cl 67 mf ord (id 1))"
-      "  (note 0.5 0.45 Cl 70 mf ord (id 2))"
+      "  (note 0.5 0.45 Cl 70 mf ord (id 2) (cents 19))"
       "  (note 1 0.45 Cl 74 f ord (id 3))"
       "  (note 1.5 0.9 Cl 72.5 p ord (id 4))"
       "  (msg 0 tonic 67 (id 5))"
@@ -40,9 +40,11 @@
   (obj croll comment "The box is a roll: click a note, drag it" (pos 600 190))
   (obj croll2 comment "(later, higher), drag its end; Alt-drag copies;" (pos 600 208))
   (obj croll3 comment "a rectangle selects; Delete, the arrows" (pos 600 226))
-  (obj croll4 comment "(each edit an undo step of the patch)." (pos 600 244))
-  (obj croll5 comment "Double-click it: the roll's window." (pos 600 268))
-  (obj croll6 comment "In edit mode, its corner sizes it." (pos 600 286))
+  (obj croll4 comment "(Edit > Undo takes an edit back)." (pos 600 244))
+  (obj croll5 comment "Alt+Up, Alt+Down: a cent (Shift: ten);" (pos 600 262))
+  (obj croll6 comment "the cents always shown (+19 by the head)." (pos 600 280))
+  (obj croll7 comment "Double-click it: the roll's window." (pos 600 304))
+  (obj croll8 comment "In edit mode, its corner sizes it." (pos 600 322))
   (obj tl t l l (pos 220 405))
   (obj up unpack 0 0 0 (pos 300 435))
   (obj mt mtof (pos 300 465))
@@ -58,8 +60,9 @@
   (obj out dac~ (pos 20 565))
   (obj cs comment "its sounds, placed at their azimuth (two channels here)" (pos 90 566))
   (obj tip comment "A code box sends a score made in Musil with (out 1 s); its sounds read files or buffer~s by name. orchidea sends its solution as a score." (pos 20 605))
-  (obj tl2 comment "Its menu's Open as Timeline shows it as a timeline: its rows are tracks (gain, pan, mute, solo), its" (pos 20 625))
+  (obj tl2 comment "Its menu's Open as Timeline (or the roll's Timeline button) shows it as tracks (gain, pan, mute, solo), its" (pos 20 625))
   (obj tl3 comment "events clips, its messages automation lanes that also reach the receives of their name. File > New Score too." (pos 20 643))
+  (obj tl4 comment "The box, its roll and its timeline are one score: an edit in one is in the others, with one undo and one selection." (pos 20 661))
   (connect play 0 s 0)
   (connect stop 0 s 0)
   (connect loc 0 s 0)

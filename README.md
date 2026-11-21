@@ -220,23 +220,26 @@ Moritz follows Max's conventions:
   (`sound.wav.markers`), and closing it asks when it has edits. Samples
   copied in one editor paste into another (resampled when the rates differ).
 - **Roll**: a `score` box draws its score as a roll, a staff a row with
-  proportional time (rows in orchestral order, clefs, microtones with their
-  cents, scores placed inside as faint blocks with their placement), and is
-  edited in place when the patch is locked: click a note (Shift adds, a
-  rectangle selects), drag it in time and pitch, drag its end, Alt-drag
-  copies, Delete, the arrows nudge, Q quantizes; each edit is an undo step of
-  the patch, and in edit mode its corner sizes it. Double-click it for the
-  roll's window: staves, a piano roll or a list of the events, Select / Draw
-  / Erase on a grid, a lane of dynamics, the Transform panel (transpose,
-  invert, retrograde, augment, diminish, quantize, humanize, thin, density:
-  the same functions as Musil's `score-transpose!` and the others), the score
-  as Musil data below, edited and kept in sync, and a breadcrumb: a
-  double-click enters a score placed inside, Esc goes up. `orchidea` sends its
-  solution to a `score` box, which plays each note's sample.
-- **Timeline**: double-click a `score` box (locked; or its menu's Open as
-  Timeline) to see its score as tracks, as in a DAW; File > Open Score...
-  opens a .score file the same way and File > New Score starts one. The
-  score's rows are tracks, each with a small mixer strip (M and S in its
+  proportional time (rows in orchestral order, clefs, microtones and
+  detuned notes with their cents, in the box too, scores placed inside as
+  faint blocks with their placement), and is edited in place when the patch
+  is locked: click a note (Shift adds, a rectangle selects), drag it in time
+  and pitch, drag its end, Alt-drag copies, Delete, the arrows nudge, Alt+Up
+  and Alt+Down detune by a cent (Shift+Alt: ten), Q quantizes; Edit > Undo
+  takes the edits back (the box clicked last), and in edit mode its corner
+  sizes it. Double-click it (or its menu's Open Roll...) for the roll's
+  window: staves, a piano roll or a list of the events (each cell edited,
+  the cents too), Select / Draw / Erase on a grid, a lane of dynamics, the
+  Transform panel (transpose, invert, retrograde, augment, diminish,
+  quantize, humanize, thin, density: the same functions as Musil's
+  `score-transpose!` and the others), the score as Musil data below, edited
+  and kept in sync, and a breadcrumb: a double-click enters a score placed
+  inside, Esc goes up. `orchidea` sends its solution to a `score` box, which
+  plays each note's sample and shows how far each is detuned.
+- **Timeline**: a `score` box's menu's Open as Timeline (or the roll's
+  Timeline button) shows its score as tracks, as in a DAW; File > Open
+  Score... opens a .score file the same way and File > New Score starts one.
+  The score's rows are tracks, each with a small mixer strip (M and S in its
   header; gain and pan in the inspector) that the score's playback follows.
   Clips are its events: sound regions drawn as waveforms (drag them, drag an
   edge to trim, S splits at the playhead, fades and gain in the inspector),
@@ -249,8 +252,13 @@ Moritz follows Max's conventions:
   sound files from the Finder, or use Add; cut, copy, paste, duplicate and
   undo every edit; snap to beats or bars; Space plays from the playhead on
   the transport (a ruler drag sets the loop). Render... writes the score to a
-  stereo WAV file, faster than real time. A score kept in a patch is saved
-  with the patch; a .score file with Save.
+  stereo WAV file, faster than real time. Its Roll and List buttons open the
+  roll of the same score.
+- **One score, several views**: the box's own roll, the roll's window and
+  the timeline show one document: an edit in one is in the others at once,
+  with one undo history and one selection. A score kept in a patch is saved
+  with the patch (its edits mark the patch edited; they are undone in the
+  score's history, not the patch's); a .score file with Save.
 - **Zoom**: Cmd+ and Cmd- (or the toolbar) zoom the patch; View > Interface
   makes the whole interface larger or smaller.
 - **Code view**: Cmd+T shows the patch as text beside the drawing. Edit
