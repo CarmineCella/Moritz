@@ -102,7 +102,7 @@ set-buffer! "out" (* in1 y) sr
 out 1 (length y)                          ; the number of samples, out of outlet 1
 ```
 
-Tutorial 11 goes from the Console to the code box; `examples/12-code` has
+Tutorial 14 goes from the Console to the code box; `examples/12-code` has
 sounds transformed, analysed and made by scripts, and Maple and SoundTypes
 from code; `help/code.help.moritz` sums it up. The Musil manual is in Help >
 Documents.
