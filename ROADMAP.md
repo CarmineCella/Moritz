@@ -195,8 +195,15 @@ the editor's command table and undo rule), YIN, `descriptors~` on the shared ana
       other tags in the file names, and the analysed features. Patterns (`pizz*`, `/sul_?pont/`),
       ranges (`C4..G5`, `p..f` in the order of dynamics, `pitch 60..72`), lists (`Vn|Va`), and, or,
       not; per instrument or for the whole orchestra. Shows how many samples remain before a run.
-- [ ] Orchidea's morphological and granular modes, and the adaptive segmentation, in C++ (today
-      about 800 lines of music.mu), producing a score.
+- [x] Orchidea's morphological and granular modes, and the adaptive segmentation, in C++ (they were
+      about 800 lines of music.mu), producing a score: `musil/src/music/granular.h` (the granulator, the
+      target's analysis, the pursuit and the genetic decision) and `signals/morphology.h` (the curves, the
+      flux peaks, `adaptive-onsets`); Musil's `orchestrate-granular` and `orchestrate-morphological` keep
+      their names and, for a seed, the notes of 0.12's interpreted versions (seven to nine times faster);
+      `orchidea`'s `mode granular` and `mode morphological` run the same code (cross-tests in tests/cross/),
+      every parameter a message (a number, a range, a set, an envelope `at t v ...`, a buffer~'s curve),
+      paired players (`Vn+Vc`), sections that carry the players' bookings (`continue`, `start`, the
+      orchestra's `rest`, the score's `merge`), and `segmentation adaptive` in the mimetic mode.
 - [x] `orchidea` outputs a score (the shared C++ score) instead of a plot: a `score` box shows it as a roll,
       edits it and plays each note's sample.
 - [ ] **The solutions of each segment in the roll**, as Musil's roll has them: the score from orchidea
@@ -209,7 +216,9 @@ the editor's command table and undo rule), YIN, `descriptors~` on the shared ana
 - [ ] Examples as patches: Grisey (Partiels: an orchestral spectrum of a trombone note), Haas and
       Ligeti's Atmosphères (Musil's haas.mu and atmospheres.mu), played through the score.
 - [ ] More examples for every orchestration mode and idea (mimetic, morphological, granular, queries,
-      a sound file orchestrated over time, a score as target), and a tutorial on orchestration.
+      a sound file orchestrated over time, a score as target), and a tutorial on orchestration. Done:
+      the mimetic, granular and morphological examples and the tutorial (tutorials/14-orchestration);
+      left: queries (once they exist) and a score as target.
 
 ### Examples
 
@@ -227,14 +236,18 @@ Many more examples, each small and about one idea, in the folder of its topic:
 - [ ] **Sound editor**: markers and regions into a coll, once `coll` exists.
 - [ ] **Orchestration**: one example per mode and idea (in the orchestration section above), as the modes
       arrive. The mimetic mode has its examples (examples/13-orchestration: static and dynamic, the
-      connections, memory, the search, the space of sounds, the output, the piece of four targets).
+      connections, memory, the search, the space of sounds, the output, the piece of four targets), and
+      so have the granular and morphological ones (granular-envelopes, granular-styles, granular-methods,
+      granular-sections, morphological, mimetic-morphological); queries' examples wait for the queries.
 
 ### Tutorials
 
 The patches in `tutorials/` are numbered in the order they are taught; the code tutorial stays last.
 
-- [ ] **Orchestration**: a tutorial patch before the code one, written once the orchestration
-      features are complete (queries, the morphological and granular modes, scores as output).
+- [x] **Orchestration** (tutorials/14-orchestration): targets, databases and datasets by name, the orchestra
+      (doublings, pairs), mimetic static and dynamic with its connections and memory, the granular and
+      morphological modes, the result as a score in the roll; before the code tutorial (now 15-code).
+      Queries join it when they exist.
 - [x] **Sound editor** (tutorials/12-sound-editor): from a buffer~ to the sound editor: the views,
       selecting and listening, edits with undo, the pencil, markers and regions, Process with an object,
       a Musil script and a patch (with its tail), To score and To coll, saving.

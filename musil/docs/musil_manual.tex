@@ -1679,9 +1679,9 @@ partials does): the dictionary is the free players' sounds whose pitch is one of
 target's spectral peaks at that instant (\musil{target-peaks}, \musil{target-dictionary}:
 the partials of a sound are the pitches an orchestra can double it with, and the register
 and the dynamics of the moment narrow the choice), the signal is the target's spectrum
-over the next 100\,ms less what already sounds (\musil{target-residual}: the sounding
+over the next 100\,ms less what already sounds (the sounding
 notes refitted to the frame together), and each atom is a note with its instrument, pitch
-and technique (\musil{target-notes}: the best atom always, more up to \musil{'voices} when
+and technique (the best atom always, more up to \musil{'voices} when
 each accounts for \musil{'min-gain} of the residual; when the sounding notes explain the
 frame the pursuit doubles it instead). A note lasts as long as the target keeps its sound
 (\musil{atom-persistence}: the projection of the frames ahead on the sound's spectrum stays
@@ -1692,7 +1692,10 @@ nearest peak against the sound's own frequency (\musil{entry-f0}). When every pl
 busy and an event is due the oldest note gives way (\musil{'steal}). Nothing is segmented:
 a long sound under short ones comes out as a long note under short ones, which is what
 granulating rather than cutting is for. \texttt{morph\_orchestration.mu} orchestrates a
-recording this way and places the target after it to compare.
+recording this way and places the target after it to compare. The granulator, the target's
+analysis and this decision are C++ (\texttt{src/music/granular.h} and
+\texttt{src/signals/morphology.h}, since 0.13): Moritz's \texttt{orchidea} runs the same code in
+its granular and morphological modes, and for a seed both write the same notes.
 
 \textbf{Mimetic orchestration (Orchidea).} \musil{orchestrate-mimetic db orch x sr params}
 is assisted orchestration: the target is imitated as a whole. Its search core is Orchidea's

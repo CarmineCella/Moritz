@@ -117,7 +117,10 @@ cmake --build build --target uninstall
    fragments and scores in scores (see the manual's music section); `algorithmic_comp.mu`,
    `score_in_score.mu`. Known cost: preparing a long score for playback is the hall convolution
    (about 3 s per minute of music); notes and the hall's response are cached.
-5. **Orchestrations** (round one done): a result record (segments, solutions, connections) shared by
+5. **Orchestrations** (round one done; in C++ since 0.13: `src/music/granular.h` holds the granulator, the
+   target's analysis and the morphological decisions, `src/signals/morphology.h` the curves and the adaptive
+   onsets, so that Moritz's orchidea runs the same code; music.mu keeps the surface, and for a seed the notes
+   of the interpreted versions, which tests/test_music.mu keeps): a result record (segments, solutions, connections) shared by
    every orchestrator; `orchestrate-granular` with envelopes, an orchestra of players (ossia, pairs)
    and five ways of choosing pitches; `midi-read` and MIDI files as fragments (src/music/midi.h).
    `orchestrate-morphological` (done, rebuilt from first principles): `target-analyse` (descriptors in

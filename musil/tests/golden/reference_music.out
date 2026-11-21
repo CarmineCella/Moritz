@@ -90,7 +90,7 @@ connect!        : the score remembers the orchestration; score-solutions: 1 orch
 target-analyse  : 2.6 s, 112 frames; curves: density (flux peaks a second), centroid, spread, low, loudness; 1 flux peaks
 target-envelopes: the granulator's parameters from the curves: (density dynamics register)
 target-peaks    : the pitches the notes may take, at 1 s: (C4 C6 C5 C7 A#6 E7)
-orchestrate-morphological: 1 notes with cents, e.g. Vc C4 f 15 cents; a matching pursuit at every event (target-notes), each note as long as the target keeps its sound (atom-persistence), no segmentation
+orchestrate-morphological: 1 notes with cents, e.g. Vc C4 f 15 cents; a matching pursuit at every event (granular.h), each note as long as the target keeps its sound (atom-persistence), no segmentation
 
 --- notation ---
 score-meter!    : (3 4) with score-tempo! 120 bpm: the bar and the beat of the notation

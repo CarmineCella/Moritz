@@ -1,5 +1,51 @@
 # Changes
 
+## 0.13 (in progress)
+
+### Orchestration
+
+- **The granular and morphological orchestrations are C++** (`src/music/granular.h`, with the curves of
+  `src/signals/morphology.h`), the code Moritz's `orchidea` runs in its granular and morphological modes:
+  the granulator (its envelopes of numbers, ranges and sets, the orchestra of players with its ossia,
+  paired groups and seats, the five ways of choosing pitches, `'continue` and `'start`, the report), the
+  target's analysis (`target-analyse-with`: the frame spectra and the fine ones, the flux peaks and their
+  density, the register, the loudness) and the decision at every event (the matching pursuit against the
+  target's spectrum less what sounds, or Orchidea's search with `'decision 'genetic`), the durations from
+  the persistence of each sound in the target. `orchestrate-granular` and `orchestrate-morphological` keep
+  their names, parameters and results: for a seed they write the notes the interpreted versions of 0.12
+  wrote (`tests/test_music.mu` keeps their signatures, and the examples and golden outputs are unchanged).
+  They are much faster: 120 s of a granular orchestra of twenty players (1792 notes) in 0.03 s instead of
+  0.95 s; the analysis of 15 s of voice in 0.13 s instead of 0.79 s; its morphological orchestration in
+  0.02 s instead of 0.71 s (with the genetic decision 0.05 s instead of 0.60 s), the same notes.
+- The rules on values are written once for both: `env-at`, `value-at`, `draw-in`, `pick-from`,
+  `numeric-range?`, `draw-duration`, `level->dynamics`, `dynamics->level`, `level->gain`,
+  `instrument-family`, `balance-gain`, `harmonic-series`, `just-cents` and `band-weight` (what
+  `band-weigher`'s function computes) are builtins on the granulator's own code; so are
+  `target-envelopes`, `target-frame`, `target-level`, `target-peaks`, `frames-mean`, `atom-persistence`,
+  `entry-f0`, `target-dictionary`, `technique-short?`, `moving-median` and `markov-learn` (what
+  `markov-table` learns a score's lines with). `db-pitches-at` reads the granulator's index
+  (`granular-pitches`).
+- `granulate` runs `granular-run`, `orchestrate-morphological` runs `morphological-run`; the morphological
+  decision's internals (`target-notes`, `target-note-of`, `target-notes-genetic`, `target-residual`,
+  `db-by-midi!`) and the granulator's (`choose-pitch`, `random-pitch`, `instrument-for`) are no longer Musil
+  functions.
+- **The adaptive segmentation is C++**: `adaptive-onsets` (the flux's peaks above a ratio of its local
+  median, a timegate apart), which `mimetic-target`'s `'segmentation 'adaptive` cuts at and Moritz's
+  orchidea offers as `segmentation adaptive`.
+- A database's index for the granulator is kept on the database (its `'granular` entry), built once from
+  `db-index!`.
+
+### Signals
+
+- `frame-spectra`, `onset-strength`, `flux-peaks`, `peak-density`, `register-curve` and `loudness-curve`
+  are builtins (`src/signals/morphology.h`), computed operation for operation as their interpreted
+  versions were (the same results); the recursive filter of `iir` is `src/signals/iir.h`.
+
+### Scientific
+
+- `mp`'s pursuit and `median-filter`'s running median are C++ functions of their own (`mp_run`,
+  `median_filter`), which the morphological orchestration calls.
+
 ## 0.12
 
 ### The score

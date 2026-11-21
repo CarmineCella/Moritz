@@ -165,7 +165,7 @@ print "target-envelopes: the granulator's parameters from the curves:" (sort-lis
 print "target-peaks    : the pitches the notes may take, at 1 s:" (map (vec->list (target-peaks tg 1 6)) (function (f) (midi->pitch (round (hz->midi f)))))
 seed 3
 var mo (orchestrate-morphological db orch tg (record (list 'solutions 1)))
-print "orchestrate-morphological:" (length (best-connection mo)) "notes with cents, e.g." (get (last (head (best-connection mo))) 'label) (get (last (head (best-connection mo))) 'cents) "cents; a matching pursuit at every event (target-notes), each note as long as the target keeps its sound (atom-persistence), no segmentation"
+print "orchestrate-morphological:" (length (best-connection mo)) "notes with cents, e.g." (get (last (head (best-connection mo))) 'label) (get (last (head (best-connection mo))) 'cents) "cents; a matching pursuit at every event (granular.h), each note as long as the target keeps its sound (atom-persistence), no segmentation"
 
 ; --- 5e. Notation: quantization and MusicXML ------------------------------------------------------------
 print ""

@@ -2405,9 +2405,9 @@ The database can be named instead of given as a file: orchestra band fullsol, re
 
 analyse makes a database out of a folder of sounds named as in the *SOL databases (Orchidea's dbgen, the analysis of Musil's db-gen): every WAV under the folder, its features in folder.spectrum.db next to the folder (never over a file already there), which is then read. The Datasets window does the same and registers the file by a name (Analyse a folder...).
 
-Without players, the orchestra is Orchidea's default (two of each wind and brass, a bass tuba, two of each string), of what the database has. A player is an instrument code as the database names it (Fl, Ob, ClBb, Bn, Hn, TpC, Tbn, BTb, Vn, Va, Vc, Cb...); Fl|Picc is one player who doubles. Right-click the box for Info.
+Without players, the orchestra is Orchidea's default (two of each wind and brass, a bass tuba, two of each string), of what the database has. A player is an instrument code as the database names it (Fl, Ob, ClBb, Bn, Hn, TpC, Tbn, BTb, Vn, Va, Vc, Cb...); Fl|Picc is one player who doubles; Vn+Vc are two players paired, whom orchidea's granular mode makes sound together (a group). The players also keep what orchidea's granular runs that continue book of them (continue 1), so that the sections of a piece never ask a player for two notes at once; rest forgets it. Right-click the box for Info.
 
-See the examples in examples/13-orchestration: sound-space (players, doublings, range, techniques, dynamics) and, for what orchidea does with the orchestra, static-dynamic, connections, memory, search and output.
+See the examples in examples/13-orchestration: sound-space (players, doublings, range, techniques, dynamics) and, for what orchidea does with the orchestra, static-dynamic, connections, memory, search and output; the granular ones (granular-envelopes, granular-styles, granular-sections) and the morphological ones (morphological, mimetic-morphological).
 
 | Argument | |
 | --- | --- |
@@ -2418,18 +2418,19 @@ See the examples in examples/13-orchestration: sound-space (players, doublings, 
 | --- | --- |
 | `read file` | reads a database (a background job): a feature file, or a dataset's name (read fullsol); the sounds are looked for next to it |
 | `analyse folder [type block hop ncoeff]` | analyses every WAV under the folder into folder.spectrum.db next to it, when the patch may write there (its folder, ~/Documents/Moritz; the Datasets window analyses a folder anywhere) (a background job; spectrum 2048 256 1024 by default; logspec, specpeaks, specenv, mfcc 13, moments 4), then reads it |
-| `players instrument [n] ...` | the players, an instrument a player, a number after one making it that many players (players Vn 4 Va 2 Vc 2 Fl); A\|B is one player who doubles, playing either (Fl\|Picc); no instrument: the default orchestra |
+| `players instrument [n] ...` | the players, an instrument a player, a number after one making it that many players (players Vn 4 Va 2 Vc 2 Fl); A\|B is one player who doubles, playing either (Fl\|Picc); A+B are players paired, a group the granular mode makes sound together (Vn+Vc); no instrument: the default orchestra |
 | `add instrument [n]` | more players of an instrument |
 | `remove instrument` | every player of an instrument |
 | `range instrument lo hi` | only the instrument's sounds from lo to hi enter the search (pitch names, G3, or MIDI numbers, both included); range instrument: its whole range again |
 | `techniques name ...` | only sounds of these techniques (ord, pizz-lv..., as the file names say them) enter the search, for every instrument; techniques alone: every technique |
 | `dynamics name ...` | only sounds of these dynamics (pp, mf...) enter the search; dynamics alone: every dynamics. A segment a filter leaves no sound (nor a pitch of its partials) is a rest: orchidea says so, its report line says why, and the other segments are orchestrated |
+| `rest` | forgets the players' bookings: the next granular run that continues starts a piece afresh (Musil's orchestra-rest!) |
 | `info` | prints the database (sounds, instruments, their ranges and techniques) and the players in the Console |
 | `stop` | cancels the reading |
 
 | Inlet | |
 | --- | --- |
-| 1 | read file.db or a dataset's name (fullsol, tinysol, microsol); analyse folder [type block hop ncoeff]; players Vn 2 Va ...; add, remove, range, techniques, dynamics, info, stop |
+| 1 | read file.db or a dataset's name (fullsol, tinysol, microsol); analyse folder [type block hop ncoeff]; players Vn 2 Va Fl\|Picc Vn+Vc ...; add, remove, range, techniques, dynamics, rest, info, stop |
 
 | Outlet | |
 | --- | --- |
@@ -2454,13 +2455,21 @@ See the examples in examples/13-orchestration, one a feature: static-dynamic (se
 
 A search of 300 individuals over 300 epochs on TinySOL takes well under a second for a static target; a segmented target takes that per segment.
 
+mode granular makes the orchestra a granulator (Musil's orchestrate-granular): run seconds writes a stochastic process of that length, never more notes at once than players, each event a note a player of the orchestra can play as recorded (a sample of its instrument with the style, in the register, at the dynamics when strict): what no player can play is said once and left out. Every parameter is a message whose value is a number, a range (two numbers: drawn between them at every event), a set of names (one drawn), an envelope of any of them over time (density at 0 4 6 at 10 0.5 1: ranges interpolated, sets crossfaded by chance), or a buffer~'s curve spread over the run (density buffer name: one channel a number, two a range; at most 1000 breakpoints). A parameter alone is its default again. The pitches by method: random in the register (or of the chord), cluster (every pitch of the band once before any repeats), pivots (around the chord's pitches, within interval), chordinterp (the chords of the envelope), markov (a line learnt: markov C4 D4 E4 C4), harmonic (the partials of fundamental, with harmonicity; just 1 tunes them). Players paired in the orchestra (Vn+Vc) sound together (coupling); an ossia player (Fl|Picc) keeps its instrument for seat seconds. With continue 1 the orchestra's players carry their bookings from run to run, in any order of time, one run at a time (another is refused while one books them): the sections of a piece on one orchestra, start s placing each (its notes are placed there too, so that a score object receiving the first section with score and the others with merge holds the piece); the orchestra's rest starts afresh.
+
+mode morphological drives the granulator by a target sound (Musil's orchestrate-morphological): run target reads the buffer~'s density of attacks (the peaks of its spectral flux), its register (centroid, spread and lowest partial) and its loudness as the envelopes, and at every event pursues the target's spectrum, less what already sounds, over the free players' sounds at its spectral peaks: instrument, pitch and technique from the sound chosen, the length from how long the target keeps it, cents from its peaks. decision genetic makes the choice at each event by Orchidea's search instead (population, epochs, sparsity... as messages). Any granular parameter given replaces the target's (density, register, dynamics, duration, styles).
+
+In both modes solutions n makes n realisations of the process (choose 1 n takes another), seed n gives the same notes again, and Musil's functions with the same parameters and seed write the very same notes; the distance outlet gives the saturation (the share of the events due that found every able player busy), report prints the events, the unplayable and every player's notes and busy share. The notes, the score, write and roll work as for the mimetic mode, a note's dynamics the one asked for and its gain the finer level between the recorded ones.
+
 | Argument | |
 | --- | --- |
 | `orchestra` | the name of an orchestra object |
 
 | Message | |
 | --- | --- |
-| `run target [out]` | orchestrates the buffer~ target (mixed to mono); the sum of the chosen samples goes to the buffer~ out |
+| `mode mimetic \| granular \| morphological` | what run does: the search above (mimetic, the default), the orchestra as a granulator, or the granulator driven by a target |
+| `run target [out]` | orchestrates the buffer~ target (mixed to mono); the sum of the chosen samples goes to the buffer~ out (mimetic and morphological) |
+| `run seconds [out]` | granular: the process over that many seconds (up to 3600) |
 | `population n` | individuals of the genetic search, the combinations tried at each generation, 2 to 20000 (300; 500 when dynamic): more, nearer the target and slower |
 | `epochs n` | generations at most, 1 to 100000 (300; 500 when dynamic) |
 | `patience n` | generations without a better population before a search stops (150) |
@@ -2472,7 +2481,8 @@ A search of 300 individuals over 300 epochs on TinySOL takes well under a second
 | `positive x` | the cost of a partial the solution has and the target lacks (0.5) |
 | `negative x` | the cost of a partial the target has and the solution lacks (10) |
 | `regularization x` | above 0, solutions with fewer players are preferred (0) |
-| `segmentation none \| flux \| frames` | none, one segment (a static target, the default); flux, at the peaks of the spectral flux above threshold, timegate apart; frames, every block of the database |
+| `segmentation none \| flux \| adaptive \| frames` | none, one segment (a static target, the default); flux, at the peaks of the spectral flux above threshold, timegate apart; adaptive, at the peaks of the flux above ratio times its local median, timegate apart (Musil's 'adaptive: a quiet passage's attacks count as a loud one's); frames, every block of the database |
+| `ratio x` | adaptive: a peak of the flux counts above x times its moving median (2) |
 | `onsets ms ...` | the segments start at these times instead |
 | `threshold x` | the flux's peaks above this share of its largest count as onsets (2: none does) |
 | `timegate ms` | onsets at least this far apart (100) |
@@ -2495,18 +2505,42 @@ A search of 300 individuals over 300 epochs on TinySOL takes well under a second
 | `report` | prints a line per segment: its cost, players, players holding on (the notes the chosen connection holds from the segment before: one longer note each), sounds in the search space, and the target's pitches no instrument of the orchestra has; a rest says why |
 | `write file` | saves the notes as an Orchidea connection file (Musil's score-load reads it), in the patch's folder or in ~/Documents/Moritz (elsewhere: not written; its menu's Save... writes where you choose) |
 | `roll buffer` | writes the notes into a buffer~, a frame a note: onset (s), pitch (MIDI, with its cents), player, duration (s); plot in scatter mode draws it as a roll, a colour a player |
+| `density v` | granular: events a second (density 4 6; density at 0 4 6 at 10 0.5 1; density buffer curve: every granular parameter takes these forms) |
+| `register lo hi` | granular: the octaves the pitches are drawn in (3 5; octave 4 holds middle C) |
+| `duration lo hi` | granular: seconds (0.2 1); duration-law uniform \| log \| x (log: as many short as long by ratio; an exponent above 1, mostly short) |
+| `styles name ...` | granular: the techniques an event may use, each player one it has samples of in the register (ord); morphological: only these |
+| `dynamics name ... \| level` | granular: labels drawn (pp ff), or a level 0..1 (ppp..fff) interpolated, its gain between the recorded dynamics (mf); dynamics-strict 1: a sample at that dynamics, or the player is not asked |
+| `chords pitches [/ pitches ...]` | granular: chords whose pitch classes the notes take (chords C4 E4 G4 / D4 F4 A4); chord-weight 0..1 how often (1) |
+| `method random \| cluster \| pivots \| chordinterp \| markov \| harmonic` | granular: how a pitch is chosen (random); interval (pivots, 3), fundamental and harmonicity (harmonic: C2, 0.7), just 1 (just intonation's cents) |
+| `markov pitches [/ pitches ...]` | granular: the lines the markov method learns its transitions from |
+| `weight x \| tilt x` | granular: -1..1, where in the band the pitches fall: the middle (weight 1) or the edges (-1); the top (tilt 1) or the bottom (-1) |
+| `leap n \| leap lo hi` | granular: a player's next pitch within n semitones of its last; a signed range is a direction (leap -3 -1 descends) |
+| `inertia x` | granular: 0..1, how often a player keeps its technique (0) |
+| `seat s` | granular: an ossia player keeps the instrument it took for s seconds (0) |
+| `spread s` | granular: a paired group's attack scattered within s seconds (0) |
+| `polyphony n` | granular: the players sounding at once at most (the orchestra) |
+| `coupling x` | granular: 0..1, how often a paired group sounds together (1) |
+| `group-density v [/ v ...]` | granular: a density per paired group, in the order of the groups |
+| `balance name dB ...` | granular: decibels per instrument or family (balance brass -6 Hn -3: strings winds brass percussion keyboard plucked) |
+| `continue 1/0` | granular and morphological: the orchestra's players carry their bookings on from run to run (0) |
+| `start s` | where the run sits in the piece: its notes are placed there, and with continue the bookings compare there (0) |
+| `voices n \| min-gain x \| floor x` | morphological: the notes an event may start (2), what a further one must explain of the residual (0.2), and below what share of the spectrum the pursuit doubles the whole spectrum instead (0.1) |
+| `persist x \| min-length s \| max-length s \| short s` | morphological: a note lasts while the target keeps its sound at persist of its peak (0.5), between min-length and max-length (0.1, 8); a life under short takes a short technique of the sound (0.4) |
+| `width x \| range dB \| density-scale x \| min-density x \| step s` | morphological: the register's width in spreads (1), the dynamics' span (40), the density times x (1), at least (0.5), the envelopes' breakpoints (0.25 s) |
+| `decision pursuit \| genetic` | morphological: the choice at each event, a matching pursuit or Orchidea's search (population, epochs, sparsity, mutation, positive, negative, pursuit, patience: 60, 40, 0.1, 0.02, 0.5, 10, 0, 20 unless set) |
+| `hop n \| fine n \| attack-threshold x` | morphological: the target's analysis: a frame every n samples (1024), the window its peaks are read with (8192), the flux's peaks counted above x times its local median (2) |
 | `stop` | cancels the search |
 
 | Inlet | |
 | --- | --- |
-| 1 | run target [out]: buffer~ names; population, epochs, seed, segmentation, partials... ; choose segment n, notes, score, show, report, write file, roll buffer, stop |
+| 1 | mode mimetic\|granular\|morphological; run target [out] (run seconds [out]: granular); population, epochs, seed, segmentation, partials... ; density, register, styles, dynamics, method... (granular); choose segment n, notes, score, show, report, write file, roll buffer, stop |
 
 | Outlet | |
 | --- | --- |
 | 1 | progress of the search, 0 to 1 |
 | 2 | bang: done (the notes are out) |
 | 3 | a note a message: number, instrument, pitch, dynamics, technique, onset (ms), duration (ms), the sound's path, cents off the target's partial, player |
-| 4 | the distance: the mean cost of the chosen solutions (lower is nearer the target) |
+| 4 | the distance: the mean cost of the chosen solutions (lower is nearer the target); granular and morphological: the saturation (the share of the events due skipped, every able player busy) |
 | 5 | the solution as a score (score token): into a score object, which shows it as a roll and plays it |
 
 See also: `orchestra` `score` `buffer~` `play~` `code`
@@ -3114,10 +3148,11 @@ A stereo sound on two outlets is balanced by its azimuth (the clip's and its tra
 | `seek ms` | moves the transport to a time |
 | `info` | rows, events and seconds out of the info outlet |
 | `score token` | the score a code box (or orchidea) sent |
+| `merge token` | the events of another score added to this one, and its rows (in orchestral order): the sections of an orchestration, one after another |
 
 | Inlet | |
 | --- | --- |
-| 1 | read/write file.score, clear, add note\|sound\|msg ..., play, stop, locate bar, info |
+| 1 | read/write file.score, clear, add note\|sound\|msg ..., score token, merge token, play, stop, locate bar, info |
 
 | Outlet | |
 | --- | --- |

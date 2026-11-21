@@ -1440,7 +1440,7 @@ function pursuit-space (m) (sqrt (max m 0))
 ;     target sound (target-analyse), no segmentation: the density of the flux peaks gives the events a second, the
 ;     centroid and the spread the register, the loudness the dynamics (target-envelopes); at every event a matching
 ;     pursuit over the free players' sounds at the target's spectral peaks picks instrument, pitch and technique for
-;     the target's spectrum at that instant, less what already sounds (target-notes), and each note lasts as long as
+;     the target's spectrum at that instant, less what already sounds (a pursuit, C++), and each note lasts as long as
 ;     the target keeps its sound (atom-persistence). When every player is busy and an event is due, the oldest note
 ;     gives way ('steal, 1 by default). params: 'voices (2: notes an event may start), 'min-gain (0.2), 'floor (0.2),
 ;     'persist (0.5), 'min-length (0.1), 'max-length (8), 'short (0.4), 'width (1: the register's width in spreads),
