@@ -134,7 +134,7 @@ const std::map<std::string, PortDocs>& docs() {
                   "components k, iterations n, size n, seed n, stop"},
                  {"progress, 0 to 1", "bang: done (dest has one part, or one source, per channel)"}}},
         {"orchestra", {{"read file.db or a dataset's name (fullsol, tinysol, microsol); analyse folder [type block hop ncoeff]; "
-                        "players Vn 2 Va Fl|Picc Vn+Vc ...; add, remove, range, techniques, dynamics, rest, info, stop"},
+                        "players Vn 2 Va Fl|Picc Vn+Vc ...; add, remove, range, techniques, dynamics, select [instrument] query, rest, info, stop"},
                        {"progress of reading (or analysing), 0 to 1", "bang: the database is read",
                         "the number of sounds in the database",
                         "the players, a list of instruments (Fl|Picc: one player who doubles); bang: none"}}},

@@ -4,8 +4,11 @@
 ; ord, pizz-lv...) and the dynamics (dynamics pp mf) of the sounds that enter the search; info
 ; prints the database and what is left in the Console. MicroSOL leaves little to choose (nearly all
 ; ord and mf, one cello note ff); with TinySOL or FullSOL these filters choose among thousands of
-; sounds (techniques pizz-lv, dynamics pp, range Fl C5 C6). A small language of queries (instrument,
-; technique, dynamics, pitch, any tag) comes later. MicroSOL, which comes with Moritz, has four
+; sounds (techniques pizz-lv, dynamics pp, range Fl C5 C6). select chooses by a query, the language of
+; Musil's db-select: fields (instrument, family, technique, dynamics, pitch, string, mute, tag, file)
+; and values (pizz*, /sul_?pont/, C4..G5, p..f, Vn|Va) joined by and, or, not; select Vc dynamics ff
+; applies to the cellos only; each select says in the Console how many sounds remain for each
+; instrument, and which players are left without any. MicroSOL, which comes with Moritz, has four
 ; instruments around C4-G4 and no pitch filter is used with it (partials 0); with FullSOL (read
 ; fullsol, once registered in Extras > Datasets...) or TinySOL (read tinysol, after Download TinySOL
 ; there) set partials 0.3 so that the target's partials choose the pitches; the search is then
@@ -41,6 +44,11 @@
   (obj t1 message "techniques ord" (pos 460 259))
   (obj t0 message techniques (pos 570 259))
   (obj rc comment "an instrument between two pitches (alone: all of it); only these dynamics, techniques (alone: all)" (pos 20 284))
+  (obj sq comment "or a query: select alone lets every sound in again" (pos 680 237))
+  (obj q1 message "select family strings and pitch D4..G4" (pos 680 259))
+  (obj q2 message "select Vc dynamics ff" (pos 680 284))
+  (obj q3 message "select not instrument Hn" (pos 830 284))
+  (obj q0 message select (pos 1000 284))
   (obj go message "partials 0, population 200, epochs 200, segmentation none, run spbell spmix" (pos 20 314))
   (obj goc comment "3. orchestrate the bell with what is left" (pos 470 315))
   (obj oi orchidea spband (pos 20 350))
@@ -99,6 +107,10 @@
   (connect d0 0 band 0)
   (connect t1 0 band 0)
   (connect t0 0 band 0)
+  (connect q1 0 band 0)
+  (connect q2 0 band 0)
+  (connect q3 0 band 0)
+  (connect q0 0 band 0)
   (connect go 0 oi 0)
   (connect stp 0 oi 0)
   (connect rp 0 oi 0)

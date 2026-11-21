@@ -1,0 +1,48 @@
+; orchidea-select.moritz - cross-test: the orchestra's select (a query for every sound, and one per instrument) against
+; Musil's 'select of orchestrate-mimetic and db-select (music/db_query.h, one language for both) (tools/test-patches.sh):
+; the same queries choose the same sounds, so the same target, orchestra and seed give the same notes; every note is
+; one the queries allow, and the horns, which the query leaves without a sound, are silent
+(patch
+  (obj b1 buffer~ xtgt microsol/microsol/Strings/Vc/Vc-ord-E4-mf-1c.wav (pos 20 20))
+  (obj or orchestra xsel microsol/microsol.spectrum.db (pos 20 50))
+  (obj lb loadbang (pos 20 80))
+  (obj tr t b b (pos 20 105))
+  (obj ms message "select not instrument Hn and dynamics mf..ff, select Vn string 3, select Vc pitch ..E4|/F#/" (pos 200 130))
+  (obj m message "seed 4, population 16, epochs 4, partials 0.05, sparsity 0.001, solutions 10, sustain 1, hold, dovetail 0, connection closest, onsets 0 800, run xtgt" (pos 20 160))
+  (obj oi orchidea xsel (pos 20 190))
+  (obj cm message compare (pos 20 220))
+  (obj c code 1 (pos 20 250)
+    (script
+      "; every note of the object arrives here, then compare"
+      "var got (try got catch e (list))"
+      "if (not (equal? in1 \"compare\")) { push got in1 } {"
+      "    load \"music.mu\""
+      "    var db (db-load \"../../data/microsol/microsol.spectrum.db\")"
+      "    var sel (record (list 'all \"not instrument Hn and dynamics mf..ff\" 'Vn \"string 3\" 'Vc \"pitch ..E4|/F#/\"))"
+      "    var sr (buffer-rate \"xtgt\")"
+      "    var r (orchestrate-mimetic db (orchestra (list 'Ob 'Ob 'Hn 'Hn 'Vn 'Vn 'Vc 'Vc)) (head (buffer \"xtgt\")) sr (record (list 'segmentation (list 0 0.8) 'seed 4 'population 16 'epochs 4 'partials 0.05 'quiet 1 'select sel)))"
+      "    var f (mimetic-connection r)"
+      "    var bad (if (== (length f) (length got)) 0 1)"
+      "    each (zip f got) (function (p) {"
+      "        var n (last (head p))"
+      "        var g (last p)"
+      "        var same (and (equal? (str (getidx g 1)) (get n 'instr)) (equal? (str (getidx g 2)) (get n 'pitch)) (equal? (str (getidx g 3)) (get n 'dyn)) (equal? (str (getidx g 4)) (get n 'tech))"
+      "                      (< (abs (- (getidx g 5) (* 1000 (head (head p))))) 0.05) (< (abs (- (getidx g 6) (* 1000 (getidx (head p) 1)))) 0.05)"
+      "                      (== (getidx g 8) (get n 'cents)) (== (getidx g 9) (get n 'player)) (equal? (filename (str (getidx g 7))) (filename (note-path n))))"
+      "        if (not same) { set bad (+ bad 1) }"
+      "    })"
+      "    var chosen (map (get (db-select db sel) 'entries) (function (e) (filename (get e 'file))))"
+      "    var outside (length (filter got (function (g) (not (contains? chosen (filename (str (getidx g 7))))))))"
+      "    var horns (length (filter got (function (g) (equal? (str (getidx g 1)) \"Hn\"))))"
+      "    print \"cross orchidea-select:\" (length got) \"notes,\" (length f) \"in Musil,\" bad \"differ,\" outside \"outside the selection of\" (length chosen) \"sounds,\" horns \"horns\""
+      "    if (or (> bad 0) (== (length f) 0) (> outside 0) (> horns 0) (!= (length chosen) 20)) { print \"FAIL: the orchestra's select and Musil's 'select disagree:\" (length got) \"notes against\" (length f) \"in Musil,\" bad \"differ,\" outside \"outside the selection of\" (length chosen) \"sounds,\" horns \"horns\" } { print \"PASS: the orchestra's select and Musil's 'select choose the same sounds\" }"
+      "}"))
+  (connect lb 0 tr 0)
+  (connect tr 1 ms 0)
+  (connect tr 0 m 0)
+  (connect ms 0 or 0)
+  (connect m 0 oi 0)
+  (connect oi 2 c 0)
+  (connect oi 1 cm 0)
+  (connect cm 0 c 0)
+)
