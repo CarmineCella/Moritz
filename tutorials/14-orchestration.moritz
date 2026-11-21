@@ -39,7 +39,7 @@
   (obj s5 comment "5. Mimetic, dynamic: the voice cut into segments where its spectrum changes (adaptive: against the flux's local median), a chord each, connected:" (pos 20 495))
   (obj s5b comment "   sustain holds a pitch the target keeps (one longer note), connection path takes the least melodic movement, dovetail keeps pivot notes." (pos 20 513))
   (obj m2 message "; t14orch mode mimetic, segmentation adaptive, ratio 2, timegate 250, partials 0, population 100, epochs 100, sustain 1, connection path, dovetail 0.75, run t14vox t14mix" (pos 20 540))
-  (obj s5c comment "   another solution of a segment (choose segment n); the same seed, the same notes; report prints a line a segment in the Console:" (pos 20 570))
+  (obj s5c comment "   another solution of a segment: choose segment n, or in the score's roll (step 8) a click on the segment's mark (\"2/5\"), its solutions by cost; report:" (pos 20 570))
   (obj m3 message "; t14orch choose 3 2" (pos 20 595))
   (obj m4 message "; t14orch report" (pos 170 595))
   (obj m5 message "; t14orch seed 7, run t14vox t14mix" (pos 290 595))

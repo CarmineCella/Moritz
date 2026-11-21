@@ -56,7 +56,7 @@ size_t rowsBytes(const std::vector<sc::Row>& rows) {
 
 size_t ScoreDoc::Edit::Op::bytes() const {
     return sizeof(Op) + eventBytes(ev.get()) + eventBytes(before.get()) + eventBytes(after.get()) + rowsBytes(rowsBefore) +
-           rowsBytes(rowsAfter) + nameBefore.capacity() + nameAfter.capacity() + 64 * (extraBefore.size() + extraAfter.size());
+           rowsBytes(rowsAfter) + nameBefore.capacity() + nameAfter.capacity() + fieldsBytes(extraBefore) + fieldsBytes(extraAfter);
 }
 
 // ---------------------------------------------------------------- opening

@@ -1176,9 +1176,17 @@ function connect! (s at result choices) {
     return evs
 }
 ; (score-choose! s k seg n)   in the k-th orchestration connected into the score (connect!, in order), solution n of
-;                          segment seg in place of the one chosen: its notes replaced; => the new events
+;                          segment seg in place of the one chosen: its notes replaced; => the new events. After those
+;                          connected here come the orchestrations whose solutions the score keeps in its data (Moritz's
+;                          orchidea makes them; read from a .score): their notes around the segment are replaced
+;                          (score-choose-solution!, the C++ that Moritz's roll uses)
 function score-choose! (s k seg n) {
     var os (opt s 'orchestrations (list))
+    if (and (>= k (length os)) (< k (+ (length os) (length (score-orchestrations s))))) {
+        var evs (score-choose-solution! s (- k (length os)) seg n)
+        score-clear-cache! s
+        return evs
+    }
     if (or (< k 0) (>= k (length os))) { error "score-choose!: no orchestration " k " in the score" }
     var o (getidx os k)
     var ids (map (get o 'events) (function (e) (get e 'id)))
@@ -1190,8 +1198,10 @@ function score-choose! (s k seg n) {
     return evs
 }
 ; (score-solutions s)      the orchestrations connected into a score, with their segments and the solution chosen in
-;                          each: a list of (list at (list (list seg-at seg-dur chosen costs) ...)); what the roll shows
-function score-solutions (s) (map (opt s 'orchestrations (list)) (function (o) (list (get o 'at) (map (zip (get (get o 'result) 'segments) (get o 'choices)) (function (p) (list (get (head p) 'at) (get (head p) 'dur) (last p) (map (get (head p) 'solutions) head)))))))
+;                          each: a list of (list at (list (list seg-at seg-dur chosen costs) ...)); what the roll shows.
+;                          Those connected here first (connect!), then those the score keeps in its data
+;                          (score-orchestrations: Moritz's orchidea)
+function score-solutions (s) (concat-list (map (opt s 'orchestrations (list)) (function (o) (list (get o 'at) (map (zip (get (get o 'result) 'segments) (get o 'choices)) (function (p) (list (get (head p) 'at) (get (head p) 'dur) (last p) (map (get (head p) 'solutions) head))))))) (score-orchestrations s))
 ; (merge-continuations f)   in a fragment, a note starting where a note of the same instrument and pitch ends becomes
 ;                          the continuation of that note (one longer event), as an orchestration's connection does;
 ;                          notes that carry their 'player (the granulator's do) merge only with the same player's

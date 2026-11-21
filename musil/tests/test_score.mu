@@ -316,6 +316,29 @@ check (equal? (data-of (getidx mnotes 1) 'sound) (note-path (head (get (getidx (
 var back (text->score (score->text ms))
 check (has? (head (score-events back)) 'sound) "read back: the sample kept as data"
 
+; --- the solutions an orchestration keeps in its score (music/score_solutions.h; Moritz's orchidea makes them) ---
+; three segments: the first two hold a Vn C4 (one note, 0 to 2), the second adds a Fl; a Pno not of the orchestration
+var otext "(score \"orch\" (sr 44100) (data solutions (list (list 0 1000000000 (list 0 1 0 (list 0.1 (list Vn 60 0 mf ord 0 1 \"\" 0)) (list 0.2 (list Vc 48 0 mf ord 0 1 \"\" 1))) (list 1 1 0 (list 0.3 (list Vn 60 0 mf ord 0 1 \"\" 0) (list Fl 72 0 mf ord 0 1 \"\" 2)) (list 0.4 (list Ob 62 0 mf ord 0 1 \"\" 3))) (list 2 1 0 (list 0.5 (list Hn 55 0 mf ord 0 1 \"\" 4)))))) (note 0 2 Vn 60 mf ord (id 1) (data player 0) (data orchestration 0)) (note 1 1 Fl 72 mf ord (id 2) (data player 2) (data orchestration 0)) (note 2 1 Hn 55 mf ord (id 3) (data player 4) (data orchestration 0)) (note 0.5 1 Pno 64 (id 4)))"
+var os (text->score otext)
+check (equal? (score-solutions os) (list (list 0 (list (list 0 1 0 (list 0.1 0.2)) (list 1 1 0 (list 0.3 0.4)) (list 2 1 0 (list 0.5)))))) "score-solutions: the solutions a score keeps, the one chosen in each"
+function orch-notes (s) (map (sort-by (score-events s) (function (e) (+ (get e 'at) (* 0.001 (get e 'midi))))) (function (e) (list (str (get e 'instr)) (get e 'at) (get e 'dur) (get e 'midi))))
+var chosen-now (score-choose! os 0 1 1)
+check (== (length chosen-now) 2) "score-choose!: the new notes returned"
+check (equal? (orch-notes os) (list (list "Vn" 0 1 60) (list "Pno" 0.5 1 64) (list "Ob" 1 1 62) (list "Hn" 2 1 55))) "score-choose!: the held Vn cut back to its segment, the Fl gone, the Ob in; the Pno and the next segment kept"
+check (not (equal? (type (score-find os 3)) "nil")) "score-choose!: a neighbour's note kept as it was (its id)"
+check (== (getidx (getidx (last (head (score-solutions os))) 1) 2) 1) "score-choose!: the choice kept in the score"
+check (== (length (score-choose! os 0 1 1)) 0) "score-choose!: the same solution again changes nothing"
+score-choose! os 0 1 0
+check (equal? (orch-notes os) (list (list "Vn" 0 2 60) (list "Pno" 0.5 1 64) (list "Fl" 1 1 72) (list "Hn" 2 1 55))) "score-choose!: the first solution back: the Vn held again"
+score-choose! os 0 0 1
+check (equal? (orch-notes os) (list (list "Vc" 0 1 48) (list "Pno" 0.5 1 64) (list "Vn" 1 1 60) (list "Fl" 1 1 72) (list "Hn" 2 1 55))) "score-choose!: the segment before: the Vn now starts in the second"
+var oback (text->score (score->text os))
+check (and (equal? (score-solutions oback) (score-solutions os)) (equal? (orch-notes oback) (orch-notes os))) "score-choose!: the choices and the notes saved and read back"
+check (not (equal? (error-of (function () (score-choose! os 0 1 5))) "")) "score-choose!: no such solution, an error"
+check (not (equal? (error-of (function () (score-choose! os 3 0 0))) "")) "score-choose!: no such orchestration, an error"
+check (not (equal? (error-of (function () (score-choose! (text->score "(score \"x\" (data solutions (list (list 0 1 (list 0 1 0 (list 0.1 (list Vn))))))))") 0 0 0))) "")) "score-choose!: a malformed solutions list, an error (no crash)"
+check (equal? (score-solutions (score "plain" 44100)) (list)) "score-solutions: a score keeping none"
+
 ; --- the layout of the roll (music/score_layout.h) ---
 check (== (instrument-rank 'Vn) 29) "instrument-rank: Vn"
 check (== (instrument-rank "Zz") 1002) "instrument-rank: an unknown one after, by length"

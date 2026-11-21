@@ -86,6 +86,10 @@
 //   act=rolldynrow:<k>        the dynamics lane's row chooser set to its k-th item (print: whether the lane hides it)
 //   act=rollkey:<up|down|left|right>[:alt][:shift]   a key on the roll (Alt+Up: a cent higher, Shift+Alt: ten)
 //   act=rollcell:<id>:<key>:<value>   the List view, a cell typed into and entered
+//   act=rollsolutions:<t>     the cursor over second t of the roll; print: the segments' marks of the orchestration the
+//                             score keeps ("2/5") and the toolbar's menu of solutions (shown, its items, the one chosen)
+//   act=rollsolution:<k>      the k-th item of that menu chosen (from 0): the segment's notes replaced
+//   act=boxsegments:<box>     print: the segments' marks the score box's own roll draws
 //   act=boxcents:<box>:<event>   print: how the score box's own roll shows the event's detuning (text, tick or none)
 //   act=boxclef:<box>:<row>, act=rollclef:<row>   print: whether a staff's clef is drawn (ink in its box) and, for the
 //                             G clef, its loop above the staff and its tail below; whether it is upright (its ink spread
@@ -439,6 +443,18 @@ bool act(const std::string& a) {
         if (!core) return false;
         RollCore::CentsMark m = core->centsMark(std::strtoull(arg.c_str() + c1 + 1, nullptr, 10));
         state("box cents %s %s", m.kind == RollCore::CentsMark::Text ? "text" : m.kind == RollCore::CentsMark::Tick ? "tick" : "none", m.text);
+        return true;
+    }
+    if (verb == "boxsegments") {                // act=boxsegments:<box>: the segments' marks the box's own roll draws
+        DocumentWindow* d = front();
+        RollCore* core = d ? inlineRollOf(d->patch.find(arg)) : nullptr;
+        if (!core) return false;
+        std::string marks;
+        for (size_t k = 0; k < core->segments().size(); ++k) {
+            double x, y, w, h;
+            marks += " " + RollCore::segmentText(core->segments()[k]) + (core->segmentLabel(k, x, y, w, h) ? "" : "(hidden)");
+        }
+        state("box segments%s", marks);
         return true;
     }
     if (verb == "boxdrag") {

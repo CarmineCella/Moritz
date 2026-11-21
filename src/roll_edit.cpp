@@ -154,6 +154,10 @@ bool RollEditTarget::transform(const ScorePath& path, const Ids& ids, const Scor
     return apply(path, names[(int)t.kind], [&](sc::Score& s) { return applyTransform(s, ids, t); });
 }
 
+bool RollEditTarget::chooseSolution(const ScorePath& path, size_t orch, size_t seg, size_t rank) {
+    return apply(path, "choose solution", [&](sc::Score& s) { return sc::solutions::choose(s, orch, seg, rank).changed; });
+}
+
 bool RollEditTarget::replaceScore(std::shared_ptr<sc::Score> s, const std::string& label) {
     if (!s) return false;
     return replaceTop(std::move(s), label);
@@ -320,6 +324,7 @@ bool ScoreDocTarget::commitDiff(ScoreDoc& d, const sc::Score& next, const std::s
     if (!sameRows(cur.rows, next.rows)) ed.setRows(next.rows);
     if (cur.name != next.name || cur.bpm != next.bpm || cur.meterNum != next.meterNum || cur.meterDen != next.meterDen)
         ed.setHeader(next.name, next.bpm, next.meterNum, next.meterDen);
+    if (cur.extra != next.extra) ed.setExtra(next.extra);       // the score's data (the solutions kept, their choices)
     if (ed.ok() && ed.empty()) return false;
     if (!ed.commit()) {
         lastError = d.message;

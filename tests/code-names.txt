@@ -467,6 +467,7 @@ score-add!
 score-augment!
 score-bbt
 score-bbt->sec
+score-choose-solution!
 score-copy
 score-density!
 score-diminish!
@@ -480,6 +481,7 @@ score-markers
 score-markers!
 score-midi
 score-orchestral-order
+score-orchestrations
 score-pan-gains
 score-placed
 score-quantize-grid!

@@ -1137,6 +1137,29 @@ bool rollAction(ScoreWindow* w, const std::string& verb, const std::string& arg)
         }
         return true;
     }
+    if (verb == "rollsolutions") {                 // act=rollsolutions:<t>: the cursor over second t; print the segments'
+        double t = std::atof(arg.c_str());          // marks and the toolbar's menu of solutions (its items, the chosen one)
+        RollWidget* rw = panel->rollWidget();
+        RollCore& c = rw->core();
+        mouse(rw, rw->x() + (int)std::lround(c.xOf(t)), rw->y() + rw->h() / 2, FL_MOVE, 0, 0);
+        for (auto& m : c.segments())
+            say("roll segment " + std::to_string(m.seg + 1) + " at " + num(m.at) + " " + num(m.dur) + " " + RollCore::segmentText(m));
+        Fl_Choice* ch = panel->solutionChoice();
+        std::string items;
+        for (int k = 0; k < ch->size() - 1; ++k) items += std::string(k ? " | " : "") + (ch->text(k) ? ch->text(k) : "");
+        say(std::string("roll solution menu ") + (ch->visible() ? "shown" : "hidden") + " mark " + std::to_string(panel->solutionMark()) +
+            " value " + std::to_string(ch->value()) + ": " + items);
+        return true;
+    }
+    if (verb == "rollsolution") {                  // act=rollsolution:<k>: the k-th item of the menu chosen (from 0)
+        Fl_Choice* ch = panel->solutionChoice();
+        int k = std::atoi(arg.c_str());
+        if (!ch->visible() || k < 0 || k >= ch->size() - 1) return false;
+        ch->value(k);
+        ch->do_callback();
+        say("roll status " + panel->status());
+        return true;
+    }
     if (verb == "rollundo") { panel->undo(); return true; }
     if (verb == "rollredo") { panel->redo(); return true; }
     if (verb == "rolltimeline") { w->setView(ScoreView::Timeline); return true; }

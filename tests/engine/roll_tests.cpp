@@ -492,3 +492,159 @@ TEST(roll_cents_shown_and_edited) {
     c.selection = {};
     CHECK(!t->detune({}, {}, 1));
 }
+
+// ---- the solutions an orchestration keeps in its score (music/score_solutions.h)
+namespace {
+// three segments of an orchestration: the first two hold a Vn C4 (one note, 0 to 2), the second adds a Fl; a Pno note
+// is not of the orchestration (as in musil/tests/test_score.mu)
+const char* kSolutions =
+    "(score \"orch\" (sr 44100) (data solutions (list (list 0 1000000000"
+    " (list 0 1 0 (list 0.1 (list Vn 60 0 mf ord 0 1 \"\" 0)) (list 0.2 (list Vc 48 0 mf ord 0 1 \"\" 1)))"
+    " (list 1 1 0 (list 0.3 (list Vn 60 0 mf ord 0 1 \"\" 0) (list Fl 72 0 mf ord 0 1 \"\" 2)) (list 0.4 (list Ob 62 0 mf ord 0 1 \"\" 3)))"
+    " (list 2 1 0 (list 0.5 (list Hn 55 0 mf ord 0 1 \"\" 4))))))"
+    " (row Vn) (row Fl) (row Hn) (row Pno)"
+    " (note 0 2 Vn 60 mf ord (id 1) (data player 0) (data orchestration 0))"
+    " (note 1 1 Fl 72 mf ord (id 2) (data player 2) (data orchestration 0))"
+    " (note 2 1 Hn 55 mf ord (id 3) (data player 4) (data orchestration 0))"
+    " (note 0.5 1 Pno 64 (id 4)))";
+// the notes as row at dur pitch, by onset then pitch
+std::string notesOf(const sc::Score& s) {
+    std::vector<std::tuple<double, double, std::string, double>> v;
+    for (auto& e : s.events()) v.push_back({e->at, e->pitch, e->row, e->dur});
+    std::sort(v.begin(), v.end());
+    std::string t;
+    for (auto& x : v)
+        t += std::get<2>(x) + " " + sc::numText(std::get<0>(x)) + " " + sc::numText(std::get<3>(x)) + " " + sc::numText(std::get<1>(x)) + "; ";
+    return t;
+}
+}  // namespace
+
+// The roll's choice of a segment's solution: the notes around the segment replaced (a held note cut back, the
+// neighbours and the notes not of the orchestration kept), the choice kept in the score's data, one undo step that
+// gives back the score as it was; the marks the roll draws ("1/2") and where their labels are; a .score written and
+// read back keeps the solutions and the choice
+TEST(roll_chooses_a_segments_solution) {
+    Rig r(kPatch);
+    give(r, "s", sc::readText(kSolutions, ""));
+    auto t = targetOf(r, "s");
+    std::string before = text(*t->score());
+    CHECK(notesOf(*t->score()) == "Vn 0 2 60; Pno 0.5 1 64; Fl 1 1 72; Hn 2 1 55; ");
+    RollCore c(t);
+    c.setSize(600, 300);
+    c.fit();
+    CHECK(c.segments().size() == 3);
+    CHECK(c.segmentAt(1.5) == 1 && c.segmentAt(5) == -1);
+    CHECK(c.segments().size() == 3 && RollCore::segmentText(c.segments()[1]) == "1/2" && RollCore::segmentText(c.segments()[2]) == "1/1");
+    CHECK(c.segments().size() == 3 && RollCore::solutionText(c.segments()[1], 1) == "solution 2   cost 0.4");
+    double x, y, w, h;
+    CHECK(c.segmentLabel(1, x, y, w, h) && std::fabs(x - 2 - c.xOf(1)) < 1e-9);
+    CHECK(c.chooseSolution(1, 1));
+    CHECK(notesOf(*t->score()) == "Vn 0 1 60; Pno 0.5 1 64; Ob 1 1 62; Hn 2 1 55; ");
+    CHECK(t->score()->find(3) && t->score()->find(4));                // the next segment's note, the Pno: as they were
+    CHECK(c.segments().size() == 3 && c.segments()[1].chosen == 1 && RollCore::segmentText(c.segments()[1]) == "2/2");
+    CHECK(scoreOfBox(r.box("s"))->find(2) == nullptr);                 // the box plays it
+    auto doc = t->document();
+    CHECK(doc->undoName() == "choose solution");
+    CHECK(!c.chooseSolution(1, 1));                                  // the one there already: no step
+    CHECK(!t->chooseSolution({}, 0, 1, 7) && !t->lastError.empty()); // no such solution: a message, nothing done
+    CHECK(t->undo());
+    CHECK(text(*t->score()) == before);                              // the notes and the choice as they were
+    CHECK(c.segments().size() == 3 && c.segments()[1].chosen == 0);
+    CHECK(t->redo() && notesOf(*t->score()) == "Vn 0 1 60; Pno 0.5 1 64; Ob 1 1 62; Hn 2 1 55; ");
+    // written and read back (a .score): the solutions and the choice kept; another choice on the score read
+    auto back = sc::readText(sc::toText(*t->score()), "");
+    CHECK(sc::toText(*back) == sc::toText(*t->score()));
+    CHECK(sc::solutions::read(*back).size() == 1 && sc::solutions::read(*back)[0].segments[1].chosen == 1);
+    CHECK(sc::solutions::choose(*back, 0, 0, 1).changed);
+    CHECK(notesOf(*back) == "Vc 0 1 48; Pno 0.5 1 64; Ob 1 1 62; Hn 2 1 55; ");
+    // a score without solutions: no marks, as before
+    give(r, "s", three());
+    CHECK(c.segments().empty());
+    CHECK(sc::field(t->score()->extra, "solutions") == nullptr);
+}
+
+// A .score file opened on its own: the choice saved (Save) and read again; malformed solutions read as data, show no
+// marks, and a choice on them is an error, never a crash
+TEST(roll_solutions_saved_in_a_file) {
+    namespace fs = std::filesystem;
+    fs::path dir = fs::temp_directory_path() / ("moritz_solutions_" + std::to_string(std::rand()));
+    fs::create_directories(dir);
+    std::string path = (dir / "orch.score").string();
+    sc::writeFile(*sc::readText(kSolutions, ""), path);
+    std::string err;
+    auto doc = ScoreDoc::open(path, err);
+    CHECK(doc != nullptr);
+    if (doc) {
+        auto t = makeRollTarget(doc);
+        CHECK(t->chooseSolution({}, 0, 1, 1) && doc->dirty());
+        CHECK(doc->save(err));
+        auto again = sc::readFile(path);
+        CHECK(notesOf(*again) == "Vn 0 1 60; Pno 0.5 1 64; Ob 1 1 62; Hn 2 1 55; ");
+        CHECK(sc::solutions::read(*again).size() == 1 && sc::solutions::read(*again)[0].segments[1].chosen == 1);
+    }
+    auto bad = sc::readText("(score \"x\" (data solutions (list (list 0 1 (list 0 1 0 (list 0.1 (list Vn)))))) (note 0 1 Vn 60))", "");
+    CHECK(sc::solutions::readOrNone(*bad).empty());
+    bool threw = false;
+    try { sc::solutions::choose(*bad, 0, 0, 0); } catch (const sc::Error&) { threw = true; }
+    CHECK(threw);
+    fs::remove_all(dir);
+}
+
+// An orchestration's score placed in a timeline (a score event, as a clip): it keeps its solutions; the roll inside the
+// placement shows its marks and chooses there, in the placed score's own history; a copy of the clip (the timeline's
+// copy and paste: the same score placed again) shares them
+TEST(roll_chooses_inside_a_placement) {
+    Rig r(kPatch);
+    auto inner = sc::readText(kSolutions, "");
+    auto top = std::make_shared<sc::Score>("piece", 44100);
+    auto e = std::make_shared<sc::Event>();
+    e->kind = sc::Kind::Score;
+    e->sub = inner;
+    e->at = 4;
+    e->dur = 3;
+    e->row = "orchestra";
+    top->insert(e);
+    auto copy = std::make_shared<sc::Event>(*e);       // a clip copied: the same score placed again
+    copy->id = 0;
+    copy->at = 8;
+    top->insert(copy);
+    give(r, "s", top);
+    auto t = targetOf(r, "s");
+    RollCore c(t);
+    c.setSize(600, 300);
+    CHECK(c.segments().empty());                       // the top keeps none
+    c.enter(1);
+    CHECK(c.path == ScorePath{1} && c.segments().size() == 3);
+    CHECK(c.chooseSolution(1, 1));
+    auto s = now(r, "s");
+    CHECK(notesOf(*s->find(1)->sub) == "Vn 0 1 60; Pno 0.5 1 64; Ob 1 1 62; Hn 2 1 55; ");
+    CHECK(s->find(2)->sub == s->find(1)->sub);         // both placements play the choice
+    auto sub = ScoreDoc::ofPlacement(t->document(), 1);
+    CHECK(sub && sub->undoName() == "choose solution");
+    CHECK(t->undo() && notesOf(*now(r, "s")->find(1)->sub) == "Vn 0 2 60; Pno 0.5 1 64; Fl 1 1 72; Hn 2 1 55; ");
+}
+
+// Choosing while the audio thread plays the score: the document's publish path (the box's plan made again), no crash
+TEST(roll_chooses_while_audio_runs) {
+    Rig r(kPatch);
+    give(r, "s", sc::readText(kSolutions, ""));
+    auto t = targetOf(r, "s");
+    r.box("tr")->message(0, {Atom("loop"), Atom(1.f), Atom(2.f)});
+    r.box("tr")->message(0, {Atom("play")});
+    std::atomic<bool> stop{false};
+    std::thread audio([&] {
+        std::vector<float> buf(64);
+        while (!stop) r.p.process(nullptr, 0, buf.data(), 1, 64);
+    });
+    for (int k = 0; k < 200; ++k) {
+        t->chooseSolution({}, (size_t)0, (size_t)(k % 2), (size_t)((k / 2) % 2));
+        if (k % 7 == 0) t->undo();
+        r.p.runDue(r.p.time() + 0.01);
+        r.p.collectGarbage();
+    }
+    stop = true;
+    audio.join();
+    r.p.collectGarbage(true);
+    CHECK(!r.printedSomething("score:"));
+    CHECK(sc::solutions::read(*t->score()).size() == 1);
+}

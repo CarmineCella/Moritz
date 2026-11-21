@@ -21,6 +21,7 @@
 #include "score_text.h"
 #include "score_transform.h"
 #include "score_layout.h"
+#include "score_solutions.h"
 #include "db_files.h"
 #include "midi.h"
 
@@ -898,6 +899,40 @@ inline vptr mus_score_scale(vlist& a, Interp& i) {
     return a[0];
 }
 
+// --- the solutions of an orchestration kept in a score (score_solutions.h: Moritz's orchidea keeps them) ----------------------------
+// (score-orchestrations s)      the orchestrations whose solutions the score keeps (its data, as Moritz's orchidea makes
+//                               them): a list of (list at (list (list seg-at seg-dur chosen costs) ...)), as score-solutions
+inline vptr mus_score_orchestrations(vlist& a, Interp& i) {
+    auto os = guarded(i, [&] { return score::solutions::read(*S(i, a[0])); });
+    vlist out;
+    for (auto& o : os) {
+        vlist segs;
+        for (auto& g : o.segments) {
+            vlist costs;
+            for (auto& sol : g.solutions) costs.push_back(v_num(sol.cost));
+            segs.push_back(v_list({v_num(g.at), v_num(g.dur), v_num(g.chosen), v_list(std::move(costs))}));
+        }
+        out.push_back(v_list({v_num(o.at), v_list(std::move(segs))}));
+    }
+    return v_list(std::move(out));
+}
+// (score-choose-solution! s k seg n)   solution n of segment seg of the k-th orchestration the score keeps (all from 0) in
+//                               place of the one chosen: the notes around the segment replaced (score_solutions.h's
+//                               choose, as Moritz's roll and orchidea's choose do); => the new events
+inline vptr mus_score_choose_solution(vlist& a, Interp& i) {
+    auto s = S(i, a[0]);
+    auto idx = [&](const vptr& v, const char* what) {
+        double d = i.scalar(v);
+        if (!(d >= 0) || d > 1e9 || d != std::floor(d)) i.bad(std::string("score-choose-solution!: ") + what + " must be an integer >= 0");
+        return (size_t)d;
+    };
+    size_t k = idx(a[1], "the orchestration"), seg = idx(a[2], "the segment"), n = idx(a[3], "the solution");
+    auto c = guarded(i, [&] { return score::solutions::choose(*s, k, seg, n); });
+    vlist out;
+    for (uint64_t id : c.added) if (auto e = s->find(id)) out.push_back(v_event(e));
+    return v_list(std::move(out));
+}
+
 // --- layout (score_layout.h): the rules Moritz's roll draws with --------------------------------------------------------------------
 // (instrument-rank instr)  where an instrument code sits in the orchestral order (Picc Fl ... Vc Cb; unknown ones after)
 inline vptr mus_instrument_rank(vlist& a, Interp&) { return v_num(score::layout::instrumentRank(textOf(a[0]))); }
@@ -947,6 +982,7 @@ inline void add_score(Interp& i) {
     i.def("score-humanize!", mus_score_humanize, 4, 5); i.def("score-thin!", mus_score_thin, 3, 4);
     i.def("score-density!", mus_score_density, 3, 4); i.def("score-shift!", mus_score_shift, 2, 3);
     i.def("score-scale!", mus_score_scale, 2, 2);
+    i.def("score-orchestrations", mus_score_orchestrations, 1, 1); i.def("score-choose-solution!", mus_score_choose_solution, 4, 4);
     i.def("instrument-rank", mus_instrument_rank, 1, 1); i.def("score-orchestral-order", mus_orchestral_order, 0, 0);
     i.def("staff-clef", mus_staff_clef, 1, 1);
 }

@@ -5,10 +5,15 @@
 
 #include "musil_host.h"
 #include "roll_edit.h"
+#include "score_doc.h"
 #include "transport.h"
 
 #include "music/score_layout.h"
+#include "music/score_solutions.h"
+#include "music/score_text.h"
 #include "rig.h"
+
+#include <tuple>
 
 #include <atomic>
 #include <chrono>
@@ -589,5 +594,78 @@ TEST(orchidea_dynamic_defaults) {
         CHECK(o.r.printedSomething("segmentation flux, population 30, epochs 20, sparsity 0.01, partials 0, solutions 5, sustain 1, "
                                    "hold 4000 ms, dovetail 0.75, hysteresis 0, connection best"));
     }
+    jobsSynchronous = sync;
+}
+
+namespace {
+// a score's notes, every field the connection sets, in order
+std::string noteKeys(const musil::score::Score& s) {
+    namespace sc = musil::score;
+    std::vector<std::string> v;
+    for (auto& e : s.events()) {
+        const sc::Datum* snd = sc::field(e->extra, "sound");
+        const sc::Datum* pl = sc::field(e->extra, "player");
+        v.push_back(sc::numText(e->at) + " " + e->row + " " + sc::numText(e->pitch) + " " + sc::numText(e->dur) + " " + sc::numText(e->cents) +
+                    " " + e->dyn + " " + e->tech + " " + sc::numText(e->az) + " " + (snd ? snd->s : "-") + " " + (pl ? sc::numText(pl->num) : "-"));
+    }
+    std::sort(v.begin(), v.end());
+    std::string t;
+    for (auto& x : v) t += x + "\n";
+    return t;
+}
+// the score as text but for the next id (an undo does not give ids back)
+std::string withoutNextId(const musil::score::Score& s) {
+    std::string t = musil::score::toText(s);
+    size_t k = t.find("(next-id ");
+    if (k != std::string::npos) t.erase(k, t.find(')', k) - k + 1);
+    return t;
+}
+}  // namespace
+
+// A target cut into segments: the score keeps every segment's solutions (the one chosen in each); another solution
+// chosen in the roll (one undo step, undone to the score as it was) and orchidea's choose give the same notes, which
+// are those of the connection orchidea makes again with that choice (score); the notes outlet says as many
+TEST(orchidea_choose_and_the_roll_agree) {
+    namespace sc = musil::score;
+    bool sync = jobsSynchronous;
+    jobsSynchronous = true;
+    OrchRig o(" (obj s score solution 1) (connect oi 4 s 0)");
+    o.send({Atom("partials"), Atom(0.f)});
+    o.send({Atom("population"), Atom(30.f)});
+    o.send({Atom("epochs"), Atom(10.f)});
+    o.send({Atom("seed"), Atom(3.f)});
+    o.send({Atom("onsets"), Atom(0.f), Atom(500.f), Atom(1000.f), Atom(1500.f)});
+    o.send({Atom("run"), Atom("tgt")});
+    Box* box = o.r.box("s");
+    auto first = scoreOfBox(box)->clone();
+    auto os = sc::solutions::read(*first);
+    CHECK(os.size() == 1 && os[0].segments.size() == 4);
+    if (os.size() != 1) { jobsSynchronous = sync; return; }
+    int compared = 0, moved = 0;
+    for (size_t k = 0; k < os[0].segments.size(); ++k) {
+        const auto& g = os[0].segments[k];
+        for (size_t rank = 0; rank < g.solutions.size() && rank < 3; ++rank) {
+            if ((int)rank == g.chosen) continue;
+            auto doc = ScoreDoc::ofBox(box);
+            auto t = makeRollTarget(doc);
+            std::string before = withoutNextId(*t->score());
+            if (!t->chooseSolution({}, 0, k, rank)) continue;        // the same notes (nothing to do)
+            std::string roll = noteKeys(*t->score());
+            CHECK(doc->undoName() == "choose solution" && t->undo() && withoutNextId(*t->score()) == before);
+            o.clear();
+            o.send({Atom("choose"), Atom((float)k + 1), Atom((float)rank + 1)});
+            auto chosen = scoreOfBox(box);
+            CHECK(noteKeys(*chosen) == roll);
+            CHECK(sc::solutions::read(*chosen)[0].segments[k].chosen == (int)rank);
+            CHECK(o.notes->got.size() == chosen->size());
+            o.send({Atom("score")});                                 // the connection made again: the same notes
+            CHECK(noteKeys(*scoreOfBox(box)) == roll);
+            moved += roll != noteKeys(*first);
+            ++compared;
+            o.send({Atom("choose"), Atom((float)k + 1), Atom((float)g.chosen + 1)});   // back
+            CHECK(noteKeys(*scoreOfBox(box)) == noteKeys(*first));
+        }
+    }
+    CHECK(compared >= 3 && moved >= 3);
     jobsSynchronous = sync;
 }

@@ -47,6 +47,8 @@
   (obj croll7 comment "Double-click it: its window (Timeline, Roll," (pos 600 304))
   (obj croll9 comment "Piano roll, List: one score, views in place)." (pos 600 340))
   (obj croll8 comment "In edit mode, its corner sizes it." (pos 600 358))
+  (obj croll10 comment "A score orchidea made: a mark (\"2/5\") at each" (pos 600 376))
+  (obj croll11 comment "segment; a click on it, its solutions by cost." (pos 600 390))
   (obj tl t l l (pos 220 405))
   (obj up unpack 0 0 0 (pos 300 435))
   (obj mt mtof (pos 300 465))

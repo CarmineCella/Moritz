@@ -19,6 +19,7 @@
 #include "moritz.h"
 
 #include "music/score.h"
+#include "music/score_solutions.h"
 #include "music/score_transform.h"
 
 #include <functional>
@@ -77,6 +78,9 @@ public:
     bool detune(const ScorePath& path, const Ids& ids, double dcents);    // the notes' cents by that much
     bool transform(const ScorePath& path, const Ids& ids, const ScoreTransform& t);
     bool replaceScore(std::shared_ptr<sc::Score> s, const std::string& label);       // the text view: all of it
+    // solution rank of segment seg of orchestration orch (all from 0) in place of the one chosen: the notes around the
+    // segment replaced and the choice kept (music/score_solutions.h's choose, as orchidea's choose and score-choose!)
+    bool chooseSolution(const ScorePath& path, size_t orch, size_t seg, size_t rank);
     // ---- history
     virtual bool undo() = 0;
     virtual bool redo() = 0;

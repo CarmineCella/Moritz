@@ -21,6 +21,7 @@
 
 #include "music/score.h"
 #include "music/score_layout.h"
+#include "music/score_solutions.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -591,6 +592,44 @@ std::vector<OrchNote> connectionOf(const OrchResult& r) {
     return out;
 }
 
+// every segment's solutions, ranked, as the score keeps them (musil/src/music/score_solutions.h): the notes each would
+// play (as connectionOf makes them), the one chosen; the score's connection made of it is connectionOf's, note for note
+musil::score::solutions::Orchestration orchestrationOf(const OrchResult& r) {
+    namespace so = musil::score::solutions;
+    so::Orchestration o;
+    o.hold = r.hold;
+    for (size_t k = 0; k < r.search.segments.size() && k < r.segments.size(); ++k) {
+        const auto& s = r.search.segments[k];
+        const auto& g = r.segments[k];
+        so::Segment seg;
+        seg.at = g.start;
+        seg.dur = g.length;
+        seg.chosen = s.solutions.empty() ? 0 : std::clamp(r.choices[k], 0, (int)s.solutions.size() - 1);
+        for (auto& sol : s.solutions) {
+            so::Solution x;
+            x.cost = sol.first;
+            for (size_t j = 0; j < sol.second.size() && j < s.players.size(); ++j) {
+                if (sol.second[j] < 0) continue;
+                const orch::entry& e = r.spec->db->entries[(size_t)sol.second[j]];
+                so::Note n;
+                n.row = e.instr;
+                n.midi = e.midi;
+                auto c = g.notes.find(e.pitch);
+                n.cents = c == g.notes.end() ? 0 : c->second;
+                n.dyn = e.dyn;
+                n.tech = e.tech;
+                n.az = r.seating ? orch::seat_of(e.instr) : 0;
+                n.sound = r.spec->db->paths[(size_t)sol.second[j]];
+                n.player = s.players[j];
+                x.notes.push_back(std::move(n));
+            }
+            seg.solutions.push_back(std::move(x));
+        }
+        o.segments.push_back(std::move(seg));
+    }
+    return o;
+}
+
 // what a granular or morphological run found: a realisation per solution (granular.h's run_result: its notes, its
 // report, what it said), the one chosen
 struct GranResult {
@@ -815,7 +854,10 @@ std::vector<std::vector<float>> mixOf(const std::vector<OrchNote>& notes, const 
 // fraction of the events due skipped because every able player was busy), and the solution as a score (score <token>,
 // for a score box: a row an instrument in orchestral order, each note with its dynamics, technique, cents, gain,
 // place and its sample as its sound, so the score box plays it and its roll edits it), after each run and choose, and
-// for score.
+// for score. A mimetic run's score keeps every segment's solutions, ranked (musil/src/music/score_solutions.h): the roll
+// shows a boundary at each segment with the solution chosen ("2/5") and a menu of the others, and choose segment n
+// sends the last score with that segment's notes replaced, by the same function the roll's menu calls (a note held
+// across a boundary is cut back or lengthened to what the new solution holds; the other segments are kept).
 class OrchideaBox : public OfflineBox {
     std::set<std::string> given_;                         // the settings a message chose
 
@@ -1063,21 +1105,32 @@ private:
         if (n < 0 || n >= ns) { patch->print("orchidea: segment " + std::to_string(seg + 1) + " has " + std::to_string(ns) + " solutions"); return; }
         auto res = std::make_shared<OrchResult>(*result_);
         res->choices[(size_t)seg] = n;
+        // the score: the last one sent, the segment's notes replaced by the choice (score_solutions.h's choose, as the
+        // roll does); made again from the run when there is none (or it keeps no solutions)
+        std::shared_ptr<musil::score::Score> chosen;
+        if (lastScore_) {
+            chosen = lastScore_->clone();
+            try {
+                musil::score::solutions::choose(*chosen, 0, (size_t)seg, (size_t)n);
+            } catch (const std::exception&) {
+                chosen = nullptr;
+            }
+        }
         if (out_.empty() || !findBuffer(patch, out_)) {
             result_ = res;
             outputNotes();
-            outputScore();
+            outputScore(chosen);
             outletBang(1);
             return;
         }
         auto mix = std::make_shared<std::vector<std::vector<float>>>();
         auto missing = std::make_shared<size_t>(0);
         runJob([res, mix, missing](Job& job) { *mix = mixOf(connectionOf(*res), *res->spec->db, res->sr, job, *missing); },
-               [this, res, mix, missing] {
+               [this, res, mix, missing, chosen] {
                    result_ = res;
                    if (!mix->empty()) storeMix(*mix, *missing);
                    outputNotes();
-                   outputScore();
+                   outputScore(chosen);
                    return true;
                });
     }
@@ -1151,8 +1204,17 @@ public:
         auto s = std::make_shared<sc::Score>("orchidea", have ? srNow() : 44100);
         if (!have) return s;
         const OrchDb& db = dbNow();
-        auto notes = notesNow();
         std::map<std::string, std::vector<double>> pitches;
+        if (!granularLast_) {                            // every segment's solutions kept with the notes chosen
+            namespace so = sc::solutions;
+            auto o = orchestrationOf(*result_);
+            for (auto& ev : so::connection(o, 0)) {
+                pitches[ev->row].push_back(ev->pitch);
+                s->insert(ev);
+            }
+            so::write(*s, {o});
+        }
+        auto notes = granularLast_ ? notesNow() : std::vector<OrchNote>();
         for (auto& n : notes) {
             const orch::entry& e = db.entries[(size_t)n.entry];
             auto ev = std::make_shared<sc::Event>();
@@ -1182,7 +1244,12 @@ public:
     }
 
 private:
-    void outputScore() { outlet(4, {Atom("score"), Atom(shareScore(solutionScore()))}); }
+    // the score to its outlet: the run's (s none), or the one choose made; a copy kept (what choose changes next)
+    void outputScore(std::shared_ptr<musil::score::Score> s = nullptr) {
+        if (!s) s = solutionScore();
+        lastScore_ = s->clone();
+        outlet(4, {Atom("score"), Atom(shareScore(s))});
+    }
     std::string soundsOf(const std::vector<int>& sol) const {
         std::string s;
         for (int j : sol) {
@@ -1517,6 +1584,7 @@ private:
     bool granularLast_ = false;                           // the last run was granular or morphological
     CarryPtr carryHeld_;
     std::string carryKey_;
+    std::shared_ptr<musil::score::Score> lastScore_;      // a copy of the last score sent (choose changes it)
 
     std::string orchestra_, out_;
     orch::analysis_options an_ = [] { orch::analysis_options a; a.segmentation = "none"; return a; }();

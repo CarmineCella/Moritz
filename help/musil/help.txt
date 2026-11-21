@@ -1831,6 +1831,15 @@
 #score-scale!
   (score-scale! s f)
   every onset and duration multiplied by f (> 0). => s
+#score-orchestrations
+  (score-orchestrations s)
+  the orchestrations whose solutions the score keeps (its data, as Moritz's orchidea makes
+  them): a list of (list at (list (list seg-at seg-dur chosen costs) ...)), as score-solutions
+#score-choose-solution!
+  (score-choose-solution! s k seg n)
+  solution n of segment seg of the k-th orchestration the score keeps (all from 0) in
+  place of the one chosen: the notes around the segment replaced (score_solutions.h's
+  choose, as Moritz's roll and orchidea's choose do); => the new events
 #instrument-rank
   (instrument-rank instr)
   where an instrument code sits in the orchestral order (Picc Fl ... Vc Cb; unknown ones after)
@@ -2471,11 +2480,16 @@
 #score-choose!
   (score-choose! s k seg n)
   in the k-th orchestration connected into the score (connect!, in order), solution n of
-  segment seg in place of the one chosen: its notes replaced; => the new events
+  segment seg in place of the one chosen: its notes replaced; => the new events. After those
+  connected here come the orchestrations whose solutions the score keeps in its data (Moritz's
+  orchidea makes them; read from a .score): their notes around the segment are replaced
+  (score-choose-solution!, the C++ that Moritz's roll uses)
 #score-solutions
   (score-solutions s)
   the orchestrations connected into a score, with their segments and the solution chosen in
-  each: a list of (list at (list (list seg-at seg-dur chosen costs) ...)); what the roll shows
+  each: a list of (list at (list (list seg-at seg-dur chosen costs) ...)); what the roll shows.
+  Those connected here first (connect!), then those the score keeps in its data
+  (score-orchestrations: Moritz's orchidea)
 #merge-continuations
   (merge-continuations f)
   in a fragment, a note starting where a note of the same instrument and pitch ends becomes

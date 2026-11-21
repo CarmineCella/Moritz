@@ -109,6 +109,23 @@ public:
     void detuneSelection(double dcents);                   // Alt+Up/Down: a cent; Shift+Alt: ten
     void quantizeSelection();
     bool transformSelection(ScoreTransform t);
+    // ---- the solutions of the orchestrations the score shown keeps (music/score_solutions.h: orchidea's scores): a
+    // dashed boundary at each segment and the solution chosen over it ("2/5"); a click on that label opens the menu of
+    // the segment's solutions, by cost (the panel's toolbar has the same menu for the segment under the cursor)
+    struct SegmentMark {
+        size_t orch = 0, seg = 0;    // which orchestration, which of its segments (from 0)
+        double at = 0, dur = 0;      // seconds of the score shown
+        int chosen = 0;
+        std::vector<double> costs;   // its solutions' costs, best first
+    };
+    const std::vector<SegmentMark>& segments() const;
+    int segmentAt(double t) const;                         // the mark whose segment holds t (-1: none)
+    bool segmentLabel(size_t mark, double& x, double& y, double& w, double& h) const;   // where its "2/5" is drawn
+    static std::string segmentText(const SegmentMark& m);                 // "2/5"
+    static std::string solutionText(const SegmentMark& m, size_t rank);   // "solution 2   cost 0.412"
+    // solution rank of a mark's segment in place of the one chosen: its notes replaced, one undo step
+    bool chooseSolution(size_t mark, size_t rank);
+    void solutionMenu(size_t mark);                        // the menu, at the mouse (a popup)
     std::function<void(uint64_t)> onEnter;                 // a score placed was double-clicked (compact: the window)
     // audition: a click on a note or a sound (not a drag, not with Shift, not a double-click) sounds it, through
     // onAudition (the box or the panel plays it: auditionInBox, transport.h) while the roll's Audition is on (its
@@ -198,6 +215,11 @@ private:
     double drawAt_ = 0, drawEnd_ = 0, drawPitch_ = 60;
     std::set<uint64_t> erasing_;
     std::set<uint64_t> before_;      // the selection when a rubber band started
+    // the segments' marks, made again when the score shown changes
+    mutable std::vector<SegmentMark> marks_;
+    mutable uint64_t marksGen_ = ~0ull;
+    mutable std::shared_ptr<const sc::Score> marksOf_;
+    void drawSegments(double ox, double oy);
 };
 
 // a colour for each row (as the mockups: orange, teal, magenta, blue, ...)
@@ -290,6 +312,11 @@ public:
     void editCell(uint64_t id, const std::string& key, const std::string& value, int x, int y, int w);
     void commitCell();
     static void runTransform(RollPanel* p, int kind);   // a button of the Transform panel (kind: ScoreTransform's, 100 diminish)
+    // the toolbar's menu of solutions (shown when the score keeps an orchestration's): it follows the segment under the
+    // cursor (at t, seconds of the score shown); choosing an item puts that solution in the segment's place
+    Fl_Choice* solutionChoice() const { return solMenu_; }
+    void followSolutions(double t);
+    int solutionMark() const { return solMark_; }       // the mark the menu is of (-1: none)
 
 private:
     friend class RollWidget;
@@ -310,6 +337,9 @@ private:
     ToolButton* toolBtn_[3];
     ToolButton* auditionBtn_;
     Fl_Choice* snap_;
+    Fl_Choice* solMenu_;
+    int solMark_ = -1;
+    double solTime_ = 0;
     RollWidget* roll_;
     DynamicsLane* dyn_;
     Fl_Choice* dynRow_;

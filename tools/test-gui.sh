@@ -752,6 +752,26 @@ run "$G/timeline.moritz" --window-png none act=tlopen:s act=timeline act=tlramp:
 modes=$(grep "state: timeline lane voice/density" "$out" | sed 's/state: timeline lane voice\/density //' | tr '\n' ' ')
 if [ $status -eq 0 ] && [ "$modes" = "steps ramps steps ramps " ]; then ok; else fail "a lane switched between steps and ramps (got $modes)"; fi
 
+# 54. the solutions of an orchestration's segments (a score orchidea made keeps them): the box's own roll and the roll
+#     draw a mark at each segment ("1/2"); the toolbar's menu follows the segment under the cursor, its solutions by
+#     cost; choosing one replaces the segment's notes (the Vn held from the first segment cut back, the Fl gone, the Ob
+#     in; the next segment and the Pno kept) as one undo step, which gives the notes and the choice back
+run "$G/solutions.moritz" --window-png none act=draw act=boxsegments:s act=roll:s act=rollsolutions:1.5 act=rollsolution:1 \
+    act=rollstate act=rollsolutions:1.5 act=rollundo act=rollstate act=rollsolutions:1.5 act=rollsolutions:0.5 act=boxsegments:s
+expect "the box's marks" "state: box segments 1/2 1/2 1/1"
+expect "the marks in the roll" "state: roll segment 2 at 1 1 1/2"
+expect "the menu of the segment under the cursor" "state: roll solution menu shown mark 1 value 0: segment 2: solution 1   cost 0.3 | segment 2: solution 2   cost 0.4"
+expect "the choice said" "state: roll status segment 2: solution 2 of 2"
+expect "the held note cut back" "state: roll note 5 0 1 60"
+expect "the other solution's note" "state: roll note 6 1 1 62"
+expect "the mark follows" "state: roll segment 2 at 1 1 2/2"
+expect "the menu shows the choice" "state: roll solution menu shown mark 1 value 1:"
+expect "the undo: the held note again" "state: roll note 1 0 2 60"
+expect "the menu of the first segment" "state: roll solution menu shown mark 0 value 0: segment 1: solution 1   cost 0.1"
+if [ $status -eq 0 ] && [ "$(grep -c "state: roll note 2 1 1 72" "$out")" = 1 ] && [ "$(grep -c "state: roll note 3 2 1 55" "$out")" = 2 ] &&
+   [ "$(grep -c "state: roll segment 2 at 1 1 1/2" "$out")" = 3 ] && [ "$(grep -c "state: box segments 1/2 1/2 1/1" "$out")" = 2 ]
+then ok; else fail "the undo gives back the notes and the choice; the next segment's note kept throughout"; fi
+
 rm -rf "$T"
 echo "$count interface cases, $fails failed"
 [ $fails -eq 0 ]
