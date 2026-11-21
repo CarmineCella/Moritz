@@ -9,6 +9,7 @@
 // leaves its outlet at the logical time whose stamp is its sample, so a signal object it reaches starts there too.
 
 #include "gui.h"
+#include "multitrack.h"
 #include "preview.h"
 #include "roll.h"
 #include "score_doc.h"
@@ -189,24 +190,88 @@ private:
 };
 
 // ---------------------------------------------------------------- score
-// What the audio thread plays: the sounds of the score by onset, their sources, where they go.
+// What the audio thread plays (multitrack.h): a channel for every track (a row of the score) and bus, each with its
+// voices (the sounds on it, by onset), the patches it runs (its insert, its instrument, its patch clips), its strip
+// (parameters the interface changes through atomics: no new plan for a fader moved) and where it goes (a bus, the
+// master); the channels in an order where a channel comes after every channel that feeds it, those fed by none first
+// (they may run on several cores). The master sums what goes to it, through its own strip and insert, into the outlets.
 struct ScorePlan {
     struct Voice {
         int64_t start = 0, len = 0;      // positions, samples
         double from = 0, to = -1;        // seconds in the source
         float gain = 1.f;
         double speed = 1;                // a note's sound: faster or slower by its pitch against the sample's
-        int file = -1, buf = -1;         // a decoded file, or a buffer~ by name
+        int file = -1, buf = -1, stream = -1;   // a decoded file, a buffer~ by name, or a file read from disk
         int gains = 0;                   // where its channel gains start in `gains`
-        int64_t fadeIn = 0, fadeOut = 0; // its fades (the clip's fade-in and fade-out), samples
+        int64_t fadeIn = 0, fadeOut = 0; // its fades (the clip's fade-in and fade-out, or a crossfade), samples
+        uint8_t inShape = 0, outShape = 0;   // 0 linear, 1 equal power, 2 slow (squared), 3 fast (square root)
     };
-    std::vector<Voice> voices;
-    std::vector<float> gains;            // per voice: one per outlet (a mono source's placement)
-    int64_t maxLen = 0;
+    struct Clip {                        // a patch clip: its patch runs while the transport is inside it
+        int slot = -1;
+        int64_t start = 0, end = 0;
+    };
+    struct Curve {                       // a strip lane: ramps between its points
+        enum What : uint8_t { Gain, Pan, Mute, Send } what = Gain;
+        int send = 0;
+        std::vector<std::pair<int64_t, float>> pts;   // by position
+        float at(int64_t pos) const {
+            if (pts.empty()) return 0.f;
+            if (pos <= pts.front().first) return pts.front().second;
+            if (pos >= pts.back().first) return pts.back().second;
+            auto it = std::upper_bound(pts.begin(), pts.end(), pos,
+                                       [](int64_t p, const std::pair<int64_t, float>& q) { return p < q.first; });
+            auto a = *(it - 1), b = *it;
+            if (what == Mute || b.first == a.first) return a.second;
+            return a.second + (b.second - a.second) * (float)((double)(pos - a.first) / (double)(b.first - a.first));
+        }
+    };
+    struct Source {                      // what a channel takes from another: its output (send -1) or a send of it
+        int ch = 0, send = -1;
+    };
+    struct Channel {
+        std::string name;
+        mt::StripParams* strip = nullptr;
+        std::vector<Voice> voices;
+        int64_t maxLen = 0;
+        std::vector<Clip> clips;
+        int insert = -1, instrument = -1;   // the box's slots
+        std::vector<Source> inputs;
+        bool bus = false, toMaster = true;
+        int input = -1, inputCh = 1;     // the device's channel it records from (from 0; -1 none)
+        bool armed = false;
+        bool balance = true;             // its pan a balance on its two channels (else placed in its voices)
+        std::vector<Curve> curves;
+        float* buf = nullptr;            // nOut x kBlock: what it makes in a block, after its strip
+        float* tmp = nullptr;            // its insert's output
+    };
+    std::vector<Channel> channels;
+    int nFree = 0;                       // the first nFree take nothing from others
+    mt::StripParams* master = nullptr;
+    int masterInsert = -1;
+    float* masterBuf = nullptr;
+    float* masterTmp = nullptr;
+    std::vector<float> gains;            // per voice: one per outlet (a mono source's placement), then its balance
+    std::vector<float> arena;            // the channels' buffers
     double sr = 44100.0;
+    int nOut = 2;
     std::vector<std::shared_ptr<const SampleBuffer>> files;
     std::vector<std::unique_ptr<BufferRef>> bufs;
+    std::vector<std::shared_ptr<mt::DiskStream>> streams;
+    std::vector<std::shared_ptr<mt::StripParams>> strips;   // kept alive while the plan plays
+    bool anyArmed = false;
 };
+
+// the thread a box's inner patch runs on: what its inlet~s read and its outlet~s add to (the channel's buffers)
+struct InnerIO {
+    const float* in[mt::kMaxChannels] = {};
+    float* out[mt::kMaxChannels] = {};
+    int nin = 0, nout = 0;
+};
+thread_local const InnerIO* tlInner = nullptr;
+const float kSilence[dsp::kBlock] = {};
+
+class ScoreBox;
+struct BlockCtx;
 
 // score name [file.score] [channels] [@size w h] [@view timeline|roll|piano|list]: a score (rows, notes, sounds,
 // messages, scores inside it) that plays on the patch's transport. Without a file it is kept in the patch. The box
@@ -349,6 +414,83 @@ public:
         else patch->print("score: unknown message " + h.str());
     }
     void dsp(int n) override;
+    bool wantsInput() const override { return armed_; }
+    // ---- the patches it runs (its tracks' inserts and instruments, its patch clips): its inner patches, in a fixed order
+    Patch* inner() const override { return slots_.empty() ? nullptr : slots_[0]->p.get(); }
+    std::vector<Patch*> inners() const override {
+        std::vector<Patch*> v;
+        for (auto& sl : slots_) v.push_back(sl->p.get());
+        return v;
+    }
+    void syncPorts() override { for (auto& sl : slots_) numberPatchPorts(*sl->p); }   // the box's own ports stay
+    const float* innerInput(const Patch*, int k, int) override {
+        const InnerIO* io = tlInner;
+        return io && k >= 0 && k < io->nin && io->in[k] ? io->in[k] : kSilence;
+    }
+    float* innerOutput(const Patch*, int k) override {
+        const InnerIO* io = tlInner;
+        return io && k >= 0 && k < io->nout ? io->out[k] : nullptr;
+    }
+    void innerOutlet(const Patch*, int, const Message&) override {}   // a track patch's control outlets lead nowhere
+    void processChannel(const BlockCtx& bc, int index);
+    void runInsert(int slot, float* buf, float* tmp, int nOut, int n);
+    static void applyStrip(mt::StripParams& st, float* buf, int nOut, int n, float gain, float az, bool balance);
+    static void meter(mt::StripParams& st, const float* buf, int nOut, int n, double sr);
+    // ---- for the multitrack windows (multitrack.h)
+    mt::StripParams* strip(const std::string& name) { return stripNamed(name).get(); }
+    bool startRecording(std::unique_ptr<mt::Recording> r, std::string& err) {
+        if (recordingOwned_) { err = "already recording"; return false; }
+        if (!r->start(err)) return false;
+        recordingOwned_ = std::move(r);
+        recording_.store(recordingOwned_.get(), std::memory_order_release);
+        return true;
+    }
+    std::unique_ptr<mt::Recording> stopRecording() {
+        recording_.store(nullptr, std::memory_order_seq_cst);
+        if (recordingOwned_) recordingOwned_->stop();       // waits for the audio thread to leave push()
+        return std::move(recordingOwned_);
+    }
+    mt::Recording* recording() const { return recordingOwned_.get(); }
+    void setStemTap(bool on) { stemTap_ = on; }
+    bool stems(mt::StemTap& out) {
+        const ScorePlan* p = plan_.get();
+        if (!p) return false;
+        out.names.clear();
+        out.data.clear();
+        out.channels = nOut_;
+        out.n = lastN_;
+        for (auto& ch : p->channels) {
+            out.names.push_back(ch.name);
+            for (int c = 0; c < nOut_; ++c) out.data.push_back(ch.buf + c * dsp::kBlock);
+        }
+        return true;
+    }
+    mt::PlanInfo info() const {
+        mt::PlanInfo i;
+        const ScorePlan* p = plan_.get();
+        i.plans = plans_;
+        if (!p) return i;
+        i.channels = (int)p->channels.size();
+        for (auto& ch : p->channels) {
+            (ch.bus ? i.buses : i.tracks)++;
+            i.voices += (int)ch.voices.size();
+        }
+        i.streamed = (int)p->streams.size();
+        i.slots = (int)slots_.size();
+        i.parallel = p->nFree >= 2;
+        return i;
+    }
+    Patch* slotPatch(const std::string& key) const {
+        for (auto& sl : slots_)
+            if (sl->key == key && !sl->file.empty()) return sl->p.get();
+        return nullptr;
+    }
+    Patch* clipSlot(uint64_t id) const {
+        std::string k = "clip:" + std::to_string(id) + ":";
+        for (auto& sl : slots_)
+            if (sl->key.rfind(k, 0) == 0 && !sl->file.empty()) return sl->p.get();
+        return nullptr;
+    }
 
     // ---- the interface: a header (name and summary) and the score as a roll, edited in place when locked
     void uiSize(int& w, int& h) const override {      // measured without the fonts: made where there is no display too
@@ -505,6 +647,9 @@ private:
         int outlet;
         Message msg;
         bool send = false;                       // a message: to the receives of its name too
+        enum Kind : uint8_t { Plain, Note, ClipStart, ClipEnd } kind = Plain;
+        std::string track;                       // a note's: its strip says whether it sounds; its instrument plays it
+        int slot = -1;                           // a patch clip's
     };
     static constexpr int kDefaultW = 360, kDefaultH = 150;
     int nOut_ = 2;
@@ -525,9 +670,21 @@ private:
     bool firing_ = false;
     bool ownPlay_ = false;                       // the transport started by its play message (it stops at the end)
     uint64_t ownChanges_ = 0;
+    int lastN_ = 0;                              // the last block's length (stems)
     int64_t firedPos_ = -1;
     int firedLap_ = 0;
     size_t rows_ = 0;                            // the rows declared or used
+    // the multitrack side (multitrack.h): the strips, the patches it runs, the files read from disk, a recording
+    struct Slot;
+    std::map<std::string, std::shared_ptr<mt::StripParams>> strips_;
+    std::vector<std::unique_ptr<Slot>> slots_;
+    std::map<std::string, std::shared_ptr<mt::DiskStream>> streams_;
+    std::map<std::string, double> lengths_;
+    std::atomic<mt::Recording*> recording_{nullptr};
+    std::unique_ptr<mt::Recording> recordingOwned_;
+    uint64_t planKey_ = 0, plans_ = 0;
+    bool armed_ = false;
+    bool stemTap_ = false;
 
     // where the score kept in the patch is, for its errors and the files it places: the patch's folder
     std::string here() const {
@@ -766,39 +923,28 @@ private:
         if (auto d = ScoreDoc::find(score_.get())) d->clearSelection();
     }
 
-    // a voice playing a region of a sound file (decoded once, kept while an event reads it)
-    void addVoice(ScorePlan& plan, std::map<std::string, int>& files, int64_t start, int64_t len, double from, double to, float gain,
-                  double speed, double az, int64_t fadeIn, int64_t fadeOut, const std::string& path) {
-        if (len <= 0) return;
-        auto it = files.find(path);
-        if (it == files.end()) {
-            auto d = decoded_.find(path);
-            if (d == decoded_.end()) {
-                auto b = std::make_shared<SampleBuffer>();
-                std::string err;
-                if (!decodeAudioFile(path, *b, err)) { patch->print("score: " + err); b.reset(); }
-                d = decoded_.emplace(path, b).first;
-            }
-            if (!d->second) return;
-            it = files.emplace(path, (int)plan.files.size()).first;
-            plan.files.push_back(d->second);
+    // ---- the plan: made on the GUI thread, published; the control events kept here
+    // a decoded file (read once, kept while an event reads it); nullptr when it can't be read (said once)
+    std::shared_ptr<const SampleBuffer> decodedFile(const std::string& path) {
+        auto d = decoded_.find(path);
+        if (d == decoded_.end()) {
+            auto b = std::make_shared<SampleBuffer>();
+            std::string err;
+            if (!decodeAudioFile(path, *b, err)) { patch->print("score: " + err); b.reset(); }
+            d = decoded_.emplace(path, b).first;
         }
-        ScorePlan::Voice v;
-        v.start = start;
-        v.len = len;
-        v.from = from;
-        v.to = to;
-        v.gain = gain;
-        v.speed = std::isfinite(speed) && speed > 0 ? speed : 1;
-        v.fadeIn = fadeIn;
-        v.fadeOut = fadeOut;
-        v.file = it->second;
-        v.gains = pushGains(plan, az);
-        plan.maxLen = std::max(plan.maxLen, v.len);
-        plan.voices.push_back(v);
+        return d->second;
+    }
+    // a file's length in seconds (asked once: -1 when it can't be read)
+    double fileLength(const std::string& path) {
+        auto it = lengths_.find(path);
+        if (it != lengths_.end()) return it->second;
+        double s = mt::fileSeconds(path);
+        lengths_[path] = s;
+        return s;
     }
     // a voice's gains: its pan (a source mixed down to one channel), then its balance (a source with a channel for each
-    // output: a stereo file panned by its clip's and its track's azimuth); where they start in plan.gains
+    // output: a stereo file panned by its clip's azimuth, and by its track's when that is not a balance of the mix)
     int pushGains(ScorePlan& plan, double az) const {
         int at = (int)plan.gains.size();
         double g[16];
@@ -808,37 +954,205 @@ private:
         for (int c = 0; c < nOut_; ++c) plan.gains.push_back((float)g[c]);
         return at;
     }
-
-    // ---- the plan: made on the GUI thread, published; the control events kept here
+    // a voice playing a region of a file: decoded into memory, or read from disk while it plays when it is long (the
+    // stream kept for the clip from plan to plan, so what is read stays read)
+    bool fileVoice(ScorePlan& plan, std::map<std::string, int>& files, std::map<std::string, int>& streams, ScorePlan::Voice& v,
+                   const std::string& path, const std::string& streamKey) {
+        if (v.len <= 0) return false;
+        double len = streamKey.empty() ? -1 : fileLength(path);
+        if (len > mt::streamThreshold.load()) {
+            auto it = streams.find(streamKey);
+            if (it == streams.end()) {
+                auto& s = streams_[streamKey];
+                if (!s || s->path() != path) {
+                    std::string err;
+                    s = mt::DiskStream::open(path, err);
+                    if (!s) { patch->print("score: " + err); return false; }
+                }
+                s->pin((int64_t)std::floor(v.from * s->sr()));          // where the clip starts: always there
+                it = streams.emplace(streamKey, (int)plan.streams.size()).first;
+                plan.streams.push_back(s);
+            }
+            v.stream = it->second;
+            return true;
+        }
+        auto it = files.find(path);
+        if (it == files.end()) {
+            auto d = decodedFile(path);
+            if (!d) return false;
+            it = files.emplace(path, (int)plan.files.size()).first;
+            plan.files.push_back(d);
+        }
+        v.file = it->second;
+        return true;
+    }
+    // the strip of a track, a bus or the master (kept from plan to plan: the interface writes its atomics)
+    std::shared_ptr<mt::StripParams> stripNamed(const std::string& name) {
+        auto& p = strips_[name];
+        if (!p) p = std::make_shared<mt::StripParams>();
+        return p;
+    }
+    // ---- the patches the box runs: a track's insert or instrument, a patch clip (slots, never reordered: the plan
+    // names them by their place, which is the place of their plans among the box's inner patches)
+    struct Slot {
+        std::string key, file;             // what it is for; the file loaded ("" empty)
+        std::unique_ptr<Patch> p;
+        bool used = false;
+    };
+    int slotFor(const std::string& key, const std::string& file, bool& changed) {
+        Slot* s = nullptr;
+        int k = 0;
+        for (; k < (int)slots_.size(); ++k)
+            if (slots_[(size_t)k]->key == key) { s = slots_[(size_t)k].get(); break; }
+        if (!s) {
+            auto ns = std::make_unique<Slot>();
+            ns->key = key;
+            ns->p = std::make_unique<Patch>();
+            ns->p->parent = patch;
+            ns->p->owner = this;
+            s = ns.get();
+            k = (int)slots_.size();
+            slots_.push_back(std::move(ns));
+            changed = true;
+        }
+        s->used = true;
+        if (s->file != file) {
+            if (!s->file.empty()) s->p->clear();
+            s->file = file;
+            std::string err;
+            if (!file.empty() && !loadPatchInto(*s->p, file, err)) {
+                patch->print("score: " + file + ": " + err);
+            }
+            numberPatchPorts(*s->p);
+            if (key.rfind("clip:", 0) != 0) s->p->loadbangAll();   // an insert or an instrument starts now; a clip at its start
+            changed = true;
+        }
+        return k;
+    }
+    // what the plan depends on but for the strips' values (a fader, a pan on two channels, mute, solo, a send's level):
+    // when only those changed, the strips take them and the plan stays
+    uint64_t planKey(const std::vector<sc::Placed>& flat, double sr) const {
+        uint64_t h = 1469598103934665603ull;
+        auto mix = [&h](const std::string& s) {
+            for (unsigned char c : s) { h ^= c; h *= 1099511628211ull; }
+            h ^= 0xff;
+            h *= 1099511628211ull;
+        };
+        std::string t;
+        mix(std::to_string(sr) + " " + std::to_string(nOut_) + " " + referenceFolder() + " " + std::to_string(mt::streamThreshold.load()));
+        for (auto& r : score_->rows) {
+            sc::Row c = r;
+            for (const char* k : {"gain", "mute", "solo", "monitor", "height", "lanes"}) sc::eraseField(c.extra, k);
+            if (nOut_ == 2) sc::eraseField(c.extra, "az");
+            mt::RowSettings rs = mt::rowSettings(r);
+            for (auto& x : rs.sends) x.gain = 0;
+            rs.monitor = false;
+            mt::setRowSettings(c, rs);
+            t = c.name;
+            sc::writeFields(c.extra, t);
+            mix(t);
+        }
+        mix(mt::sessionSettings(*score_).masterInsert);
+        for (auto& p : flat) {
+            t.clear();
+            sc::writeEvent(p.ev, t, 0);
+            mix(t);
+            mix(p.top ? p.top->row : std::string());
+            mix(p.origin ? p.origin->path : std::string());
+        }
+        return h;
+    }
+    // the strips' values from the score (the fast way: nothing else changed)
+    void loadStrips() {
+        for (auto& r : score_->rows) mt::loadStrip(*stripNamed(r.name), r);
+        stripNamed(mt::kMaster)->gain.store((float)mt::sessionSettings(*score_).masterGain, std::memory_order_relaxed);
+    }
     void rebuild() {
         if (!patch) return;
         double sr = patch->root()->sampleRate.load();
-        auto plan = std::make_unique<ScorePlan>();
-        plan->sr = sr;
         std::vector<sc::Placed> flat;
         try { sc::flatten(*score_, flat); }
         catch (const std::exception& e) { complain(e); flat.clear(); }
-        const sc::Mixer mixer(*score_);           // the tracks' strips: each event plays on the row that placed it
-        std::vector<Ctl> ctl;
-        std::map<std::string, int> files, bufs;
-        end_ = 0;
+        uint64_t key = planKey(flat, sr);
+        if (plan_.get() && key == planKey_) {           // the strips only: their atomics, no new plan
+            loadStrips();
+            return;
+        }
+        planKey_ = key;
+        ++plans_;
+        auto plan = std::make_unique<ScorePlan>();
+        plan->sr = sr;
+        plan->nOut = nOut_;
         auto at = [sr](double sec) { return (int64_t)std::floor(sec * sr); };   // as Musil's score-render places them
+        // the channels: the rows (tracks and buses), then the rows only events name, then the events with none
+        std::vector<std::string> names;
+        std::map<std::string, int> index;
+        auto channelOf = [&](const std::string& n) {
+            auto it = index.find(n);
+            if (it != index.end()) return it->second;
+            index[n] = (int)names.size();
+            names.push_back(n);
+            return (int)names.size() - 1;
+        };
+        for (auto& r : score_->rows) channelOf(r.name);
+        for (auto& p : flat) {
+            const std::string& track = p.top ? p.top->row : p.ev.row;
+            if (p.ev.kind == sc::Kind::Message && p.ev.source.rfind("strip.", 0) != 0) continue;
+            channelOf(track);
+        }
+        std::vector<ScorePlan::Channel> chans(names.size());
+        std::vector<mt::RowSettings> settings(names.size());
+        for (size_t c = 0; c < names.size(); ++c) {
+            ScorePlan::Channel& ch = chans[c];
+            ch.name = names[c];
+            auto sp = stripNamed(ch.name);
+            const sc::Row* row = nullptr;
+            for (auto& r : score_->rows) if (r.name == ch.name) row = &r;
+            sc::Row none;
+            none.name = ch.name;
+            mt::loadStrip(*sp, row ? *row : none);
+            settings[c] = mt::rowSettings(row ? *row : none);
+            ch.strip = sp.get();
+            plan->strips.push_back(sp);
+            ch.bus = settings[c].bus;
+            ch.armed = settings[c].arm;
+            ch.input = settings[c].input - 1;
+            ch.inputCh = settings[c].inputCh;
+            ch.balance = nOut_ == 2;
+            plan->anyArmed = plan->anyArmed || (ch.armed && ch.input >= 0);
+        }
+        auto masterStrip = stripNamed(mt::kMaster);
+        mt::SessionSettings ss = mt::sessionSettings(*score_);
+        masterStrip->gain.store((float)ss.masterGain, std::memory_order_relaxed);
+        plan->master = masterStrip.get();
+        plan->strips.push_back(masterStrip);
+        // the events
+        const sc::Mixer mixer(*score_);
+        std::vector<Ctl> ctl;
+        std::map<std::string, int> files, bufs, streams;
+        std::map<std::pair<int, std::string>, ScorePlan::Curve> curves;
+        for (auto& s : slots_) s->used = false;
+        bool slotsChanged = false;
+        end_ = 0;
         for (auto& p : flat) {
             const sc::Event& e = p.ev;
             end_ = std::max(end_, at(e.end()));
             const std::string& track = p.top ? p.top->row : e.row;
-            if (e.kind != sc::Kind::Message && !mixer.sounds(track)) continue;   // muted, or another track soloed
+            int c = index.count(track) ? index[track] : -1;
             const sc::Strip strip = mixer.of(track);
-            if (e.kind == sc::Kind::Sound) {
+            double baked = c >= 0 && !chans[(size_t)c].balance ? strip.az : 0;   // the track's pan, when not a balance
+            if (e.kind == sc::Kind::Sound && c >= 0) {
                 ScorePlan::Voice v;
                 v.start = at(e.at);
                 v.len = at(e.dur);
                 if (v.len <= 0) continue;
                 v.from = e.from;
                 v.to = e.to;
-                v.gain = (float)(e.gain * strip.gain);
+                v.gain = (float)e.gain;
                 v.fadeIn = std::clamp<int64_t>(at(sc::numField(e.extra, "fade-in", 0)), 0, v.len);
                 v.fadeOut = std::clamp<int64_t>(at(sc::numField(e.extra, "fade-out", 0)), 0, v.len);
+                v.inShape = fadeShape(e.extra, "fade-in-shape");
+                v.outShape = fadeShape(e.extra, "fade-out-shape");
                 if (e.buffer) {
                     auto it = bufs.find(e.source);
                     if (it == bufs.end()) {
@@ -847,43 +1161,165 @@ private:
                         plan->bufs.back()->resolve(patch);
                     }
                     v.buf = it->second;
-                } else {
-                    addVoice(*plan, files, v.start, v.len, v.from, v.to, v.gain, 1.0, e.az + strip.az, v.fadeIn, v.fadeOut,
-                             sourcePath(e.source, p.origin));
+                } else if (!fileVoice(*plan, files, streams, v, sourcePath(e.source, p.origin),
+                                      std::to_string(e.id) + "|" + e.source + "|" + sc::numText(e.from) + "|" + std::to_string((uintptr_t)p.origin))) {
                     continue;
                 }
-                v.gains = pushGains(*plan, e.az + strip.az);
-                plan->maxLen = std::max(plan->maxLen, v.len);
-                plan->voices.push_back(v);
+                v.gains = pushGains(*plan, e.az + baked);
+                chans[(size_t)c].voices.push_back(v);
             } else if (e.kind == sc::Kind::Note) {
                 if (e.variant == "chord") continue;
                 // a note with a sound of its own (orchidea's: its sample) plays it, faster or slower by its pitch against
                 // the sample's (sound-pitch; without it, by its cents)
-                if (const sc::Datum* snd = sc::field(e.extra, "sound"); snd && (snd->kind == sc::Datum::Str || snd->kind == sc::Datum::Sym) && !snd->s.empty()) {
+                if (const sc::Datum* snd = sc::field(e.extra, "sound"); c >= 0 && snd && (snd->kind == sc::Datum::Str || snd->kind == sc::Datum::Sym) && !snd->s.empty()) {
                     const sc::Datum* sp = sc::field(e.extra, "sound-pitch");
                     double base = sp && sp->kind == sc::Datum::Num ? sp->num : e.pitch;
-                    addVoice(*plan, files, at(e.at), at(e.dur), 0, -1, (float)(e.gain * strip.gain), std::pow(2.0, (e.sounding() - base) / 12.0),
-                             e.az + strip.az, 0, 0,
-                             sourcePath(snd->s, p.origin));
+                    ScorePlan::Voice v;
+                    v.start = at(e.at);
+                    v.len = at(e.dur);
+                    v.to = -1;
+                    v.gain = (float)e.gain;
+                    double speed = std::pow(2.0, (e.sounding() - base) / 12.0);
+                    v.speed = std::isfinite(speed) && speed > 0 ? speed : 1;
+                    if (fileVoice(*plan, files, streams, v, sourcePath(snd->s, p.origin), "")) {
+                        v.gains = pushGains(*plan, e.az + baked);
+                        chans[(size_t)c].voices.push_back(v);
+                    }
                 }
-                int vel = (int)std::lround(sc::velocityOf(e.dyn) * e.gain * strip.gain);
+                int vel = (int)std::lround(sc::velocityOf(e.dyn) * e.gain);
                 Message msg{Atom((float)e.sounding()), Atom((float)std::clamp(vel, 1, 127)), Atom((float)(e.dur * 1000.0)),
                             Atom(e.row.empty() ? std::string("-") : e.row), Atom(e.dyn.empty() ? std::string("-") : e.dyn),
                             Atom(e.tech.empty() ? std::string("-") : e.tech)};
-                ctl.push_back({at(e.at), nOut_, std::move(msg)});
+                Ctl k{at(e.at), nOut_, std::move(msg)};
+                k.kind = Ctl::Note;
+                k.track = track;
+                ctl.push_back(std::move(k));
             } else if (e.kind == sc::Kind::Message) {
+                if (e.source.rfind("strip.", 0) == 0) {          // a lane of the track's strip: played on the audio thread
+                    if (c < 0 || e.values.empty() || e.values[0].kind != sc::Datum::Num) continue;
+                    std::string what = e.source.substr(6);
+                    ScorePlan::Curve cv;
+                    if (what == "gain") cv.what = ScorePlan::Curve::Gain;
+                    else if (what == "pan") cv.what = ScorePlan::Curve::Pan;
+                    else if (what == "mute") cv.what = ScorePlan::Curve::Mute;
+                    else if (what.rfind("send.", 0) == 0) {
+                        cv.what = ScorePlan::Curve::Send;
+                        cv.send = -1;
+                        auto& sends = settings[(size_t)c].sends;
+                        for (size_t k = 0; k < sends.size(); ++k) if (sends[k].bus == what.substr(5)) cv.send = (int)k;
+                        if (cv.send < 0) continue;
+                    } else continue;
+                    auto& slot = curves[{c, what}];
+                    if (slot.pts.empty()) { slot.what = cv.what; slot.send = cv.send; }
+                    slot.pts.push_back({at(e.at), (float)e.values[0].num});
+                    continue;
+                }
                 Message msg{Atom(e.source.empty() ? std::string("-") : e.source)};
                 for (auto& d : e.values) appendDatum(msg, d);
                 ctl.push_back({at(e.at), nOut_ + 1, std::move(msg), !e.source.empty()});
             } else if (e.kind == sc::Kind::Patch) {
-                // patch clips do not run yet: they leave the messages outlet as `patch name duration-ms args...`
-                // (the hook where a patch clip will be loaded and run while it lasts)
+                // a patch clip: its patch (a .moritz file) loaded now, run while the clip plays (loadbang at its start,
+                // its timers stopped at its end); it leaves the messages outlet too, as `patch name duration-ms args...`
                 Message msg{Atom("patch"), Atom(e.source), Atom((float)(e.dur * 1000.0))};
                 for (auto& d : e.values) appendDatum(msg, d);
                 ctl.push_back({at(e.at), nOut_ + 1, std::move(msg)});
+                std::string file = sourcePath(e.source, p.origin);
+                if (c >= 0 && endsWith(file, ".moritz") && std::filesystem::exists(std::filesystem::u8path(file))) {
+                    int k = slotFor("clip:" + std::to_string(e.id) + ":" + std::to_string((uintptr_t)p.origin), file, slotsChanged);
+                    ScorePlan::Clip cl;
+                    cl.slot = k;
+                    cl.start = at(e.at);
+                    cl.end = at(e.end());
+                    chans[(size_t)c].clips.push_back(cl);
+                    Ctl s{cl.start, -1, {}}, f{cl.end, -1, {}};
+                    s.kind = Ctl::ClipStart;
+                    s.slot = k;
+                    f.kind = Ctl::ClipEnd;
+                    f.slot = k;
+                    ctl.push_back(std::move(s));
+                    ctl.push_back(std::move(f));
+                }
             }
         }
-        std::stable_sort(plan->voices.begin(), plan->voices.end(), [](const ScorePlan::Voice& a, const ScorePlan::Voice& b) { return a.start < b.start; });
+        for (auto& kv : curves) {
+            auto& cv = kv.second;
+            std::stable_sort(cv.pts.begin(), cv.pts.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+            chans[(size_t)kv.first.first].curves.push_back(std::move(cv));
+        }
+        // the sounds of a channel by onset
+        for (auto& ch : chans) {
+            std::stable_sort(ch.voices.begin(), ch.voices.end(), [](const ScorePlan::Voice& a, const ScorePlan::Voice& b) { return a.start < b.start; });
+            for (auto& v : ch.voices) ch.maxLen = std::max(ch.maxLen, v.len);
+        }
+        // routing: a track goes to its bus (out) or the master, and sends to buses; the channels ordered so that each
+        // comes after those it takes from (a loop of buses is broken: to the master)
+        std::vector<std::vector<ScorePlan::Source>> inputs(chans.size());
+        for (size_t c = 0; c < chans.size(); ++c) {
+            const mt::RowSettings& rs = settings[c];
+            if (!rs.out.empty() && index.count(rs.out) && (size_t)index[rs.out] != c) {
+                inputs[(size_t)index[rs.out]].push_back({(int)c, -1});
+                chans[c].toMaster = false;
+            }
+            for (size_t k = 0; k < rs.sends.size(); ++k)
+                if (index.count(rs.sends[k].bus) && (size_t)index[rs.sends[k].bus] != c)
+                    inputs[(size_t)index[rs.sends[k].bus]].push_back({(int)c, (int)k});
+        }
+        std::vector<int> order, indeg(chans.size(), 0);
+        for (size_t c = 0; c < chans.size(); ++c) indeg[c] = (int)inputs[c].size();
+        std::vector<char> placed(chans.size(), 0);
+        while (order.size() < chans.size()) {
+            bool progress = false;
+            for (size_t c = 0; c < chans.size(); ++c) {
+                if (placed[c] || indeg[c] > 0) continue;
+                placed[c] = 1;
+                order.push_back((int)c);
+                progress = true;
+                for (size_t d = 0; d < chans.size(); ++d)
+                    for (auto& s : inputs[d]) if (s.ch == (int)c) --indeg[d];
+            }
+            if (progress) continue;
+            // a loop: the first channel left takes nothing; what went to it goes to the master
+            size_t c = 0;
+            while (placed[c]) ++c;
+            patch->print("score: the buses of " + chans[c].name + " go round in a loop: what goes to it goes to the master");
+            for (auto& s : inputs[c]) if (s.send < 0) chans[(size_t)s.ch].toMaster = true;
+            inputs[c].clear();
+            indeg[c] = 0;
+        }
+        // the channels' places once ordered: those fed by none first (they may run on several cores)
+        std::stable_sort(order.begin(), order.end(), [&](int a, int b) { return inputs[(size_t)a].empty() && !inputs[(size_t)b].empty(); });
+        std::vector<int> where(chans.size());
+        for (size_t k = 0; k < order.size(); ++k) where[(size_t)order[k]] = (int)k;
+        for (size_t k = 0; k < order.size(); ++k) {
+            ScorePlan::Channel ch = std::move(chans[(size_t)order[k]]);
+            for (auto s : inputs[(size_t)order[k]]) ch.inputs.push_back({where[(size_t)s.ch], s.send});
+            if (ch.inputs.empty()) plan->nFree = (int)k + 1;
+            plan->channels.push_back(std::move(ch));
+        }
+        // the track patches: an insert, an instrument (and the master's insert)
+        for (size_t k = 0; k < plan->channels.size(); ++k) {
+            ScorePlan::Channel& ch = plan->channels[k];
+            const mt::RowSettings& rs = settings[(size_t)order[k]];
+            if (!rs.insert.empty()) ch.insert = slotFor("insert:" + ch.name, sourcePath(rs.insert, score_.get()), slotsChanged);
+            if (!rs.instrument.empty()) ch.instrument = slotFor("instrument:" + ch.name, sourcePath(rs.instrument, score_.get()), slotsChanged);
+        }
+        if (!ss.masterInsert.empty()) plan->masterInsert = slotFor("insert:" + std::string(mt::kMaster), sourcePath(ss.masterInsert, score_.get()), slotsChanged);
+        for (auto& s : slots_)
+            if (!s->used && !s->file.empty()) {               // no longer used: emptied (its plan let go of first)
+                s->p->clear();
+                s->file.clear();
+                slotsChanged = true;
+            }
+        // the buffers: a channel's output and its insert's, the master's
+        size_t per = (size_t)nOut_ * dsp::kBlock;
+        plan->arena.assign(per * 2 * (plan->channels.size() + 1), 0.f);
+        for (size_t k = 0; k < plan->channels.size(); ++k) {
+            plan->channels[k].buf = plan->arena.data() + per * 2 * k;
+            plan->channels[k].tmp = plan->channels[k].buf + per;
+        }
+        plan->masterBuf = plan->arena.data() + per * 2 * plan->channels.size();
+        plan->masterTmp = plan->masterBuf + per;
+        if (plan->nFree >= 2) mt::TrackPool::get();     // the workers made here, not on the audio thread
         std::stable_sort(ctl.begin(), ctl.end(), [](const Ctl& a, const Ctl& b) { return a.pos < b.pos; });
         ctl_ = std::move(ctl);
         std::set<std::string> rows;
@@ -892,10 +1328,44 @@ private:
         rows_ = rows.size();
         // files no event reads any more are let go (a plan the audio thread still uses keeps its own)
         for (auto it = decoded_.begin(); it != decoded_.end();) it = files.count(it->first) ? std::next(it) : decoded_.erase(it);
+        for (auto it = streams_.begin(); it != streams_.end();) it = streams.count(it->first) ? std::next(it) : streams_.erase(it);
+        bool armed = plan->anyArmed;
+        // the slots' plans first (the box's inner patches compiled), then the plan naming them
+        if (slotsChanged) patch->rebuild();
         plan_.set(patch, std::move(plan));
+        if (armed != armed_) {                            // input wanted or no longer: the device follows
+            armed_ = armed;
+            if (mt::inputNeedChanged) mt::inputNeedChanged();
+        }
         follow();
     }
+    static uint8_t fadeShape(const sc::Fields& f, const char* key) {
+        const sc::Datum* d = sc::field(f, key);
+        if (!d || (d->kind != sc::Datum::Sym && d->kind != sc::Datum::Str)) return 0;
+        if (d->s == "equal" || d->s == "equal-power") return 1;
+        if (d->s == "slow") return 2;
+        if (d->s == "fast") return 3;
+        return 0;
+    }
 
+    // the files read from disk told where the transport is (a locate: read there now) and where its loop starts (kept)
+    void prepareStreams() {
+        const ScorePlan* p = plan_.get();
+        if (!p || p->streams.empty() || !t_) return;
+        int lap;
+        double pos;
+        t_->where(patch, lap, pos);
+        int64_t here = (int64_t)pos, loopAt = t_->looping() ? t_->loopStart() : -1;
+        for (auto& ch : p->channels)
+            for (auto& v : ch.voices) {
+                if (v.stream < 0) continue;
+                mt::DiskStream* s = p->streams[(size_t)v.stream].get();
+                double rate = s->sr() / p->sr * v.speed;
+                auto frameAt = [&](int64_t q) { return (int64_t)std::floor(v.from * s->sr() + (double)(q - v.start) * rate); };
+                if (here >= v.start && here < v.start + v.len) s->hint(frameAt(here));
+                if (loopAt >= v.start && loopAt < v.start + v.len) s->pin(frameAt(loopAt));
+            }
+    }
     // ---- the control events on the scheduler, following the transport
     // in its patch still (a removed box is kept until the audio thread lets go of it: it follows nothing then)
     bool inPatch() const {
@@ -905,6 +1375,7 @@ private:
     void follow() {
         if (!inPatch()) return;
         patch->cancel(this);
+        prepareStreams();
         armOffs();                               // an auditioned note's end still to come
         if (!t_ || !t_->playing()) return;
         double pos;
@@ -941,6 +1412,14 @@ private:
                 });
         }
     }
+    // a track sounds: not muted, and no other soloed (its strip as the interface left it)
+    bool sounds(const std::string& track) const {
+        bool any = false;
+        for (auto& kv : strips_) if (kv.first != mt::kMaster) any = any || kv.second->solo.load(std::memory_order_relaxed);
+        auto it = strips_.find(track);
+        if (it == strips_.end()) return !any;
+        return !it->second->mute.load(std::memory_order_relaxed) && (!any || it->second->solo.load(std::memory_order_relaxed));
+    }
     void fire() {
         if (cursor_ >= ctl_.size()) return;
         int64_t p = ctl_[cursor_].pos;
@@ -952,6 +1431,33 @@ private:
         firedPos_ = p;
         firedLap_ = lap_;
         for (auto& c : due) {
+            if (c.kind == Ctl::ClipStart || c.kind == Ctl::ClipEnd) {        // a patch clip starts (loadbang) or stops
+                if (c.slot >= 0 && c.slot < (int)slots_.size()) {
+                    Patch* sp = slots_[(size_t)c.slot]->p.get();
+                    if (c.kind == Ctl::ClipStart) sp->loadbangAll();
+                    else sp->forEachBox([this](Box* b) { patch->cancel(b); });
+                }
+                continue;
+            }
+            if (c.kind == Ctl::Note) {                   // its track's strip says whether it sounds; its instrument plays it
+                if (!sounds(c.track)) continue;
+                Patch* inst = slotPatch("instrument:" + c.track);
+                Message msg = c.msg;
+                auto it = strips_.find(c.track);
+                if (it != strips_.end() && msg.size() > 1) {
+                    float g = it->second->gain.load(std::memory_order_relaxed);
+                    msg[1] = Atom((float)std::clamp((int)std::lround(msg[1].f * g), 1, 127));
+                }
+                if (inst) {
+                    Message nm{Atom("note")};
+                    nm.insert(nm.end(), msg.begin(), msg.begin() + std::min<size_t>(3, msg.size()));
+                    sendToPatchInlet(*inst, 0, nm);
+                } else {
+                    outlet(c.outlet, msg);
+                }
+                if (score_ != keep || score_->version() != version || !t_->playing()) { firing_ = false; return; }
+                continue;
+            }
             if (c.send) patch->sendTo(c.msg[0].str(), Message(c.msg.begin() + 1, c.msg.end()));   // the lanes' receives
             outlet(c.outlet, c.msg);
             if (score_ != keep || score_->version() != version || !t_->playing()) { firing_ = false; return; }   // rebuild() or the transport took over
@@ -961,6 +1467,300 @@ private:
     }
 };
 
+// ---- the audio thread
+// where the transport is in a block: runs of positions going on by one a sample
+struct Run {
+    int i = 0, len = 0;
+    int64_t pos = 0;
+};
+// a block as the channels share it
+struct BlockCtx {
+    ScoreBox* box;
+    const ScorePlan* plan;
+    Run runs[dsp::kBlock];
+    int nruns = 0, n = 0;
+    int64_t pos0 = 0;                    // where the block starts (or the transport stands)
+    bool anySolo = false;
+    const float* in = nullptr;           // the device's input in this block (interleaved inCh), or none
+    int inCh = 0;
+};
+
+// a file read from disk, sample by sample: the chunk holding each frame (a miss: false, the voice is silent then)
+struct StreamSource {
+    mt::DiskStream* s;
+    mt::DiskStream::View v[2];
+    int nv = 0;
+    bool failed = false;
+    explicit StreamSource(mt::DiskStream* st) : s(st) {}
+    ~StreamSource() {
+        for (int k = 0; k < nv; ++k) mt::DiskStream::release(v[k]);
+    }
+    const float* frame(int64_t i) {
+        if (i < 0 || i >= s->frames()) return nullptr;
+        for (int k = 0; k < nv; ++k)
+            if (i >= v[k].lo && i <= v[k].hi) return v[k].data + (i - v[k].lo) * s->channels();
+        if (nv == 2) {
+            mt::DiskStream::release(v[0]);
+            v[0] = v[1];
+            nv = 1;
+        }
+        if (!s->view(i, v[nv])) {
+            failed = true;
+            return nullptr;
+        }
+        ++nv;
+        return v[nv - 1].data + (i - v[nv - 1].lo) * s->channels();
+    }
+};
+
+inline float shapeOf(uint8_t shape, float x) {
+    switch (shape) {
+    case 1: return std::sin(x * 1.5707963f);
+    case 2: return x * x;
+    case 3: return std::sqrt(x);
+    default: return x;
+    }
+}
+
+// a voice's samples in [pos, pos + len) added into buf (channel-major, kBlock a channel) from offset i. Src: interp(sp,
+// c) as SampleBuffer's, frames, channels, sr; false from ok() stops it (a stream's miss)
+template <class Src>
+void renderVoice(const ScorePlan::Voice& v, Src& src, const float* g, int nOut, float* buf, int i, int64_t pos, int len, double sr) {
+    double rate = src.sr() / sr * v.speed;                // source frames a sample
+    double first = std::floor(v.from * src.sr());
+    double last = v.to >= 0 ? std::min((double)src.frames(), std::floor(v.to * src.sr())) : (double)src.frames();
+    double avail = (last - first) / rate;                 // samples of the source after its start
+    int64_t fade = v.fadeOut;                             // a clip shorter than its source: faded out at least a little
+    const uint8_t outShape = v.outShape;
+    if (avail > (double)v.len) fade = std::max(fade, std::max<int64_t>(1, std::min<int64_t>((int64_t)std::floor(0.02 * sr), v.len / 4)));
+    int64_t p1 = pos + len;
+    int64_t k0 = std::max<int64_t>(0, pos - v.start), k1 = std::min<int64_t>(v.len, p1 - v.start);
+    bool direct = src.channels() == nOut;
+    for (int64_t k = k0; k < k1; ++k) {
+        if ((double)k >= avail) break;
+        double sp = first + (double)k * rate;
+        if (sp >= last) break;
+        float amp = v.gain;
+        if (fade && k >= v.len - fade) amp *= shapeOf(outShape, (float)(v.len - 1 - k) / (float)fade);
+        if (k < v.fadeIn) amp *= shapeOf(v.inShape, (float)k / (float)v.fadeIn);
+        int o = i + (int)(v.start + k - pos);
+        if (direct) {                                    // balanced by its azimuth (score.h's balanceGains)
+            for (int c = 0; c < nOut; ++c) buf[c * dsp::kBlock + o] += amp * g[nOut + c] * src.interp(sp, c);
+        } else {
+            float x = 0.f;
+            for (int c = 0; c < src.channels(); ++c) x += src.interp(sp, c);
+            x *= amp / (float)src.channels();
+            for (int c = 0; c < nOut; ++c) buf[c * dsp::kBlock + o] += g[c] * x;
+        }
+        if (!src.ok()) return;
+    }
+}
+struct MemSrc {
+    const SampleBuffer* b;
+    double sr() const { return b->sr; }
+    double frames() const { return (double)b->frames; }
+    int channels() const { return b->channels; }
+    float interp(double sp, int c) const { return b->interp(sp, c); }
+    bool ok() const { return true; }
+};
+struct DiskSrc {
+    StreamSource s;
+    double sr() const { return s.s->sr(); }
+    double frames() const { return (double)s.s->frames(); }
+    int channels() const { return s.s->channels(); }
+    float interp(double pos, int c) {                     // as SampleBuffer::interp, from the chunks
+        if (!(pos >= -1.0 && pos < frames())) return 0.f;
+        long i = (long)std::floor(pos);
+        float f = (float)(pos - i);
+        const float* fa = s.frame(i);
+        const float* fb = s.frame(i + 1);
+        int ch = channels();
+        float a = fa ? fa[c % ch] : 0.f, b = fb ? fb[c % ch] : 0.f;
+        return a + f * (b - a);
+    }
+    bool ok() const { return !s.failed; }
+};
+
+// one channel's block: its voices, patch clips and instrument, its input when monitored, what it takes from others,
+// its insert, then its strip (fader, pan, mute and solo, ramped over the block) and its meters
+void ScoreBox::processChannel(const BlockCtx& bc, int index) {
+    const ScorePlan& plan = *bc.plan;
+    const ScorePlan::Channel& ch = plan.channels[(size_t)index];
+    const int n = bc.n, nOut = plan.nOut;
+    float* buf = ch.buf;
+    for (int c = 0; c < nOut; ++c) dsp::fill(buf + c * dsp::kBlock, 0.f, n);
+    for (int r = 0; r < bc.nruns; ++r) {
+        const Run& run = bc.runs[r];
+        int64_t p1 = run.pos + run.len;
+        auto lo = std::lower_bound(ch.voices.begin(), ch.voices.end(), run.pos - ch.maxLen,
+                                   [](const ScorePlan::Voice& v, int64_t q) { return v.start < q; });
+        for (auto it = lo; it != ch.voices.end() && it->start < p1; ++it) {
+            const ScorePlan::Voice& v = *it;
+            if (v.start + v.len <= run.pos) continue;
+            const float* g = &plan.gains[(size_t)v.gains];
+            if (v.stream >= 0) {
+                mt::DiskStream* s = plan.streams[(size_t)v.stream].get();
+                double rate = s->sr() / plan.sr * v.speed;
+                s->want((int64_t)std::floor(v.from * s->sr() + (double)std::max<int64_t>(0, run.pos - v.start) * rate));
+                DiskSrc src{StreamSource(s)};
+                renderVoice(v, src, g, nOut, buf, run.i, run.pos, run.len, plan.sr);
+                continue;
+            }
+            const SampleBuffer* sb = v.file >= 0 ? plan.files[(size_t)v.file].get() : plan.bufs[(size_t)v.buf]->get();
+            if (!sb || sb->frames <= 0) continue;
+            MemSrc src{sb};
+            renderVoice(v, src, g, nOut, buf, run.i, run.pos, run.len, plan.sr);
+        }
+    }
+    // the patches it runs add into it
+    InnerIO io;
+    for (int c = 0; c < nOut; ++c) io.out[c] = buf + c * dsp::kBlock;
+    io.nout = nOut;
+    const InnerIO* prev = tlInner;
+    for (const auto& cl : ch.clips) {                     // a patch clip: heard from its start to its end, to the sample
+        bool inside = false;
+        for (int r = 0; r < bc.nruns && !inside; ++r) inside = bc.runs[r].pos < cl.end && bc.runs[r].pos + bc.runs[r].len > cl.start;
+        if (!inside) continue;
+        InnerIO cio;
+        for (int c = 0; c < nOut; ++c) {
+            cio.out[c] = ch.tmp + c * dsp::kBlock;
+            dsp::fill(ch.tmp + c * dsp::kBlock, 0.f, n);
+        }
+        cio.nout = nOut;
+        tlInner = &cio;
+        runInner(cl.slot, n);
+        for (int r = 0; r < bc.nruns; ++r) {
+            const Run& run = bc.runs[r];
+            int a = (int)std::clamp<int64_t>(cl.start - run.pos, 0, run.len), b = (int)std::clamp<int64_t>(cl.end - run.pos, 0, run.len);
+            for (int c = 0; c < nOut; ++c)
+                for (int i = run.i + a; i < run.i + b; ++i) buf[c * dsp::kBlock + i] += ch.tmp[c * dsp::kBlock + i];
+        }
+    }
+    if (ch.instrument >= 0) {
+        tlInner = &io;
+        runInner(ch.instrument, n);
+    }
+    tlInner = prev;
+    // its input, heard while it is armed and monitored
+    mt::StripParams& st = *ch.strip;
+    if (ch.armed && ch.input >= 0 && bc.in && st.monitor.load(std::memory_order_relaxed)) {
+        if (ch.inputCh == 2 && nOut >= 2) {
+            for (int c = 0; c < 2; ++c)
+                if (ch.input + c < bc.inCh)
+                    for (int i = 0; i < n; ++i) buf[c * dsp::kBlock + i] += bc.in[(size_t)i * bc.inCh + ch.input + c];
+        } else if (ch.input < bc.inCh) {
+            double g[mt::kMaxChannels];
+            sc::panGains(0, nOut, g);
+            for (int c = 0; c < nOut; ++c)
+                for (int i = 0; i < n; ++i) buf[c * dsp::kBlock + i] += (float)g[c] * bc.in[(size_t)i * bc.inCh + ch.input];
+        }
+    }
+    // what it takes from others: their output, or one of their sends (ramped)
+    for (const auto& src : ch.inputs) {
+        const ScorePlan::Channel& from = plan.channels[(size_t)src.ch];
+        if (src.send < 0) {
+            for (int c = 0; c < nOut; ++c)
+                for (int i = 0; i < n; ++i) buf[c * dsp::kBlock + i] += from.buf[c * dsp::kBlock + i];
+            continue;
+        }
+        mt::StripParams& fs = *from.strip;
+        float g0 = fs.sendApplied[src.send], g1 = fs.sendTarget[src.send];
+        for (int c = 0; c < nOut; ++c)
+            for (int i = 0; i < n; ++i) buf[c * dsp::kBlock + i] += from.buf[c * dsp::kBlock + i] * (g0 + (g1 - g0) * (float)(i + 1) / (float)n);
+        fs.sendApplied[src.send] = g1;
+    }
+    // its insert: the channel through a patch
+    if (ch.insert >= 0) runInsert(ch.insert, buf, ch.tmp, nOut, n);
+    // its strip
+    float target = st.gain.load(std::memory_order_relaxed), az = st.az.load(std::memory_order_relaxed);
+    bool mute = st.mute.load(std::memory_order_relaxed);
+    float sendTarget[mt::kMaxSends];
+    for (int k = 0; k < mt::kMaxSends; ++k) sendTarget[k] = st.send[k].load(std::memory_order_relaxed);
+    for (const auto& cv : ch.curves) {
+        float v = cv.at(bc.pos0);
+        switch (cv.what) {
+        case ScorePlan::Curve::Gain: target = (float)mt::dbToGain(v); break;
+        case ScorePlan::Curve::Pan: az = v; break;
+        case ScorePlan::Curve::Mute: mute = v >= 0.5f; break;
+        case ScorePlan::Curve::Send: sendTarget[cv.send] = (float)mt::dbToGain(v); break;
+        }
+    }
+    bool audible = !mute && (!bc.anySolo || st.solo.load(std::memory_order_relaxed) || ch.bus || !ch.inputs.empty());
+    applyStrip(st, buf, nOut, n, audible ? target : 0.f, ch.balance ? az : 0.f, ch.balance);
+    for (int k = 0; k < mt::kMaxSends; ++k) {
+        st.sendTarget[k] = sendTarget[k];
+        if (st.fresh) st.sendApplied[k] = sendTarget[k];
+    }
+    st.fresh = false;
+    meter(st, buf, nOut, n, plan.sr);
+}
+
+void ScoreBox::runInsert(int slot, float* buf, float* tmp, int nOut, int n) {
+    InnerIO io;
+    for (int c = 0; c < nOut; ++c) {
+        io.in[c] = buf + c * dsp::kBlock;
+        io.out[c] = tmp + c * dsp::kBlock;
+        dsp::fill(tmp + c * dsp::kBlock, 0.f, n);
+    }
+    io.nin = io.nout = nOut;
+    const InnerIO* prev = tlInner;
+    tlInner = &io;
+    runInner(slot, n);
+    tlInner = prev;
+    for (int c = 0; c < nOut; ++c) std::copy_n(tmp + c * dsp::kBlock, n, buf + c * dsp::kBlock);
+}
+
+// the fader (and, on two channels, the pan as a constant-power balance) ramped from what was applied over the block
+void ScoreBox::applyStrip(mt::StripParams& st, float* buf, int nOut, int n, float gain, float az, bool balance) {
+    float l1 = gain, r1 = gain;
+    if (balance && nOut == 2) {
+        double b[2];
+        sc::balanceGains(az, 2, b);
+        l1 = gain * (float)b[0];
+        r1 = gain * (float)b[1];
+    }
+    if (st.fresh) {
+        st.appliedL = l1;
+        st.appliedR = r1;
+        st.applied = gain;
+    }
+    float l0 = st.appliedL, r0 = st.appliedR;
+    for (int c = 0; c < nOut; ++c) {
+        float a = c == 1 ? r0 : l0, b = c == 1 ? r1 : l1;
+        float* x = buf + c * dsp::kBlock;
+        if (a == b) {
+            if (a != 1.f) for (int i = 0; i < n; ++i) x[i] *= a;
+        } else {
+            for (int i = 0; i < n; ++i) x[i] *= a + (b - a) * (float)(i + 1) / (float)n;
+        }
+    }
+    st.appliedL = l1;
+    st.appliedR = r1;
+    st.applied = gain;
+}
+
+void ScoreBox::meter(mt::StripParams& st, const float* buf, int nOut, int n, double sr) {
+    double a = std::exp(-(double)n / (0.3 * sr));
+    for (int m = 0; m < 2; ++m) {
+        const float* x = buf + std::min(m, nOut - 1) * dsp::kBlock;
+        float pk = 0.f;
+        double ss = 0;
+        for (int i = 0; i < n; ++i) {
+            pk = std::max(pk, std::fabs(x[i]));
+            ss += (double)x[i] * x[i];
+        }
+        if (pk > st.peak[m].load(std::memory_order_relaxed)) st.peak[m].store(pk, std::memory_order_relaxed);
+        st.rmsState[m] = a * st.rmsState[m] + (1 - a) * (ss / std::max(1, n));
+        st.rms[m].store((float)std::sqrt(st.rmsState[m]), std::memory_order_relaxed);
+    }
+    st.blocks.fetch_add(1, std::memory_order_relaxed);
+}
+
+void channelJob(void* ctx, int k) {
+    auto* bc = static_cast<BlockCtx*>(ctx);
+    bc->box->processChannel(*bc, k);
+}
+
 void ScoreBox::dsp(int n) {
     float* out[16];
     for (int c = 0; c < nOut_; ++c) {
@@ -968,59 +1768,80 @@ void ScoreBox::dsp(int n) {
         if (out[c]) dsp::fill(out[c], 0.f, n);
     }
     const ScorePlan* plan = plan_.get();
+    lastN_ = n;
+    if (!plan || n > dsp::kBlock || plan->nOut != nOut_) return;
     const TransportState* ts = t_ ? t_->state() : nullptr;
-    if (!plan || !ts || plan->voices.empty()) return;
-    const double sr = plan->sr;
+    BlockCtx bc;
+    bc.box = this;
+    bc.plan = plan;
+    bc.n = n;
+    // where the transport is, sample by sample (for the takes being recorded)
+    int64_t posAt[dsp::kBlock];
+    bool playAt[dsp::kBlock];
     const uint64_t t0 = patch->sampleTime();
-    int i = 0;
-    while (i < n) {
-        int64_t pos;
-        uint64_t t = t0 + (uint64_t)i;
-        if (!ts->at(t, pos)) {                                  // not playing here: until the next change
-            if (t < ts->since) { i += (int)std::min<int64_t>(n - i, (int64_t)(ts->since - t)); continue; }
-            break;
-        }
-        int len = (int)ts->run(t, pos, n - i);
-        int64_t p1 = pos + len;
-        // the voices sounding in [pos, p1): starting before p1, ending after pos
-        auto lo = std::lower_bound(plan->voices.begin(), plan->voices.end(), pos - plan->maxLen,
-                                   [](const ScorePlan::Voice& v, int64_t q) { return v.start < q; });
-        for (auto it = lo; it != plan->voices.end() && it->start < p1; ++it) {
-            const ScorePlan::Voice& v = *it;
-            if (v.start + v.len <= pos) continue;
-            const SampleBuffer* src = v.file >= 0 ? plan->files[(size_t)v.file].get() : plan->bufs[(size_t)v.buf]->get();
-            if (!src || src->frames <= 0) continue;
-            double rate = src->sr / sr * v.speed;                // source frames a sample
-            double first = std::floor(v.from * src->sr);
-            double last = v.to >= 0 ? std::min((double)src->frames, std::floor(v.to * src->sr)) : (double)src->frames;
-            double avail = (last - first) / rate;                // samples of the source after its start
-            int64_t fade = v.fadeOut;
-            if (avail > (double)v.len) fade = std::max(fade, std::max<int64_t>(1, std::min<int64_t>((int64_t)std::floor(0.02 * sr), v.len / 4)));
-            int64_t k0 = std::max<int64_t>(0, pos - v.start), k1 = std::min<int64_t>(v.len, p1 - v.start);
-            const float* g = &plan->gains[(size_t)v.gains];
-            bool direct = src->channels == nOut_;
-            for (int64_t k = k0; k < k1; ++k) {
-                if ((double)k >= avail) break;
-                double sp = first + (double)k * rate;
-                if (sp >= last) break;
-                float amp = v.gain;
-                if (fade && k >= v.len - fade) amp *= (float)(v.len - 1 - k) / (float)fade;
-                if (k < v.fadeIn) amp *= (float)k / (float)v.fadeIn;
-                int o = i + (int)(v.start + k - pos);
-                if (direct) {                                    // balanced by its azimuth (score.h's balanceGains)
-                    for (int c = 0; c < nOut_; ++c) if (out[c]) out[c][o] += amp * g[nOut_ + c] * src->interp(sp, c);
-                } else {
-                    float x = 0.f;
-                    for (int c = 0; c < src->channels; ++c) x += src->interp(sp, c);
-                    x *= amp / (float)src->channels;
-                    for (int c = 0; c < nOut_; ++c) if (out[c]) out[c][o] += g[c] * x;
-                }
+    int64_t stood = 0;
+    if (ts) {
+        int i = 0;
+        while (i < n) {
+            int64_t pos;
+            uint64_t t = t0 + (uint64_t)i;
+            if (!ts->at(t, pos)) {                              // not playing here
+                stood = pos;
+                posAt[i] = pos;
+                playAt[i] = false;
+                ++i;
+                continue;
             }
+            int len = (int)std::min<int64_t>(n - i, ts->run(t, pos, n - i));
+            bc.runs[bc.nruns++] = Run{i, len, pos};
+            for (int k = 0; k < len; ++k) {
+                posAt[i + k] = pos + k;
+                playAt[i + k] = true;
+            }
+            i += len;
         }
-        i += len;
+    } else {
+        for (int i = 0; i < n; ++i) { posAt[i] = 0; playAt[i] = false; }
     }
+    bc.pos0 = bc.nruns ? bc.runs[0].pos : stood;
+    Patch* root = patch->root();
+    if (root->ioIn && root->ioInCh > 0) {
+        bc.in = root->ioIn + (size_t)root->ioOffset * (size_t)root->ioInCh;
+        bc.inCh = root->ioInCh;
+    }
+    if (mt::Recording* rec = recording_.load(std::memory_order_acquire)) rec->push(bc.in, bc.inCh, n, posAt, playAt);
+    for (const auto& ch : plan->channels) bc.anySolo = bc.anySolo || ch.strip->solo.load(std::memory_order_relaxed);
+    // the channels fed by none, on several cores when there are enough of them; then the others, in order
+    int want = mt::TrackPool::threads.load(std::memory_order_relaxed);
+    bool parallel = bc.nruns > 0 && plan->nFree >= 2 && want != 1 && (want >= 2 || plan->nFree >= mt::TrackPool::minTracks.load(std::memory_order_relaxed));
+    if (parallel) mt::TrackPool::get().run(plan->nFree, channelJob, &bc);
+    else for (int k = 0; k < plan->nFree; ++k) processChannel(bc, k);
+    for (int k = plan->nFree; k < (int)plan->channels.size(); ++k) processChannel(bc, k);
+    // the master: what goes to it, in the channels' order, through its insert and strip
+    float* mb = plan->masterBuf;
+    for (int c = 0; c < nOut_; ++c) dsp::fill(mb + c * dsp::kBlock, 0.f, n);
+    for (const auto& ch : plan->channels)
+        if (ch.toMaster)
+            for (int c = 0; c < nOut_; ++c)
+                for (int i = 0; i < n; ++i) mb[c * dsp::kBlock + i] += ch.buf[c * dsp::kBlock + i];
+    if (plan->masterInsert >= 0) runInsert(plan->masterInsert, mb, plan->masterTmp, nOut_, n);
+    mt::StripParams& ms = *plan->master;
+    applyStrip(ms, mb, nOut_, n, ms.mute.load(std::memory_order_relaxed) ? 0.f : ms.gain.load(std::memory_order_relaxed), 0.f, false);
+    ms.fresh = false;
+    meter(ms, mb, nOut_, n, plan->sr);
+    // the count-in's clicks, before a recording's start
+    if (mt::Recording* rec = recording_.load(std::memory_order_acquire); rec && rec->clickBeat > 0)
+        for (int i = 0; i < n; ++i) {
+            if (!playAt[i] || posAt[i] < rec->clickFrom || posAt[i] >= rec->from()) continue;
+            int64_t k = (posAt[i] - rec->clickFrom) % rec->clickBeat;
+            if (k >= (int64_t)(0.03 * plan->sr)) continue;
+            bool bar = (posAt[i] - rec->clickFrom) / rec->clickBeat % std::max(1, rec->clickBar) == 0;
+            float x = 0.3f * std::exp(-(float)k / (float)(0.006 * plan->sr)) * std::sin(6.2831853f * (bar ? 1600.f : 1000.f) * (float)k / (float)plan->sr);
+            for (int c = 0; c < nOut_; ++c) mb[c * dsp::kBlock + i] += x;
+        }
+    for (int c = 0; c < nOut_; ++c)
+        if (out[c]) std::copy_n(mb + c * dsp::kBlock, n, out[c]);
 }
-
 }  // namespace
 
 // ---------------------------------------------------------------- what editors use (transport.h)
@@ -1054,6 +1875,46 @@ RollCore* inlineRollOf(Box* b) {
     auto* s = dynamic_cast<ScoreBox*>(b);
     return s ? &s->roll() : nullptr;
 }
+
+namespace mt {
+std::function<void()> inputNeedChanged;
+StripParams* stripOf(Box* b, const std::string& row) {
+    auto* s = dynamic_cast<ScoreBox*>(b);
+    return s ? s->strip(row) : nullptr;
+}
+bool startRecording(Box* b, std::unique_ptr<Recording> r, std::string& err) {
+    auto* s = dynamic_cast<ScoreBox*>(b);
+    if (!s) { err = "no score box"; return false; }
+    return s->startRecording(std::move(r), err);
+}
+std::unique_ptr<Recording> stopRecording(Box* b) {
+    auto* s = dynamic_cast<ScoreBox*>(b);
+    return s ? s->stopRecording() : nullptr;
+}
+Recording* recordingOf(Box* b) {
+    auto* s = dynamic_cast<ScoreBox*>(b);
+    return s ? s->recording() : nullptr;
+}
+bool stemsOf(Box* b, StemTap& out) {
+    auto* s = dynamic_cast<ScoreBox*>(b);
+    return s && s->stems(out);
+}
+void setStemTap(Box* b, bool on) {
+    if (auto* s = dynamic_cast<ScoreBox*>(b)) s->setStemTap(on);
+}
+PlanInfo planInfo(Box* b) {
+    auto* s = dynamic_cast<ScoreBox*>(b);
+    return s ? s->info() : PlanInfo{};
+}
+Patch* trackPatch(Box* b, const std::string& row, const std::string& role) {
+    auto* s = dynamic_cast<ScoreBox*>(b);
+    return s ? s->slotPatch(role + ":" + row) : nullptr;
+}
+Patch* clipPatch(Box* b, uint64_t clipId) {
+    auto* s = dynamic_cast<ScoreBox*>(b);
+    return s ? s->clipSlot(clipId) : nullptr;
+}
+}  // namespace mt
 
 void registerScoreObjects(ClassTable& t) {
     t.insert(t.end(), {

@@ -83,6 +83,7 @@ public:
         bool replace(const sc::Event& now);           // the event of now.id gets now's fields
         void setRows(std::vector<sc::Row> rows);
         void setHeader(const std::string& name, double bpm, int num, int den);
+        void setExtra(sc::Fields extra);             // the score's own data (the master strip, recording options)
         bool ok() const { return error_.empty(); }
         const std::string& error() const { return error_; }
         bool empty() const { return ops_.empty(); }
@@ -95,12 +96,13 @@ public:
         // one change and what takes it back: score.h's results kept (the event object inserted or removed and its
         // index, the old and new fields of a replaced one), or the rows or header before and after
         struct Op {
-            enum Kind : uint8_t { Insert, Remove, Replace, Rows, Header } kind = Insert;
+            enum Kind : uint8_t { Insert, Remove, Replace, Rows, Header, Extra } kind = Insert;
             uint64_t id = 0;
             size_t index = 0;
             std::shared_ptr<sc::Event> ev;              // Insert, Remove
             std::shared_ptr<sc::Event> before, after;   // Replace
             std::vector<sc::Row> rowsBefore, rowsAfter;
+            sc::Fields extraBefore, extraAfter;
             std::string nameBefore, nameAfter;
             double bpmBefore = 60, bpmAfter = 60;
             int numBefore = 4, numAfter = 4, denBefore = 4, denAfter = 4;
@@ -223,9 +225,10 @@ public:
     ScoreRender& operator=(const ScoreRender&) = delete;
     ~ScoreRender();                            // a render going on is cancelled (its done() dropped)
     // folder: where its relative sources are; done(ok, message) on the GUI thread once the file is written.
-    // false: not started (err says why)
+    // false: not started (err says why). stems: each track's output (after its strip, before the master) written too,
+    // next to wav (multitrack_ops.h's stemPath)
     bool start(const sc::Score& s, const std::string& folder, const std::string& wav, int channels, double sr,
-               std::function<void(bool, const std::string&)> done, std::string& err);
+               std::function<void(bool, const std::string&)> done, std::string& err, bool stems = false);
     void cancel();
     bool running() const;
     std::function<void(float)> onProgress;     // 0..1, GUI thread

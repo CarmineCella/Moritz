@@ -3,6 +3,7 @@
 // it is bound to, saving, playing it, rendering it.
 
 #include "score_doc.h"
+#include "multitrack_ops.h"
 #include "transport.h"
 
 #include "music/score_text.h"
@@ -55,7 +56,7 @@ size_t rowsBytes(const std::vector<sc::Row>& rows) {
 
 size_t ScoreDoc::Edit::Op::bytes() const {
     return sizeof(Op) + eventBytes(ev.get()) + eventBytes(before.get()) + eventBytes(after.get()) + rowsBytes(rowsBefore) +
-           rowsBytes(rowsAfter) + nameBefore.capacity() + nameAfter.capacity();
+           rowsBytes(rowsAfter) + nameBefore.capacity() + nameAfter.capacity() + 64 * (extraBefore.size() + extraAfter.size());
 }
 
 // ---------------------------------------------------------------- opening
@@ -329,6 +330,16 @@ void ScoreDoc::Edit::setHeader(const std::string& name, double bpm, int num, int
     ops_.push_back(std::move(op));
 }
 
+void ScoreDoc::Edit::setExtra(sc::Fields extra) {
+    if (!doc_ || !ok()) return;
+    Op op;
+    op.kind = Op::Extra;
+    op.extraBefore = doc_->score_->extra;
+    op.extraAfter = std::move(extra);
+    doc_->apply(op, true);
+    ops_.push_back(std::move(op));
+}
+
 bool ScoreDoc::Edit::commit() {
     if (!doc_) {
         return false;
@@ -390,6 +401,10 @@ void ScoreDoc::apply(Edit::Op& op, bool forward) {
         break;
     case Op::Rows:
         s.rows = forward ? op.rowsAfter : op.rowsBefore;
+        s.touch();
+        break;
+    case Op::Extra:
+        s.extra = forward ? op.extraAfter : op.extraBefore;
         s.touch();
         break;
     case Op::Header:
@@ -726,7 +741,7 @@ void ScoreRender::cancel() {
 }
 
 bool ScoreRender::start(const sc::Score& s, const std::string& folder, const std::string& wav, int channels, double sr,
-                        std::function<void(bool, const std::string&)> done, std::string& err) {
+                        std::function<void(bool, const std::string&)> done, std::string& err, bool stems) {
     cancel();
     channels = std::clamp(channels, 1, 16);
     double seconds = s.duration();
@@ -754,6 +769,7 @@ bool ScoreRender::start(const sc::Score& s, const std::string& folder, const std
     if (!p->load(text, lerr)) { err = lerr; return false; }
     Box* b = p->find("s");
     if (!b || !replaceScoreOfBox(b, s.clone())) { err = "no score box"; return false; }   // its plan made here
+    if (stems) mt::setStemTap(b, true);
     transportOf(p.get())->play(p.get());
     patch_ = std::move(p);
     job_ = std::make_unique<Job>();
@@ -762,7 +778,7 @@ bool ScoreRender::start(const sc::Score& s, const std::string& folder, const std
     long total = (long)std::ceil((seconds + 0.05) * sr);
     auto result = std::make_shared<std::string>();
     job_->start(
-        [ip, frame, total, channels, sr, wav, result](Job& job) {
+        [ip, b, stems, frame, total, channels, sr, wav, result](Job& job) {
             dsp::FlushDenormalsScope ftz;
             struct Owner {
                 Patch* p;
@@ -776,6 +792,9 @@ bool ScoreRender::start(const sc::Score& s, const std::string& folder, const std
             out.frames = total;
             out.data.assign((size_t)total * channels, 0.f);
             std::vector<float> buf((size_t)blk * channels);
+            std::vector<std::string> stemNames;
+            std::vector<SampleBuffer> stemOut;             // each track's output, as the master's
+            mt::StemTap tap;
             for (long f = 0; f < total; f += blk) {
                 if (job.cancelled()) return;
                 frame->store(f);
@@ -784,10 +803,29 @@ bool ScoreRender::start(const sc::Score& s, const std::string& folder, const std
                 ip->runDue((double)(f + n) / sr);
                 ip->process(nullptr, 0, buf.data(), channels, n);
                 std::copy(buf.begin(), buf.begin() + (long)n * channels, out.data.begin() + f * channels);
+                if (stems && mt::stemsOf(b, tap) && tap.channels == channels) {
+                    if (stemOut.size() != tap.names.size()) {       // the tracks (the plan made before the first block)
+                        stemNames = tap.names;
+                        stemOut.assign(tap.names.size(), SampleBuffer{});
+                        for (auto& so : stemOut) {
+                            so.channels = channels;
+                            so.sr = sr;
+                            so.frames = total;
+                            so.data.assign((size_t)total * channels, 0.f);
+                        }
+                    }
+                    for (size_t k = 0; k < stemOut.size(); ++k)
+                        for (int c = 0; c < channels; ++c) {
+                            const float* x = tap.data[k * (size_t)channels + (size_t)c];
+                            for (int i = 0; i < n; ++i) stemOut[k].data[(size_t)(f + i) * channels + c] = x[i];
+                        }
+                }
                 if ((f / blk) % 256 == 0) job.progress((float)f / total);
             }
             std::string e;
             if (!writeWavFile(wav, out, e, 24)) *result = e.empty() ? "cannot write " + wav : e;
+            for (size_t k = 0; k < stemOut.size() && result->empty(); ++k)
+                if (!writeWavFile(mt::stemPath(wav, stemNames[k]), stemOut[k], e, 24)) *result = e.empty() ? "cannot write a stem" : e;
         },
         [this, result, prints, wav, done] {
             patch_.reset();

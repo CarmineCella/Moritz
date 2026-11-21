@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <map>
 #include <set>
 
 namespace moritz {
@@ -322,6 +323,34 @@ bool movePoint(ScoreDoc& d, uint64_t id, double t, double v) {
 
 bool isClip(const sc::Event& e) { return e.kind != sc::Kind::Message; }
 
+void crossfadeOverlaps(ScoreDoc::Edit& e, const sc::Score& s) {
+    if (sc::numField(s.extra, "auto-crossfade", 0) == 0) return;
+    std::map<std::string, std::vector<const sc::Event*>> byTrack;
+    for (auto& ep : s.events())
+        if (ep->kind == sc::Kind::Sound) byTrack[ep->row].push_back(ep.get());
+    for (auto& kv : byTrack) {
+        auto& v = kv.second;
+        std::stable_sort(v.begin(), v.end(), [](const sc::Event* a, const sc::Event* b) { return a->at < b->at; });
+        for (size_t k = 0; k + 1 < v.size(); ++k) {
+            const sc::Event *a = v[k], *b = v[k + 1];
+            double overlap = std::min(a->end(), b->end()) - b->at;
+            if (!(overlap > 1e-9) || !(b->at > a->at)) continue;
+            if (sc::numField(a->extra, "fade-out", 0) < overlap - 1e-9) {
+                sc::Event na = *a;
+                sc::setField(na.extra, "fade-out", sc::Datum::number(overlap));
+                sc::setField(na.extra, "fade-out-shape", sc::Datum::symbol("equal"));
+                e.replace(na);
+            }
+            if (sc::numField(b->extra, "fade-in", 0) < overlap - 1e-9) {
+                sc::Event nb = *b;
+                sc::setField(nb.extra, "fade-in", sc::Datum::number(overlap));
+                sc::setField(nb.extra, "fade-in-shape", sc::Datum::symbol("equal"));
+                e.replace(nb);
+            }
+        }
+    }
+}
+
 bool moveClips(ScoreDoc& d, const std::vector<uint64_t>& ids, double dt, int dTrack) {
     const sc::Score& s = d.score();
     auto all = tracks(s);
@@ -343,6 +372,7 @@ bool moveClips(ScoreDoc& d, const std::vector<uint64_t>& ids, double dt, int dTr
         }
         e.replace(now);
     }
+    crossfadeOverlaps(e, s);
     return e.commit();
 }
 
@@ -411,6 +441,7 @@ std::vector<uint64_t> split(ScoreDoc& d, const std::vector<uint64_t>& ids, doubl
 bool change(ScoreDoc& d, const sc::Event& now, const std::string& what) {
     auto e = d.edit(what);
     e.replace(now);
+    if (what != "Fades") crossfadeOverlaps(e, d.score());    // fades set by hand stay as they are set
     return e.commit();
 }
 
@@ -473,6 +504,7 @@ std::vector<uint64_t> paste(ScoreDoc& d, const Clips& c, double at, const std::s
         if (!track.empty() && rows.size() == 1) n->row = track;
         if (uint64_t id = e.insert(n)) made.push_back(id);
     }
+    crossfadeOverlaps(e, d.score());
     if (!e.commit()) return {};
     d.select(made);
     return made;
@@ -526,6 +558,7 @@ uint64_t addSound(ScoreDoc& d, const std::string& source, bool buffer, const std
     e->row = track;
     auto ed = d.edit("Add Sound");
     uint64_t id = ed.insert(e);
+    crossfadeOverlaps(ed, d.score());
     if (!ed.commit()) return 0;
     d.select({id});
     return id;

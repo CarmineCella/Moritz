@@ -60,6 +60,10 @@ double pointValue(const sc::Event& e);           // its first number (0 when non
 
 // ---- clips
 bool isClip(const sc::Event& e);                 // shown on the track itself (not a lane point)
+// sound clips overlapping on a track crossfade (equal power) over their overlap: their fades written (made as long as
+// the overlap when shorter) into an edit going on, when the score says so (extra auto-crossfade: the multitrack
+// sessions' default); moving, trimming, pasting and adding clips do it
+void crossfadeOverlaps(ScoreDoc::Edit& e, const sc::Score& s);
 // moved by dt seconds (none before 0) and dTrack tracks (clamped to the tracks there are)
 bool moveClips(ScoreDoc& d, const std::vector<uint64_t>& ids, double dt, int dTrack = 0);
 bool trimStart(ScoreDoc& d, uint64_t id, double at);    // the start to at (a sound: from follows)

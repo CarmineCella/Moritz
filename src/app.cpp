@@ -2,6 +2,7 @@
 // app.cpp — the application: documents, help, code and text windows, the audio switch
 
 #include "gui.h"
+#include "multitrack.h"
 #include "roll.h"
 #include "ui_util.h"
 #include "settings.h"
@@ -100,6 +101,7 @@ void App::init() {
         return std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
     };
     host.onSchedule = [this] { armTimer(); };
+    mt::inputNeedChanged = [this] { audio.updateInputNeed(); };   // a score's track armed or disarmed
     host.onStructure = [this] {
         int before = audio.channels();
         audio.updateInputNeed();
