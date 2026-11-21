@@ -377,3 +377,35 @@ TEST(orchidea_solution_as_a_score) {
     CHECK(energy > 1);
     CHECK(!o.r.printedSomething("score:"));
 }
+
+// a target cut into segments is searched with Musil's dynamic settings, unless a message chose them; a static target
+// keeps Orchidea's
+TEST(orchidea_dynamic_defaults) {
+    bool sync = jobsSynchronous;
+    jobsSynchronous = true;
+    {
+        OrchRig o;
+        o.send({Atom("partials"), Atom(0.f)});
+        o.send({Atom("population"), Atom(30.f)});
+        o.send({Atom("epochs"), Atom(20.f)});
+        o.send({Atom("run"), Atom("tgt")});
+        o.send({Atom("report")});
+        CHECK(o.r.printedSomething("segmentation none, population 30, epochs 20, sparsity 0.001"));
+        CHECK(o.r.printedSomething("connection closest"));
+    }
+    {
+        OrchRig o;
+        o.send({Atom("segmentation"), Atom("flux")});
+        o.send({Atom("threshold"), Atom(0.5f)});
+        o.send({Atom("population"), Atom(30.f)});
+        o.send({Atom("epochs"), Atom(20.f)});
+        o.send({Atom("connection"), Atom("best")});
+        o.send({Atom("run"), Atom("tgt")});
+        o.send({Atom("report")});
+        // population, epochs and connection as the messages set them; the rest Musil's dynamic settings (MicroSOL:
+        // no pitch filter)
+        CHECK(o.r.printedSomething("segmentation flux, population 30, epochs 20, sparsity 0.01, partials 0, solutions 5, sustain 1, "
+                                   "hold 4000 ms, dovetail 0.75, hysteresis 0, connection best"));
+    }
+    jobsSynchronous = sync;
+}

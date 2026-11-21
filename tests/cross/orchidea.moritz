@@ -7,7 +7,7 @@
   (obj b2 buffer~ xmix (pos 260 20))
   (obj or orchestra xband microsol/microsol.spectrum.db (pos 20 50))
   (obj lb loadbang (pos 20 80))
-  (obj m message "seed 3, population 16, epochs 4, partials 0.05, onsets 0 800, run xtgt xmix" (pos 20 110))
+  (obj m message "seed 3, population 16, epochs 4, partials 0.05, sparsity 0.001, solutions 10, sustain 1, hold, dovetail 0, connection closest, onsets 0 800, run xtgt xmix" (pos 20 110))
   (obj oi orchidea xband (pos 20 140))
   (obj cm message compare (pos 20 175))
   (obj c code 2 (pos 20 210)

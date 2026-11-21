@@ -59,6 +59,14 @@ asymmetric distance (a partial the target lacks costs more than one it has
 and the solution lacks). The search runs as a background job, on Musil's
 engine: Musil's orchestrate-mimetic with the same target, database,
 orchestra and seed finds the same notes, on every system.
+A target cut into segments (segmentation flux or frames, or onsets) is searched
+with Musil's dynamic settings (musil/examples/dynamic_orchidea.mu), which keep
+the lines continuous, unless a message sets them: population and epochs 500,
+sparsity 0.01, partials 0.3 (0 with a tiny database such as MicroSOL),
+solutions 5, sustain 1 with notes held 4 s at most, dovetail 0.75 (pivot notes)
+and the path connection (the least melodic movement). A static target keeps
+Orchidea's defaults, given with each message below. report prints the settings
+a search ran with.
 
 When it is done, the solution comes out as one message a note: its number
 (from 1), instrument, pitch, dynamics, technique, onset and duration (ms),

@@ -360,6 +360,7 @@ struct OrchResult {
     std::vector<int> choices;                  // the solution chosen per segment (the connection's, or choose's)
     bool seating = true;
     double hold = 1e9, sr = 44100;
+    std::string settings;                      // what the search ran with (report says it)
 };
 
 // the chosen solutions as notes (orchestrate-mimetic, then connection: sorted by onset, held notes merged)
@@ -478,6 +479,8 @@ std::vector<std::vector<float>> mixOf(const std::vector<OrchNote>& notes, const 
 // a row an instrument in orchestral order, each note with its dynamics, technique, cents, place and its sample as its
 // sound, so the score box plays it and its roll edits it), after each run and choose, and for score.
 class OrchideaBox : public OfflineBox {
+    std::set<std::string> given_;                         // the settings a message chose
+
 public:
     explicit OrchideaBox(const Message& a) : orchestra_(argstr(a, 0)) {
         setPorts({P::Control}, {P::Control, P::Control, P::Control, P::Control, P::Control});
@@ -500,6 +503,7 @@ public:
         auto& p = opts_.p;
         if (h.is("stop")) { job_.cancel(); return; }
         if (h.is("run") && m.size() > 1) { start(m[1].str(), argstr(m, 2)); return; }
+        given_.insert(h.str());                           // set by a message: the dynamic defaults leave it alone
         if (h.is("population")) p.pop_size = clampInt(num(300), 2, 20000);
         else if (h.is("epochs")) p.max_epochs = clampInt(num(300), 1, 100000);
         else if (h.is("sparsity")) p.sparsity = std::clamp((double)num(.001f), 0.0, 1.0);
@@ -554,6 +558,25 @@ public:
         else patch->print("orchidea: unknown message " + h.str());
     }
 
+    // A target cut into segments (flux, frames, onsets) is searched with Musil's dynamic settings
+    // (musil/examples/dynamic_orchidea.mu), which keep lines continuous, unless a message set them: population and
+    // epochs 500, sparsity 0.01, the partials' pitch filter at 0.3 (0 for a tiny database such as MicroSOL, whose few
+    // pitches it would leave unplayable), 5 solutions a segment, sustain on with notes held 4 s at most, dovetail
+    // 0.75 (pivot notes) and the path connection (the least melodic movement). A static target keeps Orchidea's.
+    void settingsFor(size_t dbSize, orch::analysis_options& an, orch::search_options& so) const {
+        if (an.segmentation == "none" || an.segmentation == "static") return;
+        auto unset = [&](const char* k) { return given_.count(k) == 0; };
+        if (unset("population")) so.p.pop_size = 500;
+        if (unset("epochs")) so.p.max_epochs = 500;
+        if (unset("sparsity")) so.p.sparsity = 0.01;
+        if (unset("solutions")) so.p.max_solutions = 5;
+        if (unset("dovetail")) so.p.dovetail = 0.75;
+        if (unset("sustain")) so.sustain = true;
+        if (unset("hold")) so.hold = 4.0;
+        if (unset("connection")) so.connection = "path";
+        if (unset("partials")) an.partials = dbSize < 100 ? 0.0 : 0.3;
+    }
+
 private:
     bool ready() {
         if (result_) return true;
@@ -585,13 +608,23 @@ private:
         auto res = std::make_shared<OrchResult>();
         res->spec = spec;
         res->seating = seating_;
-        res->hold = opts_.hold;
         res->sr = sr;
         auto err = std::make_shared<std::string>();
         auto mix = std::make_shared<std::vector<std::vector<float>>>();
         auto missing = std::make_shared<size_t>(0);
         orch::analysis_options an = an_;
         orch::search_options so = opts_;
+        settingsFor(spec->db->entries.size(), an, so);
+        res->hold = so.hold;
+        {
+            char b[300];
+            std::snprintf(b, sizeof b, "segmentation %s, population %d, epochs %d, sparsity %g, partials %g, solutions %d, sustain %d, "
+                          "hold %s, dovetail %g, hysteresis %g, connection %s", an.segmentation.c_str(), so.p.pop_size, so.p.max_epochs,
+                          so.p.sparsity, an.partials, so.p.max_solutions, so.sustain ? 1 : 0,
+                          so.hold >= 1e8 ? "none" : (std::to_string((int)std::lround(so.hold * 1000)) + " ms").c_str(), so.p.dovetail,
+                          so.p.hysteresis, so.connection.c_str());
+            res->settings = b;
+        }
         so.styles = spec->styles;
         so.dynamics = spec->dynamics;
         bool render = !out.empty();
@@ -777,6 +810,7 @@ private:
         std::snprintf(head, sizeof head, "orchidea: %d %s; the search evaluated %zu combinations, %zu taken from the cache", (int)r.segments.size(),
                       r.segments.size() == 1 ? "segment" : "segments", r.cache_misses, r.cache_hits);
         patch->print(head);
+        patch->print("orchidea: " + result_->settings);
         for (size_t k = 0; k < r.segments.size() && k < 40; ++k) {
             const auto& s = r.segments[k];
             const auto& g = result_->segments[k];
