@@ -447,6 +447,60 @@ Convolves each inlet with the impulse response in a buffer~, with no latency: th
 
 See also: `buffer~` `condec` `reverb~`
 
+### `harmonize~`
+
+`harmonize~ [voices] [latency-ms] [separate]`
+
+A vocal harmonizer (reVoice's; the engine of Musil's harmonize): up to eight copies of the voice in the left inlet at other pitches, each made of grains of the voice's own periods laid out at its new pitch (PSOLA), so the formants stay where they are and the copies sound like the same singer. YIN follows the voice's f0; where the voice is unvoiced (a consonant, a breath, silence) the copies fade out in 10 ms, or cross to the dry voice with `unvoiced dry`. Each copy keeps the voice's level, from an octave down to an octave up.
+
+Four ways to choose the pitches: `mode intervals` (each voice its interval in semitones: 4 7 12 -12 by default), `mode scale` (the sung note is snapped to `key` and `scale` and each voice is that many steps of the scale away from it: 2 a third, 4 a fifth, -3 a fourth below; the voices keep the singer's intonation), `mode midi-chord` (every held note is a voice at that pitch, its velocity its level) and `mode midi-root` (the last held note is the fundamental, the voices their intervals above it). Notes come from notein or kslider into the two right inlets, or as `note pitch velocity`.
+
+The outlets are left and right (the voices panned, plus the dry voice at the level `mix` gives) and the f0 detected, in Hz, every 20 ms when it changes. With `separate` there is an outlet per voice instead, each alone and not panned. The voices are heard `latency` later: one period of the lowest f0 and 2 ms (16 ms for the default range 70-1000 Hz).
+
+| Argument | |
+| --- | --- |
+| `voices` | the number of voices, 1-8 (4) |
+| `latency-ms` | the delay of the voices, 0 for the shortest the range allows (0) |
+| `separate` | an outlet per voice instead of left and right |
+
+| Message | |
+| --- | --- |
+| `intervals a b c ...` | the voices' intervals in semitones (scale steps in scale mode); their number is the number of voices that sound (also a list in the second inlet) |
+| `mode m` | intervals, scale, midi-chord or midi-root (intervals) |
+| `key k` | the key of scale mode, 0-11 or a name: C, F#, Bb ... (C) |
+| `scale s` | major minor dorian phrygian lydian mixolydian aeolian locrian harmonic-minor melodic-minor chromatic whole pentatonic minor-pentatonic blues, or the pitch classes above the key (major) |
+| `note p v` | a note for the midi modes; velocity 0 releases it |
+| `flush` | releases every note |
+| `voice k level x` | voice k's level (1); also pan -1..1, formant x (1 keeps the formants, 1.2 moves them 20% up), interval x, vibrato cents hz [random 0-1] |
+| `level x` | every voice's level (as pan, formant, vibrato and interval without `voice k`) |
+| `mix dry wet` | the levels of the dry voice and of the harmony (0 1) |
+| `transpose st` | moves every voice by st semitones (0) |
+| `humanize cents ms` | each voice drifts slowly within +- cents and starts up to ms late (0 0) |
+| `range lo hi` | the voice's f0 range in Hz (70 1000); a lower lo means more latency |
+| `latency ms` | the delay of the voices (0: the shortest) |
+| `threshold t` | YIN's threshold, lower is stricter (0.15) |
+| `gate db` | under this level the voice is unvoiced (-50) |
+| `cycles n` | the voice's periods in each grain, 0.5-4, or auto: 2, fewer for large shifts (auto) |
+| `window w` | the grain window, hann, hamming or blackman (hann) |
+| `marks m` | snap (each pitch mark at the peak of its period) or period (one period apart, as reVoice) (snap) |
+| `unvoiced m` | mute (the voices fade out) or dry (they carry the dry voice) (mute) |
+| `seed n` | the random draws of vibrato and humanize start again from n |
+
+| Inlet | |
+| --- | --- |
+| 1 | the voice to harmonize; intervals..., mode intervals\|scale\|midi-chord\|midi-root, key k, scale name\|pcs, note p v, voice k level\|pan\|formant\|interval\|vibrato ..., mix dry wet, transpose st, humanize cents ms, range lo hi, latency ms, threshold t, gate db, cycles n\|auto, window w, marks snap\|period, unvoiced mute\|dry, seed n, flush |
+| 2 | intervals: semitones (or scale steps) per voice; their number is the voices that sound |
+| 3 | note pitch (or pitch velocity), from notein or kslider: midi-chord, midi-root; velocity 0 releases it |
+| 4 | velocity of the next pitch |
+
+| Outlet | |
+| --- | --- |
+| 1 | left |
+| 2 | right |
+| 3 | f0 detected (Hz; 0 when unvoiced), every 20 ms when it changes |
+
+See also: `notein` `kslider` `sparkle~` `descriptors~`
+
 ### `filterdesign`
 
 `filterdesign [type] [freq] [q] [gain]`
@@ -3118,7 +3172,7 @@ The Timeline view: tracks with their clips (sound regions drawn as waveforms, no
 
 A stereo sound on two outlets is balanced by its azimuth (the clip's and its track's), as a mono one is panned. The box's roll and its window's views are views of one score: an edit in one is in the others at once, with one undo history and one selection. Every edit plays at once. A score kept in the patch is saved with the patch: its edits mark the patch edited, and they are undone in the score's history (Edit > Undo with the box clicked last, or the roll's or the timeline's Undo), not as steps of the patch; a message to the box (add, clear, read, a transformation, a score sent), the code view or the patch's Undo (which puts back the whole patch as it was before its step, its scores too) change the score from outside, and its history starts again from there. A score with a file of its own is written by Save in its window (closing it with unsaved edits asks). A score replaced whole (clear, read, a score sent) forgets the selection.
 
-Export: File > Export MusicXML... and Export MIDI... in its window (the score the view shows), Export MusicXML... and Export MIDI... in the box's menu, or the message export. MusicXML is Musil's notation (score-notate and musicxml-text: each beat quantized to the division that moves its notes least, voices, ties, tuplets, quarter tones, the dynamics and techniques; a part per instrument, or per player when the notes say who plays them), made on a thread of its own, its report (how far the notes moved) in the Console. MIDI is Musil's score-midi: a format 1 file, a track per part with its General MIDI program, the velocities from the dynamics, the times exact at the score's tempo; the notes between semitones rounded, or each on a channel of its own with a pitch bend (the window asks; the message says bend). The scores placed inside are written with it; sounds, patches and messages are not notes and are left out of both. A file is written whole or not at all.
+Export: File > Export MusicXML... and Export MIDI... in its window (the score the view shows), Export MusicXML... and Export MIDI... in the box's menu, or the message export. MusicXML is Musil's notation (score-notate and musicxml-text: each beat quantized to the division that moves its notes least, voices, ties, tuplets, quarter tones, the dynamics and techniques; a part per instrument, or per player when the notes say who plays them), made on a thread of its own, its report (how far the notes moved) in the Console. MIDI is Musil's score-midi: a format 1 file, a track per part with its General MIDI program, the velocities from the dynamics, the times exact at the score's tempo; the notes between semitones rounded, or each on a channel of its own with a pitch bend (the window asks; the message says bend). The scores placed inside are written with it; MusicXML writes the sounds on one-line staves of their own, MIDI only the notes; messages are in neither. A file is written whole or not at all.
 
 | Argument | |
 | --- | --- |

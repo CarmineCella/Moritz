@@ -204,6 +204,9 @@ hamming
 hann
 hann-fade
 harmonic-series
+harmonize
+harmonize-f0
+harmonize-voices
 has?
 head
 help
@@ -459,6 +462,8 @@ robotize
 rotate-vec
 round
 same?
+scale-names
+scale-steps
 schroeder-reverb
 score->coll
 score->data

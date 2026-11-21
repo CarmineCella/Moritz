@@ -928,11 +928,10 @@ function chordinterp (db instr dyn tech c1 c2 r) {
 function transpose-pitches (pitches n) (map pitches (function (p) (if (equal? (type p) "nil") nil (+ (pitch->number p) n))))
 function invert (pitches axis) (map pitches (function (p) (if (equal? (type p) "nil") nil (- (* 2 (pitch->number axis)) (pitch->number p)))))
 ; (scale-pitches root mode degrees)   pitches of a scale: root a pitch, mode 'major 'minor 'dorian 'phrygian 'lydian
-;                          'mixolydian 'aeolian 'locrian 'chromatic 'whole 'pentatonic, degrees a list of scale steps (0 = root)
+;                          'mixolydian 'aeolian 'locrian 'harmonic-minor 'melodic-minor 'chromatic 'whole 'pentatonic
+;                          'minor-pentatonic 'blues (scale-names), degrees a list of scale steps (0 = root)
 function scale-pitches (root mode degrees) {
-    var steps (get (list (list 'major (list 0 2 4 5 7 9 11)) (list 'minor (list 0 2 3 5 7 8 10)) (list 'dorian (list 0 2 3 5 7 9 10)) (list 'phrygian (list 0 1 3 5 7 8 10))
-                         (list 'lydian (list 0 2 4 6 7 9 11)) (list 'mixolydian (list 0 2 4 5 7 9 10)) (list 'aeolian (list 0 2 3 5 7 8 10)) (list 'locrian (list 0 1 3 5 6 8 10))
-                         (list 'chromatic (list 0 1 2 3 4 5 6 7 8 9 10 11)) (list 'whole (list 0 2 4 6 8 10)) (list 'pentatonic (list 0 2 4 7 9))) mode)
+    var steps (scale-steps mode)
     var r (pitch->number root)
     return (map degrees (function (d) (+ r (* 12 (floor (/ d (length steps)))) (getidx steps (mod d (length steps))))))
 }
