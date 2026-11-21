@@ -1586,6 +1586,7 @@ bool scoreTestAction(const std::string& verb, const std::string& arg) {
         Fl::e_length = text[0] ? 1 : 0;
         Fl::e_number = FL_KEYBOARD;
         w->show();
+        Fl::first_window(w);                       // the keys go to the window in front (no window manager may order them)
         bool done = p->handle(FL_KEYBOARD) != 0;
         Fl::e_state = 0;
         return done;

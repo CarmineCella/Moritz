@@ -691,7 +691,7 @@ if [ $status -eq 0 ] && [ -s "$T/mt/mix.wav" ] && [ -s "$T/mt/mix-audio 1.wav" ]
 #     notes between semitones asked about (Pitch Bend), written whole (no temporary file left); MusicXML on its thread,
 #     its notation report in the Console
 run "$G/detuned.moritz" --window-png none act=roll:s "saveas=$T/detuned.mid" answer=1 act=menu:file.exportmidi act=scstate \
-    "saveas=$T/detuned.musicxml" act=menu:file.exportxml act=wait:3 act=scstate
+    "saveas=$T/detuned.musicxml" act=roll:s act=menu:file.exportxml act=wait:3 act=scstate
 expect "the name offered is the score's" "save as: detuned.mid"
 expect "the microtones asked about" "ask: 2 notes of the score sound between semitones"
 expect "MIDI written" "status exported 3 notes in 1 part as MIDI: $T/detuned.mid"

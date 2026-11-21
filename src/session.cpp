@@ -16,6 +16,7 @@
 #include <cstring>
 #include <fstream>
 #include <map>
+#include <mutex>
 #include <set>
 #include <sstream>
 #include "jobs.h"
@@ -48,8 +49,11 @@ void onMain(std::function<void()> f) {
     }, p);
 }
 
-// a detached thread with a large stack: Musil's recursion is measured against it
+// a detached thread with a large stack: Musil's recursion is measured against it. FLTK makes the lock of its awake
+// ring the first time Fl::awake is called, unguarded: it is made here, before the first thread, on the calling one
 void startThread(std::function<void()> f) {
+    static std::once_flag ring;
+    std::call_once(ring, [] { Fl::awake([](void*) {}, nullptr); });
 #ifdef _WIN32
     std::thread(std::move(f)).detach();          // the executable's stack size (8 MB)
 #else
