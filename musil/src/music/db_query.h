@@ -48,7 +48,8 @@ namespace musil {
 namespace dbq {
 
 // the dynamics in their order
-inline const std::vector<std::string>& dynamics_scale() { static const std::vector<std::string> s = {"ppp", "pp", "p", "mp", "mf", "f", "ff", "fff"}; return s; }
+// (never destroyed: a detached thread may still read it while the program exits)
+inline const std::vector<std::string>& dynamics_scale() { static const std::vector<std::string>& s = *new std::vector<std::string>{"ppp", "pp", "p", "mp", "mf", "f", "ff", "fff"}; return s; }
 // (instrument-family instr): winds brass percussion keyboard plucked strings, other
 inline std::string instrument_family(const std::string& instr) {
     const auto& o = score::layout::orchestralOrder();

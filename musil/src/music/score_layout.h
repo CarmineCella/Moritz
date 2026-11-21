@@ -24,8 +24,9 @@ namespace score {
 namespace layout {
 
 // the instrument codes of the *SOL databases in the order of an orchestral score
+// (never destroyed: a detached thread, an export or a script, may still read it while the program exits)
 inline const std::vector<std::string>& orchestralOrder() {
-    static const std::vector<std::string> v = {"Picc", "Fl", "AFl", "BFl", "Ob", "EH", "ClEb", "ClBb", "Cl", "BCl", "CbCl",
+    static const std::vector<std::string>& v = *new std::vector<std::string>{"Picc", "Fl", "AFl", "BFl", "Ob", "EH", "ClEb", "ClBb", "Cl", "BCl", "CbCl",
                                                "Bn", "CbBn", "SSax", "ASax", "TSax", "BSax", "Hn", "TpC", "Tp", "Tbn", "BTb",
                                                "Tba", "Timp", "Perc", "Hp", "Pno", "Acc", "Gtr", "Vn", "Va", "Vc", "Cb"};
     return v;

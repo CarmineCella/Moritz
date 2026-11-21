@@ -63,23 +63,24 @@ const ClassDef* findClass(const std::string& name) {
 
 }  // namespace
 
+// the search paths are never destroyed: a detached thread (a script, an export) may read them while the program exits
 std::vector<std::string>& abstractionPath() {
-    static std::vector<std::string> v;
+    static std::vector<std::string>& v = *new std::vector<std::string>;
     return v;
 }
 
 std::vector<std::string>& libraryPath() {
-    static std::vector<std::string> v;
+    static std::vector<std::string>& v = *new std::vector<std::string>;
     return v;
 }
 
 std::vector<std::string>& soundPath() {
-    static std::vector<std::string> v;
+    static std::vector<std::string>& v = *new std::vector<std::string>;
     return v;
 }
 
 std::vector<std::string>& helpPath() {
-    static std::vector<std::string> v;
+    static std::vector<std::string>& v = *new std::vector<std::string>;
     return v;
 }
 
