@@ -1565,11 +1565,7 @@ function validation-print (r) {
 function mimetic-target (db x sr params) {
     var segmentation (opt params 'segmentation 'flux)
     if (equal? segmentation 'adaptive) {                                   ; the onsets of signals' flux-peaks: a peak counts against its local median, not the file's maximum
-        var peaks (vec->list (flux-peaks x sr (get db 'block) (get db 'hop) (opt params 'ratio 2) 21))
-        var gate (opt params 'timegate 0.1)
-        var kept (list)
-        each peaks (function (t) (if (or (== (length kept) 0) (> (- t (last kept)) gate)) (push kept t)))
-        set segmentation (if (== (length kept) 0) (list 0) kept)
+        set segmentation (vec->list (adaptive-onsets x sr (get db 'block) (get db 'hop) (opt params 'ratio 2) (opt params 'timegate 0.1)))
     }
     var opts (record (list 'segmentation segmentation 'threshold (opt params 'threshold 2) 'timegate (opt params 'timegate 0.1)
                            'partials-window (opt params 'partials-window 32768) 'partials (opt params 'partials 0.2) 'extra-pitches (map (opt params 'extra-pitches (list)) str)))

@@ -12,6 +12,7 @@ abs
 accuracy
 acf-f0
 acos
+adaptive-onsets
 add-at
 add-at!
 add-intercept

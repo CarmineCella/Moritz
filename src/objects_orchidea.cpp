@@ -629,7 +629,8 @@ std::vector<std::vector<float>> mixOf(const std::vector<OrchNote>& notes, const 
 //                                players seated as in Orchidea's mixes) goes to the buffer~ out
 //   population n (300), epochs n (300), sparsity x (0.001), seed n (1), pursuit k (0), crossover x (0.8),
 //   mutation x (0.01), positive x (0.5), negative x (10), regularization x (0), patience n (150)
-//   segmentation none|flux|frames (none: static), onsets ms..., threshold x (2), timegate ms (100)
+//   segmentation none|flux|adaptive|frames (none: static), onsets ms..., threshold x (2), ratio x (2: adaptive's flux
+//   peaks above ratio times their local median), timegate ms (100)
 //   partials x (0.2; 0: no pitch filter), window n (32768), pitches C4 ... (always admitted), octaves 0 -1 ...
 //   connection closest|best|path, solutions n (10), hysteresis x, dovetail x, movement x, sustain 1/0, hold ms
 //   seating 1/0, choose segment n, notes, score, show segment, report, write file, roll buffer (a frame a note: onset
@@ -723,13 +724,14 @@ public:
             if (opts_.octaves.empty()) opts_.octaves.push_back(0);
         } else if (h.is("segmentation")) {
             std::string s = argstr(m, 1, "none");
-            if (s == "none" || s == "static" || s == "flux" || s == "frames") an_.segmentation = s;
-            else patch->print("orchidea: segmentation is none, flux or frames (or onsets ms...)");
+            if (s == "none" || s == "static" || s == "flux" || s == "frames" || s == "adaptive") an_.segmentation = s;
+            else patch->print("orchidea: segmentation is none, flux, adaptive or frames (or onsets ms...)");
         } else if (h.is("onsets")) {
             an_.onsets.clear();
             for (size_t k = 1; k < m.size(); ++k) if (m[k].isFloat() && std::isfinite(m[k].f) && m[k].f >= 0) an_.onsets.push_back(m[k].f / 1000.0);
             an_.segmentation = "list";
         } else if (h.is("threshold")) an_.threshold = std::clamp((double)num(2), 0.0, 1e6);
+        else if (h.is("ratio")) ratio_ = std::clamp(decimalOf(num(2)), 0.0, 1e6);
         else if (h.is("timegate")) an_.timegate = std::clamp((double)num(100), 0.0, 1e7) / 1000.0;
         else if (h.is("partials")) an_.partials = std::clamp((double)num(.2f), 0.0, 1.0);
         else if (h.is("window")) { int n = 64; while (n < clampInt(num(32768), 64, 1 << 20)) n <<= 1; an_.partials_window = n; }
@@ -838,6 +840,7 @@ private:
         orch::analysis_options an = an_;
         orch::search_options so = opts_;
         settingsFor(spec->db->entries.size(), an, so);
+        double ratio = ratio_;
         res->hold = so.hold;
         {
             char b[300];
@@ -852,16 +855,22 @@ private:
         so.dynamics = spec->dynamics;
         bool render = !out.empty();
         runJob(
-            [x, sr, res, err, mix, missing, an, so, render](Job& job) {
+            [x, sr, res, err, mix, missing, an, so, render, ratio](Job& job) {
                 try {
                     const OrchDb& db = *res->spec->db;
+                    orch::analysis_options a = an;
+                    if (a.segmentation == "adaptive") {           // Musil's mimetic-target 'adaptive: the flux peaks against their median
+                        std::vector<double> xs(std::begin(*x), std::end(*x));
+                        a.onsets = musil::morph::adaptive_onsets(xs, sr, (size_t)std::max(1, db.block), (size_t)std::max(1, db.hop), ratio, a.timegate);
+                        a.segmentation = "list";
+                    }
                     std::vector<orch::entry> space;                     // the sounds the ranges allow
                     for (auto& e : db.entries) {
                         auto r = res->spec->ranges.find(e.instr);
                         if (r != res->spec->ranges.end() && e.midi >= 0 && (e.midi < r->second.first || e.midi > r->second.second)) continue;
                         space.push_back(e);
                     }
-                    res->segments = orch::analyse(*x, sr, db.type, db.block, db.hop, db.ncoeff, an, [&job] { return !job.cancelled(); });
+                    res->segments = orch::analyse(*x, sr, db.type, db.block, db.hop, db.ncoeff, a, [&job] { return !job.cancelled(); });
                     if (job.cancelled()) return;
                     job.progress(.05f);
                     res->search = orch::search_segments(space, res->spec->players, res->segments, so,
@@ -1341,7 +1350,7 @@ private:
     gr::params gp_;                                       // the granular and morphological parameters given
     std::map<std::string, std::string> curves_;           // a parameter read from a buffer~'s curve at the run
     gr::markov_table markov_;
-    double start_ = 0, attackThreshold_ = 2;
+    double start_ = 0, attackThreshold_ = 2, ratio_ = 2;
     bool continue_ = false;
     uint64_t seed64_ = 1;
     int hop_ = 1024, fine_ = 8192;

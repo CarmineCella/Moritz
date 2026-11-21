@@ -1,4 +1,4 @@
-; orchidea.moritz - cross-test: the orchidea object against Musil's orchestrate-mimetic (tools/test-patches.sh): the
+; orchidea.moritz - cross-test: the orchidea object against Musil's orchestrate-mimetic (its adaptive segmentation too) (tools/test-patches.sh): the
 ; same target, database, orchestra, onsets and seed give the same notes (instrument, pitch, dynamics, technique,
 ; onset, duration, cents, player, sound), the same distance, and the object's mix is score-render's (a small search,
 ; so that another seed gives other notes)
@@ -86,4 +86,36 @@
   (connect oi2 2 c2 0)
   (connect oi2 3 c2 1)
   (connect oi2 1 cm2 0)
-  (connect cm2 0 c2 0))
+  (connect cm2 0 c2 0)
+  (obj p3 comment "the adaptive segmentation (the flux's peaks against its local median, Musil's 'adaptive) of a voice" (pos 700 80))
+  (obj b4 buffer~ xvox Vox.wav (pos 700 20))
+  (obj m3 message "seed 2, population 16, epochs 4, partials 0, sparsity 0.001, solutions 3, sustain 0, hold, dovetail 0, connection closest, segmentation adaptive, ratio 2, timegate 250, run xvox" (pos 700 110))
+  (obj oi3 orchidea xband (pos 700 140))
+  (obj cm3 message compare (pos 700 175))
+  (obj c3 code 2 (pos 700 210)
+    (script
+      "var got (try got catch e (list))"
+      "if (not (equal? in1 \"compare\")) { push got in1 } {"
+      "    load \"music.mu\""
+      "    var db (db-load \"../../data/microsol/microsol.spectrum.db\")"
+      "    var x (head (buffer \"xvox\"))"
+      "    var sr (buffer-rate \"xvox\")"
+      "    var r (orchestrate-mimetic db (orchestra (list 'Ob 'Ob 'Hn 'Hn 'Vn 'Vn 'Vc 'Vc)) x sr (record (list 'segmentation 'adaptive 'ratio 2 'timegate 0.25 'seed 2 'population 16 'epochs 4 'partials 0 'solutions 3 'sustain 0 'quiet 1)))"
+      "    var f (mimetic-connection r)"
+      "    var bad (if (== (length f) (length got)) 0 1)"
+      "    each (zip f got) (function (p) {"
+      "        var n (last (head p))"
+      "        var g (last p)"
+      "        var same (and (equal? (str (getidx g 1)) (get n 'instr)) (equal? (str (getidx g 2)) (get n 'pitch)) (< (abs (- (getidx g 5) (* 1000 (head (head p))))) 0.05)"
+      "                      (< (abs (- (getidx g 6) (* 1000 (getidx (head p) 1)))) 0.05) (== (getidx g 9) (get n 'player)))"
+      "        if (not same) { set bad (+ bad 1) }"
+      "    })"
+      "    var onsets (adaptive-onsets x sr (get db 'block) (get db 'hop) 2 0.25)"
+      "    print \"cross orchidea, adaptive:\" (length (get r 'segments)) \"segments,\" (length onsets) \"onsets;\" (length got) \"notes,\" (length f) \"in Musil,\" bad \"differ\""
+      "    if (or (> bad 0) (== (length f) 0) (< (length (get r 'segments)) 3)) { print \"FAIL: the adaptive segmentation disagrees with Musil's\" } { print \"PASS: the adaptive segmentation agrees with Musil's\" }"
+      "}"))
+  (connect lb 0 m3 0)
+  (connect m3 0 oi3 0)
+  (connect oi3 2 c3 0)
+  (connect oi3 1 cm3 0)
+  (connect cm3 0 c3 0))

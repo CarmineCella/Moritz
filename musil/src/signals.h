@@ -973,6 +973,16 @@ inline vptr sig_flux_peaks(vlist& a, Interp& i) {
     catch (std::runtime_error& e) { i.bad(e.what()); }
     return vec_from(out);
 }
+// (adaptive-onsets x sr n hop ratio timegate)   the onsets of the adaptive segmentation (mimetic-target 'segmentation
+//   'adaptive, Moritz's orchidea segmentation adaptive): the flux peaks above ratio times their moving median (as
+//   flux-peaks, over 21 frames), at least timegate seconds apart; (vec 0) when there is none
+inline vptr sig_adaptive_onsets(vlist& a, Interp& i) {
+    double sr = i.scalar(a[1]); if (!(sr > 0)) i.bad("the sample rate must be > 0");
+    std::vector<double> out;
+    try { out = morph::adaptive_onsets(doubles_from(i, a[0]), sr, positive_size(i, a[2], "n"), positive_size(i, a[3], "hop"), i.scalar(a[4]), i.scalar(a[5])); }
+    catch (std::runtime_error& e) { i.bad(e.what()); }
+    return vec_from(out);
+}
 // (peak-density times secs window hop)   how many of some times (a vector, seconds) fall a second around every instant:
 //   the count within window seconds centred on each hop-second step over secs seconds, divided by the window; => a
 //   vector, one value per step (a density in events a second)
@@ -1049,7 +1059,7 @@ inline void add_signals(Interp& i) {
     i.def("yin", sig_yin, 2, 5); i.def("yin-track", sig_yin_track, 4, 7); i.def("descriptors", sig_descriptors, 4, 7);
     i.def("spectral-moments", sig_spectral_moments, 2, 2); i.def("spectral-flatness", sig_spectral_flatness, 1, 1);
     i.def("spectral-flux", sig_spectral_flux, 2, 2); i.def("frame-spectra", sig_frame_spectra, 4, 4); i.def("onset-strength", sig_onset_strength, 3, 3);
-    i.def("flux-peaks", sig_flux_peaks, 6, 6); i.def("peak-density", sig_peak_density, 4, 4); i.def("register-curve", sig_register_curve, 3, 3); i.def("loudness-curve", sig_loudness_curve, 3, 3); i.def("hfc", sig_hfc, 1, 1); i.def("zcr", sig_zcr, 1, 1);
+    i.def("flux-peaks", sig_flux_peaks, 6, 6); i.def("adaptive-onsets", sig_adaptive_onsets, 6, 6); i.def("peak-density", sig_peak_density, 4, 4); i.def("register-curve", sig_register_curve, 3, 3); i.def("loudness-curve", sig_loudness_curve, 3, 3); i.def("hfc", sig_hfc, 1, 1); i.def("zcr", sig_zcr, 1, 1);
     i.def("conv", sig_conv, 2, 2); i.def("conv-fast", sig_conv, 2, 2); i.def("ambi-gains", sig_ambi_gains, 3, 3); i.def("ambi-decoder", sig_ambi_decoder, 2, 2); i.def("binaural-level", sig_binaural_level, 2, 2); i.def("ambi-rotate", sig_ambi_rotate, 2, 2); i.def("hrir", sig_hrir, 3, 3); i.def("hrir-model", sig_hrir_model, 3, 3);
     i.def("fade-in", sig_fade_in, 2, 2); i.def("fade-out", sig_fade_out, 2, 2); i.def("normalize-peak", sig_normalize_peak, 1, 1);
     i.def("hrtf-load", sig_hrtf_load, 1, 1); i.def("hrtf-unload", sig_hrtf_unload, 0, 0); i.def("hrtf-loaded", sig_hrtf_loaded, 0, 0);

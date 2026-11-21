@@ -86,6 +86,16 @@ inline std::vector<double> flux_peaks(const std::vector<double>& x, double sr, s
     }
     return out;
 }
+// the adaptive segmentation of a mimetic orchestration (music.mu's mimetic-target 'segmentation 'adaptive, Moritz's
+// orchidea segmentation adaptive): the flux peaks against their local median (ratio times it), timegate seconds apart
+// at least; the start alone when there is none
+inline std::vector<double> adaptive_onsets(const std::vector<double>& x, double sr, size_t n, size_t hop, double ratio, double timegate) {
+    std::vector<double> kept;
+    for (double t : flux_peaks(x, sr, n, hop, ratio, 21))
+        if (kept.empty() || t - kept.back() > timegate) kept.push_back(t);
+    if (kept.empty()) kept.push_back(0);
+    return kept;
+}
 // (peak-density times secs window hop): how many of the times fall within window seconds around each step of hop
 // seconds over secs, divided by the window (events a second)
 inline std::vector<double> peak_density(const std::vector<double>& times, double secs, double window, double hop) {

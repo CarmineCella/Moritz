@@ -1028,6 +1028,11 @@
   over width frames (odd): every noticeable spectral change, an attack or not, counted as the target's activity;
   threshold 2 keeps the attacks, 1.5 admits the ripples of a held sound too; peaks within 50 ms of the previous one
   count as one; => a vector
+#adaptive-onsets
+  (adaptive-onsets x sr n hop ratio timegate)
+  the onsets of the adaptive segmentation (mimetic-target 'segmentation
+  'adaptive, Moritz's orchidea segmentation adaptive): the flux peaks above ratio times their moving median (as
+  flux-peaks, over 21 frames), at least timegate seconds apart; (vec 0) when there is none
 #peak-density
   (peak-density times secs window hop)
   how many of some times (a vector, seconds) fall a second around every instant:

@@ -565,6 +565,10 @@ var mhf (connection mhold (get mhold 'choices))
 check (all? (map mhf (function (x) (<= (getidx x 1) 2.01))) identity) "hold: a note continued across segments never longer than 'hold seconds"
 var madapt (mimetic-target db mtx 44100 (record (list 'segmentation 'adaptive 'ratio 2 'timegate 0.2 'partials 0)))
 check (>= (length (get madapt 'segments)) 1) "mimetic-target: 'adaptive segmentation (flux-peaks against the local median)"
+check (equal? (adaptive-onsets (zeros 44100) 44100 1024 256 2 0.1) (vec 0)) "adaptive-onsets: a silence, the start alone"
+check (all? (map (vec->list (diff (adaptive-onsets mtx 44100 2048 256 1.5 0.3))) (function (d) (> d 0.3))) identity) "adaptive-onsets: the onsets timegate apart"
+var madat (map (get madapt 'segments) (function (g) (get g 'at)))
+check (all? (map (vec->list (adaptive-onsets mtx 44100 (get db 'block) (get db 'hop) 2 0.2)) (function (o) (any? madat (function (a) (< (abs (- a o)) 0.03))))) identity) "mimetic-target: 'adaptive cuts at adaptive-onsets"
 ; the players hold their sound on across segments ('sustain), the report, the cache, the genetic decision
 var msus (orchestrate-mimetic db morch mtx 44100 (put mprm 'segmentation (list 0 1 2 3)))
 check (== (length (get msus 'report)) 4) "orchestrate-mimetic: a report, a record per segment"

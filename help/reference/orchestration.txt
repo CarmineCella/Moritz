@@ -167,7 +167,8 @@ msg mutation x: the mutation rate (0.01)
 msg positive x: the cost of a partial the solution has and the target lacks (0.5)
 msg negative x: the cost of a partial the target has and the solution lacks (10)
 msg regularization x: above 0, solutions with fewer players are preferred (0)
-msg segmentation none | flux | frames: none, one segment (a static target, the default); flux, at the peaks of the spectral flux above threshold, timegate apart; frames, every block of the database
+msg segmentation none | flux | adaptive | frames: none, one segment (a static target, the default); flux, at the peaks of the spectral flux above threshold, timegate apart; adaptive, at the peaks of the flux above ratio times its local median, timegate apart (Musil's 'adaptive: a quiet passage's attacks count as a loud one's); frames, every block of the database
+msg ratio x: adaptive: a peak of the flux counts above x times its moving median (2)
 msg onsets ms ...: the segments start at these times instead
 msg threshold x: the flux's peaks above this share of its largest count as onsets (2: none does)
 msg timegate ms: onsets at least this far apart (100)
