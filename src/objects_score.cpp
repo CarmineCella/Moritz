@@ -13,6 +13,7 @@
 #include "preview.h"
 #include "roll.h"
 #include "score_doc.h"
+#include "score_export.h"
 #include "score_window.h"
 #include "transport.h"
 #include "zoom.h"
@@ -375,6 +376,17 @@ public:
         const Atom& h = m[0];
         if (h.is("read")) readFile(m.size() > 1 ? m[1].str() : file_);
         else if (h.is("write")) writeFile(m.size() > 1 ? m[1].str() : file_);
+        else if (h.is("export")) {
+            ScoreFormat f;
+            if (m.size() < 2 || !parseScoreFormat(m[1].str(), f)) { patch->print("score: export musicxml|midi [file] [bend]"); return; }
+            std::string file;
+            bool bend = false;
+            for (size_t k = 2; k < m.size(); ++k) {
+                if (m[k].is("bend")) bend = true;
+                else if (file.empty()) file = m[k].str();
+            }
+            exportTo(f, file, bend, false);
+        }
         else if (h.is("clear")) { auto s = score_->clone(); s->clear(); dropSelection(); replace(s); }
         else if (h.is("add")) add(m);
         else if (h.is("select")) select(m);
@@ -551,10 +563,49 @@ public:
         return true;
     }
     // (the canvas's menu has Open for a score box: its window, in the view used last)
-    std::vector<std::string> menuItems() override { return {"Read...", "Write..."}; }
+    std::vector<std::string> menuItems() override { return {"Read...", "Write...", "Export MusicXML...", "Export MIDI..."}; }
     void menuAction(int k) override {
+        if (k >= 2) {                                // a file the user chose: written wherever it is
+            ScoreFormat f = k == 2 ? ScoreFormat::MusicXML : ScoreFormat::Midi;
+            std::string p = chooseFile(true, k == 2 ? "Export MusicXML" : "Export MIDI", k == 2 ? "MusicXML\t*.musicxml" : "MIDI\t*.mid",
+                                       exportName() + scoreFormatExtension(f));
+            if (p.empty()) return;
+            bool bend = false;
+            if (int n = k == 3 ? microtonalNotes(*score_) : 0) {   // as the window's Export MIDI...
+                int a = askUser("%d notes of the score sound between semitones. Write each with a pitch bend (on a MIDI "
+                                "channel of its own), or rounded to the nearest semitone?", "Cancel", "Pitch Bend", "Round", n);
+                if (a == 0) return;
+                bend = a == 1;
+            }
+            exportTo(f, p, bend, true);
+            return;
+        }
         std::string f = chooseFile(k == 1, k == 0 ? "Read a score" : "Write the score", "Score\t*.score", file_.empty() ? name_ + ".score" : file_);
         if (!f.empty()) message(0, {Atom(k == 0 ? "read" : "write"), Atom(f)});
+    }
+    // export musicxml|midi [file] [bend]: the score as MusicXML or MIDI (score_export.h), relative to the patch's folder;
+    // a patch from elsewhere writes only in its folder or ~/Documents/Moritz (patchMayWrite), unless the user chose the
+    // file (chosen). When written: `exported <format> <path> <notes>` out of the info outlet, the summary in the Console
+    void exportTo(ScoreFormat f, const std::string& file, bool bend, bool chosen) {
+        std::string path = patch->resolvePath(file.empty() ? exportName() + scoreFormatExtension(f) : file);
+        std::string why;
+        if (!chosen && !patchMayWrite(patch, path, why)) { patch->print("score: " + why); return; }
+        ScoreExportOptions o;
+        o.bend = bend;
+        std::weak_ptr<bool> alive = alive_;
+        std::string word = f == ScoreFormat::Midi ? "midi" : "musicxml";
+        exportScore(*score_, f, path, o, [this, alive, word, path](const ScoreExported& r) {
+            std::string m = r.ok ? "score: " + r.message : "score: can't export: " + r.message;
+            if (!alive.lock()) { App::get().log(m); return; }   // the box is gone: the Console still hears it
+            patch->print(m);
+            if (r.ok) outlet(nOut_ + 2, {Atom("exported"), Atom(word), Atom(path), Atom((float)r.notes)});
+        });
+    }
+    std::string exportName() const {
+        std::string n = !file_.empty() ? file_ : !name_.empty() ? name_ : std::string("score");
+        if (size_t slash = n.find_last_of("/\\"); slash != std::string::npos) n = n.substr(slash + 1);
+        if (endsWith(n, ".score")) n.resize(n.size() - 6);
+        return n;
     }
 
     // the score from elsewhere (GUI thread): what plays changes at once, the transport going on
@@ -688,6 +739,7 @@ private:
     uint64_t planKey_ = 0, plans_ = 0;
     bool armed_ = false;
     bool stemTap_ = false;
+    std::shared_ptr<bool> alive_ = std::make_shared<bool>(true);   // what an export finishing later checks (main thread)
 
     // where the score kept in the patch is, for its errors and the files it places: the patch's folder
     std::string here() const {

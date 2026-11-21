@@ -273,6 +273,20 @@ it was before its step, its scores too) change the score from outside, and its
 history starts again from there. A score with a file of its own is written by
 Save in its window (closing it with unsaved edits asks). A score replaced whole
 (clear, read, a score sent) forgets the selection.
+
+Export: File > Export MusicXML... and Export MIDI... in its window (the score the
+view shows), Export MusicXML... and Export MIDI... in the box's menu, or the
+message export. MusicXML is Musil's notation (score-notate and musicxml-text: each
+beat quantized to the division that moves its notes least, voices, ties, tuplets,
+quarter tones, the dynamics and techniques; a part per instrument, or per player
+when the notes say who plays them), made on a thread of its own, its report (how
+far the notes moved) in the Console. MIDI is Musil's score-midi: a format 1 file,
+a track per part with its General MIDI program, the velocities from the dynamics,
+the times exact at the score's tempo; the notes between semitones rounded, or each
+on a channel of its own with a pitch bend (the window asks; the message says
+bend). The scores placed inside are written with it; MusicXML writes the sounds on
+one-line staves of their own, MIDI only the notes; messages are in neither. A file
+is written whole or not at all.
 arg name: the score's name
 arg file.score: a file next to the patch to read the score from (none: kept in the patch)
 arg channels: the signal outlets, 1 to 16 (2)
@@ -280,6 +294,7 @@ arg @size w h: the box's size (360 by 150)
 arg @view v: the view its window opens in the first time: timeline, roll, piano or list (roll)
 msg read [file]: reads a .score file (its own again without a name)
 msg write [file]: writes it as a .score file, in the patch's folder or in ~/Documents/Moritz; the scores it places and its sounds are named from the file's folder (relative when near, else absolute), so it reads back whole
+msg export musicxml|midi [file] [bend]: the score as MusicXML or as a MIDI file (none: the score's name, .musicxml or .mid), in the patch's folder or in ~/Documents/Moritz (elsewhere: not written; the menu's Export writes where you choose); bend: the MIDI notes between semitones with a pitch bend each (else rounded); exported musicxml|midi path notes out of the info outlet when written
 msg clear: no events
 msg add note at dur row pitch [dyn [tech]]: a note (at and dur in seconds; the pitch a MIDI number or a name, G5)
 msg add at row pitch [dyn [tech]]: a note a beat long (the kind and the duration may be left out)

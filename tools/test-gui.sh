@@ -687,6 +687,27 @@ run --window-png none "act=mtopen:$T/mt/song.score" "saveas=$T/mt/mix.wav" act=t
 if [ $status -eq 0 ] && [ -s "$T/mt/mix.wav" ] && [ -s "$T/mt/mix-audio 1.wav" ] && [ -s "$T/mt/mix-audio 2.wav" ] &&
    grep -q "a stem for each track beside it" "$out"; then ok; else fail "the mix and its stems rendered"; fi
 
+# 49. File > Export MIDI... and Export MusicXML... of a score's window: the file chosen (its name the score's), the
+#     notes between semitones asked about (Pitch Bend), written whole (no temporary file left); MusicXML on its thread,
+#     its notation report in the Console
+run "$G/detuned.moritz" --window-png none act=roll:s "saveas=$T/detuned.mid" answer=1 act=menu:file.exportmidi act=scstate \
+    "saveas=$T/detuned.musicxml" act=menu:file.exportxml act=wait:3 act=scstate
+expect "the name offered is the score's" "save as: detuned.mid"
+expect "the microtones asked about" "ask: 2 notes of the score sound between semitones"
+expect "MIDI written" "status exported 3 notes in 1 part as MIDI: $T/detuned.mid"
+expect "MusicXML written" "status exported 3 notes in 1 part, 1 bar as MusicXML: $T/detuned.musicxml"
+if [ $status -eq 0 ] && head -c 4 "$T/detuned.mid" | grep -q MThd && grep -q "</score-partwise>" "$T/detuned.musicxml" &&
+   [ "$(grep -c "<pitch>" "$T/detuned.musicxml")" = 3 ] && [ -z "$(ls -A "$T" | grep '\.tmp')" ]; then ok
+else fail "the exported files"; fi
+#     the box's export message, on its thread: the box hears it (the status line); a box deleted while it exports is
+#     not called, and the file is still written
+cp "$G/detuned.moritz" "$T/detuned-box.moritz"
+run "$T/detuned-box.moritz" --window-png none "act=send:s:export musicxml live.musicxml" act=wait:3 act=state \
+    act=menu:patch.edit "act=send:s:export musicxml gone.musicxml" act=click:s act=menu:edit.delete act=wait:3 act=boxes
+expect "a box hears its export" "score: exported 3 notes in 1 part, 1 bar as MusicXML: $T/live.musicxml"
+if [ $status -eq 0 ] && [ -s "$T/gone.musicxml" ] && ! grep -q "box s " "$out"; then ok
+else fail "a box deleted while it exports"; fi
+
 rm -rf "$T"
 echo "$count interface cases, $fails failed"
 [ $fails -eq 0 ]

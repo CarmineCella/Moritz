@@ -7,10 +7,15 @@
 #include "gui.h"
 #include "preview.h"
 #include "score_doc.h"
+#include "session.h"
+#include "jobs.h"
 #include "transport.h"
 
+#include "music/midi.h"
 #include "music/score.h"
 #include "music/score_text.h"
+
+#include <FL/Fl.H>
 
 #include <atomic>
 #include <cmath>
@@ -734,6 +739,146 @@ TEST(score_written_elsewhere_keeps_its_references) {
     r.printed.clear();
     r.box("s")->message(0, {Atom("read"), Atom("nothing-here.score")});
     CHECK(r.printedSomething("score: cannot open") && !r.printedSomething("score: score:"));
+    std::error_code ec;
+    fs::remove_all(T, ec);
+}
+
+// The score box's export (score_export.h): MusicXML by Musil's notation (well formed, a pitch for each note, the notes
+// of a score placed inside written too) and MIDI by Musil's writer (read back by its reader: the tracks, the pitches;
+// with bend, the quarter tone's pitch bend), each announced out of the info outlet; a patch writes only in its folder;
+// the bytes are those Musil's own functions write; on a thread, the box deleted while it exports
+namespace {
+// is the XML well formed: every element closed in order (declarations, comments and empty elements skipped)
+bool wellFormed(const std::string& x, int& elements) {
+    std::vector<std::string> open;
+    elements = 0;
+    for (size_t k = x.find('<'); k != std::string::npos; k = x.find('<', k + 1)) {
+        size_t e = x.find('>', k);
+        if (e == std::string::npos) return false;
+        std::string tag = x.substr(k + 1, e - k - 1);
+        if (tag.empty() || tag[0] == '?' || tag[0] == '!') continue;
+        if (tag.back() == '/') { ++elements; continue; }
+        std::string name = tag.substr(tag[0] == '/' ? 1 : 0);
+        name = name.substr(0, name.find_first_of(" \t\n"));
+        if (tag[0] == '/') {
+            if (open.empty() || open.back() != name) return false;
+            open.pop_back();
+        } else {
+            open.push_back(name);
+            ++elements;
+        }
+    }
+    return open.empty() && elements > 0;
+}
+size_t countOf(const std::string& s, const std::string& what) {
+    size_t n = 0;
+    for (size_t k = s.find(what); k != std::string::npos; k = s.find(what, k + what.size())) ++n;
+    return n;
+}
+}  // namespace
+
+TEST(score_box_exports_musicxml_and_midi) {
+    namespace fs = std::filesystem;
+    fs::path T = fs::weakly_canonical(fs::temp_directory_path()) / ("moritz_export_" + std::to_string(std::rand()));
+    fs::create_directories(T);
+    bool sync = jobsSynchronous;
+    jobsSynchronous = true;                      // as moritz --render: the MusicXML job finishes at once
+    Rig r("");
+    r.p.dir = T.string();
+    std::string err;
+    CHECK(r.p.load("(patch (obj s score piece) (obj pi print i) (connect s 4 pi 0))", err));
+    auto s = std::make_shared<sc::Score>("piece", 44100);
+    s->bpm = 120;                                // a beat is 0.5 s
+    s->insert(note(0, 0.5, 60));
+    s->insert(note(0.5, 0.5, 62.5));             // a quarter tone
+    auto vn = note(0, 1, 55);
+    vn->row = "Vn";
+    s->insert(vn);
+    auto inner = std::make_shared<sc::Score>("inner", 44100);
+    inner->insert(note(0, 0.5, 67));
+    auto placed = std::make_shared<sc::Event>();
+    placed->kind = sc::Kind::Score;
+    placed->sub = inner;
+    placed->at = 1;
+    placed->dur = 1;
+    s->insert(placed);
+    give(r, "s", s);
+    r.box("s")->message(0, {Atom("export"), Atom("musicxml"), Atom("piece.musicxml")});
+    CHECK(r.printedSomething("score: exported 4 notes in 2 parts"));
+    CHECK(r.printedSomething("i: exported musicxml " + (T / "piece.musicxml").string() + " 4"));
+    std::string xml;
+    CHECK(readFile((T / "piece.musicxml").string(), xml));
+    int elements = 0;
+    CHECK(xml.rfind("<?xml", 0) == 0 && wellFormed(xml, elements));
+    CHECK(countOf(xml, "<pitch>") == 4);
+    CHECK(countOf(xml, "<score-part ") == 2);
+    CHECK(xml.find("<alter>0.5</alter>") != std::string::npos || xml.find("<alter>-0.5</alter>") != std::string::npos);
+    // MIDI, rounded
+    r.box("s")->message(0, {Atom("export"), Atom("midi")});          // no file: the score's name, in the patch's folder
+    CHECK(r.printedSomething("i: exported midi " + (T / "piece.mid").string() + " 4"));
+    CHECK(r.printedSomething("1 rounded to the semitone"));
+    musil::midi_file m = musil::read_midi((T / "piece.mid").string());
+    CHECK(m.notes.size() == 4);
+    CHECK((m.track_names == std::vector<std::string>{"piece", "Cl", "Vn"}));
+    std::vector<int> pitches;
+    for (auto& n : m.notes) pitches.push_back(n.pitch);
+    CHECK((pitches == std::vector<int>{60, 55, 63, 67}));
+    CHECK(m.notes.size() == 4 && std::fabs(m.notes[3].at - 1.0) < 1e-9 && std::fabs(m.notes[1].dur - 1.0) < 1e-9);
+    // MIDI with pitch bend: 62.5 is 63 bent down a quarter tone (8192 - 2048 = 0x1800: 0x00 0x30)
+    r.box("s")->message(0, {Atom("export"), Atom("midi"), Atom("bent.mid"), Atom("bend")});
+    CHECK(!r.printedSomething("can't export"));
+    std::string bytes;
+    CHECK(readFile((T / "bent.mid").string(), bytes));
+    bool bent = false;
+    for (size_t k = 0; k + 2 < bytes.size(); ++k)
+        bent = bent || (((unsigned char)bytes[k] & 0xf0) == 0xe0 && bytes[k + 1] == 0x00 && bytes[k + 2] == 0x30);
+    CHECK(bent);
+    CHECK(musil::read_midi((T / "bent.mid").string()).notes.size() == 4);
+    // nowhere else, nor a format it has not
+    r.box("s")->message(0, {Atom("export"), Atom("midi"), Atom("/elsewhere-not-allowed.mid")});
+    CHECK(r.printedSomething("not written"));
+    r.box("s")->message(0, {Atom("export"), Atom("pdf")});
+    CHECK(r.printedSomething("score: export musicxml|midi"));
+    // the box's files are Musil's own: score-midi and musicxml-text of the same score (players, microtones, a sound),
+    // run in Musil, write the same bytes
+    {
+        std::ofstream f(T / "cross.score");
+        f << "(score \"piece\" (bpm 72) (meter 3 4)"
+             " (note 0 0.8 Vn 60 ff ord (data player 1)) (note 0.3 0.4 Vn 64.5 p pizz (data player 2))"
+             " (note 0.9 1.3 Vc 43 mf ord) (note 1.1 0.2 Vc 47.25 pp ord (cents 10)) (sound 0.5 1 \"x.wav\") (msg 1 tempo 3))";
+    }
+    r.box("s")->message(0, {Atom("read"), Atom("cross.score")});
+    r.box("s")->message(0, {Atom("export"), Atom("musicxml"), Atom("box.musicxml")});
+    r.box("s")->message(0, {Atom("export"), Atom("midi"), Atom("box.mid"), Atom("bend")});
+    auto ctx = std::make_shared<LangContext>("cross");
+    std::string musilErr;
+    std::string dir = T.generic_string();
+    ctx->eval("load \"music.mu\"\n"
+              "var s (score-read \"" + dir + "/cross.score\")\n"
+              "score-midi s \"" + dir + "/musil.mid\" (record (list 'microtones 'bend))\n"
+              "write \"" + dir + "/musil.musicxml\" (musicxml-text (score-notate s (list)))\n",
+              "cross", 1, [&](const EvalResult& e) { if (!e.ok) musilErr = e.error; });
+    if (!musilErr.empty()) std::printf("  musil: %s\n", musilErr.c_str());
+    CHECK(musilErr.empty());
+    std::string boxXml, musilXml, boxMid, musilMid;
+    CHECK(readFile((T / "box.musicxml").string(), boxXml) && readFile((T / "musil.musicxml").string(), musilXml));
+    CHECK(readFile((T / "box.mid").string(), boxMid) && readFile((T / "musil.mid").string(), musilMid));
+    CHECK(!boxXml.empty() && boxXml == musilXml);
+    CHECK(!boxMid.empty() && boxMid == musilMid);
+    CHECK(countOf(boxXml, "<score-part ") == 4);            // Violin 1, Violin 2, Violoncello, Sounds
+    // on its thread (as in the application), the box deleted while it exports: the export goes on (its copy of the
+    // score), the file is written, and the gone box is never called (its answer comes through the event loop: the GUI
+    // test, tools/test-gui.sh, sees a box that stays hear it)
+    jobsSynchronous = false;
+    r.box("s")->message(0, {Atom("export"), Atom("musicxml"), Atom("gone.musicxml")});
+    r.p.removeBoxes({r.box("s")});
+    for (int k = 0; k < 1000 && !fs::exists(T / "gone.musicxml"); ++k) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    for (int k = 0; k < 20; ++k) { std::this_thread::sleep_for(std::chrono::milliseconds(10)); Fl::wait(0); drainMain(); }
+    CHECK(fs::exists(T / "gone.musicxml"));
+    CHECK(!r.printedSomething("gone.musicxml"));
+    // no temporary file left behind
+    for (auto& f : fs::directory_iterator(T)) CHECK(f.path().string().find(".tmp") == std::string::npos);
+    jobsSynchronous = sync;
     std::error_code ec;
     fs::remove_all(T, ec);
 }
