@@ -124,6 +124,22 @@ check (== (length placed) 3) "a score placed by file three times"
 check (same? (get (head placed) 'source) (get (last placed) 'source)) "... is one score, three instances"
 check (close? (get (last placed) 'gain) (pow 10 (/ -6 20)) 1e-12) "(db -6): a gain in decibels"
 check (contains? (score->text piece) "\"texture.score\"") "written back by its file's name"
+; a sound named bare in a .score is found next to the score (wherever the score is), else where Musil finds files and in
+; the shared data folder (data/), as the score object finds it: score-read and render play it (read-wav could not open
+; "stems_drums.wav" before)
+mkdir (concat tmp "/sounds")
+write-wav (concat tmp "/sounds/beside.wav") 8000 (list (* 0.5 (ones 800)))
+write (concat tmp "/sounds/bare.score") "(score \"bare\" (sr 8000) (sound 0 0.1 \"beside.wav\") (sound 0.2 0.1 \"drums.wav\"))"
+var bare (score-read (concat tmp "/sounds/bare.score"))
+check (and (ends-with? (score-sound-file (head (score-events bare))) "/sounds/beside.wav") (exists? (score-sound-file (head (score-events bare))))) "score-sound-file: a bare name, next to the .score"
+check (ends-with? (score-sound-file (last (score-events bare))) "data/drums.wav") "score-sound-file: a bare name in the shared data folder"
+var bare-y (score-render bare "mono")
+check (> (max (abs (take (head bare-y) 800))) 0.4) "score-render: the sound next to the .score plays"
+check (> (max (abs (slice (head bare-y) 1600 800))) 0.01) "score-render: the sound in data/ plays"
+write (concat tmp "/outer.score") "(score \"outer\" (sr 8000) (score 0 \"sounds/bare.score\"))"
+var flat (score-flatten (score-read (concat tmp "/outer.score")) 0)
+check (ends-with? (get (head flat) 'source) "/sounds/beside.wav") "score-flatten: a sound of a score placed inside is found from that score's folder"
+check (equal? (score-sound-file "no-such-sound.wav") "no-such-sound.wav") "score-sound-file: a file that is nowhere, as written"
 ; a cycle through files
 write (concat tmp "/a.score") "(score \"a\" (score 0 \"b.score\"))"
 write (concat tmp "/b.score") "(score \"b\" (score 0 \"a.score\"))"
@@ -266,6 +282,7 @@ check (equal? (staff-clef (list 40 50 70)) "bass") "staff-clef: a median below C
 check (equal? (staff-clef (list 59 61)) "treble") "staff-clef: a median at C4"
 check (equal? (staff-clef (list)) "none") "staff-clef: no pitches"
 
+each (ls (concat tmp "/sounds")) (function (f) (remove (concat tmp "/sounds/" f)))
 each (ls tmp) (function (f) (remove (concat tmp "/" f)))
 remove tmp
 report "test_score"

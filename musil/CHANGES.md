@@ -22,6 +22,13 @@
   clef of a row from its pitches, the steps of the staff. `instrument-rank`, `staff-clef` and
   `score-orchestral-order` are builtins; `score-roll` and the plot's roll draw with them, as Moritz's
   roll does.
+- **A sound named bare in a `.score` plays** (`"stems_drums.wav"`, as Moritz's timeline writes it):
+  `score-render`, `render` and `play-score` find the file next to the `.score` it was read from, then
+  where Musil finds a file to read (the current folder, the program's), then on the load path and in
+  the shared data folder (`data/`), as Moritz's score object does; a sound of a score placed inside is
+  found from that score's folder. `(score-sound-file e)` says which file an event plays. One rule in
+  C++ (`score::resolveSource`) for every host. `score-read` of Moritz's `piece.score` failed with
+  "cannot open WAV file stems_drums.wav" before.
 
 ### Orchestration
 

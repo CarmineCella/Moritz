@@ -462,6 +462,7 @@ score-remove-id!
 score-retrograde!
 score-scale!
 score-shift!
+score-sound-file
 score-take-id!
 score-thin!
 score-transpose!

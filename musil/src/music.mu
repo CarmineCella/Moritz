@@ -166,7 +166,7 @@ function render-event (e sr) {
     var kind (get e 'kind)
     var chans nil
     if (equal? kind 'file) {
-        var w (load-sound (get e 'source))
+        var w (load-sound (score-sound-file e))                ; next to its .score, else where Musil finds files and data
         set chans (to-rate (sound-region (getidx w 1) (head w) (opt e 'from 0) (opt e 'to -1)) (head w) sr)
     }
     if (equal? kind 'buffer) {
@@ -353,7 +353,7 @@ function score-play-now (s gain from) {
         if (and (equal? kind 'note) (not (has? e 'db))) { print "play-score: note" (get e 'id) "has no sound (score-bind! gives it one from a database), left out" } {
         if (or (equal? kind 'note) (equal? kind 'file)) {
             var rate (if (equal? kind 'note) (pow 2 (/ (+ (opt e 'shift 0) (/ (opt e 'cents 0) 100)) 12)) 1)
-            push cues (list when (if (equal? kind 'note) (note-path e) (get e 'source)) skip (- (get e 'dur) skip) rate (* level (get e 'gain)) (azimuth->pan (get e 'az)))
+            push cues (list when (if (equal? kind 'note) (note-path e) (score-sound-file e)) skip (- (get e 'dur) skip) rate (* level (get e 'gain)) (azimuth->pan (get e 'az)))
         } {
             if (equal? kind 'synth) {
                 var id (try (synth (get e 'source)) catch err nil)

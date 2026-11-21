@@ -51,6 +51,23 @@ inline std::string normalPath(const std::string& p) { return std::filesystem::pa
 inline bool absolutePath(const std::string& p) {
     return !p.empty() && (p[0] == '/' || p[0] == '\\' || (p.size() > 2 && p[1] == ':' && (p[2] == '/' || p[2] == '\\')));
 }
+// Where the file a sound event names is: the one rule of every host. An absolute path is itself; a relative one is
+// looked for next to the score's file (scoreDir, its folder: the score written with its sounds beside it, or in a
+// folder below, plays wherever it is moved), then in each of dirs in order (the host's: Musil's read path and data
+// folder, Moritz's patch folder and sound path). => the path found, or "" when no folder has it
+inline std::string resolveSource(const std::string& src, const std::string& scoreDir, const std::vector<std::string>& dirs) {
+    if (src.empty()) return "";
+    std::error_code ec;
+    if (absolutePath(src)) return std::filesystem::is_regular_file(src, ec) ? src : "";
+    auto in = [&](const std::string& dir) -> std::string {
+        std::string f = dir.empty() ? src : dir + "/" + src;
+        std::error_code e;
+        return std::filesystem::is_regular_file(f, e) ? normalPath(f) : std::string();
+    };
+    if (!scoreDir.empty()) if (std::string f = in(scoreDir); !f.empty()) return f;
+    for (auto& d : dirs) if (std::string f = in(d); !f.empty()) return f;
+    return "";
+}
 
 namespace detail {
 

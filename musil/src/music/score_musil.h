@@ -519,8 +519,55 @@ inline vptr mus_score_copy(vlist& a, Interp& i) {
     for (auto& e : c->events()) e->host = hostCopy(e->host);
     return v_score(c);
 }
+// Where Musil looks for the file of a sound event, after the folder of the event's score (score::resolveSource): as a
+// file to read is looked for (the current folder, the folder of the file running, of the program started), then the
+// load path (MUSIL_PATH, ~/.musil), then the shared data folder (data/ next to the libraries: Moritz's examples and
+// Musil's share it), as datasets find the bundled MicroSOL
+inline std::vector<std::string> soundDirs(Interp& i) {
+    std::vector<std::string> dirs{""};
+    auto add = [&](const std::string& d) { if (std::find(dirs.begin(), dirs.end(), d) == dirs.end()) dirs.push_back(d); };
+    for (const sptr& f : {i.current_file, i.main_file})
+        if (f) { std::string d = std::filesystem::path(*f).parent_path().string(); if (!d.empty()) add(d); }
+    std::vector<std::string> libs = i.load_path;
+    if (!i.home_path.empty()) libs.push_back(i.home_path);
+    std::string mu = i.find_file("music.mu");
+    if (!mu.empty()) libs.push_back(std::filesystem::path(mu).parent_path().string());
+    for (auto& d : libs) add(d);
+    for (auto& d : libs)
+        for (const char* up : {"/../../data", "/../data", "/data"}) {
+            std::error_code ec;
+            if (std::filesystem::is_directory(d + up, ec)) add(score::normalPath(d + up));
+        }
+    return dirs;
+}
+// the file a sound event plays, found (resolveSource with Musil's folders); "" when none has it
+inline std::string soundFile(Interp& i, const Event& e, const Score* origin) {
+    std::string dir = origin && !origin->path.empty() ? score::folderOf(origin->path) : std::string();
+    if (dir.empty() && origin && !origin->path.empty()) dir = ".";
+    return score::resolveSource(e.source, dir, soundDirs(i));
+}
+// (score-sound-file e)     the file a sound event (kind 'file) plays: its path as written if absolute, else found next
+//                          to the .score file it was read from (or written to), else as a file to read is found, else
+//                          in the load path and the shared data folder (data/), as the score object finds it in Moritz;
+//                          a file that is nowhere: the path as written (reading it then says so)
+inline vptr mus_score_sound_file(vlist& a, Interp& i) {
+    if (isEvent(a[0])) {
+        auto e = eventOf(i, a[0]);
+        if (e->kind != Kind::Sound || e->buffer) i.bad("score-sound-file: not a sound file's event");
+        std::string f = soundFile(i, *e, e->owner.p);
+        return v_str(f.empty() ? e->source : f);
+    }
+    vptr v = a[0];                                                // a record of an event (list (kind file) (source path) ...), or a path
+    if (v && v->t == Value::LIST)
+        for (auto& p : v->l) if (p && p->t == Value::LIST && p->l.size() == 2 && symIs(p->l[0], "source")) { v = p->l[1]; break; }
+    if (!v || (v->t != Value::STR && v->t != Value::SYM)) i.bad("score-sound-file: a sound's event, its record or a path");
+    std::string src = v->s;
+    std::string f = score::resolveSource(src, "", soundDirs(i));
+    return v_str(f.empty() ? src : f);
+}
 // the events of a flattened score as Musil events: a note transposed by its placements is shifted (its 'shift, the
-// resampling of its sound) by as much
+// resampling of its sound) by as much; a sound of a score placed inside, found from that score's folder, takes the
+// file's path (the copy is in no score, so it would not know where to look)
 inline vptr flatList(Interp& i, const Score& s, int depth) {
     std::vector<score::Placed> flat;
     guarded(i, [&] { score::flatten(s, flat, depth); return 0; });
@@ -533,6 +580,8 @@ inline vptr flatList(Interp& i, const Score& s, int depth) {
         }
         auto e = std::make_shared<Event>(std::move(p.ev));
         e->host = hostCopy(e->host);
+        if (e->kind == Kind::Sound && !e->buffer && !score::absolutePath(e->source))
+            if (std::string f = soundFile(i, *e, p.origin); !f.empty()) e->source = f;
         if (p.transpose != 0 && pitched(*e)) {
             vptr r = hostRec(e->host); vptr k = v_sym("shift"); long h = hostFind(r, k);
             if (h >= 0 && r->l[(size_t)h]->l[1]->t == Value::NUM) r->l[(size_t)h]->l[1] = v_num(r->l[(size_t)h]->l[1]->num[0] + p.transpose);
@@ -791,7 +840,7 @@ inline void add_score(Interp& i) {
     i.def("score-find", mus_score_find, 2, 2); i.def("score-remove-id!", mus_score_remove_id, 2, 2);
     i.def("score-query", mus_score_query, 3, 3); i.def("score-copy", mus_score_copy, 1, 1);
     i.def("score-flatten", mus_score_flatten, 2, 2); i.def("score-placed", mus_score_placed, 5, 5);
-    i.def("score-read", mus_score_read, 1, 1); i.def("score-write", mus_score_write, 2, 2);
+    i.def("score-read", mus_score_read, 1, 1); i.def("score-write", mus_score_write, 2, 2); i.def("score-sound-file", mus_score_sound_file, 1, 1);
     i.def("score->text", mus_score_text, 1, 1); i.def("text->score", mus_text_score, 1, 1);
     i.def("score->data", mus_score_data, 1, 1); i.def("data->score", mus_data_score, 1, 1);
     i.def("score->coll", mus_score_coll, 1, 1); i.def("coll->score", mus_coll_score, 3, 3);
