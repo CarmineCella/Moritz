@@ -304,6 +304,28 @@ TEST(multitrack_strip_lanes) {
     CHECK(!r.printedSomething("got"));
 }
 
+// A strip lane switched to steps holds each point's value until the next (on the audio thread, as the ramp)
+TEST(multitrack_strip_lane_steps) {
+    Rig r(kMt);
+    fillBuffer(r, "k", 44100 * 4, [](long) { return 1.f; });
+    Box* s = r.box("s");
+    auto d = ScoreDoc::ofBox(s);
+    tl::addTrack(*d, "A");
+    tl::addSound(*d, "one", true, "A", 0, 3);
+    tl::addLane(*d, "A", "strip.gain", -60, 6);
+    tl::addPoint(*d, "A", "strip.gain", 0, -60);
+    tl::addPoint(*d, "A", "strip.gain", 1, 0);
+    CHECK(tl::setLaneRamp(*d, "A", "strip.gain", tl::Ramp::Step));
+    auto y = playFor(r, 0, 44100 * 2);
+    auto L = etest::channel(y, 2, 0);
+    CHECK(std::fabs(L[22050] / kHalf - (float)mt::dbToGain(-60)) < 1e-4f);
+    CHECK(std::fabs(L[11025] - L[40000]) < 1e-6f && near(L[60000], kHalf));
+    d->undo();                                            // it ramps again
+    y = playFor(r, 0, 44100 * 2);
+    L = etest::channel(y, 2, 0);
+    CHECK(std::fabs(L[22050] / kHalf - (float)mt::dbToGain(-30)) < 0.002f);
+}
+
 // A track's insert (a patch from inlet~ to outlet~), its instrument (a patch playing its notes) and a patch clip (run
 // while it plays, loadbang at its start)
 TEST(multitrack_track_patches) {

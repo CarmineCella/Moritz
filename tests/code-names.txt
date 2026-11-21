@@ -474,6 +474,8 @@ score-flatten
 score-humanize!
 score-invert!
 score-make
+score-markers
+score-markers!
 score-orchestral-order
 score-pan-gains
 score-placed
@@ -483,6 +485,7 @@ score-read
 score-remove-id!
 score-retrograde!
 score-scale!
+score-section
 score-shift!
 score-sound-file
 score-take-id!

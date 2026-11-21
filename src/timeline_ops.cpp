@@ -53,6 +53,11 @@ std::vector<Lane> declaredLanes(const sc::Row* r) {
         }
         if (x.list.size() > 3 && x.list[3].kind == sc::Datum::Num && std::isfinite(x.list[3].num) && x.list[3].num > 0)
             lane.h = (int)std::lround(std::min(x.list[3].num, 4000.0));
+        lane.ramp = defaultRamp(lane.name);
+        if (x.list.size() > 4 && (x.list[4].kind == sc::Datum::Sym || x.list[4].kind == sc::Datum::Str) && lane.name != "strip.mute") {
+            if (x.list[4].s == "linear") lane.ramp = Ramp::Linear;
+            else if (x.list[4].s == "step") lane.ramp = Ramp::Step;
+        }
         out.push_back(lane);
     }
     return out;
@@ -63,7 +68,9 @@ void writeLanes(sc::Row& r, const std::vector<Lane>& lanes) {
     std::vector<sc::Datum> l;
     for (auto& x : lanes) {
         std::vector<sc::Datum> e{sc::Datum::symbol(x.name), sc::Datum::number(x.lo), sc::Datum::number(x.hi)};
-        if (x.h > 0) e.push_back(sc::Datum::number(x.h));
+        bool ramp = x.ramp != defaultRamp(x.name) && x.name != "strip.mute";   // said only when not what it would be
+        if (x.h > 0 || ramp) e.push_back(sc::Datum::number(std::max(0, x.h)));
+        if (ramp) e.push_back(sc::Datum::symbol(x.ramp == Ramp::Linear ? "linear" : "step"));
         l.push_back(sc::Datum::of(std::move(e)));
     }
     sc::setField(r.extra, "lanes", sc::Datum::of(std::move(l)));
@@ -144,6 +151,15 @@ bool moveTrack(ScoreDoc& d, const std::string& name, int delta) {
     auto e = d.edit("Move Track");
     e.setRows(std::move(rows));
     return e.commit();
+}
+
+bool moveTrackTo(ScoreDoc& d, const std::string& name, int index) {
+    auto rows = declaredRows(d.score());
+    int k = -1;
+    for (int i = 0; i < (int)rows.size(); ++i)
+        if (rows[(size_t)i].name == name) k = i;
+    if (k < 0) return fail(d, "no track " + name);
+    return moveTrack(d, name, std::clamp(index, 0, (int)rows.size() - 1) - k);
 }
 
 bool deleteTrack(ScoreDoc& d, const std::string& name) {
@@ -230,6 +246,7 @@ std::vector<Lane> lanes(const sc::Score& s, const std::string& track) {
         if (it == out.end()) {
             Lane l;
             l.name = e->source;
+            l.ramp = defaultRamp(l.name);
             l.lo = std::min(0.0, v);
             l.hi = std::max(1.0, v);
             out.push_back(l);
@@ -246,7 +263,39 @@ std::vector<Lane> lanes(const sc::Score& s, const std::string& track) {
     return out;
 }
 
-bool addLane(ScoreDoc& d, const std::string& track, const std::string& name, double lo, double hi) {
+Ramp defaultRamp(const std::string& lane) {
+    return lane.rfind("strip.", 0) == 0 && lane != "strip.mute" ? Ramp::Linear : Ramp::Step;
+}
+
+std::vector<Lane> rowLanes(const sc::Row& r) { return declaredLanes(&r); }
+
+Ramp laneRamp(const sc::Score& s, const std::string& track, const std::string& lane) {
+    for (auto& l : declaredLanes(rowOf(s, track)))
+        if (l.name == lane) return l.ramp;
+    return defaultRamp(lane);
+}
+
+bool setLaneRamp(ScoreDoc& d, const std::string& track, const std::string& lane, Ramp ramp) {
+    if (lane == "strip.mute" && ramp == Ramp::Linear) return fail(d, "a mute lane is on or off: it steps");
+    auto rows = declaredRows(d.score());
+    for (auto& r : rows) {
+        if (r.name != track) continue;
+        auto ls = declaredLanes(&r);
+        for (auto& l : lanes(d.score(), track))     // the lanes shown (some only by their points) are kept
+            if (std::none_of(ls.begin(), ls.end(), [&](const Lane& x) { return x.name == l.name; })) ls.push_back(l);
+        auto it = std::find_if(ls.begin(), ls.end(), [&](const Lane& l) { return l.name == lane; });
+        if (it == ls.end()) return fail(d, "no lane " + lane + " on " + track);
+        if (it->ramp == ramp) return fail(d, ramp == Ramp::Linear ? "it ramps already" : "it steps already");
+        it->ramp = ramp;
+        writeLanes(r, ls);
+        auto e = d.edit(ramp == Ramp::Linear ? "Lane Ramps" : "Lane Steps");
+        e.setRows(std::move(rows));
+        return e.commit();
+    }
+    return fail(d, "no track " + track);
+}
+
+bool addLane(ScoreDoc& d, const std::string& track, const std::string& name, double lo, double hi, Ramp ramp) {
     if (name.empty()) return fail(d, "a lane is named after the receive it drives");
     if (!(hi > lo)) return fail(d, "a lane's range goes from a low value to a higher one");
     auto rows = declaredRows(d.score());
@@ -256,7 +305,7 @@ bool addLane(ScoreDoc& d, const std::string& track, const std::string& name, dou
         for (auto& l : lanes(d.score(), track))     // the lanes shown (some only by their points) are kept
             if (std::none_of(ls.begin(), ls.end(), [&](const Lane& x) { return x.name == l.name; })) ls.push_back(l);
         if (std::any_of(ls.begin(), ls.end(), [&](const Lane& x) { return x.name == name; })) return fail(d, "there is a lane " + name + " already");
-        ls.push_back(Lane{name, lo, hi});
+        ls.push_back(Lane{name, lo, hi, 0, name == "strip.mute" ? Ramp::Step : ramp});
         writeLanes(r, ls);
         auto e = d.edit("Add Lane");
         e.setRows(std::move(rows));
@@ -599,6 +648,88 @@ uint64_t addPatchClip(ScoreDoc& d, const std::string& file, const std::string& t
     d.select({id});
     return id;
 }
+
+// ---------------------------------------------------------------- markers
+
+std::vector<sc::Marker> markers(const sc::Score& s) { return sc::markersOf(s); }
+
+namespace {
+bool writeMarkers(ScoreDoc& d, std::vector<sc::Marker> ms, const char* what) {
+    sc::Fields extra = d.score().extra;
+    sc::writeMarkers(extra, std::move(ms));
+    auto e = d.edit(what);
+    e.setExtra(std::move(extra));
+    return e.commit();
+}
+}  // namespace
+
+int addMarker(ScoreDoc& d, double t, const std::string& given) {
+    if (!std::isfinite(t)) { d.message = "a marker needs a time"; return -1; }
+    t = std::max(0.0, t);
+    auto ms = markers(d.score());
+    for (auto& m : ms)
+        if (std::fabs(m.at - t) < 1e-9) { d.message = "there is a marker there already (" + m.name + ")"; return -1; }
+    std::string name = given;
+    for (int k = (int)ms.size() + 1; name.empty(); ++k) {
+        name = "marker " + std::to_string(k);
+        if (std::any_of(ms.begin(), ms.end(), [&](const sc::Marker& m) { return m.name == name; })) name.clear();
+    }
+    ms.push_back(sc::Marker{t, name});
+    if (!writeMarkers(d, ms, "Add Marker")) return -1;
+    auto now = markers(d.score());
+    for (size_t k = 0; k < now.size(); ++k)
+        if (now[k].at == t && now[k].name == name) return (int)k;
+    return -1;
+}
+
+bool renameMarker(ScoreDoc& d, int k, const std::string& name) {
+    auto ms = markers(d.score());
+    if (k < 0 || k >= (int)ms.size()) return fail(d, "no such marker");
+    if (ms[(size_t)k].name == name) return fail(d, "the same name");
+    ms[(size_t)k].name = name;
+    return writeMarkers(d, ms, "Rename Marker");
+}
+
+bool moveMarker(ScoreDoc& d, int k, double t) {
+    auto ms = markers(d.score());
+    if (k < 0 || k >= (int)ms.size()) return fail(d, "no such marker");
+    if (!std::isfinite(t)) return fail(d, "a marker needs a time");
+    t = std::max(0.0, t);
+    if (ms[(size_t)k].at == t) return fail(d, "it is there already");
+    ms[(size_t)k].at = t;
+    return writeMarkers(d, ms, "Move Marker");
+}
+
+bool removeMarker(ScoreDoc& d, int k) {
+    auto ms = markers(d.score());
+    if (k < 0 || k >= (int)ms.size()) return fail(d, "no such marker");
+    ms.erase(ms.begin() + k);
+    return writeMarkers(d, ms, "Delete Marker");
+}
+
+int markerNear(const sc::Score& s, double t, double tolerance) {
+    auto ms = markers(s);
+    int best = -1;
+    double bd = tolerance;
+    for (size_t k = 0; k < ms.size(); ++k)
+        if (double dd = std::fabs(ms[k].at - t); dd <= bd) { bd = dd; best = (int)k; }
+    return best;
+}
+
+double nextMarker(const sc::Score& s, double t) {
+    for (auto& m : markers(s))
+        if (m.at > t + 1e-9) return m.at;
+    return -1;
+}
+
+double previousMarker(const sc::Score& s, double t) {
+    double out = -1;
+    for (auto& m : markers(s))
+        if (m.at < t - 1e-9) out = m.at;
+    return out;
+}
+
+sc::Section section(const sc::Score& s, double t) { return sc::sectionAt(markers(s), t, s.duration()); }
 
 // ---------------------------------------------------------------- snapping
 

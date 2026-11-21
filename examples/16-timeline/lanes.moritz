@@ -1,12 +1,16 @@
 ; lanes.moritz - several automation lanes driving several parts of a patch: a score's messages are
 ; points on lanes (a lane a name), each sent at its time to the receive boxes of its name. Here the
 ; mix of a song (stems_demo.wav) goes through a low-pass filter (lane cutoff, Hz), an echo (lane
-; echo, the feedback 0 to 0.8) and a panner (lane pan, 0 left to 1 right); each receive ramps to
-; the new value, since the lanes send their points, not the lines between them.
+; echo, the feedback 0 to 0.8) and a panner (lane pan, 0 left to 1 right). The lanes cutoff and
+; echo step (each point sent at its time, the receive smoothing to it with line~); the lane pan
+; ramps: its values on the way are sent too, 100 a second (a lane's header, right button: Ramp
+; Between Points or Hold Each Point). The ruler's markers name the sections: intro, echo, outro.
 ; Try: 1. play and listen: the filter opens, the echo comes and goes, the sound wanders; 2. right-
 ; double-click the score box (its Timeline): the track fx has two lanes, the track space one; drag a
-; point higher or later, click on a lane to add one; 3. a lane's range (the low and high values it
-; draws) is in the track's data in the roll's text: (data lanes (list (list cutoff 200 8000) ...)).
+; point higher or later, click on a lane to add one; 3. double-click the ruler between two markers:
+; that section loops; Alt+Right and Alt+Left go from marker to marker, M adds one at the playhead;
+; 4. a lane's range (the low and high values it draws) and its mode are in the track's data in the
+; roll's text: (data lanes (list (list cutoff 200 8000) ...)).
 (patch
   (obj title comment "automation lanes: cutoff, echo and pan, each lane sent to the receive of its name" (pos 20 12))
   (obj sub comment "play; double-click the score: its Timeline; drag the points of the lanes" (pos 20 34))
@@ -19,9 +23,10 @@
       "; a song on one track, and two tracks of lanes: their messages are the points"
       "(score \"lanes\""
       "  (sr 44100) (bpm 100) (meter 4 4) (next-id 1)"
+      "  (data markers (list (list 0 \"intro\") (list 7.2 \"echo\") (list 14.4 \"outro\")))"
       "  (row song)"
       "  (row fx (data lanes (list (list cutoff 200 8000) (list echo 0 0.8))))"
-      "  (row space (data lanes (list (list pan 0 1))))"
+      "  (row space (data lanes (list (list pan 0 1 0 linear))))"
       "  (sound 0 19.2 \"stems_demo.wav\" (to 19.2) (row song))"
       "  (msg 0 cutoff 300 (row fx)) (msg 4.8 cutoff 2000 (row fx)) (msg 9.6 cutoff 7000 (row fx)) (msg 14.4 cutoff 800 (row fx))"
       "  (msg 0 echo 0 (row fx)) (msg 7.2 echo 0.7 (row fx)) (msg 12 echo 0.2 (row fx)) (msg 16.8 echo 0.8 (row fx))"

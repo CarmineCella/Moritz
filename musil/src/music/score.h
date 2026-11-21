@@ -444,6 +444,58 @@ inline float fadeGain(FadeShape shape, float x) {   // no allocation: Moritz's a
     }
 }
 
+// --- markers and sections: named times on a score's ruler, kept in its extra as markers: (list (list at "name") ...).
+// A section is the span from a marker to the next (the last one's goes to the score's end, the part before the first
+// marker is a section with no name). Moritz's timeline edits them (on its ruler); Musil reads and sets them
+// (score-markers, score-markers!, score-section). An entry that is not a time and a name is left out.
+struct Marker {
+    double at = 0;
+    std::string name;
+};
+inline std::vector<Marker> markersOf(const Fields& f) {
+    std::vector<Marker> out;
+    const Datum* d = field(f, "markers");
+    if (!d || d->kind != Datum::List) return out;
+    for (auto& x : d->list) {
+        if (x.kind != Datum::List || x.list.empty() || x.list[0].kind != Datum::Num || !std::isfinite(x.list[0].num) || x.list[0].num < 0) continue;
+        Marker m;
+        m.at = x.list[0].num;
+        if (x.list.size() > 1 && (x.list[1].kind == Datum::Str || x.list[1].kind == Datum::Sym)) m.name = x.list[1].s;
+        else if (x.list.size() > 1 && x.list[1].kind == Datum::Num) { char b[32]; std::snprintf(b, sizeof b, "%g", x.list[1].num); m.name = b; }
+        out.push_back(std::move(m));
+    }
+    std::stable_sort(out.begin(), out.end(), [](const Marker& a, const Marker& b) { return a.at < b.at; });
+    return out;
+}
+inline std::vector<Marker> markersOf(const Score& s) { return markersOf(s.extra); }
+// the markers written into a score's extra, by time (none: the field is left out)
+inline void writeMarkers(Fields& f, std::vector<Marker> ms) {
+    std::stable_sort(ms.begin(), ms.end(), [](const Marker& a, const Marker& b) { return a.at < b.at; });
+    if (ms.empty()) { eraseField(f, "markers"); return; }
+    std::vector<Datum> l;
+    for (auto& m : ms) {
+        if (!std::isfinite(m.at)) throw Error("score: a marker needs a finite time");
+        l.push_back(Datum::of({Datum::number(std::max(0.0, m.at)), Datum::string(m.name)}));
+    }
+    setField(f, "markers", Datum::of(std::move(l)));
+}
+// the section t falls in: [from, to) (to: the next marker, or end when there is none after t; -1 when t is past every
+// marker and end is not after it), its marker's index in ms (-1: before the first marker)
+struct Section {
+    double from = 0, to = -1;
+    int marker = -1;
+};
+inline Section sectionAt(const std::vector<Marker>& ms, double t, double end) {
+    Section s;
+    for (size_t k = 0; k < ms.size(); k++) {
+        if (ms[k].at <= t) { s.from = ms[k].at; s.marker = (int)k; continue; }
+        s.to = ms[k].at;
+        return s;
+    }
+    s.to = end > s.from ? end : -1;
+    return s;
+}
+
 // --- bars and beats -----------------------------------------------------------------------------------------------
 // A position as bars, beats (both from 1) and ticks (kTicks a beat), from seconds at a tempo and meter.
 constexpr int kTicks = 480;

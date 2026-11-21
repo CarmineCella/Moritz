@@ -687,6 +687,50 @@ run --window-png none "act=mtopen:$T/mt/song.score" "saveas=$T/mt/mix.wav" act=t
 if [ $status -eq 0 ] && [ -s "$T/mt/mix.wav" ] && [ -s "$T/mt/mix-audio 1.wav" ] && [ -s "$T/mt/mix-audio 2.wav" ] &&
    grep -q "a stem for each track beside it" "$out"; then ok; else fail "the mix and its stems rendered"; fi
 
+# 49. a rubber band: a drag from empty space selects the clips it touches (and the points of the lanes it crosses),
+#     so Delete takes them away, one undo step; with Shift it adds to the selection
+run "$G/timeline.moritz" --window-png none act=tlopen:s act=tlband:1.5,drums,3.5,voice act=timeline act=tlop:delete \
+    act=timeline act=tlop:undo act=tlclick:1 act=tlband:1.5,drums,2.5,drums,shift act=timeline \
+    act=tlband:1.5,drums,0.25,voice/density act=timeline
+sels=$(grep "state: timeline selection" "$out" | sed 's/state: timeline selection //' | tr '\n' '|')
+clips=$(grep -c "state: timeline clip " "$out")
+if [ $status -eq 0 ] && [ "$sels" = "2 3 ||1 2 |1 3 4 |" ] && [ "$clips" = "14" ]; then ok
+else fail "a rubber band selects, Delete and Undo act on it (got $sels, $clips clips shown)"; fi
+
+# 50. a track's header dragged onto another's: the track goes there (its lane with it), one undo step; in a session
+#     (the arranger) the mixer's strips follow the order
+run "$G/timeline.moritz" --window-png none act=tlopen:s act=tlheaddrag:voice,drums act=timeline act=tlop:undo act=timeline
+rows=$(grep "state: timeline row " "$out" | sed 's/state: timeline row //' | cut -d' ' -f1 | tr '\n' '|')
+if [ $status -eq 0 ] && [ "$rows" = "voice|voice/density|drums|drums|voice|voice/density|" ] &&
+   grep -q "state: timeline status undo Move Track" "$out"; then ok; else fail "a header dragged reorders the tracks (got $rows)"; fi
+run --window-png none act=mtnew "act=tlheaddrag:audio 2,audio 1" act=mtmixer act=timeline
+strips=$(grep "state: mixer strip " "$out" | sed 's/state: mixer strip //' | cut -d' ' -f1-2 | tr '\n' '|')
+if [ $status -eq 0 ] && [ "$strips" = "audio 2|audio 1|master gain|" ] && grep -q "state: timeline tracks audio 2|audio 1|" "$out"
+then ok; else fail "the session's mixer follows the order of its tracks (got $strips)"; fi
+
+# 51. markers: M adds one at the playhead, renamed, its flag dragged; Alt+Right and Alt+Left go to the next and the
+#     previous; a double-click on the ruler loops the section; Undo takes a move back; saved in the .score and read back
+run "$G/timeline.moritz" --window-png none act=tlopen:s act=tlplayhead:1 act=tlkey:m act=tlplayhead:3 act=tlkey:m \
+    act=tlmarkername:0,verse act=tlmarkerdrag:1,2.5 act=timeline act=tlplayhead:0 act=tlkey:alt+right act=tlkey:alt+right \
+    act=timeline act=tlkey:alt+left act=timeline act=tlrulerdbl:1.75 act=timeline act=tlop:undo act=timeline
+marks=$(grep "state: timeline markers " "$out" | sed 's/state: timeline markers //' | tr '\n' ' ')
+loops=$(grep "state: timeline at " "$out" | sed 's/state: timeline at //' | tr '\n' '|')
+if [ $status -eq 0 ] && [ "$marks" = "1:verse|2.5:marker 2| 1:verse|2.5:marker 2| 1:verse|2.5:marker 2| 1:verse|2.5:marker 2| 1:verse|3:marker 2| " ] &&
+   [ "$loops" = "3 loop 0 0 off|2.5 loop 0 0 off|1 loop 0 0 off|1 loop 1 2.5 on|1 loop 1 2.5 on|" ]
+then ok; else fail "markers added, renamed, moved, jumped to, a section looped (got $marks / $loops)"; fi
+mkdir -p "$T/mk"
+run --window-png none act=tlnew "act=tladdsound:$HERE/data/drums.wav" act=tlplayhead:0.5 act=tlkey:m "act=tllane:track 1,density" \
+    "saveas=$T/mk/m.score" act=tlsave
+run --window-png none "act=tlfile:$T/mk/m.score" act=timeline
+expect "markers kept in the .score" "state: timeline markers 0.5:marker 1|"
+expect "a lane added ramps, kept in the .score" "state: timeline lane track 1/density ramps"
+
+# 52. a lane's mode: a lane of a file made before ramps steps; switched to ramps (its header's menu), one undo step
+run "$G/timeline.moritz" --window-png none act=tlopen:s act=timeline act=tlramp:voice,density,linear act=timeline \
+    act=tlop:undo act=timeline act=tlop:redo act=timeline
+modes=$(grep "state: timeline lane voice/density" "$out" | sed 's/state: timeline lane voice\/density //' | tr '\n' ' ')
+if [ $status -eq 0 ] && [ "$modes" = "steps ramps steps ramps " ]; then ok; else fail "a lane switched between steps and ramps (got $modes)"; fi
+
 rm -rf "$T"
 echo "$count interface cases, $fails failed"
 [ $fails -eq 0 ]

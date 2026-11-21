@@ -1756,6 +1756,16 @@
 #score-bbt->sec
   (score-bbt->sec s bar beat tick)
   a position in bars, beats (from 1) and ticks as seconds at the score's tempo and meter
+#score-markers
+  (score-markers s)
+  the markers of the score's ruler, by time: (list (list at "name") ...) (Moritz's timeline sets them)
+#score-markers!
+  (score-markers! s markers)
+  the score's markers set: a list of (list at name), in any order (an empty list: none); => s
+#score-section
+  (score-section s seconds)
+  the section a time falls in, from its marker to the next: (list from to "name"); to is the
+  score's end after the last marker (-1 when the score ends before), the name "" before the first
 #score-transpose!
   (score-transpose! s n [ids])
   the notes (and the scores placed) n semitones higher; ids: a list of ids or events

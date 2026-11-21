@@ -2,10 +2,12 @@
 // timeline_tests.cpp — the score document (undo exact and bounded, listeners, bound to a score box or a .score file,
 // saved and read back, one document per score, a placed score opened), the timeline's operations (tracks, move,
 // trim, split, placements, lanes, clipboard), the playback of tracks (mute, solo, gain, pan, fades) and of automation
-// lanes (their messages on their sample, to the receives), editing while the audio thread plays, and the render; the
-// heights of tracks and lanes; the transport of a score's window (ScorePlayback: Play always plays).
+// lanes (their messages on their sample, to the receives; a lane that ramps sends the values between its points),
+// editing while the audio thread plays, and the render; the heights of tracks and lanes; the order of the tracks;
+// markers and sections; the transport of a score's window (ScorePlayback: Play always plays).
 
 #include "rig.h"
+#include "multitrack.h"
 #include "score_doc.h"
 #include "score_window.h"
 #include "timeline_ops.h"
@@ -760,14 +762,14 @@ TEST(timeline_tracks_play_with_their_strips) {
     CHECK(std::fabs(left[22050 - 4410] - 0.5f * g) < 0.01f && std::fabs(left[22050 + 10]) < 1e-6f);
 }
 
-// An automation lane plays as the messages it is: each point at its sample, to the receive of its name and out of
-// the messages outlet, whatever the track's strip says
+// An automation lane that steps plays as the messages it is: each point at its sample, to the receive of its name and
+// out of the messages outlet, whatever the track's strip says
 TEST(timeline_automation_lands_on_its_sample) {
     Rig r(kPatch);
     r.ch = 3;
     auto d = ScoreDoc::ofBox(r.box("s"));
     tl::addTrack(*d, "A");
-    tl::addLane(*d, "A", "density");
+    tl::addLane(*d, "A", "density", 0, 1, tl::Ramp::Step);
     tl::addPoint(*d, "A", "density", 0.25, 0.3);
     tl::addPoint(*d, "A", "density", 0.7071, 0.9);
     sc::Strip m;
@@ -779,6 +781,155 @@ TEST(timeline_automation_lands_on_its_sample) {
     auto clicks = above(etest::channel(y, 3, 2), 0.5f);
     CHECK(clicks.size() == 2 && clicks[0] == 11025 && clicks[1] == 31183);
     CHECK(r.printedSomething("lane: 0.3") && r.printedSomething("lane: 0.9"));
+}
+
+// A lane that ramps (the default of a lane added) sends its points as a lane that steps does, and between two points of
+// different values the values on the way, on a grid of kRampRate a second, each on its sample: from 0 at 0.25 s to 1
+// at 0.75 s, 0.5 at 0.5 s; nothing between two points of the same value, nor after the last; a lane switched to steps
+// sends its points only (the plan made again: the mode is part of it)
+TEST(timeline_lane_ramps_between_points) {
+    Rig r(kPatch);
+    r.ch = 3;
+    auto d = ScoreDoc::ofBox(r.box("s"));
+    tl::addTrack(*d, "A");
+    CHECK(tl::addLane(*d, "A", "density"));
+    CHECK(tl::laneRamp(d->score(), "A", "density") == tl::Ramp::Linear);
+    tl::addPoint(*d, "A", "density", 0.25, 0);
+    tl::addPoint(*d, "A", "density", 0.75, 1);
+    tl::addPoint(*d, "A", "density", 0.9, 1);           // the same value: held, nothing sent on the way
+    r.run(1000);
+    r.box("tr")->message(0, {Atom("play")});
+    auto y = r.run(44100);
+    r.box("tr")->message(0, {Atom("stop")});
+    auto clicks = above(etest::channel(y, 3, 2), 0.5f);
+    const long step = (long)(44100 / tl::kRampRate);
+    CHECK(clicks.size() == 51 + 1);
+    bool grid = clicks.size() == 52 && clicks[0] == 11025 && clicks[50] == 33075 && clicks[51] == 39690;
+    for (size_t k = 1; grid && k < 50; ++k) grid = clicks[k] == 11025 + (long)k * step;
+    CHECK(grid);
+    std::vector<double> got;
+    for (auto& p : r.printed)
+        if (p.rfind("lane: ", 0) == 0) got.push_back(std::atof(p.c_str() + 6));
+    CHECK(got.size() == 52 && got.front() == 0 && got[25] == 0.5 && got[50] == 1 && got[51] == 1);
+    bool rising = got.size() == 52;
+    for (size_t k = 1; rising && k <= 50; ++k) rising = got[k] > got[k - 1];
+    CHECK(rising);
+    // a step lane: the points only
+    uint64_t plans = mt::planInfo(r.box("s")).plans;
+    CHECK(tl::setLaneRamp(*d, "A", "density", tl::Ramp::Step));
+    CHECK(mt::planInfo(r.box("s")).plans == plans + 1);
+    CHECK(!tl::setLaneRamp(*d, "A", "density", tl::Ramp::Step));
+    r.printed.clear();
+    r.box("tr")->message(0, {Atom("seek"), Atom(0.f)});
+    r.box("tr")->message(0, {Atom("play")});
+    y = r.run(44100);
+    r.box("tr")->message(0, {Atom("stop")});
+    CHECK(above(etest::channel(y, 3, 2), 0.5f).size() == 3);
+    // undone: it ramps again
+    CHECK(d->undo() && tl::laneRamp(d->score(), "A", "density") == tl::Ramp::Linear);
+}
+
+// A lane's mode: kept on its row's entry (said only when it is not what a lane of that name would be without it: the
+// files made before ramps open as they played, a strip's lane ramping, a receive's stepping), in the file; a mute lane
+// always steps; a lane known only by its points can be switched (declared then)
+TEST(timeline_lane_modes_kept) {
+    auto d = ScoreDoc::make("x");
+    tl::addTrack(*d, "A");
+    tl::addPoint(*d, "A", "cutoff", 1, 0.5);             // by its points only: a receive's lane steps
+    tl::addPoint(*d, "A", "strip.gain", 1, -6);          // the strip's ramps
+    CHECK(tl::laneRamp(d->score(), "A", "cutoff") == tl::Ramp::Step);
+    CHECK(tl::laneRamp(d->score(), "A", "strip.gain") == tl::Ramp::Linear);
+    CHECK(tl::addLane(*d, "A", "strip.mute") && tl::laneRamp(d->score(), "A", "strip.mute") == tl::Ramp::Step);
+    CHECK(!tl::setLaneRamp(*d, "A", "strip.mute", tl::Ramp::Linear));
+    size_t steps = d->historySteps();
+    CHECK(tl::setLaneRamp(*d, "A", "cutoff", tl::Ramp::Linear) && tl::setLaneRamp(*d, "A", "strip.gain", tl::Ramp::Step));
+    CHECK(d->historySteps() == steps + 2);
+    auto back = sc::readText(text(*d), "x");
+    CHECK(tl::laneRamp(*back, "A", "cutoff") == tl::Ramp::Linear && tl::laneRamp(*back, "A", "strip.gain") == tl::Ramp::Step);
+    CHECK(text(*d).find("(list cutoff 0 1 0 linear)") != std::string::npos);
+    // a file of before: no mode said
+    auto old = sc::readText("(score \"o\" (row A (data lanes (list (list density 0 1 30) (list strip.pan -90 90))))"
+                            " (msg 0 density 0.5 (row A)))", "o");
+    CHECK(tl::laneRamp(*old, "A", "density") == tl::Ramp::Step && tl::laneRamp(*old, "A", "strip.pan") == tl::Ramp::Linear);
+    CHECK(tl::lanes(*old, "A")[0].h == 30);
+    d->undo();
+    d->undo();
+    CHECK(tl::laneRamp(d->score(), "A", "cutoff") == tl::Ramp::Step && tl::laneRamp(d->score(), "A", "strip.gain") == tl::Ramp::Linear);
+}
+
+// The order of the tracks: a track put at another place (its lanes and its strip with it), one undo step
+TEST(timeline_track_order) {
+    auto d = ScoreDoc::make("x");
+    tl::addTrack(*d, "A");
+    tl::addTrack(*d, "B");
+    tl::addTrack(*d, "C");
+    tl::addLane(*d, "A", "density");
+    sc::Strip st;
+    st.gain = 0.5;
+    tl::setStrip(*d, "A", st);
+    size_t steps = d->historySteps();
+    CHECK(tl::moveTrackTo(*d, "A", 2));
+    CHECK(d->historySteps() == steps + 1);
+    auto t = tl::tracks(d->score());
+    CHECK(t.size() == 3 && t[0] == "B" && t[1] == "C" && t[2] == "A");
+    CHECK(tl::lanes(d->score(), "A").size() == 1 && tl::stripOf(d->score(), "A").gain == 0.5);
+    CHECK(!tl::moveTrackTo(*d, "A", 7) && !tl::moveTrackTo(*d, "nope", 0));   // there already (clamped); no such track
+    CHECK(tl::moveTrackTo(*d, "C", 0) && tl::tracks(d->score())[0] == "C");
+    d->undo();
+    d->undo();
+    t = tl::tracks(d->score());
+    CHECK(t[0] == "A" && t[1] == "B" && t[2] == "C");
+}
+
+// Markers: added (named marker N), renamed, moved, deleted, each one undo step; kept in the score's data (so in the file:
+// written and read back, by a document saved and opened again); a file without them opens with none; sections from one
+// to the next (the last to the score's end); the next and previous from a time
+TEST(timeline_markers_and_sections) {
+    fs::path dir = scratch("markers");
+    auto d = ScoreDoc::make("x");
+    tl::addTrack(*d, "A");
+    tl::addSound(*d, "a.wav", false, "A", 0, 10);
+    CHECK(tl::markers(d->score()).empty());
+    size_t steps = d->historySteps();
+    CHECK(tl::addMarker(*d, 4) == 0 && tl::addMarker(*d, 1) == 0);
+    CHECK(tl::addMarker(*d, 4) < 0);                     // one there already
+    CHECK(d->historySteps() == steps + 2);
+    auto ms = tl::markers(d->score());
+    CHECK(ms.size() == 2 && ms[0].at == 1 && ms[0].name == "marker 2" && ms[1].name == "marker 1");
+    CHECK(tl::renameMarker(*d, 0, "verse") && tl::markers(d->score())[0].name == "verse");
+    CHECK(tl::moveMarker(*d, 1, 6) && tl::markers(d->score())[1].at == 6);
+    CHECK(tl::addMarker(*d, 8, "coda") == 2);
+    CHECK(tl::markerNear(d->score(), 6.05, 0.1) == 1 && tl::markerNear(d->score(), 3, 0.1) < 0);
+    CHECK(tl::nextMarker(d->score(), 1) == 6 && tl::nextMarker(d->score(), 8) < 0);
+    CHECK(tl::previousMarker(d->score(), 6) == 1 && tl::previousMarker(d->score(), 1) < 0);
+    auto sec = tl::section(d->score(), 7);
+    CHECK(sec.from == 6 && sec.to == 8 && sec.marker == 1);
+    sec = tl::section(d->score(), 9);
+    CHECK(sec.from == 8 && sec.to == 10 && sec.marker == 2);
+    sec = tl::section(d->score(), 0.5);
+    CHECK(sec.from == 0 && sec.to == 1 && sec.marker == -1);
+    // the file keeps them
+    std::string err;
+    CHECK(d->saveAs((dir / "m.score").string(), err));
+    std::string written;
+    readFile((dir / "m.score").string(), written);
+    CHECK(written.find("(data markers (list (list 1 \"verse\") (list 6 \"marker 1\") (list 8 \"coda\")))") != std::string::npos);
+    auto back = sc::readText(written, "m");
+    CHECK(tl::markers(*back).size() == 3 && tl::markers(*back)[2].name == "coda" && text(*back) == text(*d));
+    CHECK(tl::removeMarker(*d, 2) && tl::markers(d->score()).size() == 2);
+    d->undo();
+    CHECK(tl::markers(d->score()).size() == 3);
+    d->undo();                                           // coda added
+    d->undo();                                           // moved
+    CHECK(tl::markers(d->score())[1].at == 4);
+    d->undo();                                           // renamed
+    d->undo();
+    d->undo();
+    CHECK(tl::markers(d->score()).empty() && sc::field(d->score().extra, "markers") == nullptr);
+    // what is not a time and a name is left out (a number for a name is its text), never a crash
+    auto odd = sc::readText("(score \"o\" (data markers (list (list -1 \"a\") (list x) 3 (list 2 \"b\") (list 3 4))))", "o");
+    CHECK(tl::markers(*odd).size() == 2 && tl::markers(*odd)[0].name == "b" && tl::markers(*odd)[1].name == "4");
+    fs::remove_all(dir);
 }
 
 // The timeline's edits while the audio thread plays the score: moves, trims, splits, strips, undo and redo, a lane's

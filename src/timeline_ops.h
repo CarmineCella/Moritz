@@ -11,6 +11,11 @@
 //   lanes     the automation of a track: the message events of its row, one lane per name (the receive name they
 //             drive), each point one message (name value) at its time. A lane's range and order are kept on the row
 //             (extra "lanes": (list (list name lo hi [height]) ...)), so a lane without points stays.
+//             A lane ramps from one point to the next (linear: its values sent at kRampRate while it plays) or holds
+//             each point's value until the next (step): the fifth item of its entry (linear or step); without it, a lane
+//             of the strip ramps (strip.gain, strip.pan, strip.send.<bus>) and any other steps, as in the files made
+//             before ramps (a lane added from the timeline ramps; strip.mute always steps).
+//   markers   named times on the ruler, in the score's extra (score.h's Marker); a section is the span from one to the next
 //   heights   how high the timeline draws a track (its row's extra "height") and each of its lanes (the fourth number
 //             of its entry), in pixels; none: the view's default. Kept with the score, so saved with it.
 // Times are seconds, as in the score; snapping to beats and bars counts them at the score's tempo and meter.
@@ -32,17 +37,25 @@ std::string addTrack(ScoreDoc& d, const std::string& name = "");
 bool renameTrack(ScoreDoc& d, const std::string& from, const std::string& to);   // its row and its events
 bool moveTrack(ScoreDoc& d, const std::string& name, int delta);                   // up (-1) or down (+1)
 bool deleteTrack(ScoreDoc& d, const std::string& name);                            // its row and its events
+bool moveTrackTo(ScoreDoc& d, const std::string& name, int index);                // to that place among the tracks
 sc::Strip stripOf(const sc::Score& s, const std::string& track);
 bool setStrip(ScoreDoc& d, const std::string& track, const sc::Strip& st);
 
 // ---- lanes
+enum class Ramp { Step, Linear };
+constexpr double kRampRate = 100;                // the values a linear lane sends a second, between its points
+Ramp defaultRamp(const std::string& lane);       // a lane's when its entry says none (the files made before ramps)
 struct Lane {
     std::string name;
     double lo = 0, hi = 1;
     int h = 0;                                   // its height (0: the default)
+    Ramp ramp = Ramp::Step;
 };
 std::vector<Lane> lanes(const sc::Score& s, const std::string& track);
-bool addLane(ScoreDoc& d, const std::string& track, const std::string& name, double lo = 0, double hi = 1);
+Ramp laneRamp(const sc::Score& s, const std::string& track, const std::string& lane);
+std::vector<Lane> rowLanes(const sc::Row& r);    // the lanes a row declares (not those only its points make)
+bool addLane(ScoreDoc& d, const std::string& track, const std::string& name, double lo = 0, double hi = 1, Ramp ramp = Ramp::Linear);
+bool setLaneRamp(ScoreDoc& d, const std::string& track, const std::string& lane, Ramp ramp);   // one undo step
 bool removeLane(ScoreDoc& d, const std::string& track, const std::string& name);   // and its points
 // ---- heights (pixels; 0: the view's default)
 int trackHeight(const sc::Score& s, const std::string& track);
@@ -95,6 +108,17 @@ uint64_t addPatchClip(ScoreDoc& d, const std::string& file, const std::string& t
 std::string sourceName(const ScoreDoc& d, const std::string& path);
 // a source as a path to read (relative: next to the score, then the patch's search)
 std::string sourcePath(const ScoreDoc& d, const std::string& source);
+
+// ---- markers (each change one undo step; a marker is named by its index in markers(), by time)
+std::vector<sc::Marker> markers(const sc::Score& s);
+int addMarker(ScoreDoc& d, double t, const std::string& name = "");   // its index (-1 refused); "": "marker N"
+bool renameMarker(ScoreDoc& d, int k, const std::string& name);
+bool moveMarker(ScoreDoc& d, int k, double t);
+bool removeMarker(ScoreDoc& d, int k);
+int markerNear(const sc::Score& s, double t, double tolerance);    // the marker closest to t within tolerance (-1 none)
+double nextMarker(const sc::Score& s, double t);                     // the first after t (-1 none)
+double previousMarker(const sc::Score& s, double t);                 // the last before t (-1 none)
+sc::Section section(const sc::Score& s, double t);                   // the span from its marker to the next
 
 // ---- snapping
 enum class Snap { Off, Beat, Bar };
