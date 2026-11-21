@@ -151,8 +151,9 @@ Moritz opens on the **browser**, the place to start:
   (rows, chords and voicings, micropolyphony, spectral pivots, textures,
   rhythms, a Markov chain, random music and collage, a chorale by hand, scores
   in scores, notation, temperament: each a code box writing the score in Musil
-  for a score box) and pieces (Grisey's Partiels and Modulations, Ligeti's
-  Atmosphères, Haas's in vain, simulated with the orchestral granulator).
+  for a score box) and pieces (the opening of Grisey's Partiels, its spectrum
+  orchestrated; Grisey's Modulations, Ligeti's Atmosphères and Haas's in vain
+  simulated with the orchestral granulator).
   Each one says what it shows at the top. Musil's own examples are in
   `musil/examples`.
 - **Objects**: every object with its reference (arguments, messages, inlets,
