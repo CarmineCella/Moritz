@@ -262,6 +262,17 @@ bool audioBuffersAvailable() { return tlBuffers; }
 bool inAudioProcess() { return tlInProcess > 0; }
 AudioScope::AudioScope() { ++tlInProcess; }
 AudioScope::~AudioScope() { --tlInProcess; }
+AudioContext audioContext() { return AudioContext{tlBlockStart, tlBuffers}; }
+WorkerScope::WorkerScope(const AudioContext& c) : saved_{tlBlockStart, tlBuffers} {
+    tlBlockStart = c.blockStart;
+    tlBuffers = c.buffers;
+    ++tlInProcess;
+}
+WorkerScope::~WorkerScope() {
+    tlBlockStart = saved_.blockStart;
+    tlBuffers = saved_.buffers;
+    --tlInProcess;
+}
 
 // the values of a box's inlets: the latest given (GUI), and the one in force
 // at the start of the block being run (audio)

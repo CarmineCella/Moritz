@@ -260,6 +260,12 @@ public:
     virtual void menuAction(int item) {}
     virtual bool animated() const { return false; }      // redraw continuously (meter~, scope~)
     virtual bool working() const { return false; }       // a worker thread computes for its next hop (tests wait)
+    // ---- a box running patches that are not its subpatches' (a score's track inserts, instruments and patch clips):
+    // what an inlet~ of such a patch reads, where its outlet~ writes, where its control outlet goes (audio thread for the
+    // first two). By default the box's own inlets and outlets, as a subpatcher's.
+    virtual const float* innerInput(const Patch* inner, int k, int n) { (void)inner; return sigIn(k, n); }
+    virtual float* innerOutput(const Patch* inner, int k) { (void)inner; return sigOutIf(k); }
+    virtual void innerOutlet(const Patch* inner, int k, const Message& m) { (void)inner; if (k >= 0 && k < numOuts()) outlet(k, m); }
 
     bool isSignal() const;
     int numIns() const { return (int)ins.size(); }
@@ -640,6 +646,22 @@ struct AudioScope {
     AudioScope(const AudioScope&) = delete;
     AudioScope& operator=(const AudioScope&) = delete;
 };
+// What a thread running part of a block for the audio thread (a score's tracks on several cores, multitrack.h) takes
+// over from it: where the block starts on the sample count and whether the callback holds the buffer~ lock. A worker
+// holds a WorkerScope while it runs boxes for the block: it is then inside the audio process too (no allocation).
+struct AudioContext {
+    uint64_t blockStart = 0;
+    bool buffers = false;
+};
+AudioContext audioContext();          // the calling (audio) thread's
+struct WorkerScope {
+    explicit WorkerScope(const AudioContext& c);
+    ~WorkerScope();
+    WorkerScope(const WorkerScope&) = delete;
+    WorkerScope& operator=(const WorkerScope&) = delete;
+private:
+    AudioContext saved_;
+};
 
 class PreviewPlayer;   // preview.h
 
@@ -671,6 +693,8 @@ public:
     int sampleRate() const { return running_ ? (int)device_.sampleRate : 0; }
     std::string deviceName() const { return running_ ? device_.playback.name : ""; }
     int bufferFrames() const { return running_ ? (int)device_.playback.internalPeriodSizeInFrames : 0; }
+    // the round trip the device reports: its buffers on the way out and, with input, on the way in (samples)
+    int latencyFrames() const;
     void refreshDevices();
     void updateInputNeed();   // reopen with/without input when adc~ appears/disappears
 

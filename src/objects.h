@@ -78,6 +78,12 @@ void registerScoreObjects(ClassTable& t);
 
 // abstraction lookup, used by makeBox for unknown class names
 std::unique_ptr<Box> makeAbstraction(const std::string& path, const Message& args, Patch* context);
+// Patches a box runs that are not its subpatchers (a score's track inserts, instruments and patch clips,
+// objects_patcher.cpp): a patch file loaded into p (as an abstraction without arguments: its file and folder kept); its
+// inlets and outlets numbered left to right (the signal ones counted); a message into its control inlet number inlet.
+bool loadPatchInto(Patch& p, const std::string& path, std::string& err);
+void numberPatchPorts(Patch& p, int* sigIns = nullptr, int* sigOuts = nullptr);
+void sendToPatchInlet(Patch& p, int inlet, const Message& m);
 
 // ---------------------------------------------------------------- boxes the canvas and patch use
 // ---------------------------------------------------------------- broken

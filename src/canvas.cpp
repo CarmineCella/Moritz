@@ -1347,7 +1347,7 @@ int Canvas::handle(int e) {
 #else
                 bool opens = Fl::event_state(FL_SHIFT) != 0;
 #endif
-                if (h.box && h.box->inner() && opens) {
+                if (h.box && h.box->inner() && opens && !isScoreBox(h.box)) {
                     Fl::event_clicks(0);
                     ed_->openSubpatch(h.box);
                     return 1;

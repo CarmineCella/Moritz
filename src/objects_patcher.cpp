@@ -35,7 +35,7 @@ public:
     void dsp(int n) override {
         Box* o = patch->owner;             // its owner is running (it runs this patch): its inputs
         int k = index.load(std::memory_order_relaxed);
-        if (o && k >= 0) std::copy_n(o->sigIn(k, n), n, sigOut(0));   // zeros for a control inlet
+        if (o && k >= 0) std::copy_n(o->innerInput(patch, k, n), n, sigOut(0));   // zeros for a control inlet
         else dsp::fill(sigOut(0), 0.f, n);
     }
 
@@ -52,12 +52,12 @@ public:
     void message(int, const Message& m) override {
         Box* o = patch->owner;
         int k = index.load();
-        if (!sig_ && o && k >= 0 && k < o->numOuts()) o->outlet(k, m);
+        if (!sig_ && o && k >= 0) o->innerOutlet(patch, k, m);
     }
     void dsp(int n) override {
         Box* o = patch->owner;
         int k = index.load(std::memory_order_relaxed);
-        if (float* y = o && k >= 0 ? o->sigOutIf(k) : nullptr) {   // the owner's outlet, in its plan
+        if (float* y = o && k >= 0 ? o->innerOutput(patch, k) : nullptr) {   // the owner's outlet, in its plan
             const float* x = sigIn(0, n);
             for (int i = 0; i < n; ++i) y[i] += x[i];
         }
@@ -1032,6 +1032,33 @@ private:
 
 std::unique_ptr<Box> makeAbstraction(const std::string& path, const Message& args, Patch* context) {
     return std::make_unique<AbstractionBox>(path, args, context);
+}
+
+// ---- patches a box runs that are not subpatchers (objects.h)
+bool loadPatchInto(Patch& p, const std::string& path, std::string& err) {
+    return loadAbstractionInto(p, path, {}, err) && err.empty();
+}
+void numberPatchPorts(Patch& p, int* sigIns, int* sigOuts) {
+    std::vector<InletBox*> in;
+    std::vector<OutletBox*> out;
+    collectPorts(p, in, out);
+    int si = 0, so = 0;
+    for (size_t k = 0; k < in.size(); ++k) {
+        in[k]->index.store((int)k);
+        si += in[k]->isSig();
+    }
+    for (size_t k = 0; k < out.size(); ++k) {
+        out[k]->index.store((int)k);
+        so += out[k]->isSig();
+    }
+    if (sigIns) *sigIns = si;
+    if (sigOuts) *sigOuts = so;
+}
+void sendToPatchInlet(Patch& p, int inlet, const Message& m) {
+    if (m.empty()) return;
+    for (auto& b : p.boxes)
+        if (auto ib = dynamic_cast<InletBox*>(b.get()))
+            if (ib->index.load() == inlet && !ib->isSig()) ib->receive(m);
 }
 
 void registerPatcherObjects(ClassTable& t) {
