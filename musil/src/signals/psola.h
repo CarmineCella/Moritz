@@ -11,11 +11,12 @@
 //   pitch marks one a period, causal: the last mark plus the period, snapped to the peak of the input low-passed
 //               at 1.5 f0 within a quarter period either side (marks "period": not snapped, as reVoice did).
 //   voices      each runs an output phase at its own f0 (the input's at the delayed time, times its ratio, its
-//               vibrato and its humanizing drift); at every period it starts a grain of `cycles` input periods (2;
-//               1 from an octave up, fewer down: never more overlap than needed) centred on the analysis mark
+//               vibrato and its humanizing drift); at every period it starts a grain of `cycles` input periods (2,
+//               down to 1 from a fifth up, and 1 an octave down: never more overlap than needed) centred on the mark
 //               nearest it, windowed (hann; hamming, blackman), read at the speed `formant` (1 keeps the
-//               formants, 1.2 moves them up 20%). The grains are scaled by the overlap of their windows, so a voice
-//               keeps the input's level from an octave down to an octave up.
+//               formants, 1.2 moves them up 20%). The grains are scaled by the power of their overlapping windows and a
+//               slow level match (150 ms) makes up the rest: a voice keeps the input's level from an octave down to
+//               an octave up.
 //   unvoiced    where the delayed input has no f0 the voices fade out in 10 ms (unvoiced "mute"), or cross to the
 //               dry delayed input (unvoiced "dry": the consonants of each voice are kept); no grain is made from a
 //               stale period.
@@ -140,7 +141,7 @@ public:
         nHist_ = 0; histHead_ = 0; histCursor_ = 0;
         voicedEnv_ = 0;
         f0Now_ = f0Delayed_ = 0;
-        held_ = 0;
+        root_ = -1;
         for (int k = 0; k < 128; ++k) noteOrder_[k] = 0;
         order_ = 0;
         for (auto& v : vs_) {
@@ -190,15 +191,18 @@ public:
                 if (noteOrder_[vs_[j].note] < oldest) { oldest = noteOrder_[vs_[j].note]; k = j; }
         }
         if (k >= 0) { vs_[k].note = pitch; vs_[k].vel = std::clamp(velocity, 0.0, 127.0) / 127.0; }
+        findRoot();
     }
     void noteOff(int pitch) {
         if (pitch < 0 || pitch > 127) return;
         noteOrder_[pitch] = 0;
         for (auto& v : vs_) if (v.note == pitch) v.note = -1;
+        findRoot();
     }
     void allNotesOff() {
         for (int k = 0; k < 128; ++k) noteOrder_[k] = 0;
         for (auto& v : vs_) v.note = -1;
+        root_ = -1;
     }
 
     // n samples of input into L and R (overwritten); voiceOut[k], when given and not null, gets voice k alone
@@ -285,11 +289,17 @@ public:
     // the auto number of input periods per grain at a ratio
     static double autoCycles(double r) {
         if (r < 1) return std::clamp(2.0 * r, 1.0, 2.0);
-        if (r < 1.5) return 2.0;
-        return std::max(1.0, 3.0 / r);
+        if (r <= 1.15) return 2.0;
+        return std::max(1.0, 2.0 - (r - 1.15) / 0.35);   // one period from a fifth up: the voice stays clear
     }
 
 private:
+    // the note held last (midi-root), when the notes change
+    void findRoot() {
+        uint64_t latest = 0;
+        root_ = -1;
+        for (int j = 0; j < 128; ++j) if (noteOrder_[j] > latest) { latest = noteOrder_[j]; root_ = j; }
+    }
     struct Mark { double pos = 0, period = 0; };
     struct Hist { double at = 0, f0 = 0; };
     struct Grain {
@@ -420,11 +430,8 @@ private:
                 ratio = std::exp2((v.note + tr - in) / 12.0);
                 break;
             case HarmonyMode::MidiRoot: {
-                int root = -1;
-                uint64_t latest = 0;
-                for (int j = 0; j < 128; ++j) if (noteOrder_[j] > latest) { latest = noteOrder_[j]; root = j; }
-                if (root < 0) { ratio = 1; return false; }
-                ratio = std::exp2((root + p.v[k].interval + tr - in) / 12.0);
+                if (root_ < 0) { ratio = 1; return false; }
+                ratio = std::exp2((root_ + p.v[k].interval + tr - in) / 12.0);
                 break;
             }
         }
@@ -471,8 +478,8 @@ private:
         g.inc = fmt;
         g.envPos = 0;
         g.envStep = grains::GrainWindow::kSize / L;
-        // the windows overlap L / H times (H the output period): their sum, on average, is that times the
-        // window's mean; a voice keeps the input's level when the grains add up to it
+        // the windows overlap L / H times (H the output period): grains that do not add in phase sum to that times
+        // the window's mean square in power, so this keeps the power; the level match (process) does the rest
         double overlap = L * fo / set_.sr;
         g.amp = 1.0 / std::sqrt(std::max(0.05, overlap * window_.meanSquare()));
         g.active = true;
@@ -512,7 +519,7 @@ private:
     VoiceState vs_[kMaxVoices];
     uint64_t noteOrder_[128] = {};
     uint64_t order_ = 0;
-    int held_ = 0, q_ = -1000;
+    int root_ = -1, q_ = -1000;          // the last note held (midi-root), the scale note sung
     std::mt19937 rng_{1};
     uint32_t seed_ = 1;
 };
