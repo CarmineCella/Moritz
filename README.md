@@ -24,6 +24,9 @@ and the signal processing, analysis and learning of *Musil*.
 - **Sound files**: buffers, players, looping, recording, a sound editor
   (waveform and spectrogram, selection, cut and paste, fades, undo), and
   offline rendering of whole patches into sound.
+- **Scores and the timeline**: a `score` object plays notes, sounds,
+  messages and scores inside scores on the patch's transport; its timeline
+  arranges them on tracks with automation lanes, and renders them.
 - **Filters and effects**: resonant and state-variable filters, biquads
   designed and drawn on screen, delays, a reverb, zero-latency convolution
   with any impulse response.
@@ -216,6 +219,24 @@ Moritz follows Max's conventions:
   saved back as a 24-bit WAV file with its markers beside it
   (`sound.wav.markers`), and closing it asks when it has edits. Samples
   copied in one editor paste into another (resampled when the rates differ).
+- **Timeline**: double-click a `score` box (locked; or its menu's Open as
+  Timeline) to see its score as tracks, as in a DAW; File > Open Score...
+  opens a .score file the same way and File > New Score starts one. The
+  score's rows are tracks, each with a small mixer strip (M and S in its
+  header; gain and pan in the inspector) that the score's playback follows.
+  Clips are its events: sound regions drawn as waveforms (drag them, drag an
+  edge to trim, S splits at the playhead, fades and gain in the inspector),
+  notes, scores placed inside (an instance of the same score at each place:
+  start, length, stretch, transpose, gain; Make Unique copies one;
+  double-click opens it in its own timeline, with a breadcrumb) and patch
+  clips (double-click opens the patch; they run in a later version). A
+  track's automation lanes hold its messages: click to add a point, drag to
+  move it; each point is sent at its time to the receive of its name. Drop
+  sound files from the Finder, or use Add; cut, copy, paste, duplicate and
+  undo every edit; snap to beats or bars; Space plays from the playhead on
+  the transport (a ruler drag sets the loop). Render... writes the score to a
+  stereo WAV file, faster than real time. A score kept in a patch is saved
+  with the patch; a .score file with Save.
 - **Zoom**: Cmd+ and Cmd- (or the toolbar) zoom the patch; View > Interface
   makes the whole interface larger or smaller.
 - **Code view**: Cmd+T shows the patch as text beside the drawing. Edit

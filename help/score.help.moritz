@@ -41,6 +41,8 @@
   (obj out dac~ (pos 20 360))
   (obj cs comment "its sounds, placed at their azimuth (two channels here)" (pos 90 361))
   (obj tip comment "A code box sends a score made in Musil with (out 1 s); its sounds read files or buffer~s by name." (pos 20 400))
+  (obj tl2 comment "Double-click it (locked) to open it as a timeline: its rows are tracks (gain, pan, mute, solo), its" (pos 20 425))
+  (obj tl3 comment "events clips, its messages automation lanes that also reach the receives of their name. File > New Score too." (pos 20 443))
   (connect play 0 s 0)
   (connect stop 0 s 0)
   (connect loc 0 s 0)

@@ -166,6 +166,21 @@ come out as lists, pitch (MIDI, with the cents) velocity (from the dynamics)
 duration in ms, row, dynamics and technique (- for none); its messages as the
 name and the values. Edits while it plays (add, clear, a new score) take effect
 at once: what plays is made again off the audio thread.
+
+Its rows are tracks. A track's mixer strip (gain, pan as an azimuth, mute and
+solo, kept on the row in the score) applies to the sounds, notes and patches on
+it, and to the scores placed on it: a muted track is silent, and when a track is
+soloed only the soloed ones sound. A sound's fade-in and fade-out are played. A
+message is also sent to the receive objects of its name, so an automation lane
+drives a patch's receive; messages are sent whatever the strip says.
+
+Double-click it (or its menu's Open as Timeline) to edit it as a timeline: tracks
+with their clips (sound regions drawn as waveforms, notes, scores placed inside,
+patch clips) and automation lanes, an inspector, the transport, snap to beats and
+bars, cut, copy, paste and undo, and Render to a WAV file. Every edit plays at
+once and is kept in the patch (or in its file, with Save). File > Open Score...
+and File > New Score open a .score file on its own the same way; a score placed
+inside another opens in its own timeline, with a breadcrumb to where it is.
 arg name: the score's name
 arg file.score: a file next to the patch to read the score from (none: kept in the patch)
 arg channels: the signal outlets, 1 to 16 (2)
@@ -181,4 +196,4 @@ msg locate bar [beat]: moves the transport
 msg seek ms: moves the transport to a time
 msg info: rows, events and seconds out of the info outlet
 msg score token: the score a code box sent
-see: transport code buffer~
+see: transport code buffer~ receive

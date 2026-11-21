@@ -118,9 +118,18 @@ the editor's command table and undo rule), YIN, `descriptors~` on the shared ana
 
 ### 0.13 and 0.14
 
-- [ ] Timeline (mockup 4): tracks with a mixer strip in the model, sound, score, patch and message
-      clips, automation lanes, inspector, render; the score document with undo shared by every view.
-- [ ] Patch clips that run while they play; track instruments and effects.
+- [x] Timeline, first version (mockup 4): the score document shared with the roll (ScoreDoc: undo, selection,
+      one document per score), tracks with a strip (gain, pan, mute, solo) the playback follows, sound clips
+      (waveform, move, trim, split, gain, fades), notes, sub-score instances (placement, Make Unique, their own
+      timeline with a breadcrumb), patch clips shown, automation lanes sent to receives, the inspector, the
+      clipboard, snap, files dropped from the Finder, Open/New Score, render to a stereo WAV.
+- [ ] Timeline, next: patch clips that run while they play (loaded at their start, stopped at their end,
+      their receives following the lanes) and track patches (instrument and insert effects, in a drawer as
+      mockup 4); automation that ramps between points; a placed score split or trimmed at its start; clip
+      fades and gain dragged on the clip; rubber-band selection; track headers dragged to reorder; markers
+      and sections; render in N channels, binaural and stems; the render of a score bound to a patch running
+      the patch too; one clock per top document; long files read from disk; Musil's score-render honouring
+      the tracks' strips and fades.
 - [ ] Roll and the active `score` object (mockups 5 and 2): editing in the box and in its window,
       piano roll, list, the score as text in sync; Transform; Generate (Musil, offline); `coll`.
 - [ ] A tempo map (today a score has one tempo); stretched sound clips played stretched.
@@ -170,7 +179,8 @@ feature it describes:
 - [ ] Multitrack mode, as in Reaper: recording into tracks (arming, several inputs, punch-in,
       latency compensation), long files streamed from disk, a mixer (faders, pan, mute and solo,
       sends and buses, meters), non-destructive clip edits (fades, crossfades, gain, stretch), tracks
-      on several cores. Plug-ins (CLAP, VST3, AU) last, if ever: patches already are the effects.
+      on several cores. Plug-ins (CLAP, VST3, AU) last, if ever: patches already are the effects. The
+      timeline's tracks already keep their strip on the score's row: inputs, arming and buses go there too.
 - [ ] Musil's live functions played through Moritz's engine.
 - [ ] Patches made from Musil: a `patch` library (make boxes and cables, open the patch, change the
       patch in front through the code view's path, with undo), as in mockup 13.
