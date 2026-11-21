@@ -288,8 +288,9 @@ run "$G/sound.moritz" --window-png none "act=soundopen:$T/s.wav" act=soundmenus 
     act=processdialog:typematch act=processdialog:pvoc act=sounddrag:0.1,0.3 act=sound \
     act=process:filter:type=lowpass,freq=500 act=processwait act=sound act=soundop:undo act=sound \
     act=processresult:new act=soundmenus act=process:pvoc:stretch=2 act=processwait act=sound
-expect "the Process menu" "state: sound process menu: pursuit: rebuild with atoms... | typematch: replace by units of... | hpss: keep... | nmf: keep components... | pvoc: stretch or transpose... | sparkle~: cross with... | filter (filterdesign)... | condec: convolve with... | A patch (inlet~ to outlet~)... | A Musil script (process x sr)... | Result: replace the selection (on) | Result: a new sound | Stop (Esc)"
+expect "the Process menu" "state: sound process menu: pursuit: rebuild with atoms... | typematch: replace by units of... | hpss: keep... | nmf: keep components... | pvoc: stretch or transpose... | sparkle~: cross with... | filter (filterdesign)... | condec: convolve with... | A patch (inlet~ to outlet~)... | A Musil script (process x sr)... | Examples | "
 expect "To Score, with the score object" "To Coll... | To Score... | Show the Regions Panel"
+expect "the bundled scripts and patches, listed" "Examples | comb-resonator.moritz | hall.moritz | octave-down.mu"
 expect "the To score button too" "state: sound to score active"
 expect "a dialog asks for the other sound among the buffer~s" "ask: typematch: the selection rebuilt with the units of another sound: with=[buffer~ voice|"
 expect "and for its settings" "ask: pvoc: stretch or transpose the selection: stretch=1 transpose=0 formants=keep window=2048 result=replace"

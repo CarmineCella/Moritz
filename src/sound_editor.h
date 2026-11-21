@@ -186,7 +186,9 @@ public:
     // run with these settings (missing ones: the defaults; with: "buffer~ NAME", "sound PATH" or "file PATH")
     bool runProcess(const std::string& kind, const std::map<std::string, std::string>& params);
     void choosePatch();                        // A patch...: a file chosen, its tail asked, then processPatch
-    void chooseScript();                       // A Musil script...
+    void chooseScript();
+    static std::vector<std::string> bundledProcesses();
+    std::vector<std::string> bundled_;   // the Process menu's Examples                       // A Musil script...
     // the selection through a patch, rendered tail seconds longer (a reverb's or an echo's ring; < 0: the tail asked
     // last, 2 s at first); replacing the selection, the tail is mixed over what follows it (SoundDoc::replaceSelection)
     bool processPatch(const std::string& path, double tail = -1);

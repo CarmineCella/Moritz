@@ -9,6 +9,9 @@
 #include "sound_process.h"
 #include "ui_util.h"
 
+#include <algorithm>
+#include <filesystem>
+
 #include <FL/Fl_Choice.H>
 #include <FL/Fl_Input.H>
 #include <FL/Fl_Native_File_Chooser.H>
@@ -1347,7 +1350,7 @@ void SoundEditor::buildBottom(int X, int Y, int W) {
              auto* e = static_cast<E*>(d);
              e->deleteRegion(e->selectedRegion());
          }},
-        {"To score \xe2\x96\xb8", "A .score with a sound event for each region (the score object reads it)", [](Fl_Widget*, void* d) {
+        {"To score...", "A .score with a sound event for each region (the score object reads it)", [](Fl_Widget*, void* d) {
              static_cast<E*>(d)->toScore();
          }},
         {"To coll...", "The regions written as rows (start end type energy pitch name), for a coll",
@@ -1777,7 +1780,19 @@ void SoundEditor::buildProcessMenu() {
     auto recent = recentProcesses();
     processMenu_->add("A Musil script (process x sr)...", 0, [](Fl_Widget* w, void*) {
         static_cast<E*>(w->parent()->parent())->chooseScript();
-    }, nullptr, recent.empty() ? FL_MENU_DIVIDER : 0);
+    }, nullptr, FL_MENU_DIVIDER);
+    // the scripts and patches that come with Moritz (examples/14-sound-editor), listed here: in the macOS app they
+    // are inside Moritz.app, which a file chooser does not open
+    bundled_ = bundledProcesses();
+    for (size_t k = 0; k < bundled_.size(); ++k)
+        processMenu_->add(("Examples/" + menuText(baseName(bundled_[k]))).c_str(), 0, [](Fl_Widget* w, void* d) {
+            auto* e = static_cast<E*>(w->parent()->parent());
+            size_t k = (size_t)(uintptr_t)d;
+            if (k >= e->bundled_.size()) return;
+            std::string p = e->bundled_[k];
+            if (p.size() > 3 && p.compare(p.size() - 3, 3, ".mu") == 0) e->processScript(p);
+            else e->processPatch(p, 2.0);
+        }, (void*)(uintptr_t)k, k + 1 == bundled_.size() && !recent.empty() ? FL_MENU_DIVIDER : 0);
     recentShown_ = recent;
     for (size_t k = 0; k < recent.size(); ++k)
         processMenu_->add(("Recent: " + menuText(baseName(recent[k]))).c_str(), 0, [](Fl_Widget* w, void* d) {
@@ -2111,6 +2126,34 @@ void SoundEditor::choosePatch() {
     resultNew_ = result.value() == 1;
     menuDirty_ = true;
     processPatch(p, patchTail());
+}
+
+// a patch with an inlet~ box (a word "inlet~" in a comment is not one)
+static bool hasInletSignal(const std::string& text) {
+    for (size_t at = text.find("(obj "); at != std::string::npos; at = text.find("(obj ", at + 5)) {
+        size_t id = text.find(' ', at + 5);
+        if (id == std::string::npos) break;
+        if (text.compare(id + 1, 7, "inlet~ ") == 0 || text.compare(id + 1, 7, "inlet~)") == 0) return true;
+    }
+    return false;
+}
+
+// examples/14-sound-editor's scripts (.mu) and patches (.moritz with an inlet~), sorted by name
+std::vector<std::string> SoundEditor::bundledProcesses() {
+    std::vector<std::string> out;
+    std::string d = examplesDir();
+    if (d.empty()) return out;
+    std::error_code ec;
+    for (const auto& f : std::filesystem::directory_iterator(d + "/14-sound-editor", ec)) {
+        std::string p = f.path().string(), ext = f.path().extension().string();
+        if (ext == ".mu") out.push_back(p);
+        else if (ext == ".moritz") {
+            std::string text;
+            if (readFile(p, text) && hasInletSignal(text)) out.push_back(p);
+        }
+    }
+    std::sort(out.begin(), out.end());
+    return out;
 }
 
 void SoundEditor::chooseScript() {
