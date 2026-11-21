@@ -28,6 +28,13 @@ namespace {
 constexpr int kOverviewH = 40;
 constexpr int kBottomH = 176;
 const Fl_Color kMarker = fl_rgb_color(245, 200, 40);
+// a marker's colour says where it came from: by hand, onsets, beats, novelty (sections)
+Fl_Color markerColor(const std::string& source) {
+    if (source == "onsets") return kMarker;
+    if (source == "beats") return fl_rgb_color(80, 200, 230);
+    if (source == "novelty") return fl_rgb_color(235, 110, 200);
+    return fl_rgb_color(235, 235, 240);
+}
 // a region's color by its type (A blue, B orange, C green, D pink ...), grey for none
 Fl_Color typeColour(int t) {
     static const unsigned char k[][3] = {{74, 144, 226}, {232, 150, 40}, {46, 190, 140}, {226, 100, 170},
@@ -347,6 +354,14 @@ void SoundView::draw() {
     drawLanes(X, W);
     int top = y() + kRulerH + kRegionsH + kMarkersH, bottom = y() + h();
     fl_push_clip(X, top, W, std::max(0, bottom - top));
+    // beats and sections drawn through the sound, faintly, in their colour (onsets are many: only in their lane)
+    for (const Marker& mk : d.marks().markers) {
+        if (mk.source != "beats" && mk.source != "novelty") continue;
+        int px = ed_->xOf((double)mk.at);
+        if (px < X || px > X + W) continue;
+        fl_color(fl_color_average(markerColor(mk.source), kLaneBg, 0.45f));
+        fl_yxline(px, top, bottom);
+    }
     if (ed_->selMarker_ >= 0 && ed_->selMarker_ < (int)d.marks().markers.size()) {   // the marker chosen, through
         fl_color(kMarker);
         fl_line_style(FL_DOT);
@@ -1124,7 +1139,7 @@ void SoundView::drawLanes(int X, int W) {
         long at = (int)k == dragMarker_ ? dragMarkerTo_ : m.markers[k].at;
         int px = ed_->xOf((double)at);
         if (px < X - 6 || px > X + W + 6) continue;
-        fl_color((int)k == ed_->selMarker_ ? FL_WHITE : kMarker);
+        fl_color((int)k == ed_->selMarker_ ? FL_WHITE : markerColor(m.markers[k].source));
         fl_polygon(px - 4, my + 3, px + 4, my + 3, px, my + 11);
     }
     fl_pop_clip();
