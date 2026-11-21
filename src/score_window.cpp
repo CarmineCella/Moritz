@@ -747,12 +747,14 @@ bool ScoreWindow::toggleRecord(int latency) {
         latency = app.audio.latencyFrames();
     }
     std::string err;
+    bool deaf = app.audio.running() && !app.audio.hasInput();
     if (!recorder_->start(doc_, &app.host, play_->startPoint(), latency, err)) {
         setStatus(err);
         refresh();
         return false;
     }
-    setStatus("recording from " + timeline::bbt(doc_->score(), recorder_->startedAt()) + " (latency " + std::to_string(latency) + " samples)");
+    setStatus("recording from " + timeline::bbt(doc_->score(), recorder_->startedAt()) + " (latency " + std::to_string(latency) + " samples)" +
+              (deaf ? ": but the device has no input open (Audio Setup), the takes will be silent" : ""));
     refresh();
     return true;
 }

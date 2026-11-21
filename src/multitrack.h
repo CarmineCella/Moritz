@@ -312,7 +312,9 @@ inline constexpr const char* kMaster = "@master";             // the master stri
 StripParams* stripOf(Box* b, const std::string& row);      // a track's or a bus's strip, or kMaster's
 // recording on a score box: what plays and records; started at once (the transport is the caller's)
 bool startRecording(Box* b, std::unique_ptr<Recording> r, std::string& err);
-std::unique_ptr<Recording> stopRecording(Box* b);           // unpublished, the audio thread let go of it
+// unpublished, and no longer pushed into (the audio thread may still hold it for the callback it is in: retire it
+// through the box's patch once finished, as SessionRecorder does)
+std::unique_ptr<Recording> stopRecording(Box* b);
 Recording* recordingOf(Box* b);
 // the stems of the last block an offline render ran (each track's output, after its strip): channel-major
 // pointers, tracks x channels; false when none

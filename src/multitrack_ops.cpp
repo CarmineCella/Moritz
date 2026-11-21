@@ -236,11 +236,13 @@ bool SessionRecorder::stop(std::string& msg) {
     if (doc_->playerBox() != box) { msg = "the session's player is gone: nothing recorded"; doc_.reset(); return false; }
     auto t = transportOf(box->patch);
     t->stop(box->patch);
-    auto rec = stopRecording(box);
+    std::shared_ptr<Recording> rec = stopRecording(box);
     if (!rec) { msg = "nothing recorded"; return false; }
     std::string err;
     bool ok = rec->finish(err);
     double sr = rec->sampleRate();
+    // the audio thread may have taken it for the callback it is in: freed once that one is over
+    box->patch->retire(rec);
     auto e = doc_->edit("Record");
     int n = 0;
     for (auto& take : rec->takes()) {
