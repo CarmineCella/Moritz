@@ -140,6 +140,10 @@ const std::vector<Command>& table() {
              if (auto* d = doc()) d->saveAs();
          },
          [] { return frontScore() || app().frontSound() || app().frontCode() != nullptr || haveDoc(); }, nullptr},
+        {"file.exportxml", "File/Export MusicXML...", 0, 0, [] { if (auto* t = frontScore()) t->exportAs(ScoreFormat::MusicXML); },
+         [] { return frontScore() != nullptr; }, nullptr},
+        {"file.exportmidi", "File/Export MIDI...", 0, 0, [] { if (auto* t = frontScore()) t->exportAs(ScoreFormat::Midi); },
+         [] { return frontScore() != nullptr; }, nullptr},
         {"file.revert", "File/Revert to Saved", 0, FL_MENU_DIVIDER, [] { if (auto* d = doc()) d->revert(); },
          [] {
              auto* d = app().frontCode() || app().frontSound() || frontScore() ? nullptr : doc();

@@ -30,6 +30,7 @@ void fl_open_display();   // FL/platform.H (not included: it drags in X11's macr
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 
 namespace moritz {
 
@@ -415,6 +416,7 @@ ScoreWindow::ScoreWindow(std::shared_ptr<ScoreDoc> doc, ScoreView view, bool arr
 }
 
 ScoreWindow::~ScoreWindow() {
+    *alive_ = false;
     Fl::remove_timeout(tick, this);
     if (docToken_) doc_->unlisten(docToken_);
     if (recorder_ && recorder_->recording()) {           // what was recorded is kept (its takes are clips)
@@ -786,6 +788,46 @@ bool ScoreWindow::saveAs() {
     bool ok = saveScoreDocumentAs(current(), [this](const std::string& m) { setStatus(m); });
     updateTitle();
     return ok;
+}
+
+void ScoreWindow::exportAs(ScoreFormat f) {
+    roll_->applyText();
+    auto dp = current();
+    if (!dp) return;
+    const ScoreDoc& d = *dp;
+    bool midi = f == ScoreFormat::Midi;
+    Fl_Native_File_Chooser fc;
+    fc.title(midi ? "Export MIDI" : "Export MusicXML");
+    fc.type(Fl_Native_File_Chooser::BROWSE_SAVE_FILE);
+    fc.filter(midi ? "MIDI\t*.mid" : "MusicXML\t*.musicxml");
+    fc.options(Fl_Native_File_Chooser::SAVEAS_CONFIRM | Fl_Native_File_Chooser::USE_FILTER_EXT);
+    std::string name = d.path().empty() ? (d.score().name.empty() ? std::string("untitled") : d.score().name) : baseOf(d.path());
+    if (size_t dot = name.find_last_of('.'); dot != std::string::npos) name.resize(dot);
+    if (!d.folder().empty()) fc.directory(d.folder().c_str());
+    fc.preset_file((name + scoreFormatExtension(f)).c_str());
+    std::string p = showSaveChooser(fc);
+    if (p.empty()) return;
+    auto endsWith = [&](const char* e) {
+        size_t n = std::strlen(e);
+        return p.size() >= n && p.compare(p.size() - n, n, e) == 0;
+    };
+    if (midi ? !endsWith(".mid") && !endsWith(".midi") : !endsWith(".musicxml") && !endsWith(".xml")) p += scoreFormatExtension(f);
+    ScoreExportOptions o;
+    if (int n = midi ? microtonalNotes(d.score()) : 0) {
+        int a = askUser("%d notes of the score sound between semitones. Write each with a pitch bend (on a MIDI channel "
+                        "of its own), or rounded to the nearest semitone?", "Cancel", "Pitch Bend", "Round", n);
+        if (a == 0) return;
+        o.bend = a == 1;
+    }
+    setStatus(midi ? "exporting MIDI..." : "exporting MusicXML (quantizing the notation)...");
+    std::weak_ptr<bool> alive = alive_;
+    exportScore(d.score(), f, p, o, [this, alive](const ScoreExported& r) {
+        std::string m = r.ok ? r.message : "can't export: " + r.message;
+        App::get().print(m);
+        auto a = alive.lock();
+        if (a && *a) setStatus(m);
+        if (!r.ok) alertUser("Can't export the score:\n%s", r.message.c_str());
+    });
 }
 
 bool ScoreWindow::confirmDiscard() {

@@ -24,6 +24,7 @@
 #pragma once
 
 #include "score_doc.h"
+#include "score_export.h"
 
 #include <FL/Fl_Double_Window.H>
 
@@ -109,6 +110,10 @@ public:
     std::shared_ptr<ScoreDoc> current() const;   // the document the view edits (the roll: the score it went into)
     bool save();                           // as saveScoreDocument
     bool saveAs();
+    // File > Export MusicXML... and Export MIDI... (score_export.h): the score the view shows, to a file chosen (its
+    // name by default the score's); MIDI asks whether notes between semitones are bent or rounded. What was written
+    // goes to the status line and the Console
+    void exportAs(ScoreFormat f);
     bool confirmDiscard();                 // asks when closing would lose edits only it shows; false: cancel
     void undo();
     void redo();
@@ -163,6 +168,7 @@ private:
     ToolButton* recordBtn_ = nullptr;
     std::unique_ptr<mt::SessionRecorder> recorder_;
     int docToken_ = 0;
+    std::shared_ptr<bool> alive_ = std::make_shared<bool>(true);   // false once closed (an export finishing later)
 };
 
 // ---- the application's side

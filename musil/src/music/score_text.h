@@ -379,6 +379,24 @@ inline std::shared_ptr<Score> fromData(const vptr& form, const std::string& dir 
     return r.scoreForm(form);
 }
 
+// bytes written to a file whole or not at all: a temporary file next to it, the write and the close checked, then
+// renamed over it (a .score file, a MIDI file, MusicXML)
+inline void writeAtomically(const std::string& path, const std::string& bytes) {
+    std::string tmp = path + ".tmp";
+    {
+        std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
+        if (!f) throw Error("score: cannot write " + path);
+        f.write(bytes.data(), (std::streamsize)bytes.size());
+        f.flush();
+        if (!f) { f.close(); std::remove(tmp.c_str()); throw Error("score: cannot write " + path); }
+        f.close();
+        if (f.fail()) { std::remove(tmp.c_str()); throw Error("score: cannot write " + path); }
+    }
+    std::error_code ec;
+    std::filesystem::rename(tmp, path, ec);
+    if (ec) { std::remove(tmp.c_str()); throw Error("score: cannot write " + path + ": " + ec.message()); }
+}
+
 // a score written to a file: a temporary file next to it, checked, then renamed over it. Its references are relative
 // to fromDir (by default the folder of the file it was read from, s.path; "": none to change): written to a file in
 // another folder, they are named from there (rebasePaths), so the file reads back with its scores and sounds
@@ -391,19 +409,7 @@ inline void writeFile(const Score& s, const std::string& path, const std::string
     } else {
         text = toText(s);
     }
-    std::string tmp = path + ".tmp";
-    {
-        std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
-        if (!f) throw Error("score: cannot write " + path);
-        f.write(text.data(), (std::streamsize)text.size());
-        f.flush();
-        if (!f) { f.close(); std::remove(tmp.c_str()); throw Error("score: cannot write " + path); }
-        f.close();
-        if (f.fail()) { std::remove(tmp.c_str()); throw Error("score: cannot write " + path); }
-    }
-    std::error_code ec;
-    std::filesystem::rename(tmp, path, ec);
-    if (ec) { std::remove(tmp.c_str()); throw Error("score: cannot write " + path + ": " + ec.message()); }
+    writeAtomically(path, text);
 }
 inline void writeFile(const Score& s, const std::string& path) { writeFile(s, path, s.path.empty() ? std::string() : folderOf(s.path)); }
 

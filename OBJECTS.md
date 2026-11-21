@@ -3114,6 +3114,8 @@ The Timeline view: tracks with their clips (sound regions drawn as waveforms, no
 
 A stereo sound on two outlets is balanced by its azimuth (the clip's and its track's), as a mono one is panned. The box's roll and its window's views are views of one score: an edit in one is in the others at once, with one undo history and one selection. Every edit plays at once. A score kept in the patch is saved with the patch: its edits mark the patch edited, and they are undone in the score's history (Edit > Undo with the box clicked last, or the roll's or the timeline's Undo), not as steps of the patch; a message to the box (add, clear, read, a transformation, a score sent), the code view or the patch's Undo (which puts back the whole patch as it was before its step, its scores too) change the score from outside, and its history starts again from there. A score with a file of its own is written by Save in its window (closing it with unsaved edits asks). A score replaced whole (clear, read, a score sent) forgets the selection.
 
+Export: File > Export MusicXML... and Export MIDI... in its window (the score the view shows), Export MusicXML... and Export MIDI... in the box's menu, or the message export. MusicXML is Musil's notation (score-notate and musicxml-text: each beat quantized to the division that moves its notes least, voices, ties, tuplets, quarter tones, the dynamics and techniques; a part per instrument, or per player when the notes say who plays them), made on a thread of its own, its report (how far the notes moved) in the Console. MIDI is Musil's score-midi: a format 1 file, a track per part with its General MIDI program, the velocities from the dynamics, the times exact at the score's tempo; the notes between semitones rounded, or each on a channel of its own with a pitch bend (the window asks; the message says bend). The scores placed inside are written with it; sounds, patches and messages are not notes and are left out of both. A file is written whole or not at all.
+
 | Argument | |
 | --- | --- |
 | `name` | the score's name |
@@ -3126,6 +3128,7 @@ A stereo sound on two outlets is balanced by its azimuth (the clip's and its tra
 | --- | --- |
 | `read [file]` | reads a .score file (its own again without a name) |
 | `write [file]` | writes it as a .score file, in the patch's folder or in ~/Documents/Moritz; the scores it places and its sounds are named from the file's folder (relative when near, else absolute), so it reads back whole |
+| `export musicxml\|midi [file] [bend]` | the score as MusicXML or as a MIDI file (none: the score's name, .musicxml or .mid), in the patch's folder or in ~/Documents/Moritz (elsewhere: not written; the menu's Export writes where you choose); bend: the MIDI notes between semitones with a pitch bend each (else rounded); exported musicxml\|midi path notes out of the info outlet when written |
 | `clear` | no events |
 | `add note at dur row pitch [dyn [tech]]` | a note (at and dur in seconds; the pitch a MIDI number or a name, G5) |
 | `add at row pitch [dyn [tech]]` | a note a beat long (the kind and the duration may be left out) |
@@ -3152,7 +3155,7 @@ A stereo sound on two outlets is balanced by its azimuth (the clip's and its tra
 
 | Inlet | |
 | --- | --- |
-| 1 | read/write file.score, clear, add note\|sound\|msg ..., score token, merge token, play, stop, locate bar, info |
+| 1 | read/write file.score, export musicxml\|midi, clear, add note\|sound\|msg ..., score token, merge token, play, stop, locate bar, info |
 
 | Outlet | |
 | --- | --- |
@@ -3160,7 +3163,7 @@ A stereo sound on two outlets is balanced by its azimuth (the clip's and its tra
 | 2 | its sounds, channel 2 of 2 |
 | 3 | notes: pitch velocity duration-ms row dynamics technique |
 | 4 | messages: name values... (patch events: patch name duration-ms args...) |
-| 5 | info: end when it plays past its last event; info rows events seconds |
+| 5 | info: end when it plays past its last event; info rows events seconds; exported format path notes |
 
 See also: `transport` `code` `buffer~` `receive` `orchidea`
 

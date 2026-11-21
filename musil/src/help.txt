@@ -2114,6 +2114,12 @@
   the score as a .score file (Musil data); what only Musil can hold (a database, a function, a
   vector) is left out (an event made of it entirely: said), a chord is written as its notes, a
   score placed from a file is written by its name; => the path
+#score-midi
+  (score-midi s path [params])
+  the score's notes as a standard MIDI file (format 1, a track per part, midi.h's
+  score_midi), written whole or not at all; params: 'microtones 'round (the default: to the
+  nearest semitone) or 'bend (pitch bend, a note on a channel of its own), 'bend-range in
+  semitones (2), 'ppq (480); => a record: path tracks notes rounded parts
 #score->text
   (score->text s)
   what score-write writes, as a string
