@@ -160,6 +160,14 @@ const std::map<std::string, PortDocs>& docs() {
                       "frequency (Hz; for a buffer~, a speed ratio, or Hz once its pitch is given)",
                       "morph: 0 prototype 1 .. 1 prototype 2"},
                      {"left", "right"}}},
+        {"harmonize~", {{"the voice to harmonize; intervals..., mode intervals|scale|midi-chord|midi-root, key k, scale name|pcs, "
+                         "note p v, voice k level|pan|formant|interval|vibrato ..., mix dry wet, transpose st, humanize cents ms, "
+                         "range lo hi, latency ms, threshold t, gate db, cycles n|auto, window w, marks snap|period, "
+                         "unvoiced mute|dry, seed n, flush",
+                         "intervals: semitones (or scale steps) per voice; their number is the voices that sound",
+                         "note pitch (or pitch velocity), from notein or kslider: midi-chord, midi-root; velocity 0 releases it",
+                         "velocity of the next pitch"},
+                        {"left", "right", "f0 detected (Hz; 0 when unvoiced), every 20 ms when it changes"}}},
         {"ambienc~", {{"the signal to place", "azimuth (degrees, 0 front, 90 left)", "elevation (degrees, up)"},
                       {"sound field channel (ACN: W Y Z X ...)"}}},
         {"ambirot~", {{"sound field channel (ACN)", "sound field channel (ACN), or the yaw in degrees (last inlet)"},
@@ -371,6 +379,9 @@ std::string portHelp(const Box* b, bool outlet, int i) {
             for (size_t k = 0; k < 11; ++k) chosen.push_back(d[k].second);   // the scalars
         if (!outlet) text = "signal to analyse; bang: analyse now; hop n; threshold t; range lo hi";
         else if (i < (int)chosen.size()) text = chosen[(size_t)i];
+    } else if (c == "harmonize~" && outlet && nOuts > 3) {
+        text = i == nOuts - 1 ? "f0 detected (Hz; 0 when unvoiced), every 20 ms when it changes"
+                              : "voice " + std::to_string(i + 1) + " alone (its level, not panned)";
     } else if (c == "groove~" && outlet && i == nOuts - 1) {
         text = "sync: position in the loop, 0 to 1";
     } else if (b->inner() && c != "p" && c != "pfft~" && c != "poly~") {

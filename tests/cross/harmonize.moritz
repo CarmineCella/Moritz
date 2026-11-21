@@ -1,0 +1,33 @@
+; harmonize.moritz - cross-test: harmonize~ against Musil's harmonize, the same engine (tools/test-patches.sh)
+(patch
+  (obj src buffer~ hsrc Vox.wav (pos 300 20))
+  (obj o buffer~ hout 2000 2 (pos 160 20))
+  (obj lb loadbang (pos 20 20))
+  (obj go message "mode scale, key E, scale major, intervals 2 4 -3, voice 1 pan -0.5, voice 2 pan 0.5, voice 3 pan 0, voice 3 formant 1.1, mix 0.5 1, humanize 8 20, vibrato 20 5.5 0.3, seed 5" (pos 20 50))
+  (obj pl play~ hsrc (pos 20 90))
+  (obj hz harmonize~ 3 20 (pos 20 130))
+  (obj r record~ hout 2 (pos 20 170))
+  (obj on message 1 (pos 160 130))
+  (obj dl delay 2200 (pos 300 50))
+  (obj c code (pos 300 90)
+    (script
+      "; the voice through harmonize~ (latency 20 ms, recorded for two seconds) and through harmonize with the same"
+      "; options and seed: harmonize takes its latency out, so the recording is the same signal 882 samples later"
+      "var got (buffer \"hout\")"
+      "var x (slice (head (buffer \"hsrc\")) 0 88200)"
+      "var want (harmonize x 44100 (list 2 4 -3) (list (list \"mode\" \"scale\") (list \"key\" \"E\") (list \"scale\" \"major\") (list \"pans\" (list -0.5 0.5 0)) (list \"formants\" (list 1 1 1.1)) (list \"dry\" 0.5) (list \"humanize\" (list 8 20)) (list \"vibrato\" (list 20 5.5 0.3)) (list \"latency\" 20) (list \"seed\" 5)))"
+      "function corr (u v) (/ (dot u v) (* (+ 1e-12 (norm u)) (+ 1e-12 (norm v))))"
+      "var rl (corr (slice (head got) 882 80000) (slice (head want) 0 80000))"
+      "var rr (corr (slice (last got) 882 80000) (slice (last want) 0 80000))"
+      "print \"cross harmonize~: correlation\" (fixed rl 5) (fixed rr 5) \"rms\" (fixed (rms (head want)) 4)"
+      "if (or (< rl 0.999) (< rr 0.999) (< (rms (head want)) 0.01)) { print \"FAIL: harmonize~ and Musil's harmonize disagree\" } { print \"PASS: harmonize~ and Musil's harmonize agree\" }"))
+  (connect lb 0 go 0)
+  (connect go 0 hz 0)
+  (connect lb 0 pl 0)
+  (connect pl 0 hz 0)
+  (connect hz 0 r 0)
+  (connect hz 1 r 1)
+  (connect lb 0 on 0)
+  (connect on 0 r 0)
+  (connect lb 0 dl 0)
+  (connect dl 0 c 0))

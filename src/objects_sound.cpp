@@ -1,18 +1,21 @@
 // Copyright (c) 2024-2026 Carmine-Emanuele Cella. SPDX-License-Identifier: BSD-2-Clause
 // objects_sound.cpp — sound processing from the author's tools: sparkle~
 // (sparkle's phase vocoder), conv~ (pconv/condec convolution), condec
-// (convolution and deconvolution of buffers) and function (a breakpoint
-// editor). descriptors~ is with the live analyses, in objects_mir.cpp.
+// (convolution and deconvolution of buffers), function (a breakpoint
+// editor), nebula~ (sound_math's granular synthesis) and harmonize~ (reVoice's
+// harmonizer). descriptors~ is with the live analyses, in objects_mir.cpp.
 
 #include "objects.h"
 #include "zoom.h"
 #include "signals/convolution.h"   // Musil's convolution engines
 #include "signals/vocoder.h"   // Musil's phase vocoder engine, as its pvoc
 #include "signals/nebula.h"    // Musil's granular engine, as its nebula
+#include "signals/psola.h"     // Musil's harmonizer, as its harmonize
 
 #include <FL/Fl.H>
 #include <FL/fl_draw.H>
 
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -694,6 +697,238 @@ private:
     enum : uint8_t { kSeed = kEvUser };
 };
 
+// ---------------------------------------------------------------- harmonize~
+// harmonize~ [voices] [latency-ms] [separate]: reVoice's vocal harmonizer, the
+// engine of Musil's harmonize (musil/src/signals/psola.h): up to 8 copies of
+// the voice in its left inlet at other pitches, made of grains of its own
+// periods (PSOLA), so the formants stay. The voices follow YIN's f0 of the
+// input; where it is unvoiced they fade out. Modes: intervals (semitones per
+// voice, the default 4 7 12 -12), scale (the sung note snapped to key and
+// scale, each voice that many scale steps from it), midi-chord (each held
+// note a voice, velocity its level), midi-root (the last held note the
+// fundamental, the voices their intervals above it). Notes come as `note p v`,
+// or to the two right inlets as notein and kslider send them (velocity, then
+// pitch).
+// The outlets are left and right (with `separate`, one per voice, not
+// panned, no dry) and the f0 detected (Hz, 0 unvoiced), every 20 ms when it
+// changes. Values reach the audio thread through atomics, notes through the
+// box's event queue; a new range or latency builds a new engine aside and
+// swaps it in.
+class HarmonizeBox : public Box {
+public:
+    using Ps = musil::dsp::Psola<float>;
+    static constexpr int kMax = Ps::kMaxVoices;
+    explicit HarmonizeBox(const Message& a) {
+        int k = 0;
+        for (auto& x : a) {
+            if (x.isSymbol() && x.s == "separate") separate_ = true;
+            else if (x.isFloat()) {
+                if (k == 0) nvoices_ = std::clamp((int)x.f, 1, kMax);
+                else if (k == 1) latencyMs_ = std::clamp(x.f, 0.f, 500.f);
+                ++k;
+            }
+        }
+        active_.store(nvoices_);
+        static const float iv[kMax] = {4, 7, 12, -12, -5, 3, 9, -8};
+        for (int v = 0; v < kMax; ++v) {
+            interval_[v].store(iv[v]);
+            pan_[v].store(nvoices_ > 1 ? -0.7f + 1.4f * (float)(v % nvoices_) / (float)(nvoices_ - 1) : 0.f);
+        }
+        std::vector<Port> outs((size_t)(separate_ ? nvoices_ : 2), P::Signal);
+        outs.push_back(P::Control);
+        setPorts({P::Signal, P::Control, P::Control, P::Control}, outs);
+    }
+    void attached() override { tick(); }
+    void resolve() override {
+        double sr = patch->root()->sampleRate.load();
+        if (!(sr > 0)) sr = 44100;
+        Ps* cur = eng_.get();
+        if (!cur || cur->sampleRate() != sr) rebuild(sr);
+    }
+    void message(int in, const Message& m) override {
+        if (m.empty()) return;
+        const Atom& h = m[0];
+        if (in == 3) { if (h.isFloat()) vel_ = h.f; return; }      // the velocity of the next pitch
+        if (in == 2) {                                            // a pitch, or pitch velocity
+            if (h.isFloat()) note((int)h.f, m.size() >= 2 ? argf(m, 1, 0.f) : vel_);
+            return;
+        }
+        if (in == 1 || (h.isFloat() && in == 0)) { intervals(m, 0); return; }
+        if (h.is("intervals") || h.is("list")) intervals(m, 1);
+        else if (h.is("note") && m.size() >= 3) note((int)argf(m, 1, 60.f), argf(m, 2, 0.f));
+        else if (h.is("flush") || h.is("allnotesoff")) { held_.fill(0.f); post(kAllOff); }
+        else if (h.is("mode") && m.size() > 1) {
+            musil::dsp::HarmonyMode md;
+            if (musil::dsp::harmony_mode(m[1].str(), md)) mode_.store((int)md);
+            else patch->print("harmonize~: mode is intervals, scale, midi-chord or midi-root");
+        } else if (h.is("key") && m.size() > 1) {
+            int k = m[1].isFloat() ? (((int)std::lround(m[1].f) % 12) + 12) % 12 : musil::music::key_class(m[1].str());
+            if (k < 0) { patch->print("harmonize~: a key is 0..11 or a name (C, F#, Bb ...)"); return; }
+            key_ = k;
+            scaleMask_.store(musil::music::scale_mask(steps_.data(), nsteps_, key_));
+        } else if (h.is("scale") && m.size() > 1) {
+            if (m[1].isFloat()) {
+                nsteps_ = 0;
+                for (size_t k = 1; k < m.size() && nsteps_ < 12; ++k) steps_[(size_t)nsteps_++] = (((int)std::lround(argf(m, k, 0.f)) % 12) + 12) % 12;
+            } else {
+                const musil::music::ScaleDef* d = musil::music::scale_named(m[1].str());
+                if (!d) { patch->print("harmonize~: unknown scale " + m[1].str()); return; }
+                nsteps_ = d->n;
+                for (int k = 0; k < d->n; ++k) steps_[(size_t)k] = d->steps[k];
+            }
+            scaleMask_.store(musil::music::scale_mask(steps_.data(), nsteps_, key_));
+        } else if (h.is("voice") && m.size() > 2) {
+            int v = (int)argf(m, 1, 1.f) - 1;
+            if (v < 0 || v >= kMax) return;
+            Message rest;
+            for (size_t k = 2; k < m.size(); ++k) rest.push_back(m[k]);
+            voiceParam(v, v + 1, rest);
+        } else if (h.is("level") || h.is("pan") || h.is("formant") || h.is("vibrato") || h.is("interval")) voiceParam(0, kMax, m);
+        else if (h.is("mix")) { dry_.store(std::max(0.f, argf(m, 1, 0.f))); wet_.store(std::max(0.f, argf(m, 2, 1.f))); }
+        else if (h.is("transpose")) transpose_.store(argf(m, 1, 0.f));
+        else if (h.is("humanize")) { humCents_.store(std::max(0.f, argf(m, 1, 0.f))); humMs_.store(std::max(0.f, argf(m, 2, 0.f))); }
+        else if (h.is("cycles")) cycles_.store(m.size() > 1 && m[1].isFloat() ? std::clamp(m[1].f, 0.5f, 4.f) : 0.f);
+        else if (h.is("threshold")) threshold_.store(std::clamp(argf(m, 1, .15f), .001f, 1.f));
+        else if (h.is("gate")) gate_.store(std::pow(10.f, argf(m, 1, -50.f) / 20.f));
+        else if (h.is("window") && m.size() > 1) {
+            std::string w = m[1].str();
+            int k = w == "hamming" ? 1 : w == "blackman" ? 2 : w == "hann" ? 0 : -1;
+            if (k < 0) patch->print("harmonize~: window is hann, hamming or blackman");
+            else window_.store(k);
+        } else if (h.is("marks") && m.size() > 1) marksPeriod_.store(m[1].is("period"));
+        else if (h.is("unvoiced") && m.size() > 1) unvoicedDry_.store(m[1].is("dry"));
+        else if (h.is("seed")) post(kSeed, argf(m, 1, 1.f));
+        else if (h.is("range") && m.size() > 2) {
+            float lo = argf(m, 1, 70.f), hi = argf(m, 2, 1000.f);
+            if (!(lo >= 20.f) || !(hi > lo * 1.5f)) { patch->print("harmonize~: range lo hi, 20 <= lo, hi > 1.5 lo"); return; }
+            fmin_ = lo; fmax_ = hi;
+            rebuild(eng_.get() ? eng_.get()->sampleRate() : 44100.0);
+        } else if (h.is("latency")) {
+            latencyMs_ = std::clamp(argf(m, 1, 0.f), 0.f, 500.f);
+            rebuild(eng_.get() ? eng_.get()->sampleRate() : 44100.0);
+        }
+    }
+    void dsp(int n) override {
+        Ps* ps = eng_.get();
+        const int nout = separate_ ? nvoices_ : 2;
+        if (!ps) {
+            for (int k = 0; k < nout; ++k) dsp::fill(sigOut(k), 0.f, n);
+            return;
+        }
+        auto& p = ps->p;
+        p.mode = (musil::dsp::HarmonyMode)mode_.load(std::memory_order_relaxed);
+        p.voices = std::clamp(active_.load(std::memory_order_relaxed), 1, nvoices_);
+        for (int v = 0; v < kMax; ++v) {
+            p.v[v].interval = interval_[v].load(std::memory_order_relaxed);
+            p.v[v].level = level_[v].load(std::memory_order_relaxed);
+            p.v[v].pan = pan_[v].load(std::memory_order_relaxed);
+            p.v[v].formant = formant_[v].load(std::memory_order_relaxed);
+            p.v[v].vibDepth = vibDepth_[v].load(std::memory_order_relaxed);
+            p.v[v].vibRate = vibRate_[v].load(std::memory_order_relaxed);
+            p.v[v].vibRandom = vibRandom_[v].load(std::memory_order_relaxed);
+        }
+        p.transpose = transpose_.load(std::memory_order_relaxed);
+        p.scaleMask = scaleMask_.load(std::memory_order_relaxed);
+        p.dry = dry_.load(std::memory_order_relaxed);
+        p.wet = wet_.load(std::memory_order_relaxed);
+        p.humanizeCents = humCents_.load(std::memory_order_relaxed);
+        p.humanizeMs = humMs_.load(std::memory_order_relaxed);
+        p.cycles = cycles_.load(std::memory_order_relaxed);
+        p.unvoicedDry = unvoicedDry_.load(std::memory_order_relaxed);
+        p.marksPeriod = marksPeriod_.load(std::memory_order_relaxed);
+        ps->setThreshold(threshold_.load(std::memory_order_relaxed));
+        ps->setGate(gate_.load(std::memory_order_relaxed));
+        int w = window_.load(std::memory_order_relaxed);
+        if (w != ps->windowType()) ps->setWindowType(w);           // the table is rewritten in place
+        const float* x = sigIn(0, n);
+        float* outs[kMax] = {};
+        auto run = [&](int from, int to) {
+            if (to <= from) return;
+            if (separate_) {
+                for (int k = 0; k < nvoices_; ++k) outs[k] = sigOut(k) + from;
+                ps->process(x + from, nullptr, nullptr, to - from, outs);
+            } else ps->process(x + from, sigOut(0) + from, sigOut(1) + from, to - from);
+        };
+        int at = 0;
+        for (int k = 0; k < events(); ++k) {                     // notes at their sample
+            const Event& e = event(k);
+            int off = std::clamp(eventOffset(k), at, n);
+            run(at, off);
+            at = off;
+            if (e.kind == kNote) ps->noteOn((int)e.a, e.b);
+            else if (e.kind == kAllOff) ps->allNotesOff();
+            else if (e.kind == kSeed) ps->seed((uint32_t)e.a);
+        }
+        run(at, n);
+        f0_.store((float)ps->f0(), std::memory_order_relaxed);
+    }
+
+private:
+    enum : uint8_t { kNote = kEvUser, kAllOff, kSeed };
+    // a list of intervals (or scale steps): the voices that sound, up to the box's
+    void intervals(const Message& m, size_t from) {
+        int k = 0;
+        for (size_t i = from; i < m.size() && k < nvoices_; ++i)
+            if (m[i].isFloat()) interval_[k++].store(m[i].f);
+        if (k > 0) active_.store(k);
+    }
+    // level x, pan x, formant x, vibrato depth rate [random], interval x: voices from .. to - 1
+    void voiceParam(int from, int to, const Message& m) {
+        if (m.empty()) return;
+        const Atom& h = m[0];
+        for (int v = from; v < to; ++v) {
+            if (h.is("level")) level_[v].store(std::max(0.f, argf(m, 1, 1.f)));
+            else if (h.is("pan")) pan_[v].store(std::clamp(argf(m, 1, 0.f), -1.f, 1.f));
+            else if (h.is("formant")) formant_[v].store(std::clamp(argf(m, 1, 1.f), .25f, 2.f));
+            else if (h.is("interval")) interval_[v].store(argf(m, 1, 0.f));
+            else if (h.is("vibrato")) {
+                vibDepth_[v].store(std::max(0.f, argf(m, 1, 0.f)));
+                vibRate_[v].store(std::max(0.f, argf(m, 2, 5.f)));
+                vibRandom_[v].store(std::clamp(argf(m, 3, 0.f), 0.f, 1.f));
+            }
+        }
+    }
+    void note(int pitch, float vel) {
+        if (pitch < 0 || pitch > 127) return;
+        held_[(size_t)pitch] = std::max(0.f, vel);
+        post(kNote, (float)pitch, std::max(0.f, vel));
+    }
+    // a new engine for the rate, range and latency, built here and swapped in; the notes held are given again
+    void rebuild(double sr) {
+        auto e = std::make_unique<Ps>();
+        Ps::Setup s;
+        s.sr = sr; s.fmin = fmin_; s.fmax = fmax_; s.latencyMs = latencyMs_;
+        s.threshold = threshold_.load(); s.gate = gate_.load();
+        e->init(s);
+        e->setWindowType(window_.load());
+        eng_.set(patch, std::move(e));
+        post(kAllOff);
+        for (int k = 0; k < 128; ++k) if (held_[(size_t)k] > 0) post(kNote, (float)k, held_[(size_t)k]);
+    }
+    // the f0 out, every 20 ms, when it changed
+    void tick() {
+        float f = f0_.load(std::memory_order_relaxed);
+        if (patch->root()->dspRunning && std::fabs(f - sent_) > 0.01f) {
+            sent_ = f;
+            outletFloat(numOuts() - 1, f);
+        }
+        patch->schedule(this, 0.02, [this] { tick(); });
+    }
+
+    Published<Ps> eng_;
+    int nvoices_ = 4;
+    bool separate_ = false;
+    float latencyMs_ = 0, fmin_ = 70, fmax_ = 1000, sent_ = -1, vel_ = 100;
+    int key_ = 0, nsteps_ = 7;
+    std::array<int, 12> steps_ = {0, 2, 4, 5, 7, 9, 11};
+    std::array<float, 128> held_{};
+    std::atomic<int> active_{4}, mode_{0}, scaleMask_{0xAB5}, window_{0};
+    std::atomic<float> interval_[kMax], level_[kMax] = {1, 1, 1, 1, 1, 1, 1, 1}, pan_[kMax], formant_[kMax] = {1, 1, 1, 1, 1, 1, 1, 1},
+        vibDepth_[kMax] = {}, vibRate_[kMax] = {5, 5, 5, 5, 5, 5, 5, 5}, vibRandom_[kMax] = {};
+    std::atomic<float> transpose_{0}, dry_{0}, wet_{1}, humCents_{0}, humMs_{0}, cycles_{0}, threshold_{.15f}, gate_{.003f}, f0_{0};
+    std::atomic<bool> unvoicedDry_{false}, marksPeriod_{false};
+};
+
 }  // namespace
 
 void registerSoundObjects(ClassTable& t) {
@@ -703,6 +938,7 @@ void registerSoundObjects(ClassTable& t) {
         {"condec", "Samples", "convolve / deconvolve buffers: conv|deconv x h out", plain<CondecBox>()},
         {"function", "Interface", "breakpoint editor: [domain ms] [lo] [hi]", with<FunctionBox>()},
         {"nebula~", "Oscillators", "granular synthesis (sound_math's nebula): [proto1] [proto2]", with<NebulaBox>()},
+        {"harmonize~", "Filters", "vocal harmonizer (reVoice): [voices] [latency-ms] [separate]", with<HarmonizeBox>()},
     });
 }
 

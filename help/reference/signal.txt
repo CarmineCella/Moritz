@@ -217,6 +217,55 @@ msg gain x: scales the response (1)
 msg normalize 0/1: normalises the response to unit energy, or not (1)
 see: buffer~ condec reverb~
 
+@ harmonize~
+syntax: harmonize~ [voices] [latency-ms] [separate]
+A vocal harmonizer (reVoice's; the engine of Musil's harmonize): up to eight
+copies of the voice in the left inlet at other pitches, each made of grains
+of the voice's own periods laid out at its new pitch (PSOLA), so the formants
+stay where they are and the copies sound like the same singer. YIN follows
+the voice's f0; where the voice is unvoiced (a consonant, a breath, silence)
+the copies fade out in 10 ms, or cross to the dry voice with `unvoiced dry`.
+Each copy keeps the voice's level, from an octave down to an octave up.
+
+Four ways to choose the pitches: `mode intervals` (each voice its interval in
+semitones: 4 7 12 -12 by default), `mode scale` (the sung note is snapped to
+`key` and `scale` and each voice is that many steps of the scale away from it:
+2 a third, 4 a fifth, -3 a fourth below; the voices keep the singer's
+intonation), `mode midi-chord` (every held note is a voice at that pitch, its
+velocity its level) and `mode midi-root` (the last held note is the
+fundamental, the voices their intervals above it). Notes come from notein or
+kslider into the two right inlets, or as `note pitch velocity`.
+
+The outlets are left and right (the voices panned, plus the dry voice at the
+level `mix` gives) and the f0 detected, in Hz, every 20 ms when it changes.
+With `separate` there is an outlet per voice instead, each alone and not
+panned. The voices are heard `latency` later: one period of the lowest f0
+and 2 ms (16 ms for the default range 70-1000 Hz).
+arg voices: the number of voices, 1-8 (4)
+arg latency-ms: the delay of the voices, 0 for the shortest the range allows (0)
+arg separate: an outlet per voice instead of left and right
+msg intervals a b c ...: the voices' intervals in semitones (scale steps in scale mode); their number is the number of voices that sound (also a list in the second inlet)
+msg mode m: intervals, scale, midi-chord or midi-root (intervals)
+msg key k: the key of scale mode, 0-11 or a name: C, F#, Bb ... (C)
+msg scale s: major minor dorian phrygian lydian mixolydian aeolian locrian harmonic-minor melodic-minor chromatic whole pentatonic minor-pentatonic blues, or the pitch classes above the key (major)
+msg note p v: a note for the midi modes; velocity 0 releases it
+msg flush: releases every note
+msg voice k level x: voice k's level (1); also pan -1..1, formant x (1 keeps the formants, 1.2 moves them 20% up), interval x, vibrato cents hz [random 0-1]
+msg level x: every voice's level (as pan, formant, vibrato and interval without `voice k`)
+msg mix dry wet: the levels of the dry voice and of the harmony (0 1)
+msg transpose st: moves every voice by st semitones (0)
+msg humanize cents ms: each voice drifts slowly within +- cents and starts up to ms late (0 0)
+msg range lo hi: the voice's f0 range in Hz (70 1000); a lower lo means more latency
+msg latency ms: the delay of the voices (0: the shortest)
+msg threshold t: YIN's threshold, lower is stricter (0.15)
+msg gate db: under this level the voice is unvoiced (-50)
+msg cycles n: the voice's periods in each grain, 0.5-4, or auto: 2, fewer for large shifts (auto)
+msg window w: the grain window, hann, hamming or blackman (hann)
+msg marks m: snap (each pitch mark at the peak of its period) or period (one period apart, as reVoice) (snap)
+msg unvoiced m: mute (the voices fade out) or dry (they carry the dry voice) (mute)
+msg seed n: the random draws of vibrato and humanize start again from n
+see: notein kslider sparkle~ descriptors~
+
 # ---------------------------------------------------------------- Signal Math
 
 @ +~ -~ *~ /~
