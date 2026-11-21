@@ -208,6 +208,12 @@ bool isScoreBox(const Box* b);
 std::shared_ptr<musil::score::Score> scoreOfBox(Box* b);
 bool replaceScoreOfBox(Box* b, std::shared_ptr<musil::score::Score> s);
 bool scoreBoxKeptInPatch(const Box* b);
+// a note (or a sound) sounded on its own, as a click on it in a roll does (GUI thread): e as it sounds (its placements
+// applied), origin the score it is in (where its sample is found). A note with a sample of its own (data sound, as
+// orchidea's) plays it through the preview voice at its pitch for its duration; a note without one leaves the box's
+// notes outlet, and at its end a note-off (velocity 0), or sounds as a tone when nothing is connected there; a sound its
+// region. What was done, for the status line ("" nothing)
+std::string auditionInBox(Box* box, const musil::score::Event& e, const musil::score::Score* origin);
 
 // the clock of the patch p is in (its top document's), made on first use
 inline std::shared_ptr<Transport> transportOf(Patch* p) {

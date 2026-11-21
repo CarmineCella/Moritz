@@ -142,6 +142,9 @@ the editor's command table and undo rule), YIN, `descriptors~` on the shared ana
       plays only its patch. Play from the end (or past it) starts from the start, the button's state and icon are
       always the transport's, a score's play message stops at its end, a score's own player is made with its
       window (not at Play).
+- [x] Audition in the roll (as in Musil's roll): a click on a note sounds it, in the box and in the window (its own
+      sample at its pitch through the preview voice, or the note out of the notes outlet with its note-off; a tone
+      when nothing is connected), Shift-click never, the Audition button turns it off.
 - [ ] The score's window, next: a keyboard shortcut for each view; the panels in an arranger window or a patch's
       dock (layouts B and C of mockup 8); the loop range set in the roll too (today in the timeline's ruler).
 - [ ] Timeline, next: patch clips that run while they play (loaded at their start, stopped at their end,

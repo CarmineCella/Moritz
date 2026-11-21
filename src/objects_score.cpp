@@ -8,6 +8,8 @@
 // of the position: a locate, a loop or a replaced score needs no state), so a sound starts on its sample; a note
 // leaves its outlet at the logical time whose stamp is its sample, so a signal object it reaches starts there too.
 
+#include "gui.h"
+#include "preview.h"
 #include "roll.h"
 #include "score_doc.h"
 #include "score_window.h"
@@ -396,6 +398,58 @@ public:
         score_ = std::move(s);
         edited();
     }
+    // a click on a note in a roll (audition, GUI thread): e as it sounds (its placements applied), origin the score it is
+    // in (where its sample is looked for). A note with a sample of its own plays it through the preview voice (preview.h,
+    // the sound editor's: real-time safe) at its pitch, for its duration, faded in and out; a note without one leaves
+    // the notes outlet as playing sends it, then at its end the same with velocity 0 (a note-off), or, when nothing is
+    // connected there (a score of its own on its player), sounds as a tone at its pitch through the preview; a sound
+    // event plays its region. What was done, for the status line ("" nothing: not a note or a sound)
+    std::string audition(const sc::Event& e, const sc::Score* origin) {
+        App& app = App::get();
+        std::string said;
+        double pitch = e.sounding();
+        char pn[32];
+        std::snprintf(pn, sizeof pn, "%g", std::round(pitch * 100) / 100);
+        if (e.kind == sc::Kind::Note && e.variant != "chord") {
+            const sc::Datum* snd = sc::field(e.extra, "sound");
+            if (snd && (snd->kind == sc::Datum::Str || snd->kind == sc::Datum::Sym) && !snd->s.empty()) {
+                std::string path = sourcePath(snd->s, origin);
+                std::shared_ptr<const SampleBuffer> buf = soundOf(path);
+                if (!buf) return "can't read the note's sample " + snd->s;
+                const sc::Datum* sp = sc::field(e.extra, "sound-pitch");
+                double base = sp && sp->kind == sc::Datum::Num ? sp->num : e.pitch;
+                double speed = std::pow(2.0, (pitch - base) / 12.0);
+                long to = (long)std::ceil(std::max(0.02, e.dur) * buf->sr * speed);
+                app.audio.preview().playNote(buf, 0, std::min<long>(to, buf->frames), speed, (float)e.gain, 0.008);
+                said = "the note's sample at " + std::string(pn) + ": " + fileName(snd->s);
+            } else {
+                int vel = std::clamp((int)std::lround(sc::velocityOf(e.dyn) * e.gain), 1, 127);
+                Atom row(e.row.empty() ? std::string("-") : e.row), dyn(e.dyn.empty() ? std::string("-") : e.dyn),
+                    tech(e.tech.empty() ? std::string("-") : e.tech);
+                if (notesConnected()) {
+                    outlet(nOut_, {Atom((float)pitch), Atom((float)vel), Atom((float)(e.dur * 1000.0)), row, dyn, tech});
+                    offs_.push_back({patch->logicalTime() + std::max(0.0, e.dur), Message{Atom((float)pitch), Atom(0.f), Atom(0.f), row, dyn, tech}});
+                    armOffs();
+                    said = "the note " + std::string(pn) + " out of the notes outlet";
+                } else {
+                    app.audio.preview().playNote(tone(pitch, vel, e.dur), 0, -1, 1.0, 1.f, 0.008);
+                    said = "the note " + std::string(pn) + " as a tone (nothing is connected to the score's notes outlet)";
+                }
+            }
+        } else if (e.kind == sc::Kind::Sound && !e.buffer && !e.source.empty()) {
+            std::shared_ptr<const SampleBuffer> buf = soundOf(sourcePath(e.source, origin));
+            if (!buf) return "can't read the sound " + e.source;
+            long from = (long)std::floor(std::max(0.0, e.from) * buf->sr);
+            long to = from + (long)std::ceil(std::max(0.02, e.dur) * buf->sr);
+            if (e.to >= 0) to = std::min(to, (long)std::ceil(e.to * buf->sr));
+            app.audio.preview().playNote(buf, from, std::min<long>(to, buf->frames), 1.0, (float)e.gain, 0.008);
+            said = "the sound " + fileName(e.source);
+        } else {
+            return "";
+        }
+        if (!app.audio.running()) said += ", but audio is off: turn it on (the Audio button, " + shortcutText(FL_COMMAND + '/') + ") to hear it";
+        return said;
+    }
     // what an editor binds to (score_doc.h): the score now, and whether it is kept in the patch (no file of its own)
     std::shared_ptr<sc::Score> current() const { return score_; }
     bool keptInPatch() const { return file_.empty(); }
@@ -408,6 +462,10 @@ public:
             inline_ = std::make_unique<RollCore>(nullptr);
             inline_->compact = true;
             inline_->onChange = [this] { if (patch) patch->redraw(); };
+            inline_->onAudition = [this](uint64_t id) {    // a click on a note sounds it
+                std::string m = audition(inline_->sounding(id), inline_->shown().get());
+                if (!m.empty() && patch) patch->status(m);
+            };
             inline_->onEnter = [this](uint64_t sub) {
                 ScoreWindow* w = openScoreBox(this, (int)ScoreView::Roll);
                 if (w && sub) { w->roll()->core().enter(sub); w->roll()->changed(); }
@@ -601,6 +659,57 @@ private:
         ownChanges_ = t_->changes();
     }
     bool ownPlay() const { return ownPlay_ && t_ && t_->playing() && t_->changes() == ownChanges_; }
+    // ---- audition: the files it plays (decoded once: the plan's already are), the notes-off to send
+    std::shared_ptr<const SampleBuffer> soundOf(const std::string& path) {
+        auto d = decoded_.find(path);
+        if (d != decoded_.end()) return d->second;
+        auto b = std::make_shared<SampleBuffer>();
+        std::string err;
+        if (!decodeAudioFile(path, *b, err)) return nullptr;
+        decoded_.emplace(path, b);                   // (let go at the next rebuild unless the plan reads it)
+        return b;
+    }
+    static std::string fileName(const std::string& p) {
+        size_t k = p.find_last_of("/\\");
+        return k == std::string::npos ? p : p.substr(k + 1);
+    }
+    bool notesConnected() const {
+        for (auto& c : patch->conns)
+            if (c.from == this && c.outlet == nOut_) return true;
+        return false;
+    }
+    // a tone at a pitch (a note with no sample and no synth to play it): a few partials, faded by the preview
+    static std::shared_ptr<const SampleBuffer> tone(double pitch, int vel, double dur) {
+        auto b = std::make_shared<SampleBuffer>();
+        b->channels = 1;
+        b->sr = 44100;
+        b->frames = (long)(std::clamp(dur, 0.05, 4.0) * b->sr);
+        b->data.assign((size_t)b->frames, 0.f);
+        double f = 440.0 * std::pow(2.0, (pitch - 69.0) / 12.0), amp = 0.25 * vel / 127.0;
+        for (long i = 0; i < b->frames; ++i) {
+            double t = (double)i / b->sr, decay = std::exp(-3.0 * t);
+            double x = std::sin(2 * M_PI * f * t) + 0.3 * std::sin(4 * M_PI * f * t) + 0.12 * std::sin(6 * M_PI * f * t);
+            b->data[(size_t)i] = (float)(amp * decay * x / 1.42);
+        }
+        return b;
+    }
+    std::vector<std::pair<double, Message>> offs_;   // auditioned notes' ends: when, and the note-off
+    void armOffs() {
+        for (auto& o : offs_) {
+            double t = o.first;
+            patch->scheduleAt(this, t, [this, t] {
+                for (size_t k = 0; k < offs_.size();) {
+                    if (offs_[k].first == t) {
+                        Message m = offs_[k].second;
+                        offs_.erase(offs_.begin() + (long)k);
+                        outlet(nOut_, m);
+                    } else {
+                        ++k;
+                    }
+                }
+            });
+        }
+    }
     void edited() {
         rebuild();
         if (patch) patch->redraw();
@@ -754,6 +863,7 @@ private:
     void follow() {
         if (!inPatch()) return;
         patch->cancel(this);
+        armOffs();                               // an auditioned note's end still to come
         if (!t_ || !t_->playing()) return;
         double pos;
         t_->where(patch, lap_, pos);
@@ -893,6 +1003,10 @@ int scoreBoxView(const Box* b) {
 }
 void setScoreBoxView(Box* b, int view) {
     if (auto* s = dynamic_cast<ScoreBox*>(b)) s->setLastView(view);
+}
+std::string auditionInBox(Box* b, const sc::Event& e, const sc::Score* origin) {
+    auto* s = dynamic_cast<ScoreBox*>(b);
+    return s ? s->audition(e, origin) : std::string();
 }
 RollCore* inlineRollOf(Box* b) {
     auto* s = dynamic_cast<ScoreBox*>(b);

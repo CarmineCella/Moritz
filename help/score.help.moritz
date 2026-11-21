@@ -65,6 +65,8 @@
   (obj tl2 comment "Its window's Timeline shows it as tracks (gain, pan, mute, solo; each sized by its lower edge), its events clips," (pos 20 625))
   (obj tl3 comment "its messages lanes that reach the receives of their name (a click on a lane's name selects them). @view timeline: it opens there." (pos 20 643))
   (obj tl4 comment "The box and its window's views are one score: an edit in one is in the others, with one undo and one selection; Space plays." (pos 20 661))
+  (obj aud comment "A click on a note sounds it (here out of the notes outlet, into the sine; a note with a sample of its own plays it); the roll's Audition button turns that off." (pos 20 679))
+  (obj tr1 comment "play plays this patch's transport (another patch open has its own); at the score's end, from the start; it stops at the end." (pos 20 697))
   (connect play 0 s 0)
   (connect stop 0 s 0)
   (connect loc 0 s 0)

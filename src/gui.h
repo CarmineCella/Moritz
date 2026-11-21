@@ -558,6 +558,7 @@ public:
     void showConsoleAlert(bool on);
     void updateMeters(float cpu, const std::vector<float>& peaks);
     Fl_Menu_Bar* menuBar() const { return menu_; }
+    std::string statusText() const { return statusBar_ && statusBar_->label() ? statusBar_->label() : ""; }   // (the tests)
 
     Canvas* canvas = nullptr;
 

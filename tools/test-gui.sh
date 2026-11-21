@@ -614,6 +614,22 @@ expect "its placed score's window plays too" "state: transport score gesture.sco
 expect "the patch is left alone" "state: transport score.moritz stopped"
 expect "the placed score's button" "state: score button stop on"
 
+# 44. audition: a click on a note sounds it, in the box (locked) and in the roll's window: with nothing connected to the
+#     score's notes outlet as a tone (audio off: said), connected out of it; Shift-click and the Audition button off
+#     never; the transport is not started
+run "$G/score.moritz" --window-png none act=draw act=boxdrag:s:2:0,0 act=state act=roll:s act=rollclick:3 act=scstate \
+    act=rollclick:1:shift act=scstate act=rollaudition:off act=rollclick:2 act=scstate act=rollaudition:on act=rollclick:2 \
+    act=scstate act=transports
+expect "a click on a note in the box" "state: status   LOCKED   ·   audio off   ·   the note 64 as a tone"
+expect "in the window, audio off said" "state: score button play off status the note 67 as a tone (nothing is connected to the score's notes outlet), but audio is off"
+if [ $status -eq 0 ] && [ "$(grep -c "status the note 67" "$out")" = 2 ]; then ok; else fail "Shift-click: no sound"; fi
+expect "Audition off: no sound" "state: score button play off status audition off"
+expect "Audition on again" "state: score button play off status the note 64 as a tone"
+expect "the transport not started" "state: transport score.moritz stopped"
+printf '(patch\n  (obj s score v (pos 20 20)\n    (script "(score \\"v\\" (row Fl treble) (note 0 0.5 Fl 62 mf (id 1)))"))\n  (obj p print n (pos 20 200))\n  (connect s 2 p 0))\n' > "$T/audition.moritz"
+run "$T/audition.moritz" --window-png none act=roll:s act=rollclick:1 act=scstate
+expect "connected: out of the notes outlet" "status the note 62 out of the notes outlet"
+
 rm -rf "$T"
 echo "$count interface cases, $fails failed"
 [ $fails -eq 0 ]

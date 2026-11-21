@@ -110,6 +110,13 @@ public:
     void quantizeSelection();
     bool transformSelection(ScoreTransform t);
     std::function<void(uint64_t)> onEnter;                 // a score placed was double-clicked (compact: the window)
+    // audition: a click on a note or a sound (not a drag, not with Shift, not a double-click) sounds it, through
+    // onAudition (the box or the panel plays it: auditionInBox, transport.h) while the roll's Audition is on (its
+    // toolbar's button: one setting for every roll, kept in the preferences)
+    std::function<void(uint64_t)> onAudition;
+    static bool auditionOn();
+    static void setAuditionOn(bool on);
+    sc::Event sounding(uint64_t id) const;                 // an event of the score shown as it sounds: placements applied
     std::function<void()> onChange;                        // something to draw again
     std::function<void(const std::string&)> onStatus;      // a message for the status line
 
@@ -184,7 +191,7 @@ private:
     // a gesture
     enum class Drag { None, Move, Resize, Rubber, Draw, Erase } drag_ = Drag::None;
     double px_ = 0, py_ = 0, cx_ = 0, cy_ = 0;
-    uint64_t anchor_ = 0;
+    uint64_t anchor_ = 0, clicked_ = 0;     // clicked_: the note pressed on, sounded when released where it was
     int anchorRow_ = -1;
     bool copy_ = false, moved_ = false, additive_ = false;
     double dragDt_ = 0, dragDp_ = 0, dragDd_ = 0;
@@ -275,6 +282,7 @@ public:
     void resize(int x, int y, int w, int h) override;
     void layoutChildren();
     RollWidget* rollWidget() const { return roll_; }
+    ToolButton* auditionButton() const { return auditionBtn_; }
     EventList* list() const { return list_; }
     DynamicsLane* dynamicsLane() const { return dyn_; }
     Fl_Choice* dynamicsRow() const { return dynRow_; }   // the row whose dynamics the lane shows ("all" first)
@@ -300,6 +308,7 @@ private:
     // the toolbar
     Fl_Group* bar_;
     ToolButton* toolBtn_[3];
+    ToolButton* auditionBtn_;
     Fl_Choice* snap_;
     RollWidget* roll_;
     DynamicsLane* dyn_;

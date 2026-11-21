@@ -245,7 +245,9 @@ Moritz follows Max's conventions:
   in place when the patch is locked: click a note (Shift adds, a rectangle
   selects), drag it in time and pitch, drag its end, Alt-drag copies,
   Delete, the arrows nudge, Alt+Up and Alt+Down detune by a cent (Shift+Alt:
-  ten), Q quantizes; Edit > Undo takes the edits back (the box clicked
+  ten), Q quantizes, and a click on a note sounds it (its own sample at its
+  pitch, or the note out of the notes outlet to the patch's synth; the
+  Audition button turns that off); Edit > Undo takes the edits back (the box clicked
   last), and in edit mode its corner sizes it. In its window: staves, a
   piano roll or a list of the events (each cell edited, the cents too),
   Select / Draw / Erase on a grid, a lane of dynamics (its row chosen at its

@@ -28,6 +28,9 @@ public:
     // ---- GUI thread
     // plays frames [from, to) of s (to <= from: to the end), from frame start (-1: from); its id
     uint64_t play(Sound s, long from, long to, bool loop, long start = -1);
+    // a note (the roll's audition): frames [from, to) of s at speed (2: an octave higher, faster), at gain, faded in
+    // and out over fade seconds; never loops; its id
+    uint64_t playNote(Sound s, long from, long to, double speed, float gain, double fade);
     void stop();                         // whatever plays (faded out)
     void setLoop(bool on) { loop_.store(on, std::memory_order_relaxed); }
     bool loop() const { return loop_.load(std::memory_order_relaxed); }
@@ -47,6 +50,9 @@ private:
         Sound sound;
         long from = 0, to = 0, start = 0;
         uint64_t id = 0;
+        double speed = 1;                // source frames a frame, besides the rates' ratio (a note's pitch)
+        float gain = 1.f;
+        double fade = 0;                 // seconds faded in and out (0: none)
         double pos = 0;                  // audio side: the frame it is at
         float env = 0.f;                 // audio side: 0..1, rises at the start, falls when it stops
         bool ending = false;             // audio side: fading out, then handed back

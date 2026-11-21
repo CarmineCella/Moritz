@@ -3,6 +3,7 @@
 
 #include "preview.h"
 
+#include <algorithm>
 #include <cmath>
 
 namespace moritz {
@@ -27,6 +28,24 @@ uint64_t PreviewPlayer::play(Sound s, long from, long to, bool loop, long start)
     v->env = 1.f;
     loop_.store(loop, std::memory_order_relaxed);
     delete slot_.exchange(v, std::memory_order_acq_rel);   // one the audio thread never took
+    return v->id;
+}
+
+uint64_t PreviewPlayer::playNote(Sound s, long from, long to, double speed, float gain, double fade) {
+    collect();
+    auto* v = new Voice;
+    v->sound = std::move(s);
+    v->from = std::max(0L, from);
+    v->to = to;
+    v->start = v->from;
+    v->id = ++lastId_;
+    v->pos = (double)v->start;
+    v->env = 1.f;
+    v->speed = std::isfinite(speed) && speed > 0 ? std::clamp(speed, 1.0 / 64, 64.0) : 1.0;
+    v->gain = std::isfinite(gain) ? std::max(0.f, gain) : 1.f;
+    v->fade = std::isfinite(fade) ? std::max(0.0, fade) : 0.0;
+    loop_.store(false, std::memory_order_relaxed);
+    delete slot_.exchange(v, std::memory_order_acq_rel);
     return v->id;
 }
 
@@ -76,7 +95,8 @@ bool PreviewPlayer::playVoice(Voice& v, float* out, int ch, int frames, double s
     const long end = v.to > v.from ? std::min(v.to, b.frames) : b.frames;
     const long from = std::min(v.from, end);
     if (end - from < 1 || bc < 1 || sr <= 0) return false;
-    const double step = b.sr > 0 ? b.sr / sr : 1.0;
+    const double step = (b.sr > 0 ? b.sr / sr : 1.0) * v.speed;
+    const double fadeFrames = v.fade * (b.sr > 0 ? b.sr : sr) * v.speed;   // a note's fades, in the sound's frames
     const float down = (float)(1.0 / (0.005 * sr));      // a stop fades out over 5 ms
     const float* x = b.data.data();
     for (int f = 0; f < frames; ++f) {
@@ -90,6 +110,8 @@ bool PreviewPlayer::playVoice(Voice& v, float* out, int ch, int frames, double s
         }
         long i = (long)v.pos;
         float fr = (float)(v.pos - (double)i);
+        float g = v.env * v.gain;
+        if (fadeFrames > 0) g *= (float)std::clamp(std::min(v.pos - (double)from, (double)end - v.pos) / fadeFrames, 0.0, 1.0);
         auto at = [&](int k) {
             float a = x[(size_t)i * bc + k];
             float n = i + 1 < b.frames ? x[(size_t)(i + 1) * bc + k] : 0.f;
@@ -99,13 +121,13 @@ bool PreviewPlayer::playVoice(Voice& v, float* out, int ch, int frames, double s
         if (ch == 1) {
             float s = 0.f;
             for (int k = 0; k < bc; ++k) s += at(k);
-            o[0] += v.env * s / (float)bc;
+            o[0] += g * s / (float)bc;
         } else if (bc == 1) {
-            float s = v.env * at(0);
+            float s = g * at(0);
             o[0] += s;
             o[1] += s;
         } else {
-            for (int c = 0; c < std::min(ch, bc); ++c) o[c] += v.env * at(c);
+            for (int c = 0; c < std::min(ch, bc); ++c) o[c] += g * at(c);
         }
         v.pos += step;
     }

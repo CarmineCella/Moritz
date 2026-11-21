@@ -211,6 +211,15 @@ augment, diminish, quantize, humanize, thin, density: Musil's score-transpose! a
 the others, the same functions); a double-click on a score placed enters it (all
 its placements follow its edits), Esc goes up.
 
+A click on a note (not a drag, not with Shift) sounds it, in the box and in the
+window (audition): a note with a sample of its own (orchidea's) plays it at the
+note's pitch for its duration through the sound editor's preview; a note without
+one leaves the notes outlet as playing sends it, then at its end the same with
+velocity 0, so the patch's synth plays it (with nothing connected there, as a
+tone); a sound event plays its region. The roll's Audition button turns it off
+(for every roll); the transport is never started, and with the audio off the
+status line says so.
+
 Its rows are tracks. A track's mixer strip (gain, pan as an azimuth, mute and
 solo, kept on the row in the score) applies to the sounds, notes and patches on
 it, and to the scores placed on it: a muted track is silent, and when a track is

@@ -18,6 +18,7 @@
 #include <FL/Fl_Image_Surface.H>
 #include <FL/Fl_Input.H>
 #include <FL/Fl_Menu_Bar.H>
+#include <FL/Fl_Preferences.H>
 #include <FL/Fl_Text_Buffer.H>
 #include <FL/Fl_Text_Editor.H>
 #include <FL/fl_draw.H>
@@ -968,6 +969,7 @@ bool RollCore::mouse(int event, double x, double y, int keys, int clicks) {
         px_ = cx_ = x;
         py_ = cy_ = y;
         moved_ = false;
+        clicked_ = 0;
         dragDt_ = dragDp_ = dragDd_ = 0;
         if (y < rulerOf(compact) || x < gutterOf(compact)) return false;
         Hit h = hit(x, y);
@@ -1009,6 +1011,7 @@ bool RollCore::mouse(int event, double x, double y, int keys, int clicks) {
             } else if (!selection.count(h.id)) {
                 selection = {h.id};
             }
+            if (!shift && clicks == 0) clicked_ = h.id;            // sounded when released without a drag
             anchor_ = h.id;
             anchorRow_ = h.row;
             copy_ = alt;
@@ -1056,17 +1059,61 @@ bool RollCore::mouse(int event, double x, double y, int keys, int clicks) {
         return true;
     }
     case FL_RELEASE: {
-        if (drag_ == Drag::None) return false;
+        uint64_t clicked = moved_ ? 0 : clicked_;               // a click on a note (not a drag): it sounds
+        clicked_ = 0;
+        if (drag_ == Drag::None) {
+            if (clicked && onAudition && auditionOn()) onAudition(clicked);
+            return clicked != 0;
+        }
         cx_ = x;
         cy_ = y;
         finishDrag(x, y, keys);
         drag_ = Drag::None;
         syncSelection();
+        if (clicked && onAudition && auditionOn()) onAudition(clicked);
         if (onChange) onChange();
         return true;
     }
     }
     return false;
+}
+
+namespace {
+int& auditionSetting() {                         // -1: not read from the preferences yet (GUI thread)
+    static int on = -1;
+    return on;
+}
+}  // namespace
+
+bool RollCore::auditionOn() {
+    int& on = auditionSetting();
+    if (on < 0) {
+        int v = 1;
+        Fl_Preferences roll(appPrefs(), "roll");
+        roll.get("audition", v, 1);
+        on = v ? 1 : 0;
+    }
+    return on != 0;
+}
+
+void RollCore::setAuditionOn(bool v) {
+    auditionSetting() = v ? 1 : 0;
+    Fl_Preferences roll(appPrefs(), "roll");
+    roll.set("audition", v ? 1 : 0);
+}
+
+sc::Event RollCore::sounding(uint64_t id) const {
+    sc::Event out;
+    auto s = shown();
+    auto e = s ? s->find(id) : nullptr;
+    if (!e) return out;
+    out = *e;
+    for (const Placement& p : placements()) {              // the scores it is placed in, from the top down
+        out.pitch += p.transpose;
+        out.dur *= p.stretch;
+        out.gain *= p.gain;
+    }
+    return out;
 }
 
 void RollCore::finishDrag(double, double, int keys) {
@@ -1518,6 +1565,22 @@ RollPanel::RollPanel(int X, int Y, int W, int H, std::shared_ptr<RollEditTarget>
     : Fl_Group(X, Y, W, H), core_(std::move(target)), play_(std::move(play)) {
     if (!play_)
         if (auto* dt = dynamic_cast<ScoreDocTarget*>(core_.target())) play_ = std::make_shared<ScorePlayback>(dt->document());
+    // a click on a note sounds it: through the score's box (a score placed inside one: the box of the score it is in;
+    // a score of its own: its player)
+    core_.onAudition = [this](uint64_t id) {
+        Box* b = nullptr;
+        if (ScoreDocTarget* dt = docTarget())
+            if (auto d = dt->document()) {
+                b = d->box();
+                if (!b && d->where() == ScoreDoc::Where::Sub) {
+                    auto chain = d->chain();
+                    if (!chain.empty()) b = chain.front()->box();
+                }
+                if (!b) b = d->player(&App::get().host);
+            }
+        std::string m = b ? auditionInBox(b, core_.sounding(id), core_.shown().get()) : std::string("nothing can play this score now");
+        if (!m.empty()) setStatus(m);
+    };
     box(FL_FLAT_BOX);
     color(kBgLocked);
     // ---- the toolbar
@@ -1552,6 +1615,14 @@ RollPanel::RollPanel(int X, int Y, int W, int H, std::shared_ptr<RollEditTarget>
     bx += 38 + 70 + 6;
     pill(bx, by, 76, bh, "Quantize", "The selection (or everything) onto the grid (Q)",
          [](Fl_Widget*, void* d) { auto* p = static_cast<P*>(d); p->core_.quantizeSelection(); p->changed(); }, this);
+    bx += 76 + 4;
+    auditionBtn_ = pill(bx, by, 76, bh, "Audition", "A click on a note sounds it (its sample, or out of the score's notes outlet); Shift-click and a drag never",
+                        [](Fl_Widget* w, void* d) {
+                            bool on = static_cast<ToolButton*>(w)->value() != 0;
+                            RollCore::setAuditionOn(on);
+                            static_cast<P*>(d)->setStatus(on ? "audition on: a click on a note sounds it" : "audition off");
+                        }, this, true);
+    auditionBtn_->value(RollCore::auditionOn());
     bx += 76 + 12;
     auto* zout = new ToolButton(bx, by, 28, bh, ToolButton::Minus, "", false);
     zout->tooltip("Zoom out (Cmd+wheel)");

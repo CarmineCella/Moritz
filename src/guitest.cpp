@@ -36,7 +36,7 @@
 //   act=raise:doc             the first document's window, the same
 //   act=raise:last            the newest document's window, the same
 //   act=menuitem:<command>    print: the command's item in the menu bar, active or not
-//   act=state                 print: the documents, the front one's state, the code editors
+//   act=state                 print: the documents, the front one's state (its status line too), the code editors
 //   act=canvas                print: the front patch window, locked or not, its boxes, the help patch it shows
 //   act=buffer:<name>         print: the frames of a buffer~
 //   act=boxes                 print: the boxes of the front document
@@ -385,6 +385,7 @@ bool act(const std::string& a) {
             state("front %s edited %s", d->path().empty() ? "Untitled" : d->path(), d->doc.anyDirty() ? "yes" : "no");
             state("undo %s redo %s", d->doc.canUndo() ? "yes" : "no", d->doc.canRedo() ? "yes" : "no");
             state("boxes %s", std::to_string(d->patch.boxes.size()));
+            state("status %s", d->statusText());
         }
         state("help in front %s", app.helpInFront() ? "yes" : "no");
         for (auto* cw : app.codeWindows()) {

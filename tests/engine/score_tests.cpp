@@ -4,6 +4,8 @@
 // C++ score (.score files read back the same, untrusted text refused without a crash).
 
 #include "rig.h"
+#include "gui.h"
+#include "preview.h"
 #include "transport.h"
 
 #include "music/score.h"
@@ -576,4 +578,61 @@ TEST(score_play_from_the_patch) {
     CHECK(snd.size() == 2 && snd[0] == 11025 && snd[1] == 44100 + 11025 && t->playing());
     r.box("tr")->message(0, {Atom("stop")});
     CHECK(!r.printedSomething("score:"));
+}
+
+// Audition (a click on a note in a roll): a note with a sample of its own plays it through the preview voice at its
+// pitch (an octave above the sample's: twice as fast) for its duration, faded in and out; a note without one leaves the
+// notes outlet as playing sends it and, at its end, as a note-off (velocity 0); with nothing connected there, a tone
+// through the preview; the transport is never started
+TEST(score_audition) {
+    namespace fs = std::filesystem;
+    fs::path dir = fs::temp_directory_path() / ("moritz_audition_" + std::to_string(std::rand()));
+    fs::create_directories(dir);
+    SampleBuffer ramp;                               // sample k is k / N: the frame read is seen in the output
+    ramp.channels = 1;
+    ramp.sr = 44100;
+    ramp.frames = 44100;
+    ramp.data.resize(44100);
+    for (long k = 0; k < ramp.frames; ++k) ramp.data[(size_t)k] = (float)k / (float)ramp.frames;
+    std::string err;
+    CHECK(writeWavFile((dir / "ramp.wav").string(), ramp, err, 24));
+    Rig r("(patch (obj s score x 1) (obj p print n) (obj o dac~ 1) (connect s 1 p 0) (connect s 0 o 0) (obj q score y 1))");
+    r.p.dir = dir.string();
+    auto t = transportOf(&r.p);
+    sc::Event e = *note(0, 0.1, 72);
+    sc::setField(e.extra, "sound", sc::Datum::string("ramp.wav"));
+    sc::setField(e.extra, "sound-pitch", sc::Datum::number(60));
+    PreviewPlayer& pv = App::get().audio.preview();
+    std::string said = auditionInBox(r.box("s"), e, nullptr);
+    CHECK(said.find("the note's sample") != std::string::npos && said.find("audio is off") != std::string::npos);
+    std::vector<float> out(8192, 0.f);
+    pv.render(out.data(), 1, (int)out.size(), 44100);
+    CHECK(std::fabs(out[1000] - 2000.f / 44100.f) < 1e-3f);          // twice as fast, past the fade-in
+    CHECK(out[100] < 200.f / 44100.f);                               // fading in
+    CHECK(std::fabs(out[4000] - 8000.f / 44100.f) < 1e-3f && out[4500] == 0.f);   // a tenth of a second, then nothing
+    // without a sample: out of the notes outlet, then its note-off at its end
+    sc::Event plain = *note(0, 0.25, 64);
+    said = auditionInBox(r.box("s"), plain, nullptr);
+    CHECK(said.find("notes outlet") != std::string::npos);
+    CHECK(r.printed.size() == 1 && r.printed[0].rfind("n: 64 ", 0) == 0 && r.printed[0].find(" 250 ") != std::string::npos);
+    r.run(4410 * 2);
+    CHECK(r.printed.size() == 1);
+    r.run(4410 * 2);
+    CHECK(r.printed.size() == 2 && r.printed[1].rfind("n: 64 0 0", 0) == 0);
+    CHECK(!t->playing());
+    // nothing connected to the notes outlet: a tone, through the preview
+    said = auditionInBox(r.box("q"), plain, nullptr);
+    CHECK(said.find("as a tone") != std::string::npos);
+    std::fill(out.begin(), out.end(), 0.f);
+    pv.render(out.data(), 1, (int)out.size(), 44100);
+    float peak = 0;
+    for (float x : out) peak = std::max(peak, std::fabs(x));
+    CHECK(peak > 0.05f);
+    CHECK(auditionInBox(r.box("p"), plain, nullptr).empty());          // not a score box
+    pv.stop();
+    std::fill(out.begin(), out.end(), 0.f);
+    pv.render(out.data(), 1, 512, 44100);
+    pv.collect();
+    std::error_code ec;
+    fs::remove_all(dir, ec);
 }

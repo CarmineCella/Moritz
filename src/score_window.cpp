@@ -862,6 +862,8 @@ bool confirmCloseScores() {
 //   act=tlpng:<file>, act=rollpng:<file>   the front score window drawn into a PNG file
 //   act=rolldrag:<event>:<seconds>,<steps>[:alt]   an event dragged by its head that far in time and that many steps
 //                                    up its staff (alt: Alt held, a copy)
+//   act=rollclick:<id>[:shift]       a click on an event's head in the roll (no drag; shift: Shift held)
+//   act=rollaudition:<on|off>        the roll's Audition button set so
 //   act=rollundo, act=rollredo, act=rolltext:<file>, act=rollselect:<id>,..., act=rollkey:<key>[:alt][:shift],
 //   act=rollcell:<id>:<key>:<value>, act=rollstate   as the roll's (see guitest.cpp)
 //   act=rolldynrow:<k>               the dynamics lane's row chooser set to its k-th item; print: its label, the row the
@@ -934,6 +936,26 @@ bool rollAction(ScoreWindow* w, const std::string& verb, const std::string& arg)
         ScoreView v;
         if (!parseScoreView(arg, v)) v = ScoreView::Roll;
         w->setView(v);
+        return true;
+    }
+    if (verb == "rollclick") {                     // act=rollclick:<id>[:shift]: a click on an event's head (no drag)
+        RollWidget* rw = panel->rollWidget();
+        RollCore& c = rw->core();
+        double x, y, ww, h;
+        if (!c.eventBox(std::strtoull(arg.c_str(), nullptr, 10), x, y, ww, h)) return false;
+        int keys = arg.find(":shift") != std::string::npos ? FL_SHIFT : 0;
+        int ex = rw->x() + (int)std::lround(x + h / 2), ey = rw->y() + (int)std::lround(y + h / 2);
+        mouse(rw, ex, ey, FL_PUSH, 0, keys);
+        mouse(rw, ex, ey, FL_RELEASE, 0, keys);
+        panel->changed();
+        return true;
+    }
+    if (verb == "rollaudition") {                  // act=rollaudition:on|off: the toolbar's Audition button clicked to that
+        ToolButton* b = panel->auditionButton();
+        if ((b->value() != 0) != (arg == "on")) {
+            b->value(arg == "on");
+            b->do_callback();
+        }
         return true;
     }
     if (verb == "rollundo") { panel->undo(); return true; }
