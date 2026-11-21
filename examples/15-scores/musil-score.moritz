@@ -4,7 +4,7 @@
 ; to eight voices of scorevoice.moritz (poly~), so the chords sound whole.
 ; Try: 1. play (the score was written when the patch opened); 2. another seed: another melody, sent
 ; while it plays; 3. double-click the code box, change the chords (MIDI numbers) or the tones, Cmd-S,
-; then choose a seed again; 4. double-click the score box: the same score in the roll's window.
+; then choose a seed again; 4. double-click the score box: the same score in its window (the Roll).
 (patch
   (obj title comment "a score written in Musil: a melody over four chords, played by the score box" (pos 20 12))
   (obj sub comment "play; a seed writes another melody; double-click the code box to change the chords or the tones" (pos 20 34))

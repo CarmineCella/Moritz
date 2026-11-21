@@ -2,9 +2,9 @@
 ; to this patch) is placed five times in the score kept in this patch, each placement with its own
 ; time, transposition and stretch (an instance: all of them play the one motif). A long cello note
 ; is the main score's own. The box draws each placement as a faint block.
-; Try: 1. play; 2. double-click the score box: the roll's window; double-click a block to enter
+; Try: 1. play; 2. double-click the score box: its window, the Roll; double-click a block to enter
 ; the motif (the breadcrumb shows where you are), move a note: every placement follows; Esc goes up;
-; Save writes motif.score; 3. right-click the box, Open as Timeline: the placements are clips, their
+; Save writes motif.score; 3. Timeline at the window's top: the placements are clips, their
 ; transpose and stretch in the inspector; 4. transpose 2 here moves the whole piece, placements too.
 (patch
   (obj title comment "scores inside scores: one motif placed five times, transposed and stretched" (pos 20 12))

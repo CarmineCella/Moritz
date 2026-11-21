@@ -502,7 +502,7 @@ if [ $status -eq 0 ] && [ "$(grep -c "playhead 0.75$" "$out")" = 2 ]; then ok; e
 
 # 36. a box's @view: the window opens in that view the first time (the timeline example: its Timeline); switching views
 #     does not change the box (the patch is not edited, its @view saved as it was)
-run "$HERE/examples/14-timeline/timeline.moritz" --window-png none act=dblclick:sc act=scstate
+run "$HERE/examples/16-timeline/timeline.moritz" --window-png none act=dblclick:sc act=scstate
 expect "the timeline example opens its Timeline" "state: score view timeline"
 printf '(patch\n  (obj s score v @view list (pos 20 20)))\n' > "$T/view.moritz"
 run "$T/view.moritz" --window-png none act=dblclick:s act=scstate act=scview:roll act=state act=save
@@ -541,7 +541,7 @@ expect "a track's name: the sound it plays" "state: sound anechoic1.wav — Mori
 expect "a clip's region selected" "state: sound selection 22050 66150"
 run "$G/timeline.moritz" --window-png none act=tlopen:s act=tlheaddbl:voice,density act=selected
 expect "a lane's header double-clicked" "state: selected timeline.moritz: rd"
-run "$HERE/examples/14-timeline/timeline.moritz" --window-png none act=tlopen:sc act=tlname:filter act=selected
+run "$HERE/examples/16-timeline/timeline.moritz" --window-png none act=tlopen:sc act=tlname:filter act=selected
 expect "a track of lanes: the receives it drives" "state: selected timeline.moritz: rc"
 
 # 40. track heights: a track's lower edge dragged, another folded to one line (a double-click on its edge), kept in the

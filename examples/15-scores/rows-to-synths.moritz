@@ -4,7 +4,7 @@
 ; filter, Keys to four voices of scorevoice.moritz (poly~), Perc to a noise burst whose pitch sets
 ; its brightness.
 ; Try: 1. play (two bars, looped); 2. in the box (patch locked) drag a Bass note up or down, or
-; later: the bass follows at once; 3. right-click the box, Open as Timeline: the rows are tracks;
+; later: the bass follows at once; 3. double-click the box, then Timeline at the window's top: the rows are tracks;
 ; mute Keys (M) or solo Bass (S): a muted track's notes do not leave the box; 4. add a row of your
 ; own in the roll's text and a fourth instrument after route's last outlet (what no row matched).
 (patch

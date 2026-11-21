@@ -3,21 +3,21 @@
 ; same cell, with its own start, gain, pan, transposition (its sounds faster and higher) and stretch
 ; (its slices further apart). An edit inside the cell is heard in every placement; Make Unique gives
 ; one placement a copy of its own, edited alone.
-; Try: 1. play; 2. right-click the score box, Open as Timeline: the placements are clips on two
+; Try: 1. play; 2. double-click the score box (its Timeline): the placements are clips on two
 ; tracks; click one: its start, length, stretch, transpose and gain in the inspector; 3. double-
 ; click a placement: the cell's own timeline (the breadcrumb shows where); drag a slice: all six
 ; follow; Save writes cell.score; Esc or the breadcrumb goes back up; 4. select the last placement,
 ; Make Unique, then edit it: only that one changes.
 (patch
   (obj title comment "instances: one drum bar (cell.score) placed six times, transposed, stretched, panned" (pos 20 12))
-  (obj sub comment "Open as Timeline (right-click the score), double-click a placement: the cell itself; Make Unique: a copy" (pos 20 34))
+  (obj sub comment "double-click the score: its Timeline; double-click a placement: the cell itself; Make Unique: a copy" (pos 20 34))
   (obj play message play (pos 20 70))
   (obj stop message stop (pos 65 70))
   (obj loc message "locate 1" (pos 110 70))
   (obj loop message "loop 1 5" (pos 180 70))
   (obj noloop message "loop 0" (pos 250 70))
   (obj tr transport 100 4 4 (pos 320 70))
-  (obj sc score groove @size 600 200 (pos 20 105)
+  (obj sc score groove @size 600 200 @view timeline (pos 20 105)
     (script
       "; cell.score placed six times: (score at file (gain g) (az a) (transpose n) (stretch k) (row name))"
       "(score \"groove\""

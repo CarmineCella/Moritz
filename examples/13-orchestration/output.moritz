@@ -10,7 +10,7 @@
 ; (read tinysol, after Download TinySOL there) set partials 0.3 so that the target's partials choose
 ; the pitches; the search is then slower (a minute or more for a long target is normal).
 ; Try: 1. orchestrate; 2. double-click the score box: the roll, a staff an instrument, the cents by
-; the detuned notes (Alt+Up, Alt+Down change them); Open as Timeline from the box's menu; 3. notes:
+; the detuned notes (Alt+Up, Alt+Down change them); Timeline at the top of its window; 3. notes:
 ; the last note in the message box, all of them in the Console; 4. write: voice-orchestra.txt next
 ; to this patch, Orchidea's format; 5. roll oproll: four channels a note, for a plot.
 (patch

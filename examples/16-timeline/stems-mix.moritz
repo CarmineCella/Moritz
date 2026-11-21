@@ -2,20 +2,20 @@
 ; a score kept in this patch, each track with its strip: gain, pan (an azimuth: left positive), mute
 ; and solo. The bass starts muted, the chords sit left, the melody right; the drums come in after
 ; two bars and the melody only for the second half. The score's playback follows the strips.
-; Try: 1. play; 2. right-click the score box, Open as Timeline: a track a stem; click M on the bass
+; Try: 1. play; 2. double-click the score box (its Timeline): a track a stem; click M on the bass
 ; to unmute it, S on the drums to hear them alone (S again: all); 3. click a track's name: its gain
 ; and pan in the inspector; pan the chords to -60; 4. drag the melody clip earlier, drag its left
 ; edge to trim it, S splits it at the playhead; Edit > Undo; 5. Save the patch: the arrangement is
 ; kept inside it.
 (patch
   (obj title comment "stems arranged on tracks: gain, pan, mute and solo, the playback following the strips" (pos 20 12))
-  (obj sub comment "right-click the score: Open as Timeline; M and S in each track's header, gain and pan in the inspector" (pos 20 34))
+  (obj sub comment "double-click the score: its Timeline; M and S in each track's header, gain and pan in the inspector" (pos 20 34))
   (obj play message play (pos 20 70))
   (obj stop message stop (pos 65 70))
   (obj loc message "locate 1" (pos 110 70))
   (obj l5 message "locate 5" (pos 180 70))
   (obj tr transport 100 4 4 (pos 250 70))
-  (obj sc score stems @size 600 200 (pos 20 105)
+  (obj sc score stems @size 600 200 @view timeline (pos 20 105)
     (script
       "; four stems, a track each: the strip of a track is its row's data (gain, az, mute, solo)"
       "(score \"stems\""

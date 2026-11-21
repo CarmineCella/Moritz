@@ -3,7 +3,7 @@
 ; sound event a region, with its name); the second score, kept in the patch, plays the same regions
 ; in a new order, a two-bar beat made of five hits.
 ; Try: 1. play: the regions as in the file (the first second), then the beat they make (from 2 s);
-; 2. right-click the beat, Open as Timeline: a clip a hit; Alt-drag one to copy it, drag its edges;
+; 2. double-click the beat (its Timeline): a clip a hit; Alt-drag one to copy it, drag its edges;
 ; 3. make your own: double-click the buffer~ (the sound editor), Markers > Regions from Onsets,
 ; then To score... (save it next to this patch as my-regions.score), then
 ; read my-regions.score into the first box; copy and paste its clips into the beat's timeline.
@@ -20,7 +20,7 @@
   (obj rd0 message "read drums-regions.score" (pos 175 105))
   (obj rg score regions drums-regions.score @size 600 110 (pos 20 135))
   (obj cb comment "the beat: the same five regions in a new order, on the eighths (from 2 s)" (pos 20 260))
-  (obj bt score beat @size 600 130 (pos 20 280)
+  (obj bt score beat @size 600 130 @view timeline (pos 20 280)
     (script
       "; the regions of drums-regions.score placed anew: (sound at dur file (from s) (to s))"
       "(score \"beat\""

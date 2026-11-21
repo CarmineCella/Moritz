@@ -4,17 +4,17 @@
 ; echo, the feedback 0 to 0.8) and a panner (lane pan, 0 left to 1 right); each receive ramps to
 ; the new value, since the lanes send their points, not the lines between them.
 ; Try: 1. play and listen: the filter opens, the echo comes and goes, the sound wanders; 2. right-
-; click the score box, Open as Timeline: the track fx has two lanes, the track space one; drag a
+; double-click the score box (its Timeline): the track fx has two lanes, the track space one; drag a
 ; point higher or later, click on a lane to add one; 3. a lane's range (the low and high values it
 ; draws) is in the track's data in the roll's text: (data lanes (list (list cutoff 200 8000) ...)).
 (patch
   (obj title comment "automation lanes: cutoff, echo and pan, each lane sent to the receive of its name" (pos 20 12))
-  (obj sub comment "play; right-click the score: Open as Timeline, drag the points of the lanes" (pos 20 34))
+  (obj sub comment "play; double-click the score: its Timeline; drag the points of the lanes" (pos 20 34))
   (obj play message play (pos 20 70))
   (obj stop message stop (pos 65 70))
   (obj loc message "locate 1" (pos 110 70))
   (obj tr transport 100 4 4 (pos 180 70))
-  (obj sc score lanes @size 600 200 (pos 20 105)
+  (obj sc score lanes @size 600 200 @view timeline (pos 20 105)
     (script
       "; a song on one track, and two tracks of lanes: their messages are the points"
       "(score \"lanes\""

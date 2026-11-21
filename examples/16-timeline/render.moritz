@@ -2,18 +2,18 @@
 ; stereo WAV file, faster than real time, with the tracks' strips (gain, pan, mute, solo) and the
 ; clips' fades as the score box plays them. Here a short arrangement of the stems, kept in the patch;
 ; once rendered, the file is read into a buffer~ and played beside the score, to compare.
-; Try: 1. play: the score itself; 2. right-click the score box, Open as Timeline, then Render...:
+; Try: 1. play: the score itself; 2. double-click the score box (its Timeline), then Render...:
 ; save it as render.wav next to this patch; 3. read render.wav, then start: the file sounds as the
 ; score did; 4. mute a track in the timeline and render again: the file follows the strips; 5.
 ; double-click the buffer~: the rendered file in the sound editor.
 (patch
   (obj title comment "a piece rendered to a file: the timeline's Render... writes the score as a stereo WAV" (pos 20 12))
-  (obj sub comment "Open as Timeline (right-click the score), Render..., save it as render.wav here; then read it and listen" (pos 20 34))
+  (obj sub comment "double-click the score: its Timeline; Render..., save it as render.wav here; then read it and listen" (pos 20 34))
   (obj play message play (pos 20 70))
   (obj stop message stop (pos 65 70))
   (obj loc message "locate 1" (pos 110 70))
   (obj tr transport 100 4 4 (pos 180 70))
-  (obj sc score arrangement @size 600 180 (pos 20 105)
+  (obj sc score arrangement @size 600 180 @view timeline (pos 20 105)
     (script
       "; eight bars of the stems: the chords alone, then the bass, then the melody, fading out"
       "(score \"arrangement\""

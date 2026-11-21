@@ -1,7 +1,7 @@
 ; draw-by-hand.moritz - a score drawn by hand: the score box starts empty, with two staves (a flute
 ; and a cello), and its notes go to eight voices of scorevoice.moritz. It is kept in the patch, so
 ; what you draw is saved with it (Save As... first, to keep this example as it is).
-; Try: 1. double-click the score box (the patch locked): the roll's window opens; 2. choose Draw and
+; Try: 1. double-click the score box (the patch locked): its window opens on the Roll; 2. choose Draw and
 ; click on a staff to put a note, drag to make it longer; Select to move notes, Erase to take them
 ; out; 3. play: the transport loops the first two bars, so each note sounds as soon as it is drawn;
 ; 4. in the box itself: drag a note higher or later, drag its end, Alt-drag copies, Delete, the

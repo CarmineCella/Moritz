@@ -5,7 +5,7 @@
 ; from the score box to the synth.
 ; Try: 1. play: twelve seconds of a drone that changes by itself; 2. double-click the score box:
 ; the messages are on a line of their own; drag one later, or change a value in the List; 3. right-
-; click the box, Open as Timeline: the messages are points on lanes, one lane a name; click a lane to
+; click the box, Open, then Timeline at the window's top: the messages are points on lanes, one lane a name; click a lane to
 ; add a point; 4. add msg 3 root 43 adds a message by hand.
 (patch
   (obj title comment "a score of messages: each one reaches the receive of its name at its time" (pos 20 12))
