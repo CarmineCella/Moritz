@@ -647,6 +647,40 @@ run "$HERE/tutorials/13-scores.moritz" --window-png none "act=send:sc:write ~/Do
 expect "transposed" "state: roll note 1 0 0.45 77"
 expect "read back as written" "state: roll note 1 0 0.45 75"
 
+# 46. the multitrack mode: File > New Session opens an arranger (two tracks, the drawer's mixer), a sound added, saved
+#     where asked; a track armed by its R; Record with a fake device (a sine into input 1, audio off) for a second: the
+#     take written next to the session (<name>_media) and added as a clip on the armed track, one undo step
+mkdir -p "$T/mt"
+run --window-png none act=mtnew "act=tladdsound:$HERE/data/drums.wav" "saveas=$T/mt/song.score" act=tlsave act=mtstate \
+    "act=mtarm:audio 2" act=mtstate act=mtrecord:1 act=mtstate act=timeline
+expect "a session in the arranger" "state: arranger song.score — timeline — Moritz session"
+expect "its tracks" "state: arranger track audio 1 arm no input 0/1"
+expect "the drawer's mixer" "state: arranger clips 1 recording no drawer mixer"
+expect "armed by its R" "state: arranger track audio 2 arm yes input 1/1"
+expect "the take added" "state: arranger clips 2 recording no drawer mixer"
+expect "said" "state: arranger status recorded 1 take"
+if [ $status -eq 0 ] && [ -s "$T/mt/song_media/audio 2 take 1.wav" ] && grep -q "state: timeline clip 2 sound audio 2 0 " "$out" &&
+   [ -z "$(ls -A "$T/mt/song_media" | grep '\.part$')" ]; then ok; else fail "the take's file and clip"; fi
+
+# 47. the mixer: a fader dragged is heard during the drag (the strip's atomic) and is one undo step at the release,
+#     without a new plan; the drawer's Track tab makes an insert patch next to the session and shows it, live; the
+#     Clip tab shows the selected sound clip in the sound editor; the browser lists a folder and a double-click adds
+cp "$HERE/data/drums.wav" "$T/mt/"
+run --window-png none "act=mtopen:$T/mt/song.score" act=mtstate act=mtmixer "act=mtfader:audio 1,-6" act=mtmixer act=mtstate \
+    act=mttab:track act=mtnewpatch act=mtdrawer act=mttab:clip act=mtselect:1 act=mtdrawer "act=mtbrowse:$T/mt" act=mtbrowser \
+    act=mtbrowseopen:3 act=mtstate
+expect "the strips" "state: mixer strip audio 1 gain 0.0 pan C mute no solo no arm no out master live 0.0"
+expect "heard during the drag" "state: mixer live audio 1 -5.9"
+expect "kept at the release" "state: mixer strip audio 1 gain -5.9"
+plans=$(grep "state: arranger plans" "$out" | cut -d' ' -f4 | tr '\n' ' ')
+if [ $status -eq 0 ] && [ "$(echo $plans | cut -d' ' -f1)" = "$(echo $plans | cut -d' ' -f2)" ]; then ok
+else fail "a fader moved makes no plan (plans: $plans)"; fi
+expect "an insert made and shown" "state: drawer track audio 1 insert audio 1 insert.moritz"
+if [ -s "$T/mt/audio 1 insert.moritz" ]; then ok; else fail "the insert's file"; fi
+expect "the clip's sound editor" "state: drawer clip sound drums.wav"
+expect "the browser" "state: browser song_media/|audio 1 insert.moritz|drums.wav|song.score|"
+expect "a double-click adds a sound" "state: arranger clips 2 recording no"
+
 rm -rf "$T"
 echo "$count interface cases, $fails failed"
 [ $fails -eq 0 ]

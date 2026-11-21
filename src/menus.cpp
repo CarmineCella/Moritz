@@ -14,6 +14,7 @@
 #include "datasets.h"
 #include "sound_editor.h"
 #include "score_window.h"
+#include "arranger.h"
 #include "timeline.h"
 
 #include <FL/filename.H>
@@ -118,6 +119,8 @@ const std::vector<Command>& table() {
          nullptr, nullptr},
         {"file.newscore", "File/New Score", 0, 0, [] { newScore(); }, nullptr, nullptr},
         {"file.openscore", "File/Open Score...", 0, 0, [] { openScoreDialog(); }, nullptr, nullptr},
+        {"file.newsession", "File/New Session", 0, 0, [] { newSession(); }, nullptr, nullptr},
+        {"file.opensession", "File/Open Session...", 0, 0, [] { openSessionDialog(); }, nullptr, nullptr},
         {"@recent", "File/Open Recent", 0, 0, nullptr, nullptr, nullptr},
         {"file.import", "File/Import from Max...", FL_COMMAND + FL_SHIFT + 'i', FL_MENU_DIVIDER,
          [] { app().importDialog(); }, nullptr, nullptr},

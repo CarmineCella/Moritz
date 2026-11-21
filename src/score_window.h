@@ -40,6 +40,9 @@ namespace moritz {
 
 class TimelinePanel;
 class RollPanel;
+class FileBrowserPanel;
+class Drawer;
+namespace mt { class SessionRecorder; }
 class ScoreDocTarget;
 class ToolButton;
 
@@ -91,7 +94,8 @@ private:
 
 class ScoreWindow : public Fl_Double_Window {
 public:
-    ScoreWindow(std::shared_ptr<ScoreDoc> doc, ScoreView view);
+    // arranger: the multitrack layout (arranger.h): the browser, the drawer, a session's track headers, Record
+    ScoreWindow(std::shared_ptr<ScoreDoc> doc, ScoreView view, bool arranger = false);
     ~ScoreWindow() override;
     ScoreDoc& doc() { return *doc_; }
     const std::shared_ptr<ScoreDoc>& docPtr() const { return doc_; }
@@ -117,6 +121,16 @@ public:
     int handle(int e) override;
     void resize(int x, int y, int w, int h) override;
     ToolButton* playButton() const { return playBtn_; }
+    // ---- the arranger (a session)
+    bool arranger() const { return drawer_ != nullptr; }
+    FileBrowserPanel* browser() const { return browser_; }
+    Drawer* drawer() const { return drawer_; }
+    ToolButton* recordButton() const { return recordBtn_; }
+    // Record: the armed tracks record from the playhead (the session saved first: its takes go next to it); again
+    // (or Stop): the takes become clips. latency: the device's when < 0. false: not started (the status says why)
+    bool toggleRecord(int latency = -1);
+    bool recording() const;
+    mt::SessionRecorder* recorder() const { return recorder_.get(); }
 
 private:
     static void tick(void* data);
@@ -143,11 +157,16 @@ private:
     std::string info_, message_, positionText_, crumbKey_;
     std::vector<std::weak_ptr<ScoreDoc>> crumbDocs_;
     int rollDepth_ = 0;                    // how many scores placed inside the roll went into (for the breadcrumb)
+    FileBrowserPanel* browser_ = nullptr;
+    Drawer* drawer_ = nullptr;
+    ToolButton* recordBtn_ = nullptr;
+    std::unique_ptr<mt::SessionRecorder> recorder_;
+    int docToken_ = 0;
 };
 
 // ---- the application's side
 // the window of a document (already open: brought forward), in a view (-1: the one used last for it)
-ScoreWindow* openScore(std::shared_ptr<ScoreDoc> doc, int view = -1);
+ScoreWindow* openScore(std::shared_ptr<ScoreDoc> doc, int view = -1, bool arranger = false);
 ScoreWindow* openScoreBox(Box* box, int view = -1);      // a score box's (nullptr: not one)
 ScoreWindow* openScoreFile(const std::string& path);      // a .score file (File > Open Score...)
 void openScoreDialog();

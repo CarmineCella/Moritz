@@ -4,6 +4,8 @@
 // saves and closes it; the test actions (act=tl..., act=roll..., act=sc...), which drive it as the mouse does.
 
 #include "score_window.h"
+#include "arranger.h"
+#include "multitrack_ops.h"
 #include "fileio.h"
 #include "roll.h"
 #include "sound_editor.h"
@@ -237,7 +239,8 @@ void ScorePlayback::tick() {
 
 // ================================================================ the window
 
-ScoreWindow::ScoreWindow(std::shared_ptr<ScoreDoc> doc, ScoreView view) : Fl_Double_Window(1320, 820), doc_(std::move(doc)) {
+ScoreWindow::ScoreWindow(std::shared_ptr<ScoreDoc> doc, ScoreView view, bool arranger)
+    : Fl_Double_Window(arranger ? 1480 : 1320, arranger ? 940 : 820), doc_(std::move(doc)) {
     color(kStatusBg);
     play_ = std::make_shared<ScorePlayback>(doc_);
     // a score without a box plays on a player of its own: made now, not at the first Play (its patch compiled, its
@@ -293,6 +296,16 @@ ScoreWindow::ScoreWindow(std::shared_ptr<ScoreDoc> doc, ScoreView view) : Fl_Dou
         sw->redraw();
     }, this);
     bx += 44;
+    if (arranger) {
+        recordBtn_ = new ToolButton(bx, by, 34, bh, ToolButton::Record, "", true);
+        recordBtn_->tooltip("Record into the armed tracks from the playhead (R in a track's header arms it); again: Stop");
+        recordBtn_->callback([](Fl_Widget*, void* d) {
+            auto* sw = static_cast<W*>(d);
+            sw->toggleRecord();
+            sw->refresh();
+        }, this);
+        bx += 38;
+    }
     loopBtn_ = new ToolButton(bx, by, 34, bh, ToolButton::Loop, "", true);
     loopBtn_->tooltip("Loop (L): drag in the timeline's ruler to say where");
     loopBtn_->callback([](Fl_Widget* w, void* d) {
@@ -332,6 +345,28 @@ ScoreWindow::ScoreWindow(std::shared_ptr<ScoreDoc> doc, ScoreView view) : Fl_Dou
     int cy = Y + kToolH + kCrumbsH, ch = h() - cy - kStatusH;
     timeline_ = new TimelinePanel(0, cy, w(), ch, doc_, play_);
     roll_ = new RollPanel(0, cy, w(), ch, target_, play_);
+    if (arranger) {
+        browser_ = new FileBrowserPanel(0, cy, 220, ch);
+        drawer_ = new Drawer(0, cy, w(), 300, doc_, play_);
+        recorder_ = std::make_unique<mt::SessionRecorder>();
+        std::string dir = doc_->folder();
+        browser_->setFolder(!dir.empty() && dir != "." ? dir : homeDir());
+        browser_->onOpen = [this](const std::string& path) {
+            std::string l = path;
+            for (auto& c : l) c = (char)std::tolower((unsigned char)c);
+            auto ends = [&](const char* e) { return l.size() > std::strlen(e) && l.compare(l.size() - std::strlen(e), std::strlen(e), e) == 0; };
+            std::string track = timeline_->currentTrack();
+            if (ends(".score")) timeline_->after(timeline::addSubScore(*doc_, path, track, play_->playhead()) != 0);
+            else if (ends(".moritz")) timeline_->after(timeline::addPatchClip(*doc_, path, track, play_->playhead(), 0) != 0);
+            else timeline_->addSoundFile(path, track, play_->playhead());
+        };
+        drawer_->onStatus = [this](const std::string& m) { setStatus(m); };
+        docToken_ = doc_->listen([this](unsigned what) {
+            if (!drawer_) return;
+            if (what & ScoreDoc::Selection) drawer_->selectionChanged();
+            if ((what & ScoreDoc::Content) && drawer_->tab() == Drawer::Tab::Track) drawer_->setRole(drawer_->role());
+        });
+    }
     // the status line
     infoBox_ = new Fl_Box(0, h() - kStatusH, w() / 2, kStatusH);
     messageBox_ = new Fl_Box(w() / 2, h() - kStatusH, w() - w() / 2, kStatusH);
@@ -366,12 +401,19 @@ ScoreWindow::ScoreWindow(std::shared_ptr<ScoreDoc> doc, ScoreView view) : Fl_Dou
         if (sw->confirmDiscard()) closeScoreWindow(sw);
     });
     view_ = view;
+    if (arranger) timeline_->setSession(true);
     setView(view);
+    if (arranger) layout();
     Fl::add_timeout(1.0 / 30, tick, this);
 }
 
 ScoreWindow::~ScoreWindow() {
     Fl::remove_timeout(tick, this);
+    if (docToken_) doc_->unlisten(docToken_);
+    if (recorder_ && recorder_->recording()) {           // what was recorded is kept (its takes are clips)
+        std::string m;
+        recorder_->stop(m);
+    }
     target_->setListener(nullptr);
     timeline_->onStatus = nullptr;
     timeline_->onInfo = nullptr;
@@ -395,8 +437,17 @@ void ScoreWindow::layout() {
     crumbs_->resize(0, Y + kToolH, W, kCrumbsH);
     if (crumbInfo_) crumbInfo_->resize(W / 2, Y + kToolH + 2, W / 2 - 10, kCrumbsH - 4);
     int cy = Y + kToolH + kCrumbsH, ch = std::max(100, H - cy - kStatusH);
-    timeline_->resize(0, cy, W, ch);
-    roll_->resize(0, cy, W, ch);
+    if (drawer_) {                                       // the arranger: the browser, the views, the drawer under them
+        int dh = std::clamp(ch * 36 / 100, 200, 380), bw = 220;
+        int mh = std::max(100, ch - dh);
+        browser_->resize(0, cy, bw, mh);
+        timeline_->resize(bw, cy, W - bw, mh);
+        roll_->resize(bw, cy, W - bw, mh);
+        drawer_->resize(0, cy + mh, W, ch - mh);
+    } else {
+        timeline_->resize(0, cy, W, ch);
+        roll_->resize(0, cy, W, ch);
+    }
     infoBox_->resize(0, H - kStatusH, W / 2, kStatusH);
     messageBox_->resize(W / 2, H - kStatusH, W - W / 2, kStatusH);
     updateCrumbs();
@@ -629,10 +680,50 @@ void ScoreWindow::refresh() {
     }
 }
 
+bool ScoreWindow::recording() const { return recorder_ && recorder_->recording(); }
+
+bool ScoreWindow::toggleRecord(int latency) {
+    if (!recorder_) return false;
+    if (recorder_->recording()) {
+        std::string m;
+        recorder_->stop(m);
+        setStatus(m);
+        timeline_->contentsChanged();
+        refresh();
+        return true;
+    }
+    if (doc_->path().empty()) {                          // its takes go next to its file: saved first
+        setStatus("save the session first: its recordings go next to its file");
+        if (!saveAs() || doc_->path().empty()) { refresh(); return false; }
+    }
+    App& app = App::get();
+    if (latency < 0) {
+        if (!app.audio.running()) app.toggleAudio();
+        if (!app.audio.running()) { setStatus("audio is off: turn it on to record"); refresh(); return false; }
+        app.audio.updateInputNeed();
+        latency = app.audio.latencyFrames();
+    }
+    std::string err;
+    if (!recorder_->start(doc_, &app.host, play_->startPoint(), latency, err)) {
+        setStatus(err);
+        refresh();
+        return false;
+    }
+    setStatus("recording from " + timeline::bbt(doc_->score(), recorder_->startedAt()) + " (latency " + std::to_string(latency) + " samples)");
+    refresh();
+    return true;
+}
+
 void ScoreWindow::tick(void* data) {
     auto* sw = static_cast<ScoreWindow*>(data);
     bool was = sw->playBtn_->value() != 0;
     sw->play_->tick();
+    if (sw->recorder_ && sw->recorder_->recording() && !sw->play_->running()) sw->toggleRecord();   // stopped: the takes kept
+    if (sw->recordBtn_ && sw->recordBtn_->value() != (sw->recording() ? 1 : 0)) {
+        sw->recordBtn_->value(sw->recording());
+        sw->recordBtn_->redraw();
+    }
+    if (sw->drawer_ && sw->timeline_->currentTrack() != sw->drawer_->track()) sw->drawer_->setTrack(sw->timeline_->currentTrack());
     sw->refresh();
     if (was && !sw->play_->playing() && !sw->play_->message.empty()) sw->setStatus(sw->play_->message);
     Fl::repeat_timeout(1.0 / 30, tick, data);
@@ -755,7 +846,7 @@ bool confirmDiscardScoreDocument(const std::shared_ptr<ScoreDoc>& dp, const Fl_W
 
 // ================================================================ the application's side
 
-ScoreWindow* openScore(std::shared_ptr<ScoreDoc> doc, int view) {
+ScoreWindow* openScore(std::shared_ptr<ScoreDoc> doc, int view, bool arranger) {
     if (!doc) return nullptr;
     for (auto* w : windows())
         if (w->docPtr() == doc) {
@@ -768,7 +859,7 @@ ScoreWindow* openScore(std::shared_ptr<ScoreDoc> doc, int view) {
     else if (Box* b = doc->box()) v = (ScoreView)std::clamp(scoreBoxView(b), 0, 3);   // used last, its @view, or Roll
     else if (doc->lastView >= 0 && doc->lastView <= 3) v = (ScoreView)doc->lastView;
     fl_open_display();
-    auto* w = new ScoreWindow(doc, v);
+    auto* w = new ScoreWindow(doc, v, arranger || isSession(doc->score()));
     int k = (int)windows().size();
     centerOnScreen(w, App::get().frontDoc(), 24 * (k % 6), 24 * (k % 6));
     windows().push_back(w);
@@ -1259,7 +1350,7 @@ bool scoreTestAction(const std::string& verb, const std::string& arg) {
         auto* r = rowOf(v, arg, "");
         if (!r) return false;
         int by = v->rowTop(*r) + std::min(8, std::max(0, (r->h - 17) / 2));
-        int ex = v->x() + TimelineView::kHeadW - 50 + (verb == "tlsolo" ? 22 : 0) + 8, ey = by + 6;
+        int ex = v->x() + v->headW() - 50 + (verb == "tlsolo" ? 22 : 0) + 8, ey = by + 6;
         mouse(v, ex, ey, FL_PUSH, 0);
         mouse(v, ex, ey, FL_RELEASE, 0);
         return true;
@@ -1274,7 +1365,7 @@ bool scoreTestAction(const std::string& verb, const std::string& arg) {
             ex = v->x() + (r->lane >= 0 ? 16 : 12) + 3;
             ey = Y + std::min(r->lane >= 0 ? 15 : 20, r->h - 5) - 4;
         } else {                                   // away from it: under it, left of the buttons
-            ex = v->x() + TimelineView::kHeadW - 70;
+            ex = v->x() + v->headW() - 70;
             ey = Y + r->h / 2 + 4;
         }
         if (verb == "tlname" && !v->onName(*r, ex, ey)) return false;

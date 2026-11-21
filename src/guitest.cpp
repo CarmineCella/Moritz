@@ -73,6 +73,7 @@
 //   act=processstop           Process > Stop
 //   act=soundmenus            print: the items of the Process and Markers menus
 //   act=tl...:..., act=timeline, act=sc...:..., act=selected   a score's window (score_window.cpp lists them)
+//   act=mt...:...             a session in the arranger window (arranger.cpp lists them)
 //   act=roll:<id>             the score window of a score box of the front document, in its Roll view
 //   act=rolldrag:<event>:<seconds>,<steps>[:alt]   in the front score window, an event dragged by its head that far
 //                             in time and that many steps up its staff (alt: Alt held, a copy)
@@ -101,6 +102,7 @@
 #include "sound_editor.h"
 #include "sound_process.h"
 #include "score_window.h"
+#include "arranger.h"
 #include "timeline.h"
 
 #include <map>
@@ -201,6 +203,7 @@ std::string escape(const std::string& t) {
 bool act(const std::string& a) {
     App& app = App::get();
     std::string verb = a.substr(0, a.find(':')), arg = a.find(':') == std::string::npos ? "" : a.substr(a.find(':') + 1);
+    if (verb.rfind("mt", 0) == 0) return arrangerTestAction(verb, arg);   // arranger.cpp
     if (verb == "timeline" || verb == "selected" || verb == "transports" || verb.rfind("tl", 0) == 0 || verb.rfind("sc", 0) == 0 ||
         verb.rfind("roll", 0) == 0)
         return scoreTestAction(verb, arg);       // score_window.cpp
