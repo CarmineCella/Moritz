@@ -166,7 +166,8 @@ label: two p boxes with the same name are separate patches. A patch saved as
 name.moritz and typed as name is an abstraction, found next to the patch, then
 in the libraries, then among the bundled examples; its arguments replace
 #1 to #9 inside it, #0 becomes a number unique to each copy (for local send,
-receive and buffer~ names), and saving from its window writes its file.
+receive and buffer~ names), and saving from its window writes its file. A
+pitch name with a sharp (C#4, G#2) is a pitch, not an argument.
 arg name: a label (none)
 msg anything: goes out of the inlet box inside that matches the inlet; a number in a signal inlet becomes a constant signal
 see: inlet outlet inlet~ outlet~ poly~ pfft~

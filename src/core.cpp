@@ -628,6 +628,28 @@ std::unique_ptr<Box> Patch::create(const std::string& cls, const Message& writte
 // receive and buffer~ names); #1..#9 are the abstraction's arguments.
 // Outside any abstraction they become 0, so an abstraction file can be
 // opened and edited on its own (the written form is what gets saved).
+// A pitch name with a sharp (C#4, G#-1: a capital A to G, #, the octave) is
+// a pitch, never an argument: orchidea's chords G#4, orchestra's range F#3
+// and a score's add note keep their sharps (they became G0, F0).
+static bool sharpPitchName(const std::string& s) {
+    if (s.size() < 3 || s[0] < 'A' || s[0] > 'G' || s[1] != '#') return false;
+    size_t i = 2;
+    if (s[i] == '-') ++i;
+    if (i >= s.size()) return false;
+    for (; i < s.size(); ++i)
+        if (!std::isdigit((unsigned char)s[i])) return false;
+    return true;
+}
+
+// the word around position i (a message box's text holds several) is such a pitch name
+static bool inSharpPitch(const std::string& s, size_t i) {
+    auto sep = [](char c) { return std::isspace((unsigned char)c) || c == ',' || c == ';'; };
+    size_t from = i, to = i;
+    while (from > 0 && !sep(s[from - 1])) --from;
+    while (to < s.size() && !sep(s[to])) ++to;
+    return sharpPitchName(s.substr(from, to - from));
+}
+
 Atom Patch::substitute(const Atom& a) const {
     if (!a.isSymbol() || a.s.find('#') == std::string::npos) return a;
     const Patch* scope = this;
@@ -637,7 +659,7 @@ Atom Patch::substitute(const Atom& a) const {
     std::string out;
     const std::string& s = a.s;
     for (size_t i = 0; i < s.size(); ++i) {
-        if (s[i] == '#' && i + 1 < s.size() && std::isdigit((unsigned char)s[i + 1])) {
+        if (s[i] == '#' && i + 1 < s.size() && std::isdigit((unsigned char)s[i + 1]) && !inSharpPitch(s, i)) {
             int k = s[i + 1] - '0';
             if (k == 0) out += std::to_string(scope->instance);
             else if (k <= (int)scope->absArgs.size()) out += scope->absArgs[(size_t)k - 1].str();

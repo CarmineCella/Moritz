@@ -43,6 +43,17 @@ public:
 
 }  // namespace
 
+// a pitch name with a sharp in a box (orchidea's chords G#4, memory.moritz's pitches C#4) was taken for an
+// abstraction's argument #4 and became G0; #1 and name#0 are still arguments
+TEST(sharp_pitch_names_are_not_arguments) {
+    Rig r("(patch (obj m message \"chords E4 G#4 B4 / C#-1 F#3\") (obj a message \"x#1 #2 buf#0\") (obj p print got)"
+          " (connect m 0 p 0) (connect a 0 p 0))");
+    r.box("m")->message(0, {Atom("bang")});
+    r.box("a")->message(0, {Atom("bang")});
+    CHECK(r.printedSomething("chords E4 G#4 B4 / C#-1 F#3"));
+    CHECK(r.printedSomething("x0 0 buf0"));
+}
+
 // groove~: a NaN rate made its position NaN for good (the clamp let it through): silence forever
 TEST(groove_recovers_from_a_nan_rate) {
     Rig r("(patch (obj b buffer~ snd data/Vox.wav) (obj s sig~ 1) (obj g groove~ snd 1) (obj o dac~ 1)"
