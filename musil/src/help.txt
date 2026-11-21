@@ -2136,6 +2136,51 @@
 #score-bbt->sec
   (score-bbt->sec s bar beat tick)
   a position in bars, beats (from 1) and ticks as seconds at the score's tempo and meter
+#score-transpose!
+  (score-transpose! s n [ids])
+  the notes (and the scores placed) n semitones higher; ids: a list of ids or events
+  (none: every event). => s
+#score-invert!
+  (score-invert! s axis [ids])
+  the notes mirrored around a pitch (a number or a name); twice gives them back. => s
+#score-retrograde!
+  (score-retrograde! s [ids])
+  the events backwards within their span (from the first onset to the last end). => s
+#score-augment! score-diminish!
+  (score-augment! s k [ids])  (score-diminish! s k [ids])
+  onsets and durations stretched by k (divided by k) from the
+  first onset of the events. => s
+#score-quantize-grid!
+  (score-quantize-grid! s grid strength [ids])
+  onsets and ends moved toward the nearest multiple of grid seconds (strength 1:
+  onto it, 0.5: half way); an end that would reach its onset is a grid after it. => s
+#score-humanize!
+  (score-humanize! s seconds db seed [ids])
+  each onset moved at random by up to seconds either way, each gain by up to db
+  decibels; the same seed, the same result on every system. => s
+#score-thin!
+  (score-thin! s keep seed [ids])
+  each event kept with probability keep, the others taken out. => the ids taken out
+#score-density!
+  (score-density! s curve seed [ids])
+  each event kept with the probability a curve (a vector or a list of values 0 to 1,
+  read along the events' span) has at its onset. => the ids taken out
+#score-shift!
+  (score-shift! s dt [ids])
+  every onset moved by dt seconds (never before 0). => s
+#score-scale!
+  (score-scale! s f)
+  every onset and duration multiplied by f (> 0). => s
+#instrument-rank
+  (instrument-rank instr)
+  where an instrument code sits in the orchestral order (Picc Fl ... Vc Cb; unknown ones after)
+#score-orchestral-order
+  (score-orchestral-order)
+  the instrument codes in the order of an orchestral score
+#staff-clef
+  (staff-clef pitches)
+  the clef of a row of these MIDI pitches: "bass" when their median is below C4, else "treble";
+  "none" without pitches
 #event
   (event s 0 3.5 "bells.wav")
   a sound file (read when rendered, cached)
@@ -2294,9 +2339,6 @@
   the live way: every event scheduled on the clock (synths compiled and gated, the rest
   rendered), no hall; returns at once => (list synth-ids end-clock-time start-clock-time);
   free the synths when it is over
-#instrument-rank
-  (instrument-rank instr)
-  where an instrument code sits in the orchestral order (unknown ones after)
 #score-rows
   (score-rows s)
   the rows of the roll: one per instrument (orchestral order) for the notes, then one
@@ -3053,9 +3095,6 @@
   a note whose sound is the database entry with that file name (the
   folder may differ); when the file is not there, the note by its fields; an unpitched sound
   (pitch N) as a file event
-#score-shift! score-scale!
-  (score-shift! s dt)  (score-scale! s f)
-  every event moved by dt seconds; every onset and duration multiplied by f
 #score-select
   (score-select s f)
   the events for which f holds

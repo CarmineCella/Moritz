@@ -2444,7 +2444,7 @@ See also: `orchidea` `buffer~`
 
 Assisted orchestration, after Orchidea (Cella, Esling): a target sound in a buffer~ imitated by the players of an orchestra object. The target is cut into segments (one for a static target, or at its onsets), each analysed into the database's features and into the pitches of its partials; for each segment a genetic search finds the combinations of sounds, one per player or a rest, whose summed spectrum is nearest the target's, with an asymmetric distance (a partial the target lacks costs more than one it has and the solution lacks). The search runs as a background job, on Musil's engine: Musil's orchestrate-mimetic with the same target, database, orchestra and seed finds the same notes, on every system.
 
-When it is done, the solution comes out as one message a note: its number (from 1), instrument, pitch, dynamics, technique, onset and duration (ms), the sound's path, the cents the target's partial is away from the pitch, and the player (from 0), then the done outlet bangs (not after a run that failed with a message); a note the target holds across segments on the same player is one longer note. The distance (the mean cost of the chosen solutions) comes out on the last outlet. With an out buffer~, the chosen samples are summed into it in stereo, the players seated as in Orchidea's mixes, so that the orchestration is heard at once (scaled down when it would clip). The ten best solutions of each segment are kept: choose puts another in place, show lists them, report says what each segment found. Right-click the box for Report and Save the solution...
+When it is done, the solution comes out as one message a note: its number (from 1), instrument, pitch, dynamics, technique, onset and duration (ms), the sound's path, the cents the target's partial is away from the pitch, and the player (from 0), then the done outlet bangs (not after a run that failed with a message); a note the target holds across segments on the same player is one longer note. The distance (the mean cost of the chosen solutions) comes out on its outlet, and the solution as a score on the last (score token, for a score object: a row an instrument in orchestral order, a note a sound chosen, with its dynamics, technique, cents and place, and its sample as its sound, so the score object plays it and its roll edits it). With an out buffer~, the chosen samples are summed into it in stereo, the players seated as in Orchidea's mixes, so that the orchestration is heard at once (scaled down when it would clip). The ten best solutions of each segment are kept: choose puts another in place, show lists them, report says what each segment found. Right-click the box for Report and Save the solution...
 
 A search of 300 individuals over 300 epochs on TinySOL takes well under a second for a static target; a segmented target takes that per segment.
 
@@ -2484,6 +2484,7 @@ A search of 300 individuals over 300 epochs on TinySOL takes well under a second
 | `seating 1/0` | 1, the mix seats the players as Orchidea's mixes do (violins left, cellos right); 0, all in the middle (1) |
 | `choose segment n` | solution n (from 1, best first) of a segment (from 1) in place of the one chosen: the notes and the mix again |
 | `notes` | the notes again |
+| `score` | the solution as a score again (score token, out of the last outlet) |
 | `show segment` | prints the solutions of a segment with their costs and sounds (the chosen one starred) |
 | `report` | prints a line per segment: its cost, players, players holding on, sounds in the search space, and the target's pitches no instrument of the orchestra has |
 | `write file` | saves the notes as an Orchidea connection file (Musil's score-load reads it) |
@@ -2492,7 +2493,7 @@ A search of 300 individuals over 300 epochs on TinySOL takes well under a second
 
 | Inlet | |
 | --- | --- |
-| 1 | run target [out]: buffer~ names; population, epochs, seed, segmentation, partials... ; choose segment n, notes, show, report, write file, roll buffer, stop |
+| 1 | run target [out]: buffer~ names; population, epochs, seed, segmentation, partials... ; choose segment n, notes, score, show, report, write file, roll buffer, stop |
 
 | Outlet | |
 | --- | --- |
@@ -2500,8 +2501,9 @@ A search of 300 individuals over 300 epochs on TinySOL takes well under a second
 | 2 | bang: done (the notes are out) |
 | 3 | a note a message: number, instrument, pitch, dynamics, technique, onset (ms), duration (ms), the sound's path, cents off the target's partial, player |
 | 4 | the distance: the mean cost of the chosen solutions (lower is nearer the target) |
+| 5 | the solution as a score (score token): into a score object, which shows it as a roll and plays it |
 
-See also: `orchestra` `buffer~` `play~` `code`
+See also: `orchestra` `score` `buffer~` `play~` `code`
 
 ## Learning
 
@@ -3052,21 +3054,24 @@ See also: `score` `metro`
 
 ### `score`
 
-`score name [file.score] [channels]`
+`score name [file.score] [channels] [@size w h]`
 
 A score that plays itself on the patch's transport: notes, sounds, messages and other scores placed in time. It is Musil's score (the same C++ structure), read from a .score file, written by Musil's score-write or by a code box that sends one with (out 1 s); a .score file is Musil data, read without running anything. Without a file the score is kept in the patch.
 
-Its sounds (regions of a file or of a buffer~, by name) come out of its signal outlets, each on its sample, placed at its azimuth (one channel: all of it; two: equal power, as Musil's pan-azimuth; more: a ring of speakers); the scores inside it are played at their place, stretched, transposed and turned. Its notes come out as lists, pitch (MIDI, with the cents) velocity (from the dynamics) duration in ms, row, dynamics and technique (- for none); its messages as the name and the values. Edits while it plays (add, clear, a new score) take effect at once: what plays is made again off the audio thread.
+Its sounds (regions of a file or of a buffer~, by name) come out of its signal outlets, each on its sample, placed at its azimuth (one channel: all of it; two: equal power, as Musil's pan-azimuth; more: a ring of speakers); the scores inside it are played at their place, stretched, transposed and turned. Its notes come out as lists, pitch (MIDI, with the cents) velocity (from the dynamics) duration in ms, row, dynamics and technique (- for none); its messages as the name and the values. Edits while it plays (add, clear, a new score) take effect at once: what plays is made again off the audio thread. A note that carries a sound of its own (data sound "path", and sound-pitch, the sample's pitch: what orchidea sends) also plays its sample, faster or slower by its pitch against the sample's.
+
+The box draws its score as a roll: a staff a row (in orchestral order, a clef from its pitches), proportional time, a note a head and a line, its cents when it is a microtone; scores placed inside as faint blocks with their placement; sounds, patches and messages on lines of their own; the transport's position. When the patch is locked it is edited in place: click a note (Shift adds, a rectangle selects), drag it (later or earlier on the grid, higher or lower on the staff), drag its end to resize it, Alt-drag copies, Delete takes the selection out, the arrows nudge it (Shift: a bar, an octave), Q quantizes it. Each edit is an undo step of the patch (playing with the box is not). In edit mode the corner at its bottom right sizes it. A double-click opens the roll's window: staves, a piano roll or a list of the events (each cell edited), a lane of dynamics, the score as Musil data (edited and kept in sync: nothing applied while it does not read), Select / Draw / Erase, snap, quantize, the Transform panel (transpose, invert, retrograde, augment, diminish, quantize, humanize, thin, density: Musil's score-transpose! and the others, the same functions), and the breadcrumb: a double-click on a score placed enters it (all its placements follow its edits), Esc goes up.
 
 Its rows are tracks. A track's mixer strip (gain, pan as an azimuth, mute and solo, kept on the row in the score) applies to the sounds, notes and patches on it, and to the scores placed on it: a muted track is silent, and when a track is soloed only the soloed ones sound. A sound's fade-in and fade-out are played. A message is also sent to the receive objects of its name, so an automation lane drives a patch's receive; messages are sent whatever the strip says.
 
-Double-click it (or its menu's Open as Timeline) to edit it as a timeline: tracks with their clips (sound regions drawn as waveforms, notes, scores placed inside, patch clips) and automation lanes, an inspector, the transport, snap to beats and bars, cut, copy, paste and undo, and Render to a WAV file. Every edit plays at once and is kept in the patch (or in its file, with Save). File > Open Score... and File > New Score open a .score file on its own the same way; a score placed inside another opens in its own timeline, with a breadcrumb to where it is.
+Its menu's Open as Timeline edits it as a timeline: tracks with their clips (sound regions drawn as waveforms, notes, scores placed inside, patch clips) and automation lanes, an inspector, the transport, snap to beats and bars, cut, copy, paste and undo, and Render to a WAV file. Every edit plays at once and is kept in the patch (or in its file, with Save). File > Open Score... and File > New Score open a .score file on its own the same way; a score placed inside another opens in its own timeline, with a breadcrumb to where it is.
 
 | Argument | |
 | --- | --- |
 | `name` | the score's name |
 | `file.score` | a file next to the patch to read the score from (none: kept in the patch) |
 | `channels` | the signal outlets, 1 to 16 (2) |
+| `@size w h` | the box's size (360 by 150) |
 
 | Message | |
 | --- | --- |
@@ -3074,14 +3079,26 @@ Double-click it (or its menu's Open as Timeline) to edit it as a timeline: track
 | `write [file]` | writes it as a .score file, in the patch's folder or in ~/Documents/Moritz |
 | `clear` | no events |
 | `add note at dur row pitch [dyn [tech]]` | a note (at and dur in seconds; the pitch a MIDI number or a name, G5) |
+| `add at row pitch [dyn [tech]]` | a note a beat long (the kind and the duration may be left out) |
 | `add sound at dur file` | a sound file's region |
 | `add msg at name values` | a message |
+| `select all \| none \| id... \| row name \| time t0 t1` | the events the transformations change (none: all of them); the same selection as the roll in the box |
+| `transpose n` | the notes (and the scores placed) n semitones higher |
+| `invert [pitch]` | the notes mirrored around a pitch (none: the middle of their pitches) |
+| `retrograde` | backwards within their span |
+| `augment k` | onsets and durations k times longer, from the first onset (diminish k: k times shorter) |
+| `shift seconds` | later (earlier when negative; never before 0) |
+| `quantize [grid [strength]]` | onsets and ends toward the grid in seconds (the roll's snap, 1/16), by strength (1: onto it) |
+| `humanize [ms [dB [seed]]]` | onsets moved at random by up to ms (20), gains by up to dB (1.5) |
+| `thin keep [seed]` | each event kept with probability keep |
+| `density v...` | each event kept with the probability the curve v... has at its onset |
+| `open` | the roll's window |
 | `play` | starts the transport (every score of the patch plays) |
 | `stop` | stops the transport |
 | `locate bar [beat]` | moves the transport |
 | `seek ms` | moves the transport to a time |
 | `info` | rows, events and seconds out of the info outlet |
-| `score token` | the score a code box sent |
+| `score token` | the score a code box (or orchidea) sent |
 
 | Inlet | |
 | --- | --- |
@@ -3095,7 +3112,7 @@ Double-click it (or its menu's Open as Timeline) to edit it as a timeline: track
 | 4 | messages: name values... (patch events: patch name duration-ms args...) |
 | 5 | info: end when it plays past its last event; info rows events seconds |
 
-See also: `transport` `code` `buffer~` `receive`
+See also: `transport` `code` `buffer~` `receive` `orchidea`
 
 ## Control Math
 

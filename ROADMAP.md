@@ -135,8 +135,24 @@ the editor's command table and undo rule), YIN, `descriptors~` on the shared ana
       and sections; render in N channels, binaural and stems; the render of a score bound to a patch running
       the patch too; one clock per top document; long files read from disk; Musil's score-render honouring
       the tracks' strips and fades.
-- [ ] Roll and the active `score` object (mockups 5 and 2): editing in the box and in its window,
-      piano roll, list, the score as text in sync; Transform; Generate (Musil, offline); `coll`.
+- [x] The roll (mockup 5), first version: staves per row with proportional time, clefs, microtones, dynamics,
+      scores placed inside drawn faint with their placement, the playhead, zoom and scroll, snap; select, move,
+      resize, Alt-drag copy, Draw, Erase, Delete, quantize, the arrows; Roll, Piano roll and List views; the text
+      view in sync both ways; the breadcrumb into scores placed inside; a lane of dynamics.
+- [x] The active `score` object (mockup 2): its roll drawn in the box, edited in place when locked (each edit an
+      undo step of the patch), sized by its corner, a double-click opens the roll; messages `add` (a note without
+      its kind or duration), `select`, `transpose`, `invert`, `retrograde`, `augment`, `diminish`, `shift`,
+      `quantize`, `humanize`, `thin`, `density`, `open`.
+- [x] Transform (mockup 5, item 7): transpose, invert, retrograde, augment/diminish, quantize, humanize, thin,
+      density, once in Musil's C++ (`music/score_transform.h`), Musil's builtins and the roll's buttons.
+- [ ] The roll on the score document (ScoreDoc) when it lands: its undo and listeners in place of the roll's own
+      target (roll_edit.h says how); a .score file edited in the roll saved with the patch, closing asks.
+- [ ] Generate panel (mockup 5, item 6): Musil's algorithms into the selection, offline, with Preview and Again.
+- [ ] The roll: rows changed by dragging a note to another staff; a lane of any parameter (automation, a
+      receive name); the gain ramp and snap to a pitch field among the transformations; copy and paste of notes;
+      a score placed by file edited in its own roll (today read-only in the parent's); instances made unique.
+- [ ] Musil plays the sample a note of a .score file names (data sound), as Moritz's score object does.
+- [ ] `coll` (mockup 9).
 - [ ] A tempo map (today a score has one tempo); stretched sound clips played stretched.
 - [ ] Microtones in the roll: a choice of how they are shown and snapped, per score or per view: cents
       (the number, as now), quarter tones, eighth tones (or any division of the semitone), drawn with
@@ -154,7 +170,8 @@ the editor's command table and undo rule), YIN, `descriptors~` on the shared ana
       not; per instrument or for the whole orchestra. Shows how many samples remain before a run.
 - [ ] Orchidea's morphological and granular modes, and the adaptive segmentation, in C++ (today
       about 800 lines of music.mu), producing a score.
-- [ ] `orchidea` outputs a score instead of a plot.
+- [x] `orchidea` outputs a score (the shared C++ score) instead of a plot: a `score` box shows it as a roll,
+      edits it and plays each note's sample.
 - [ ] Playability checks.
 - [ ] Examples as patches: Grisey (Partiels: an orchestral spectrum of a trombone note), Haas and
       Ligeti's Atmosphères (Musil's haas.mu and atmospheres.mu), played through the score.
