@@ -1,0 +1,75 @@
+; musil-score.moritz - a score written in Musil and played by a score box: a code box writes four
+; bars, a chord a bar on the row "chords" and a melody on the row "melody", and sends the score to the
+; box with (out 1 s). The box draws it as a roll and plays it on the transport; its notes outlet goes
+; to eight voices of scorevoice.moritz (poly~), so the chords sound whole.
+; Try: 1. play (the score was written when the patch opened); 2. another seed: another melody, sent
+; while it plays; 3. double-click the code box, change the chords (MIDI numbers) or the tones, Cmd-S,
+; then choose a seed again; 4. double-click the score box: the same score in the roll's window.
+(patch
+  (obj title comment "a score written in Musil: a melody over four chords, played by the score box" (pos 20 12))
+  (obj sub comment "play; a seed writes another melody; double-click the code box to change the chords or the tones" (pos 20 34))
+  (obj lb loadbang (pos 20 70))
+  (obj s0 message 5 (pos 100 70))
+  (obj sd number (pos 140 70))
+  (obj csd comment "seed: another melody" (pos 200 71))
+  (obj c code (pos 20 105)
+    (script
+      "; four bars of two seconds: a chord a bar (row chords), a melody of eighths and quarters (row melody)"
+      "load \"music.mu\""
+      "seed in1"
+      "var s (score \"song\" 44100)"
+      "score-tempo! s 120"
+      "function put (at dur row pitch dyn) {"
+      "    event s at dur (record (list 'kind 'note 'instr row 'midi pitch 'dyn dyn 'tech \"ord\"))"
+      "}"
+      "var bar 2"
+      "var chords (list (list 57 60 64) (list 53 57 60) (list 48 52 55) (list 55 59 62))"
+      "var tones (list 69 71 72 74 76 77 79 81)"
+      "var k 4"
+      "each (range 4) (function (c) {"
+      "    var t (* c bar)"
+      "    each (getidx chords c) (function (p) (put t (* 0.95 bar) \"chords\" p \"p\"))"
+      "    var u 0"
+      "    while (< u bar) {"
+      "        var d (if (< (rand) 0.5) 0.25 0.5)"
+      "        set k (max 0 (min 7 (+ k (- (floor (* 3 (rand))) 1))))"
+      "        put (+ t u) (* 0.9 d) \"melody\" (getidx tones k) (if (< u 0.1) \"f\" \"mf\")"
+      "        set u (+ u d)"
+      "    }"
+      "})"
+      "out 1 s"))
+  (obj sc score song @size 560 200 (pos 20 145))
+  (obj play message play (pos 600 145))
+  (obj stop message stop (pos 645 145))
+  (obj loc message "locate 1" (pos 690 145))
+  (obj loop message "loop 1 5" (pos 600 175))
+  (obj noloop message "loop 0" (pos 670 175))
+  (obj cl comment "the four bars again and again" (pos 600 200))
+  (obj tr transport 120 4 4 (pos 600 230))
+  (obj cn comment "notes: pitch velocity duration-ms row dynamics technique; each to a free voice" (pos 140 371))
+  (obj pn prepend note (pos 20 370))
+  (obj poly poly~ scorevoice 8 (pos 20 405))
+  (obj vol message "0.8 200" (pos 160 405))
+  (obj mute message "0 200" (pos 230 405))
+  (obj cv comment "volume" (pos 290 406))
+  (obj ramp line~ (pos 160 440))
+  (obj vca *~ (pos 20 475))
+  (obj out dac~ (pos 20 515))
+  (connect lb 0 s0 0)
+  (connect lb 0 vol 0)
+  (connect s0 0 sd 0)
+  (connect sd 0 c 0)
+  (connect c 0 sc 0)
+  (connect play 0 tr 0)
+  (connect stop 0 tr 0)
+  (connect loc 0 tr 0)
+  (connect loop 0 tr 0)
+  (connect noloop 0 tr 0)
+  (connect sc 2 pn 0)
+  (connect pn 0 poly 0)
+  (connect vol 0 ramp 0)
+  (connect mute 0 ramp 0)
+  (connect poly 0 vca 0)
+  (connect ramp 0 vca 1)
+  (connect vca 0 out 0)
+  (connect vca 0 out 1))

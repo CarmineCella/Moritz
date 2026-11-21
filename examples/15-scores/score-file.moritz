@@ -1,0 +1,72 @@
+; score-file.moritz - a score in a file of its own: write tune.score saves the score kept in the box
+; as tune.score next to this patch (Musil data, a list of lists you can read in any editor); read
+; tune.score reads it back, into this box or any other. The code box reads the same file in Musil
+; (score-read), turns it backwards and writes tune-backwards.score, which the second box plays.
+; A box named with a file (score name file.score) reads it when the patch opens; a .score file can be
+; opened on its own too (File > Open Score...).
+; Try: 1. write tune.score, then look at the file next to this patch; 2. transpose 5, then read
+; tune.score: the tune as it was written; 3. drag a note in the box, write again; 4. backwards: the
+; code box reads tune.score and fills the second box; play: both boxes play on the transport, the
+; tune against itself backwards (a crab canon).
+(patch
+  (obj title comment "a score saved to a .score file and read back, here and in Musil" (pos 20 12))
+  (obj sub comment "write, change the score, read: it comes back; backwards: Musil reads the file, the second box plays it" (pos 20 34))
+  (obj play message play (pos 20 70))
+  (obj stop message stop (pos 65 70))
+  (obj loc message "locate 1" (pos 110 70))
+  (obj tr transport 120 4 4 (pos 180 70))
+  (obj w message "write tune.score" (pos 20 105))
+  (obj r message "read tune.score" (pos 135 105))
+  (obj t message "transpose 5" (pos 245 105))
+  (obj cl message clear (pos 330 105))
+  (obj in message info (pos 380 105))
+  (obj sc score tune @size 420 130 (pos 20 140)
+    (script
+      "; a tune kept in the patch, until written to a file"
+      "(score \"tune\""
+      "  (sr 44100) (bpm 120) (meter 4 4) (next-id 1)"
+      "  (row Ob treble)"
+      "  (note 0 0.45 Ob A4 mf) (note 0.5 0.45 Ob C5 mf) (note 1 0.2 Ob B4 mf) (note 1.25 0.2 Ob A4 mf)"
+      "  (note 1.5 0.45 Ob E5 f) (note 2 0.2 Ob D5 mf) (note 2.25 0.2 Ob C5 mf) (note 2.5 0.9 Ob B4 mp))"))
+  (obj pi print info (pos 460 140))
+  (obj back message bang (pos 20 290))
+  (obj cb comment "backwards: Musil reads tune.score, writes tune-backwards.score (write tune.score first)" (pos 70 291))
+  (obj c code (pos 20 320)
+    (script
+      "; the file as Musil reads it: a score, turned backwards, written next to the patch, sent to the box"
+      "var s (score-read \"tune.score\")"
+      "score-retrograde! s"
+      "score-write s \"tune-backwards.score\""
+      "print \"tune-backwards.score:\" (score-duration s) \"s\""
+      "out 1 s"))
+  (obj sb score backwards @size 420 130 (pos 20 360))
+  (obj pn prepend note (pos 20 505))
+  (obj poly poly~ scorevoice 4 (pos 20 540))
+  (obj lb loadbang (pos 300 540))
+  (obj vol message "0.8 200" (pos 300 570))
+  (obj mute message "0 200" (pos 370 570))
+  (obj cv comment "volume" (pos 430 571))
+  (obj ramp line~ (pos 300 605))
+  (obj vca *~ (pos 20 640))
+  (obj out dac~ (pos 20 680))
+  (connect play 0 tr 0)
+  (connect stop 0 tr 0)
+  (connect loc 0 tr 0)
+  (connect w 0 sc 0)
+  (connect r 0 sc 0)
+  (connect t 0 sc 0)
+  (connect cl 0 sc 0)
+  (connect in 0 sc 0)
+  (connect sc 4 pi 0)
+  (connect back 0 c 0)
+  (connect c 0 sb 0)
+  (connect sc 2 pn 0)
+  (connect sb 2 pn 0)
+  (connect pn 0 poly 0)
+  (connect lb 0 vol 0)
+  (connect vol 0 ramp 0)
+  (connect mute 0 ramp 0)
+  (connect poly 0 vca 0)
+  (connect ramp 0 vca 1)
+  (connect vca 0 out 0)
+  (connect vca 0 out 1))

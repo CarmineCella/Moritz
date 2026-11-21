@@ -1,0 +1,87 @@
+; messages.moritz - a score that plays a patch: its events are messages (msg at name values...), each
+; sent at its time to the receive boxes of its name, and out of the box's messages outlet. Here a
+; drone (two detuned saws through a low-pass filter, swung by a tremolo) is switched on and off by
+; drone, tuned by root, opened by cutoff and pulsed by rate, all from the score; nothing is wired
+; from the score box to the synth.
+; Try: 1. play: twelve seconds of a drone that changes by itself; 2. double-click the score box:
+; the messages are on a line of their own; drag one later, or change a value in the List; 3. right-
+; click the box, Open as Timeline: the messages are points on lanes, one lane a name; click a lane to
+; add a point; 4. add msg 3 root 43 adds a message by hand.
+(patch
+  (obj title comment "a score of messages: each one reaches the receive of its name at its time" (pos 20 12))
+  (obj sub comment "play; the drone is switched, tuned and opened only by the score's messages" (pos 20 34))
+  (obj play message play (pos 20 70))
+  (obj stop message stop (pos 65 70))
+  (obj loc message "locate 1" (pos 110 70))
+  (obj tr transport 60 4 4 (pos 180 70))
+  (obj add message "add msg 3 root 43" (pos 280 70))
+  (obj sc score cues @size 600 150 (pos 20 105)
+    (script
+      "; twelve seconds of cues: drone 1/0, root (MIDI), cutoff (Hz), rate (Hz)"
+      "(score \"cues\""
+      "  (sr 44100) (bpm 60) (meter 4 4) (next-id 1)"
+      "  (msg 0 root 36) (msg 0 cutoff 300) (msg 0 rate 0.5) (msg 0 drone 1)"
+      "  (msg 2 cutoff 1200) (msg 4 root 41) (msg 4 rate 4)"
+      "  (msg 6 cutoff 3000) (msg 7 root 39) (msg 8 rate 8)"
+      "  (msg 9 cutoff 500) (msg 10 root 36) (msg 10 rate 0.5) (msg 11 drone 0))"))
+  (obj pm print cue (pos 20 270))
+  (obj cpm comment "the messages outlet: name values (the Console)" (pos 100 271))
+  (obj rr r root (pos 20 310))
+  (obj mt mtof (pos 20 340))
+  (obj det * 1.007 (pos 110 370))
+  (obj o1 saw~ (pos 20 400))
+  (obj o2 saw~ (pos 110 400))
+  (obj mix +~ (pos 20 435))
+  (obj rc r cutoff (pos 240 310))
+  (obj cr message "$1 1500" (pos 240 340))
+  (obj cl line~ (pos 240 370))
+  (obj lp lores~ 300 0.5 (pos 20 470))
+  (obj rp r rate (pos 380 310))
+  (obj tre cycle~ 0.5 (pos 380 340))
+  (obj tsc *~ 0.4 (pos 380 370))
+  (obj toff +~ 0.6 (pos 380 400))
+  (obj trem *~ (pos 20 505))
+  (obj rd r drone (pos 520 310))
+  (obj dsc * 0.15 (pos 520 340))
+  (obj dr message "$1 2000" (pos 520 370))
+  (obj dl line~ (pos 520 400))
+  (obj vca *~ (pos 20 540))
+  (obj lb loadbang (pos 300 540))
+  (obj vol message "0.8 200" (pos 300 570))
+  (obj mute message "0 200" (pos 370 570))
+  (obj cv comment "volume" (pos 430 571))
+  (obj ramp line~ (pos 300 605))
+  (obj vca2 *~ (pos 20 640))
+  (obj out dac~ (pos 20 680))
+  (connect play 0 tr 0)
+  (connect stop 0 tr 0)
+  (connect loc 0 tr 0)
+  (connect add 0 sc 0)
+  (connect sc 3 pm 0)
+  (connect rr 0 mt 0)
+  (connect mt 0 o1 0)
+  (connect mt 0 det 0)
+  (connect det 0 o2 0)
+  (connect o1 0 mix 0)
+  (connect o2 0 mix 1)
+  (connect rc 0 cr 0)
+  (connect cr 0 cl 0)
+  (connect cl 0 lp 1)
+  (connect mix 0 lp 0)
+  (connect rp 0 tre 0)
+  (connect tre 0 tsc 0)
+  (connect tsc 0 toff 0)
+  (connect lp 0 trem 0)
+  (connect toff 0 trem 1)
+  (connect rd 0 dsc 0)
+  (connect dsc 0 dr 0)
+  (connect dr 0 dl 0)
+  (connect trem 0 vca 0)
+  (connect dl 0 vca 1)
+  (connect lb 0 vol 0)
+  (connect vol 0 ramp 0)
+  (connect mute 0 ramp 0)
+  (connect vca 0 vca2 0)
+  (connect ramp 0 vca2 1)
+  (connect vca2 0 out 0)
+  (connect vca2 0 out 1))

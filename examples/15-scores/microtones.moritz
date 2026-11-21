@@ -1,0 +1,68 @@
+; microtones.moritz - notes between the keys: a code box writes a score in quarter tones (a scale up
+; the octave in 24 steps, then chords with a neutral third, between minor and major), each note a
+; MIDI pitch and its cents ('cents 50: a quarter tone higher). The box shows the cents by each head;
+; the notes outlet sends the pitch with its cents (60.5), which mtof turns into the frequency between.
+; Try: 1. play; 2. eighths writes the scale in eighth tones (25 cents) instead; 3. in the box (patch
+; locked) click a note and press Alt+Up or Alt+Down: a cent higher or lower (Shift: ten), then play
+; again; 4. double-click the box, List: the cents of each note in a column, edited there too.
+(patch
+  (obj title comment "microtones: quarter tones written by Musil, each note a pitch and its cents" (pos 20 12))
+  (obj sub comment "play; eighths: the scale in eighth tones; Alt+Up and Alt+Down detune the selected note by a cent" (pos 20 34))
+  (obj lb loadbang (pos 20 70))
+  (obj q message 50 (pos 100 70))
+  (obj e message 25 (pos 140 70))
+  (obj cq comment "the step in cents: 50 quarter tones, 25 eighths" (pos 180 71))
+  (obj c code (pos 20 105)
+    (script
+      "; a scale up the octave from C4 by in1 cents, then three chords with a neutral third (C, E a quarter tone flat, G)"
+      "load \"music.mu\""
+      "var s (score \"micro\" 44100)"
+      "score-tempo! s 120"
+      "function put (at dur row midi cents dyn) {"
+      "    event s at dur (record (list 'kind 'note 'instr row 'midi midi 'cents cents 'dyn dyn 'tech \"ord\"))"
+      "}"
+      "var n (floor (/ 1200 in1))"
+      "each (range (+ n 1)) (function (k) {"
+      "    var c (* k in1)"
+      "    put (* k (/ 3 n)) (* 0.9 (/ 3 n)) \"Vn\" (+ 60 (floor (/ c 100))) (mod c 100) \"mf\""
+      "})"
+      "var t 3.5"
+      "each (list 0 5 7) (function (root) {"
+      "    put t 1.4 \"Va\" (+ 60 root) 0 \"p\""
+      "    put t 1.4 \"Va\" (+ 63 root) 50 \"p\""
+      "    put t 1.4 \"Va\" (+ 67 root) 0 \"p\""
+      "    set t (+ t 1.5)"
+      "})"
+      "out 1 s"))
+  (obj sc score micro @size 600 200 (pos 20 145))
+  (obj play message play (pos 640 145))
+  (obj stop message stop (pos 685 145))
+  (obj loc message "locate 1" (pos 730 145))
+  (obj tr transport 120 4 4 (pos 640 180))
+  (obj pn prepend note (pos 20 365))
+  (obj pp print notes (pos 160 365))
+  (obj cp comment "the Console shows each pitch with its cents" (pos 240 366))
+  (obj poly poly~ scorevoice 6 (pos 20 400))
+  (obj vol message "0.8 200" (pos 300 400))
+  (obj mute message "0 200" (pos 370 400))
+  (obj cv comment "volume" (pos 430 401))
+  (obj ramp line~ (pos 300 435))
+  (obj vca *~ (pos 20 470))
+  (obj out dac~ (pos 20 510))
+  (connect lb 0 q 0)
+  (connect lb 0 vol 0)
+  (connect q 0 c 0)
+  (connect e 0 c 0)
+  (connect c 0 sc 0)
+  (connect play 0 tr 0)
+  (connect stop 0 tr 0)
+  (connect loc 0 tr 0)
+  (connect sc 2 pn 0)
+  (connect sc 2 pp 0)
+  (connect pn 0 poly 0)
+  (connect vol 0 ramp 0)
+  (connect mute 0 ramp 0)
+  (connect poly 0 vca 0)
+  (connect ramp 0 vca 1)
+  (connect vca 0 out 0)
+  (connect vca 0 out 1))

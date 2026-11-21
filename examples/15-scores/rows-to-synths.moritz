@@ -1,0 +1,102 @@
+; rows-to-synths.moritz - a score's notes outlet driving three instruments, one for each row: every
+; note comes out as pitch velocity duration-ms row dynamics technique; a message box puts the row
+; first ($4 $1 $2 $3) and route sends it to the instrument of that row: Bass to a saw through a
+; filter, Keys to four voices of scorevoice.moritz (poly~), Perc to a noise burst whose pitch sets
+; its brightness.
+; Try: 1. play (two bars, looped); 2. in the box (patch locked) drag a Bass note up or down, or
+; later: the bass follows at once; 3. right-click the box, Open as Timeline: the rows are tracks;
+; mute Keys (M) or solo Bass (S): a muted track's notes do not leave the box; 4. add a row of your
+; own in the roll's text and a fourth instrument after route's last outlet (what no row matched).
+(patch
+  (obj title comment "a score's notes outlet driving three instruments: the row of each note chooses which" (pos 20 12))
+  (obj sub comment "play; drag a note in the box (locked): the instrument follows; the notes are pitch velocity duration row ..." (pos 20 34))
+  (obj play message play (pos 20 70))
+  (obj stop message stop (pos 65 70))
+  (obj loop message "loop 1 3" (pos 110 70))
+  (obj noloop message "loop 0" (pos 180 70))
+  (obj tr transport 120 4 4 (pos 245 70))
+  (obj sc score groove @size 600 210 (pos 20 105)
+    (script
+      "; two bars: a bass line, chords on the off-beats and a percussion part"
+      "(score \"groove\""
+      "  (sr 44100) (bpm 120) (meter 4 4) (next-id 1)"
+      "  (row Keys treble) (row Bass bass) (row Perc)"
+      "  (note 0 0.4 Bass C2 f) (note 0.5 0.2 Bass C2 mf) (note 0.75 0.2 Bass Eb2 mf) (note 1 0.4 Bass G2 f)"
+      "  (note 1.5 0.4 Bass F2 mf) (note 2 0.4 Bass Ab1 f) (note 2.5 0.2 Bass Ab1 mf) (note 2.75 0.2 Bass C2 mf)"
+      "  (note 3 0.4 Bass Eb2 f) (note 3.5 0.4 Bass G1 mf)"
+      "  (note 0.5 0.3 Keys G4 p) (note 0.5 0.3 Keys C5 p) (note 0.5 0.3 Keys Eb5 p)"
+      "  (note 1.5 0.3 Keys G4 p) (note 1.5 0.3 Keys C5 p) (note 1.5 0.3 Keys Eb5 p)"
+      "  (note 2.5 0.3 Keys Ab4 p) (note 2.5 0.3 Keys C5 p) (note 2.5 0.3 Keys Eb5 p)"
+      "  (note 3.5 0.3 Keys G4 p) (note 3.5 0.3 Keys Bb4 p) (note 3.5 0.3 Keys D5 p)"
+      "  (note 0 0.1 Perc C3 f) (note 1 0.1 Perc C6 mf) (note 1.75 0.1 Perc C3 mp) (note 2 0.1 Perc C3 f)"
+      "  (note 3 0.1 Perc C6 mf) (note 3.25 0.1 Perc C6 p) (note 3.75 0.1 Perc C6 p))"))
+  (obj swap message "$4 $1 $2 $3" (pos 20 330))
+  (obj rt route Bass Keys Perc (pos 20 360))
+  (obj cs comment "the row first, then route: one outlet a row" (pos 130 331))
+  (obj bup unpack 0. 0. 0. (pos 20 400))
+  (obj bmt mtof (pos 20 435))
+  (obj bsaw saw~ (pos 20 470))
+  (obj bamp expr "$f1 / 127. * 0.25" (pos 120 435))
+  (obj bpk pack 0. 0. (pos 120 470))
+  (obj benv message "$1 5 $1 $2 0 80" (pos 120 505))
+  (obj bln line~ (pos 120 540))
+  (obj blp lores~ 700 0.5 (pos 20 540))
+  (obj bvca *~ (pos 20 575))
+  (obj kpn prepend note (pos 260 400))
+  (obj kpoly poly~ scorevoice 4 (pos 260 435))
+  (obj pup unpack 0. 0. 0. (pos 420 400))
+  (obj pmt mtof (pos 420 435))
+  (obj pnz noise~ (pos 520 435))
+  (obj php lores~ 1000 0.6 (pos 520 470))
+  (obj pamp expr "$f1 / 127. * 0.4" (pos 620 400))
+  (obj penv message "$1 1 0 90" (pos 620 435))
+  (obj pln line~ (pos 620 470))
+  (obj pvca *~ (pos 520 505))
+  (obj mix +~ (pos 20 615))
+  (obj mix2 +~ (pos 20 645))
+  (obj lb loadbang (pos 300 615))
+  (obj vol message "0.7 200" (pos 300 645))
+  (obj mute message "0 200" (pos 370 645))
+  (obj cv comment "volume" (pos 430 646))
+  (obj ramp line~ (pos 300 680))
+  (obj vca *~ (pos 20 715))
+  (obj out dac~ (pos 20 755))
+  (connect play 0 tr 0)
+  (connect stop 0 tr 0)
+  (connect loop 0 tr 0)
+  (connect noloop 0 tr 0)
+  (connect sc 2 swap 0)
+  (connect swap 0 rt 0)
+  (connect rt 0 bup 0)
+  (connect bup 2 bpk 1)
+  (connect bup 1 bamp 0)
+  (connect bamp 0 bpk 0)
+  (connect bpk 0 benv 0)
+  (connect benv 0 bln 0)
+  (connect bup 0 bmt 0)
+  (connect bmt 0 bsaw 0)
+  (connect bsaw 0 blp 0)
+  (connect blp 0 bvca 0)
+  (connect bln 0 bvca 1)
+  (connect rt 1 kpn 0)
+  (connect kpn 0 kpoly 0)
+  (connect rt 2 pup 0)
+  (connect pup 1 pamp 0)
+  (connect pamp 0 penv 0)
+  (connect penv 0 pln 0)
+  (connect pup 0 pmt 0)
+  (connect pmt 0 php 1)
+  (connect pnz 0 php 0)
+  (connect php 0 pvca 0)
+  (connect pln 0 pvca 1)
+  (connect bvca 0 mix 0)
+  (connect kpoly 0 mix 1)
+  (connect mix 0 mix2 0)
+  (connect pvca 0 mix2 1)
+  (connect lb 0 vol 0)
+  (connect vol 0 ramp 0)
+  (connect mute 0 ramp 0)
+  (connect mix2 0 vca 0)
+  (connect ramp 0 vca 1)
+  (connect vca 0 out 0)
+  (connect vca 0 out 1))

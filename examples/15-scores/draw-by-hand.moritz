@@ -1,0 +1,57 @@
+; draw-by-hand.moritz - a score drawn by hand: the score box starts empty, with two staves (a flute
+; and a cello), and its notes go to eight voices of scorevoice.moritz. It is kept in the patch, so
+; what you draw is saved with it (Save As... first, to keep this example as it is).
+; Try: 1. double-click the score box (the patch locked): the roll's window opens; 2. choose Draw and
+; click on a staff to put a note, drag to make it longer; Select to move notes, Erase to take them
+; out; 3. play: the transport loops the first two bars, so each note sounds as soon as it is drawn;
+; 4. in the box itself: drag a note higher or later, drag its end, Alt-drag copies, Delete, the
+; arrows; Edit > Undo (the box clicked last) takes an edit back; 5. or click the add messages.
+(patch
+  (obj title comment "a score drawn by hand: double-click the empty score, choose Draw, click on a staff" (pos 20 12))
+  (obj sub comment "the transport loops two bars: each note sounds as soon as it is drawn; Edit > Undo takes it back" (pos 20 34))
+  (obj play message play (pos 20 70))
+  (obj stop message stop (pos 65 70))
+  (obj loop message "loop 1 3" (pos 110 70))
+  (obj noloop message "loop 0" (pos 180 70))
+  (obj tr transport 120 4 4 (pos 250 70))
+  (obj a1 message "add 0 Fl G5 mf" (pos 20 105))
+  (obj a2 message "add 1 Fl B5 mf" (pos 130 105))
+  (obj a3 message "add note 0 2 Vc C3 p" (pos 240 105))
+  (obj clr message clear (pos 395 105))
+  (obj opn message open (pos 450 105))
+  (obj ca comment "add at row pitch [dynamics]: a note a beat long; add note at dur row pitch: as long as you say" (pos 20 130))
+  (obj sc score sketch @size 600 220 (pos 20 155)
+    (script
+      "; an empty score: two staves to draw on"
+      "(score \"sketch\""
+      "  (sr 44100) (bpm 120) (meter 4 4) (next-id 1)"
+      "  (row Fl treble)"
+      "  (row Vc bass))"))
+  (obj pn prepend note (pos 20 395))
+  (obj poly poly~ scorevoice 8 (pos 20 430))
+  (obj cn comment "each note to a free voice: pitch velocity duration (ms) ..." (pos 160 396))
+  (obj lb loadbang (pos 300 430))
+  (obj vol message "0.8 200" (pos 300 460))
+  (obj mute message "0 200" (pos 370 460))
+  (obj cv comment "volume" (pos 430 461))
+  (obj ramp line~ (pos 300 495))
+  (obj vca *~ (pos 20 530))
+  (obj out dac~ (pos 20 570))
+  (connect play 0 tr 0)
+  (connect stop 0 tr 0)
+  (connect loop 0 tr 0)
+  (connect noloop 0 tr 0)
+  (connect a1 0 sc 0)
+  (connect a2 0 sc 0)
+  (connect a3 0 sc 0)
+  (connect clr 0 sc 0)
+  (connect opn 0 sc 0)
+  (connect sc 2 pn 0)
+  (connect pn 0 poly 0)
+  (connect lb 0 vol 0)
+  (connect vol 0 ramp 0)
+  (connect mute 0 ramp 0)
+  (connect poly 0 vca 0)
+  (connect ramp 0 vca 1)
+  (connect vca 0 out 0)
+  (connect vca 0 out 1))

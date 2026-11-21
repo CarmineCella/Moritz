@@ -1,0 +1,8 @@
+; motif.score - four notes, one second: scores-in-scores.moritz places it five times
+(score "motif"
+  (sr 44100) (bpm 120) (meter 4 4) (next-id 5)
+  (row Fl treble)
+  (note 0 0.2 Fl C5 f ord (id 1))
+  (note 0.25 0.2 Fl Eb5 mf ord (id 2))
+  (note 0.5 0.2 Fl G5 mf ord (id 3))
+  (note 0.75 0.2 Fl F5 mp ord (id 4)))

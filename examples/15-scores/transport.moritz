@@ -1,0 +1,98 @@
+; transport.moritz - the patch's clock: play, stop, locate a bar (and a beat), seek a time, loop bars,
+; tempo and meter. Bars and beats come out at every beat (a click, high on the first beat of a bar);
+; the score box plays on the same clock. A score's times are seconds: the tempo and the meter change
+; how they are counted (the bars and beats shown, the clicks, where locate and loop go), not how fast
+; the score plays.
+; Try: 1. play: four bars of 4/4 at 120, a scale a beat; 2. loop 2 3 repeats the second bar; loop 0
+; ends it; 3. locate 3, locate 3 3 (bar 3, beat 3), seek 1500 (ms), rewind; 4. tempo 60: the clicks
+; slow down and a bar is now four seconds, but the scale keeps its pace; loop 1 2 now holds eight
+; notes; 5. meter 3 4: a bar of three beats, the accent moves.
+(patch
+  (obj title comment "transport: play, locate, loop, tempo and meter; the score plays on the same clock" (pos 20 12))
+  (obj sub comment "the score's times are seconds: the tempo changes the count of bars and beats, not the score" (pos 20 34))
+  (obj play message play (pos 20 70))
+  (obj stop message stop (pos 65 70))
+  (obj rew message rewind (pos 110 70))
+  (obj l3 message "locate 3" (pos 170 70))
+  (obj l33 message "locate 3 3" (pos 240 70))
+  (obj sk message "seek 1500" (pos 320 70))
+  (obj lp1 message "loop 2 3" (pos 20 105))
+  (obj lp2 message "loop 1 2" (pos 90 105))
+  (obj lp0 message "loop 0" (pos 160 105))
+  (obj t60 message "tempo 60" (pos 230 105))
+  (obj t120 message "tempo 120" (pos 300 105))
+  (obj m34 message "meter 3 4" (pos 380 105))
+  (obj m44 message "meter 4 4" (pos 460 105))
+  (obj tr transport 120 4 4 (pos 20 145))
+  (obj bar number (pos 20 180))
+  (obj beat number (pos 90 180))
+  (obj ms flonum (pos 160 180))
+  (obj on number (pos 260 180))
+  (obj cb comment "bar, beat, ms, playing" (pos 330 181))
+  (obj sc score scale @size 560 130 (pos 20 215)
+    (script
+      "; sixteen notes, one every half second: a beat at 120"
+      "(score \"scale\""
+      "  (sr 44100) (bpm 120) (meter 4 4) (next-id 1)"
+      "  (row Vib treble)"
+      "  (note 0 0.4 Vib C5 f) (note 0.5 0.4 Vib D5) (note 1 0.4 Vib E5) (note 1.5 0.4 Vib F5)"
+      "  (note 2 0.4 Vib G5 f) (note 2.5 0.4 Vib A5) (note 3 0.4 Vib B5) (note 3.5 0.4 Vib C6)"
+      "  (note 4 0.4 Vib C6 f) (note 4.5 0.4 Vib B5) (note 5 0.4 Vib A5) (note 5.5 0.4 Vib G5)"
+      "  (note 6 0.4 Vib F5 f) (note 6.5 0.4 Vib E5) (note 7 0.4 Vib D5) (note 7.5 0.9 Vib C5))"))
+  (obj pn prepend note (pos 20 360))
+  (obj poly poly~ scorevoice 4 (pos 20 395))
+  (obj sel select 1 (pos 300 360))
+  (obj hi message 2000 (pos 300 395))
+  (obj lo message 1000 (pos 380 395))
+  (obj osc cycle~ 1000 (pos 300 430))
+  (obj env message "0.15 1 0 40" (pos 450 395))
+  (obj ln line~ (pos 450 430))
+  (obj clk *~ (pos 300 465))
+  (obj tb t b f (pos 300 330))
+  (obj ccl comment "a click a beat, higher on the first" (pos 400 331))
+  (obj mix +~ (pos 20 500))
+  (obj lb loadbang (pos 160 500))
+  (obj vol message "0.8 200" (pos 160 530))
+  (obj mute message "0 200" (pos 230 530))
+  (obj cv comment "volume" (pos 290 531))
+  (obj ramp line~ (pos 160 565))
+  (obj vca *~ (pos 20 600))
+  (obj out dac~ (pos 20 640))
+  (connect play 0 tr 0)
+  (connect stop 0 tr 0)
+  (connect rew 0 tr 0)
+  (connect l3 0 tr 0)
+  (connect l33 0 tr 0)
+  (connect sk 0 tr 0)
+  (connect lp1 0 tr 0)
+  (connect lp2 0 tr 0)
+  (connect lp0 0 tr 0)
+  (connect t60 0 tr 0)
+  (connect t120 0 tr 0)
+  (connect m34 0 tr 0)
+  (connect m44 0 tr 0)
+  (connect tr 0 bar 0)
+  (connect tr 1 beat 0)
+  (connect tr 2 ms 0)
+  (connect tr 3 on 0)
+  (connect sc 2 pn 0)
+  (connect pn 0 poly 0)
+  (connect tr 1 tb 0)
+  (connect tb 1 sel 0)
+  (connect tb 0 env 0)
+  (connect sel 0 hi 0)
+  (connect sel 1 lo 0)
+  (connect hi 0 osc 0)
+  (connect lo 0 osc 0)
+  (connect env 0 ln 0)
+  (connect osc 0 clk 0)
+  (connect ln 0 clk 1)
+  (connect poly 0 mix 0)
+  (connect clk 0 mix 1)
+  (connect lb 0 vol 0)
+  (connect vol 0 ramp 0)
+  (connect mute 0 ramp 0)
+  (connect mix 0 vca 0)
+  (connect ramp 0 vca 1)
+  (connect vca 0 out 0)
+  (connect vca 0 out 1))

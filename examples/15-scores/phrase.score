@@ -1,0 +1,15 @@
+; phrase.score - ten notes for the clarinet, two bars at 120: transform-pitch.moritz reads it
+; (Musil data: the score object reads it, Musil with score-read)
+(score "phrase"
+  (sr 44100) (bpm 120) (meter 4 4) (next-id 11)
+  (row Cl treble)
+  (note 0 0.45 Cl C5 mf ord (id 1))
+  (note 0.5 0.2 Cl D5 mf ord (id 2))
+  (note 0.75 0.2 Cl Eb5 mf ord (id 3))
+  (note 1 0.45 Cl G5 f ord (id 4))
+  (note 1.5 0.2 Cl F5 mf ord (id 5))
+  (note 1.75 0.2 Cl Eb5 mf ord (id 6))
+  (note 2 0.45 Cl D5 mf ord (id 7))
+  (note 2.5 0.2 Cl B4 p ord (id 8))
+  (note 2.75 0.2 Cl C5 p ord (id 9))
+  (note 3 0.9 Cl G4 p ord (id 10)))

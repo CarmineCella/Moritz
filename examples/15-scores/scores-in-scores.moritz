@@ -1,0 +1,54 @@
+; scores-in-scores.moritz - a score placed inside another: motif.score (four notes, one second, next
+; to this patch) is placed five times in the score kept in this patch, each placement with its own
+; time, transposition and stretch (an instance: all of them play the one motif). A long cello note
+; is the main score's own. The box draws each placement as a faint block.
+; Try: 1. play; 2. double-click the score box: the roll's window; double-click a block to enter
+; the motif (the breadcrumb shows where you are), move a note: every placement follows; Esc goes up;
+; Save writes motif.score; 3. right-click the box, Open as Timeline: the placements are clips, their
+; transpose and stretch in the inspector; 4. transpose 2 here moves the whole piece, placements too.
+(patch
+  (obj title comment "scores inside scores: one motif placed five times, transposed and stretched" (pos 20 12))
+  (obj sub comment "double-click the score, then a block: the motif itself; an edit there changes every placement" (pos 20 34))
+  (obj play message play (pos 20 70))
+  (obj stop message stop (pos 65 70))
+  (obj loc message "locate 1" (pos 110 70))
+  (obj tr transport 120 4 4 (pos 180 70))
+  (obj up message "transpose 2" (pos 300 70))
+  (obj dn message "transpose -2" (pos 385 70))
+  (obj sc score piece @size 600 200 (pos 20 105)
+    (script
+      "; motif.score placed five times: (score at file (transpose n) (stretch k) (row name))"
+      "(score \"piece\""
+      "  (sr 44100) (bpm 120) (meter 4 4) (next-id 7)"
+      "  (row Fl treble)"
+      "  (row Vc bass)"
+      "  (score 0 \"motif.score\" (id 1) (row Fl))"
+      "  (score 1 \"motif.score\" (id 2) (transpose 5) (row Fl))"
+      "  (score 2 \"motif.score\" (id 3) (transpose 7) (stretch 0.5) (row Fl))"
+      "  (score 2.5 \"motif.score\" (id 4) (transpose 7) (stretch 0.5) (row Fl))"
+      "  (score 3 \"motif.score\" (id 5) (transpose -24) (stretch 2) (row Vc))"
+      "  (note 0 3 Vc C3 p ord (id 6)))"))
+  (obj cs comment "at 0 as it is; at 1 a fourth higher; at 2 and 2.5 a fifth higher, twice as fast; at 3 two octaves lower, twice as slow" (pos 20 310))
+  (obj pn prepend note (pos 20 340))
+  (obj poly poly~ scorevoice 8 (pos 20 375))
+  (obj lb loadbang (pos 300 340))
+  (obj vol message "0.8 200" (pos 300 375))
+  (obj mute message "0 200" (pos 370 375))
+  (obj cv comment "volume" (pos 430 376))
+  (obj ramp line~ (pos 300 410))
+  (obj vca *~ (pos 20 445))
+  (obj out dac~ (pos 20 485))
+  (connect play 0 tr 0)
+  (connect stop 0 tr 0)
+  (connect loc 0 tr 0)
+  (connect up 0 sc 0)
+  (connect dn 0 sc 0)
+  (connect sc 2 pn 0)
+  (connect pn 0 poly 0)
+  (connect lb 0 vol 0)
+  (connect vol 0 ramp 0)
+  (connect mute 0 ramp 0)
+  (connect poly 0 vca 0)
+  (connect ramp 0 vca 1)
+  (connect vca 0 out 0)
+  (connect vca 0 out 1))
