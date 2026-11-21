@@ -1,0 +1,53 @@
+; sound-editor.moritz - how to process a sound in the sound editor with the scripts and patches of
+; this folder: double-click a buffer~ (the patch locked) to open its sound, select a part (or
+; nothing: all of it), then Process > A Musil script... and choose a .mu file here (tremolo,
+; octave-down, stutter, reverse-echo, widen: each defines (process x sr)), or Process > A patch...
+; and choose a .moritz file here (ring-modulator, comb-resonator, hall: inlet~ in, outlet~ out).
+; The buffer~ changes at once: start plays it here. Edit > Undo takes the process back.
+; Try: 1. double-click drums; select its first hit, Process > A Musil script..., stutter.mu: the hit
+; stutters; start; 2. Undo; select all, Process > A patch..., comb-resonator.moritz: the drums ring
+; in A major; 3. double-click voice, A Musil script..., reverse-echo.mu: echoes before each word;
+; 4. open a .mu file of this folder in a text editor: change its numbers (the var lines at the top),
+; save, run it again; 5. Markers > Markers from Onsets, then Regions from Onsets, then To score... in
+; the regions table: the hits as a score (see examples/16-timeline/regions.moritz).
+(patch
+  (obj title comment "the sound editor's Process menu: the Musil scripts and the patches of this folder" (pos 20 12))
+  (obj sub comment "double-click a buffer~ (locked), select, Process > A Musil script... or A patch..., choose a file here; Undo takes it back" (pos 20 34))
+  (obj b1 buffer~ sedrums drums.wav (pos 20 70))
+  (obj b2 buffer~ sevoice Vox.wav (pos 250 70))
+  (obj c1 comment "drums (stereo): stutter, comb-resonator, hall" (pos 20 95))
+  (obj c2 comment "a voice (mono): reverse-echo, octave-down, widen (Result: a new sound)" (pos 250 95))
+  (obj s1 message start (pos 20 125))
+  (obj t1 message stop (pos 70 125))
+  (obj s2 message start (pos 250 125))
+  (obj t2 message stop (pos 300 125))
+  (obj p1 play~ sedrums 2 (pos 20 160))
+  (obj p2 play~ sevoice 1 (pos 250 160))
+  (obj w1 waveform~ sedrums 200 50 (pos 20 195))
+  (obj w2 waveform~ sevoice 200 50 (pos 250 195))
+  (obj c3 comment "scripts (.mu): tremolo, octave-down, stutter, reverse-echo, widen; patches (.moritz): ring-modulator, comb-resonator, hall" (pos 20 260))
+  (obj c4 comment "a script defines (process x sr): x a list of channel vectors, sr the rate; it returns a vector or a list of them" (pos 20 278))
+  (obj c5 comment "a patch takes the left channel in its first inlet~, the right in the second, and gives back what reaches its outlet~s" (pos 20 296))
+  (obj lb loadbang (pos 480 330))
+  (obj vol message "0.7 200" (pos 480 360))
+  (obj mute message "0 200" (pos 550 360))
+  (obj cv comment "volume" (pos 610 361))
+  (obj ramp line~ (pos 480 395))
+  (obj vl *~ (pos 20 430))
+  (obj vr *~ (pos 250 430))
+  (obj out dac~ (pos 20 470))
+  (connect s1 0 p1 0)
+  (connect t1 0 p1 0)
+  (connect s2 0 p2 0)
+  (connect t2 0 p2 0)
+  (connect p1 0 vl 0)
+  (connect p1 1 vr 0)
+  (connect p2 0 vl 0)
+  (connect p2 0 vr 0)
+  (connect lb 0 vol 0)
+  (connect vol 0 ramp 0)
+  (connect mute 0 ramp 0)
+  (connect ramp 0 vl 1)
+  (connect ramp 0 vr 1)
+  (connect vl 0 out 0)
+  (connect vr 0 out 1))

@@ -4,8 +4,8 @@
 ; in a new order, a two-bar beat made of five hits.
 ; Try: 1. play: the regions as in the file (the first second), then the beat they make (from 2 s);
 ; 2. right-click the beat, Open as Timeline: a clip a hit; Alt-drag one to copy it, drag its edges;
-; 3. make your own: double-click the buffer~ (the sound editor), Markers > From onsets, then
-; Regions > Between onsets, then To score... (save it next to this patch as my-regions.score), then
+; 3. make your own: double-click the buffer~ (the sound editor), Markers > Regions from Onsets,
+; then To score... (save it next to this patch as my-regions.score), then
 ; read my-regions.score into the first box; copy and paste its clips into the beat's timeline.
 (patch
   (obj title comment "regions from the sound editor, written To score and arranged into a beat" (pos 20 12))
