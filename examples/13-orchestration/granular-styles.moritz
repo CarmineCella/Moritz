@@ -1,0 +1,60 @@
+; granular-styles.moritz - the players of a granular orchestra as people: the styles (techniques) a
+; process may use, each player taking one it has samples of in the register; inertia, how often a
+; player keeps its technique; a player who doubles (Ob|Hn: an ossia) keeping the instrument it took
+; for seat seconds; players paired (Vn+Vc) sounding together, coupling how often, spread their
+; attack scattered; the balance between families in decibels; dynamics-strict, a sample at the
+; dynamics asked for or the player is not asked. MicroSOL, which comes with Moritz, has the ordinary
+; technique (ord) alone and mf (the cellos ff too): the styles ord pizz flatt play ord here; with
+; FullSOL (read fullsol) the strings take pizz and the winds flatt, and styles at 0 ord at 20 pizz
+; trem crossfades them over time.
+; Try: 1. styles, inertia, the ossia seated; 2. the paired strings together, their attack spread;
+; 3. the brass 9 dB under the strings; 4. strict dynamics: only the cellos' ff; 5. report.
+(patch
+  (obj title comment "the players: styles, inertia, a player who doubles, pairs, balance, strict dynamics" (pos 20 12))
+  (obj sub comment "Click a process; the score plays through a hall. report prints each player's notes, its seat, its busy share." (pos 20 34))
+  (obj corch comment "the orchestra: an oboe, a horn, a player doubling oboe and horn, violins and cellos in pairs (MicroSOL; read fullsol for every technique)" (pos 20 65))
+  (obj band orchestra gsband microsol (pos 20 87))
+  (obj pl message "players Ob Hn Ob|Hn Vn+Vc Vn+Vc" (pos 140 87))
+  (obj rdf message "read fullsol" (pos 380 87))
+  (obj lb loadbang (pos 500 87))
+  (obj s1 comment "1. the styles the process may use; each player keeps its technique four times in five; the doubling player seated 4 s on what it took" (pos 20 125))
+  (obj p1 message "; gsorch mode granular, seed 1, styles at 0 ord at 20 pizz flatt ord, inertia 0.8, seat 4, density 3 5, register 4 4, duration 0.3 1.5, coupling 0, spread, balance, dynamics-strict, dynamics mf, run 20" (pos 20 147))
+  (obj s2 comment "2. the violins and cellos paired: when one plays the other does too (coupling 1), their attack scattered within 40 ms" (pos 20 185))
+  (obj p2 message "; gsorch mode granular, seed 2, coupling 1, spread 0 0.04, density 1 2, register 4 4, duration 1 2, inertia 0, seat 0, run 16" (pos 20 207))
+  (obj s3 comment "3. the brass 9 dB under the strings at the same dynamics (balance by instrument or family: strings winds brass...)" (pos 20 245))
+  (obj p3 message "; gsorch mode granular, seed 3, coupling 0, spread, balance brass -9, dynamics 0.7, density 4 6, register 4 4, duration 0.3 1, run 12" (pos 20 267))
+  (obj s4 comment "4. ff, strictly: only the samples recorded ff (MicroSOL's cellos): the others are not asked; then report" (pos 20 305))
+  (obj p4 message "; gsorch mode granular, seed 4, balance, dynamics ff, dynamics-strict 1, density 4, register 4 4, duration 0.5, run 8" (pos 20 327))
+  (obj rp message "; gsorch report" (pos 20 360))
+  (obj rpc comment "report: in the Console" (pos 140 361))
+  (obj rc receive gsorch (pos 20 395))
+  (obj oi orchidea gsband (pos 20 425))
+  (obj prog flonum (pos 20 460))
+  (obj cpr comment "progress" (pos 80 461))
+  (obj sat flonum (pos 160 460))
+  (obj csa comment "saturation" (pos 220 461))
+  (obj cs comment "the notes as a score: a row an instrument; double-click it for the roll" (pos 20 495))
+  (obj sc score gsscore 2 @size 600 170 (pos 20 517))
+  (obj tr transport 60 4 4 (pos 640 517))
+  (obj sp message play (pos 640 552))
+  (obj ss message stop (pos 690 552))
+  (obj chall comment "through a hall (reverb~)" (pos 20 705))
+  (obj sum +~ (pos 20 730))
+  (obj half *~ 0.5 (pos 20 760))
+  (obj rv reverb~ 0.3 2.5 (pos 20 790))
+  (obj out dac~ (pos 20 830))
+  (connect lb 0 pl 0)
+  (connect pl 0 band 0)
+  (connect rdf 0 band 0)
+  (connect rc 0 oi 0)
+  (connect oi 0 prog 0)
+  (connect oi 3 sat 0)
+  (connect oi 4 sc 0)
+  (connect sp 0 sc 0)
+  (connect ss 0 sc 0)
+  (connect sc 0 sum 0)
+  (connect sc 1 sum 1)
+  (connect sum 0 half 0)
+  (connect half 0 rv 0)
+  (connect rv 0 out 0)
+  (connect rv 1 out 1))

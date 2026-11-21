@@ -41,7 +41,8 @@ Right-click the box for Info.
 See the examples in examples/13-orchestration: sound-space (players,
 doublings, range, techniques, dynamics) and, for what orchidea does with the
 orchestra, static-dynamic, connections, memory, search and output; the
-granular ones (granular-envelopes, granular-styles, granular-sections) and
+granular ones (granular-envelopes, granular-styles, granular-methods,
+granular-sections) and
 the morphological ones (morphological, mimetic-morphological).
 arg name: the name orchidea uses (required)
 arg database: a feature file, or a dataset's name (fullsol, tinysol, microsol), to read when the box is made (none)

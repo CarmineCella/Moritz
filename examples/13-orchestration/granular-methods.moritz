@@ -1,0 +1,62 @@
+; granular-methods.moritz - how a granular orchestra chooses its pitches (method): random in the
+; register, or of a chord's pitch classes with chords; cluster, every pitch of the band once before
+; any is repeated (the players between them saturate it chromatically, as in a Ligeti cluster);
+; pivots, each player around a chord's pitch within interval semitones; harmonic, the partials of a
+; fundamental (harmonicity how often; just 1 tunes them in just intonation, their cents in the
+; score); markov, from a line learnt (markov C4 D4 E4 ...). leap keeps a player's next pitch near
+; its last (leap -2 -1: descending lines); weight and tilt lean the band to its middle or its edges,
+; its top or its bottom. MicroSOL, which comes with Moritz, has C4 to G4 (and the horn's E5): the
+; methods show their shapes in a narrow band; with FullSOL (read fullsol) widen the register (3 6).
+; Try each, then double-click the score: the roll shows the shapes; report prints the players.
+(patch
+  (obj title comment "the pitch methods: random, cluster, pivots, harmonic, markov; leap, weight, tilt" (pos 20 12))
+  (obj sub comment "Click a method; the score plays through a hall. Double-click the score for the roll." (pos 20 34))
+  (obj corch comment "the orchestra: MicroSOL, eight players (read fullsol for a real one)" (pos 20 65))
+  (obj band orchestra gmband microsol (pos 20 87))
+  (obj pl message "players Ob 2 Hn 2 Vn 2 Vc 2" (pos 140 87))
+  (obj rdf message "read fullsol" (pos 360 87))
+  (obj lb loadbang (pos 480 87))
+  (obj s0 comment "the process every method below shares: four or five events a second, a second or less each, mezzo-forte" (pos 20 120))
+  (obj p0 message "; gmorch mode granular, density 4 5, register 4 4, duration 0.2 1, dynamics 0.5, chords, leap, weight, tilt, just" (pos 20 142))
+  (obj s1 comment "1. random, then of the pitch classes of C major (chords C4 E4 G4)" (pos 20 180))
+  (obj p1 message "; gmorch seed 1, method random, run 12" (pos 20 202))
+  (obj p1b message "; gmorch seed 1, method random, chords C4 E4 G4, run 12" (pos 280 202))
+  (obj s2 comment "2. cluster: every pitch of the band before any repeats; with leap 1, chromatic lines (a micropolyphony)" (pos 20 235))
+  (obj p2 message "; gmorch seed 2, method cluster, chords, leap 1, run 12" (pos 20 257))
+  (obj s3 comment "3. pivots: each player around C4 and G4, within two semitones" (pos 20 290))
+  (obj p3 message "; gmorch seed 3, method pivots, chords C4 G4, interval 2, leap, run 12" (pos 20 312))
+  (obj s4 comment "4. harmonic: the partials of C2 (C4 E4 G4 Bb4...), tuned justly (the seventh 31 cents low)" (pos 20 345))
+  (obj p4 message "; gmorch seed 4, method harmonic, fundamental C2, harmonicity 0.9, just 1, chords, register 4 5, run 12" (pos 20 367))
+  (obj s5 comment "5. markov: the transitions of a line learnt, each player continuing it; then descending lines (leap -2 -1), the band's top more often (tilt 0.8)" (pos 20 400))
+  (obj p5 message "; gmorch seed 5, method markov, markov C4 D4 E4 C4 G4 E4 D4 C4, just, register 4 4, run 12" (pos 20 422))
+  (obj p6 message "; gmorch seed 6, method random, leap -2 -1, tilt 0.8, run 12" (pos 20 450))
+  (obj rp message "; gmorch report" (pos 400 450))
+  (obj rc receive gmorch (pos 20 490))
+  (obj oi orchidea gmband (pos 20 520))
+  (obj prog flonum (pos 20 555))
+  (obj cpr comment "progress" (pos 80 556))
+  (obj cs comment "the notes as a score; double-click it for the roll (the cents of a just partial by its note)" (pos 20 590))
+  (obj sc score gmscore 2 @size 600 170 (pos 20 612))
+  (obj tr transport 60 4 4 (pos 640 612))
+  (obj sp message play (pos 640 647))
+  (obj ss message stop (pos 690 647))
+  (obj chall comment "through a hall (reverb~)" (pos 20 800))
+  (obj sum +~ (pos 20 825))
+  (obj half *~ 0.5 (pos 20 855))
+  (obj rv reverb~ 0.3 2.5 (pos 20 885))
+  (obj out dac~ (pos 20 925))
+  (connect lb 0 pl 0)
+  (connect pl 0 band 0)
+  (connect lb 0 p0 0)
+  (connect rdf 0 band 0)
+  (connect rc 0 oi 0)
+  (connect oi 0 prog 0)
+  (connect oi 4 sc 0)
+  (connect sp 0 sc 0)
+  (connect ss 0 sc 0)
+  (connect sc 0 sum 0)
+  (connect sc 1 sum 1)
+  (connect sum 0 half 0)
+  (connect half 0 rv 0)
+  (connect rv 0 out 0)
+  (connect rv 1 out 1))

@@ -1,0 +1,58 @@
+; granular-envelopes.moritz - the orchestra as a granulator (orchidea's mode granular, Musil's
+; orchestrate-granular): a stochastic process over time, each event a note that a player of the
+; orchestra can play as recorded, never more notes at once than players. Its parameters change
+; over time as envelopes (at time value at time value ...): the density (events a second), the
+; register (octaves; octave 4 holds middle C), the durations and the dynamics (labels, or a level
+; from 0, ppp, to 1, fff, whose gain moves between the recorded dynamics). A range (two numbers)
+; is drawn anew at every event. MicroSOL, which comes with Moritz, has four instruments from C4 to
+; G4 at mf: the register stays near octave 4 and the dynamics are heard as gains; with FullSOL
+; (read fullsol, once registered in Extras > Datasets...) try register at 0 3 3 at 20 5 6.
+; Try: 1. a cloud that thickens and rises, from ppp to fff; 2. a cloud that slows into a held
+; chord; 3. the same with another seed; 4. report: the events, the saturation, each player.
+(patch
+  (obj title comment "the granular orchestra: density, register, durations and dynamics as envelopes" (pos 20 12))
+  (obj sub comment "Click a process; the notes come out as a score, which plays through a hall. Then report." (pos 20 34))
+  (obj corch comment "the orchestra: MicroSOL (oboes, horns, violins, cellos, C4 to G4), ten players; read fullsol for a real one" (pos 20 65))
+  (obj band orchestra geband microsol (pos 20 87))
+  (obj pl message "players Ob 2 Hn 2 Vn 3 Vc 3" (pos 140 87))
+  (obj rdf message "read fullsol" (pos 360 87))
+  (obj lb loadbang (pos 480 87))
+  (obj s1 comment "1. thickening and rising: from one event a second to fifteen, the durations shorter, ppp to fff" (pos 20 125))
+  (obj p1 message "; georch mode granular, seed 1, density at 0 1 2 at 20 12 16, register at 0 4 4 at 20 4 5, duration at 0 1 2 at 20 0.1 0.3, dynamics at 0 0 at 20 1, chords, chord-weight, run 20" (pos 20 147))
+  (obj s2 comment "2. slowing into a chord: the events rarer and longer, their pitches drawn more and more from C E G" (pos 20 185))
+  (obj p2 message "; georch mode granular, seed 2, density at 0 10 12 at 15 0.5 0.5, register 4 4, duration at 0 0.1 0.2 at 15 3 5, dynamics at 0 0.8 at 15 0.3, chords C4 E4 G4, chord-weight at 0 0 at 12 1, run 15" (pos 20 207))
+  (obj s3 comment "3. another seed: the same process, other draws" (pos 20 245))
+  (obj p3 message "; georch seed 3, run 15" (pos 20 267))
+  (obj rp message "; georch report" (pos 200 267))
+  (obj rpc comment "report: in the Console" (pos 320 268))
+  (obj rc receive georch (pos 20 305))
+  (obj oi orchidea geband (pos 20 335))
+  (obj prog flonum (pos 20 370))
+  (obj cpr comment "progress" (pos 80 371))
+  (obj sat flonum (pos 160 370))
+  (obj csa comment "saturation: the share of events every player was busy for" (pos 220 371))
+  (obj cs comment "the notes as a score: a row an instrument; double-click it for the roll" (pos 20 405))
+  (obj sc score gescore 2 @size 600 170 (pos 20 427))
+  (obj tr transport 60 4 4 (pos 640 427))
+  (obj sp message play (pos 640 462))
+  (obj ss message stop (pos 690 462))
+  (obj chall comment "through a hall (reverb~)" (pos 20 615))
+  (obj sum +~ (pos 20 640))
+  (obj half *~ 0.5 (pos 20 670))
+  (obj rv reverb~ 0.3 2.5 (pos 20 700))
+  (obj out dac~ (pos 20 740))
+  (connect lb 0 pl 0)
+  (connect pl 0 band 0)
+  (connect rdf 0 band 0)
+  (connect rc 0 oi 0)
+  (connect oi 0 prog 0)
+  (connect oi 3 sat 0)
+  (connect oi 4 sc 0)
+  (connect sp 0 sc 0)
+  (connect ss 0 sc 0)
+  (connect sc 0 sum 0)
+  (connect sc 1 sum 1)
+  (connect sum 0 half 0)
+  (connect half 0 rv 0)
+  (connect rv 0 out 0)
+  (connect rv 1 out 1))

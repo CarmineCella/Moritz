@@ -62,6 +62,7 @@
   (obj out dac~ (pos 20 565))
   (obj cs comment "its sounds, placed at their azimuth (two channels here)" (pos 90 566))
   (obj tip comment "A code box sends a score made in Musil with (out 1 s); its sounds read files or buffer~s by name. orchidea sends its solution as a score." (pos 20 605))
+  (obj tipm comment "score token puts that score in place of this one; merge token adds its events and rows to this one (an orchestration's sections, one after another: a message box merge $2 between an orchidea and the score)." (pos 20 717))
   (obj tl2 comment "Its window's Timeline shows it as tracks (gain, pan, mute, solo; each sized by its lower edge), its events clips," (pos 20 625))
   (obj tl3 comment "its messages lanes that reach the receives of their name (a click on a lane's name selects them). @view timeline: it opens there." (pos 20 643))
   (obj tl4 comment "The box and its window's views are one score: an edit in one is in the others, with one undo and one selection; Space plays." (pos 20 661))
