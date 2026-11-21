@@ -116,7 +116,8 @@ the editor's command table and undo rule), YIN, `descriptors~` on the shared ana
 - [ ] Sound editor leftovers: a buffer~'s markers saved inside its patch, region edges dragged with the
       mouse, To score straight into a score object.
 - [ ] Musil's golden tests now and then fail when ctest runs them in parallel with the examples (they
-      seem to share output files): give each its own files.
+      seem to share output files): give each its own files. `reference_live` also fails now and then on CI's
+      macOS (a voice left playing: its timing depends on the machine's load).
 
 ### 0.13 and 0.14
 
