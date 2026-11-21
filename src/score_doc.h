@@ -16,7 +16,7 @@
 //          (the parent is marked edited and plays the change).
 // One document per score: the functions that open one return the document already open for it, so two views of
 // the same score show the same edits, selection and history: the timeline (timeline.h) and the roll (roll.h, through
-// roll_edit.h's ScoreDocTarget: the score box's own roll, and the roll's window).
+// roll_edit.h's ScoreDocTarget: the score box's own roll, and the roll's view of the score's window, score_window.h).
 //
 // Edits. An Edit is a transaction of insertions, removals and replacements of events (and of the rows and the
 // header): commit() makes it one undo step and tells the views; an Edit not committed (or one that failed: a cycle,

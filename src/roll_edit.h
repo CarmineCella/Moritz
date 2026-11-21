@@ -134,7 +134,7 @@ private:
     int token_ = 0;
 };
 
-// the roll's target for a document (the roll's window and the score box's own roll each make one)
+// the roll's target for a document (the score's window and the score box's own roll each make one)
 std::shared_ptr<ScoreDocTarget> makeRollTarget(std::shared_ptr<ScoreDoc> doc);
 
 }  // namespace moritz

@@ -163,12 +163,23 @@ private:
     void next() {
         int lap; double pos;
         t_->where(patch, lap, pos);
+        double now = patch->logicalTime();
         double beat = t_->beatSamples();
         double b = (std::floor(pos / beat + 1e-9) + 1) * beat;
-        double t = t_->timeAt(std::floor(b + 1e-6), lap);
-        if (std::isnan(t) && t_->looping()) t = t_->timeAt((double)t_->loopStart(), lap + 1);
-        if (std::isnan(t)) return;
-        patch->scheduleAt(this, t, [this] { report(); next(); });
+        for (int guard = 0; guard < 8; ++guard) {
+            double t = t_->timeAt(std::floor(b + 1e-6), lap);
+            if (std::isnan(t) && t_->looping()) {               // past the loop's end: its start, the next pass
+                ++lap;
+                b = (double)t_->loopStart();
+                t = t_->timeAt(b, lap);
+            }
+            if (std::isnan(t)) return;
+            if (t > now) {                                      // always later: the clock never stands still
+                patch->scheduleAt(this, t, [this] { report(); next(); });
+                return;
+            }
+            b += beat;
+        }
     }
 };
 
@@ -289,7 +300,7 @@ public:
         const Atom& h = m[0];
         if (h.is("read")) readFile(m.size() > 1 ? m[1].str() : file_);
         else if (h.is("write")) writeFile(m.size() > 1 ? m[1].str() : file_);
-        else if (h.is("clear")) { auto s = score_->clone(); s->clear(); replace(s); }
+        else if (h.is("clear")) { auto s = score_->clone(); s->clear(); dropSelection(); replace(s); }
         else if (h.is("add")) add(m);
         else if (h.is("select")) select(m);
         else if (h.is("transpose") || h.is("invert") || h.is("retrograde") || h.is("augment") || h.is("diminish") ||
@@ -307,6 +318,7 @@ public:
         else if (h.is("score") && m.size() > 1) {
             auto s = sharedScore(m[1].str());
             if (!s) { patch->print("score: no score " + m[1].str() + " (a code box sends one with (out k s))"); return; }
+            dropSelection();
             replace(s->clone());
         }
         else patch->print("score: unknown message " + h.str());
@@ -457,6 +469,7 @@ private:
         try {
             auto s = sc::readFile(patch->resolvePath(f));
             if (!name_.empty()) s->name = name_;
+            dropSelection();
             score_ = s;
             edited();
         } catch (const std::exception& e) { patch->print(std::string("score: ") + e.what()); }
@@ -520,7 +533,7 @@ private:
         } else if (how.empty()) {
             for (size_t k = 1; k < m.size(); ++k) if (m[k].isFloat() && m[k].f >= 1 && score_->find((uint64_t)m[k].f)) c.selection.insert((uint64_t)m[k].f);
         } else if (how != "none") { patch->print("score: select all, none, ids, row name or time t0 t1"); return; }
-        c.syncSelection();                       // the timeline and the roll's window show it too
+        c.syncSelection();                       // the views of the score's window show it too
         if (patch) patch->redraw();
     }
     // a transformation of the selection (all of it when nothing is selected), as Musil's (music/score_transform.h)
@@ -553,9 +566,16 @@ private:
         }
         RollCore& c = roll();
         c.syncSelection();                       // what is selected in any view of the score
+        Ids ids;                                 // what of it is in the score still (none of it: all of the score)
+        if (c.path.empty())
+            for (uint64_t id : c.selectedIds()) if (score_->find(id)) ids.push_back(id);
+        if (ids.empty() && !c.selection.empty()) {
+            c.selection.clear();
+            c.syncSelection();
+        }
         auto s = score_->clone();
         try {
-            if (!applyTransform(*s, c.path.empty() ? c.selectedIds() : Ids{}, t)) return;
+            if (!applyTransform(*s, ids, t)) return;
         } catch (const std::exception& e) { patch->print(std::string("score: ") + e.what()); return; }
         for (auto it = c.selection.begin(); it != c.selection.end();) it = s->find(*it) ? std::next(it) : c.selection.erase(it);
         replace(s);
@@ -563,6 +583,15 @@ private:
     void edited() {
         rebuild();
         if (patch) patch->redraw();
+    }
+    // the score is replaced whole (clear, read, a score sent): the selection, which named events of the old one, goes,
+    // in the box and in every view of its document
+    void dropSelection() {
+        if (inline_) {
+            inline_->selection.clear();
+            if (inline_->target()) inline_->syncSelection();
+        }
+        if (auto d = ScoreDoc::find(score_.get())) d->clearSelection();
     }
 
     // a voice playing a region of a sound file (decoded once, kept while an event reads it)
@@ -592,12 +621,20 @@ private:
         v.fadeIn = fadeIn;
         v.fadeOut = fadeOut;
         v.file = it->second;
-        v.gains = (int)plan.gains.size();
+        v.gains = pushGains(plan, az);
+        plan.maxLen = std::max(plan.maxLen, v.len);
+        plan.voices.push_back(v);
+    }
+    // a voice's gains: its pan (a source mixed down to one channel), then its balance (a source with a channel for each
+    // output: a stereo file panned by its clip's and its track's azimuth); where they start in plan.gains
+    int pushGains(ScorePlan& plan, double az) const {
+        int at = (int)plan.gains.size();
         double g[16];
         sc::panGains(az, nOut_, g);
         for (int c = 0; c < nOut_; ++c) plan.gains.push_back((float)g[c]);
-        plan.maxLen = std::max(plan.maxLen, v.len);
-        plan.voices.push_back(v);
+        sc::balanceGains(az, nOut_, g);
+        for (int c = 0; c < nOut_; ++c) plan.gains.push_back((float)g[c]);
+        return at;
     }
 
     // ---- the plan: made on the GUI thread, published; the control events kept here
@@ -643,10 +680,7 @@ private:
                              sourcePath(e.source, p.origin));
                     continue;
                 }
-                v.gains = (int)plan->gains.size();
-                double g[16];
-                sc::panGains(e.az + strip.az, nOut_, g);
-                for (int c = 0; c < nOut_; ++c) plan->gains.push_back((float)g[c]);
+                v.gains = pushGains(*plan, e.az + strip.az);
                 plan->maxLen = std::max(plan->maxLen, v.len);
                 plan->voices.push_back(v);
             } else if (e.kind == sc::Kind::Note) {
@@ -792,8 +826,8 @@ void ScoreBox::dsp(int n) {
                 if (fade && k >= v.len - fade) amp *= (float)(v.len - 1 - k) / (float)fade;
                 if (k < v.fadeIn) amp *= (float)k / (float)v.fadeIn;
                 int o = i + (int)(v.start + k - pos);
-                if (direct) {
-                    for (int c = 0; c < nOut_; ++c) if (out[c]) out[c][o] += amp * src->interp(sp, c);
+                if (direct) {                                    // balanced by its azimuth (score.h's balanceGains)
+                    for (int c = 0; c < nOut_; ++c) if (out[c]) out[c][o] += amp * g[nOut_ + c] * src->interp(sp, c);
                 } else {
                     float x = 0.f;
                     for (int c = 0; c < src->channels; ++c) x += src->interp(sp, c);

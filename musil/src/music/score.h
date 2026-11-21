@@ -469,6 +469,18 @@ inline void panGains(double az, int n, double* g) {
     if (i2 >= 0) g[i2] = g2 / norm;
 }
 
+// A source with as many channels as the output played at an azimuth: on two channels a constant-power balance (1 and 1
+// in front, sqrt 2 and 0 at a side, as panGains times sqrt 2), so a stereo sound moves as a mono one does; on other
+// counts its channels as they are.
+inline void balanceGains(double az, int n, double* g) {
+    for (int k = 0; k < n; k++) g[k] = 1;
+    if (n != 2) return;
+    double p[2];
+    panGains(az, 2, p);
+    g[0] = p[0] * std::sqrt(2.0);
+    g[1] = p[1] * std::sqrt(2.0);
+}
+
 // --- dynamics as MIDI velocity: ppp 16 ... fff 127 (mf 80 when there is none) ---------------------------------------
 inline int velocityOf(const std::string& dyn) {
     static const char* names[] = {"ppp", "pp", "p", "mp", "mf", "f", "ff", "fff"};

@@ -71,6 +71,10 @@ public:
         pos = (double)seg_.pos0;
         if (!seg_.playing) return;
         double u = seg_.pos0 + std::max(0.0, t - anchorTime_) * sr_;
+        // a time timeAt gave for a sample is that sample again, whatever the anchor (a time not exact in binary): the
+        // way back from a time to a position is never a hair short of it (at the loop's end it was the pass before, and
+        // what follows the transport scheduled the same moment again and again)
+        if (double r = std::round(u); std::fabs(u - r) < 1e-3) u = r;
         if (!looping() || u < loopEnd_) { pos = u; return; }
         double len = (double)(loopEnd_ - loopStart_), over = u - loopEnd_;
         double k = std::floor(over / len);

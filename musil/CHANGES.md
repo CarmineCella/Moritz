@@ -13,6 +13,9 @@
   portable random module: the same seed, the same result on every system). Each takes an optional
   list of ids or events (none: every event). A Musil note transposed or inverted has its sound
   shifted by as much.
+- `balanceGains` (`src/music/score.h`, beside `panGains`): a source with a channel for each output
+  played at an azimuth; on two channels a constant-power balance, so that Moritz's score object pans a
+  stereo sound by its clip's and its track's azimuth as it pans a mono one.
 - `score-shift!` and `score-scale!` are those functions now (`score-shift!` takes ids too); the
   results are the same.
 - **The roll's layout is C++** (`src/music/score_layout.h`): the orchestral order of the rows, the

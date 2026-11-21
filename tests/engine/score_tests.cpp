@@ -194,6 +194,115 @@ TEST(transport_counts_bars_and_beats) {
     CHECK(bars == beats);
 }
 
+// A loop never stalls, whatever the time play starts at (a time not exact in binary: 0.1 s after a loadbang, 0.25 s
+// and the passes after it, and many others): its beats keep coming, one a beat, and the score's notes on every pass
+TEST(transport_loop_never_stalls) {
+    const long starts[] = {4410, 11025, 4410 * 3, 1, 977, 12345, 22051, 30001, 44099, 7777, 100003, 2 * 4410 + 13};
+    int bad = 0;
+    for (long start : starts) {
+        Rig r("(patch (obj tr transport 240 4 4) (obj pt print beat) (connect tr 1 pt 0) (obj s score x 1)"
+              " (obj pn print note) (connect s 1 pn 0))");
+        auto sc0 = std::make_shared<sc::Score>("x", 44100);
+        sc0->insert(note(0.5, 0.1, 60));
+        give(r, "s", sc0);
+        r.run(start);                                  // play lands then
+        r.box("tr")->message(0, {Atom("loop"), Atom(1.f), Atom(2.f)});   // bar 1: a second, again and again
+        r.box("tr")->message(0, {Atom("locate"), Atom(1.f)});
+        r.box("tr")->message(0, {Atom("play")});
+        r.printed.clear();
+        int beats = 0, notes = 0;
+        for (int k = 0; k < 40 && beats <= 18; ++k) {   // (stalled, the same beat came again and again: given up)
+            r.printed.clear();
+            r.run(k < 39 ? 4410 : 100);
+            for (auto& p : r.printed) {
+                if (p.rfind("beat:", 0) == 0) ++beats;
+                if (p.rfind("note:", 0) == 0) ++notes;
+            }
+        }
+        if (beats < 15 || beats > 17 || notes != 4) {
+            ++bad;
+            std::printf("  start %ld: %d beats, %d notes\n", start, beats, notes);
+        }
+    }
+    CHECK(bad == 0);
+}
+
+// The score replaced whole (clear, read, a score sent) forgets the selection, whose ids named the old one's events: a
+// transformation then changes all of the new score; one whose selection is gone does too
+TEST(score_replaced_forgets_its_selection) {
+    Rig r(kPatch);
+    auto s = std::make_shared<sc::Score>("x", 44100);
+    s->insert(note(0, 0.5, 60));
+    s->insert(note(0.5, 0.5, 62));
+    give(r, "s", s);
+    Box* b = r.box("s");
+    b->message(0, {Atom("select"), Atom("all")});
+    b->message(0, {Atom("clear")});
+    b->message(0, {Atom("add"), Atom(0.f), Atom(0.5f), Atom("A"), Atom(64.f)});
+    b->message(0, {Atom("add"), Atom(1.f), Atom(0.5f), Atom("A"), Atom(65.f)});
+    b->message(0, {Atom("transpose"), Atom(2.f)});
+    auto now = scoreOfBox(b);
+    std::vector<double> pitches;
+    for (auto* e : now->byTime()) pitches.push_back(e->pitch);
+    CHECK(pitches.size() == 2 && pitches[0] == 66 && pitches[1] == 67);
+    // a score sent with the same ids as the one selected: all of it transposed, not the ids that were selected
+    b->message(0, {Atom("select"), Atom((float)now->byTime()[0]->id)});
+    auto t = std::make_shared<sc::Score>("x", 44100);
+    t->insert(note(0, 0.5, 60));
+    t->insert(note(0.5, 0.5, 62));
+    give(r, "s", t);
+    b->message(0, {Atom("transpose"), Atom(1.f)});
+    pitches.clear();
+    for (auto* e : scoreOfBox(b)->byTime()) pitches.push_back(e->pitch);
+    CHECK(pitches.size() == 2 && pitches[0] == 61 && pitches[1] == 63);
+}
+
+// A stereo sound on two outlets is panned too (a constant-power balance by its clip's and its track's azimuth), as a
+// mono one is: to the left, the right channel silent and the left louder; in front, as it is
+TEST(score_stereo_sound_panned) {
+    Rig r("(patch (obj b buffer~ st 100) (obj s score x 2) (obj o dac~ 1 2) (connect s 0 o 0) (connect s 1 o 1)"
+          " (obj tr transport 240 4 4))");
+    auto* bb = dynamic_cast<BufferBox*>(r.box("b"));
+    SampleBuffer st;
+    st.channels = 2;
+    st.sr = r.sr;
+    st.frames = 4410;
+    st.data.assign((size_t)st.frames * 2, 0.5f);
+    bb->replace(std::move(st));
+    auto play = [&](double az) {
+        auto s = std::make_shared<sc::Score>("x", 44100);
+        auto e = sound(0, 0.05, "st");
+        e->az = az;
+        s->insert(e);
+        give(r, "s", s);
+        r.box("tr")->message(0, {Atom("locate"), Atom(1.f)});
+        r.box("tr")->message(0, {Atom("play")});
+        auto y = r.run(441);
+        r.box("tr")->message(0, {Atom("stop")});
+        float L = etest::channel(y, 2, 0)[220], R = etest::channel(y, 2, 1)[220];
+        return std::make_pair(L, R);
+    };
+    auto front = play(0);
+    CHECK(std::fabs(front.first - 0.5f) < 1e-4 && std::fabs(front.second - 0.5f) < 1e-4);
+    auto left = play(90);
+    CHECK(std::fabs(left.first - 0.5f * std::sqrt(2.f)) < 1e-3 && std::fabs(left.second) < 1e-4);
+    auto right = play(-45);
+    CHECK(right.second > right.first && right.first > 0.1f);
+    // the track's azimuth too
+    auto s = std::make_shared<sc::Score>("x", 44100);
+    auto e = sound(0, 0.05, "st");
+    e->row = "A";
+    s->insert(e);
+    sc::Row row{"A", "", {}};
+    sc::setField(row.extra, "az", sc::Datum::number(90));
+    s->rows.push_back(row);
+    give(r, "s", s);
+    r.box("tr")->message(0, {Atom("locate"), Atom(1.f)});
+    r.box("tr")->message(0, {Atom("play")});
+    auto y = r.run(441);
+    CHECK(std::fabs(etest::channel(y, 2, 1)[220]) < 1e-4);
+}
+
 // The audio thread plays the score while the GUI thread replaces it, adds to it, clears it, moves the transport:
 // nothing allocated or freed there, nothing torn (ThreadSanitizer); what the GUI let go is freed once the audio
 // thread has let go of it
